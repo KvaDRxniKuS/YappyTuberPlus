@@ -287,7 +287,7 @@ export function ScriptEditor({
           scheduleCheck(update.state.doc.toString());
         }),
         EditorView.theme({
-          "&": { height: "100%", fontSize: "12.5px", backgroundColor: "transparent" },
+          "&": { height: "100%", fontSize: "14.5px", backgroundColor: "transparent" },
           ".cm-scroller": { fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace", lineHeight: "1.65" },
           ".cm-gutters": { backgroundColor: "#1b1e23", color: "#5f6670", border: "none" },
           ".cm-activeLine": { backgroundColor: "#ffffff05" },

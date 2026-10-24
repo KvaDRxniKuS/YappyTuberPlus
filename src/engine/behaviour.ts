@@ -8,29 +8,40 @@ import type { RigObject, Vec2 } from "../types";
  * блока, а формулы ниже блока читаются ядром. Поэтому вкладка «Поведение» и
  * вкладка «Объект» всегда показывают одно и то же, а продвинутый автор может
  * удалить блок и писать руками.
+ *
+ * Важное правило генератора: сглаживание и пружина стоят **последними** в
+ * цепочке. Они фильтруют итоговую цель по оси — наследство родителя, `follow`,
+ * покачивание и подпрыгивание вместе, — поэтому «drag» влияет и на bounce, а не
+ * только на следование за родителем.
  */
 
 export type VisibilityRule = "none" | "open" | "closed";
 
 export interface Behaviour {
-  /** Сглаживание позиции: 0 — следует за родителем сразу, 1 — сильно отстаёт. */
+  /** Сглаживание позиции: 0 — без фильтра, 1 — сильно отстаёт. */
   smooth: number;
   /** Упругость позиции: 0 — выключено, 1 — мягкая пружина. */
   spring: number;
-  /** Сглаживание наследуемого поворота. */
+  /** Сглаживание поворота. */
   rotationSmooth: number;
-  /** Пружина на наследуемом повороте. */
+  /** Пружина на повороте. */
   rotationSpring: number;
-  /** Сила сквоша от речи: 0 — выключено. */
+  /** Сквош от речи: -1..1. Минус меняет оси местами. 0 — выключено. */
   squash: number;
   /** Скорость деформации, мс. */
   squashIn: number;
   /** Скорость возврата, мс. */
   squashOut: number;
-  /** Подпружиненный доворот от речи, градусы (±180). */
+  /** Подпрыгивание при речи, пиксели вверх. 0 — выключено. */
+  bounce: number;
+  /** Доворот от речи, градусы (−180..180). */
   rotationalDrag: number;
-  /** Предел собственного отклонения угла, градусы. 0 — без предела. */
-  rotationalLimit: number;
+  /** Предел отклонения влево, градусы 0..180. */
+  rotationalLimitLeft: number;
+  /** Предел отклонения вправо, градусы 0..180. */
+  rotationalLimitRight: number;
+  /** `true` — покачивание шумом, `false` — плавной синусоидой. */
+  wiggleRandom: boolean;
   wiggleXFreq: number;
   wiggleXAmp: number;
   wiggleYFreq: number;
@@ -53,8 +64,11 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   squash: 0,
   squashIn: 90,
   squashOut: 240,
+  bounce: 0,
   rotationalDrag: 0,
-  rotationalLimit: 0,
+  rotationalLimitLeft: 0,
+  rotationalLimitRight: 0,
+  wiggleRandom: false,
   wiggleXFreq: 0,
   wiggleXAmp: 0,
   wiggleYFreq: 0,
@@ -76,7 +90,7 @@ function num(value: number): string {
   return String(Math.round(value * 1000) / 1000);
 }
 
-/** Стабильный seed шума: у каждого объекта своё покачивание. */
+/** Стабильный seed: у каждого объекта своё покачивание и своя фаза. */
 function seedOf(id: string): number {
   let hash = 7;
   for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) % 9973;
@@ -106,7 +120,9 @@ export function heavyAngle(pivot: Vec2): number | null {
 export function isDefault(behaviour: Behaviour): boolean {
   return behaviour.smooth === 0 && behaviour.spring === 0
     && behaviour.rotationSmooth === 0 && behaviour.rotationSpring === 0
-    && behaviour.squash === 0 && behaviour.rotationalDrag === 0
+    && behaviour.squash === 0 && behaviour.bounce === 0
+    && behaviour.rotationalDrag === 0
+    && behaviour.rotationalLimitLeft === 0 && behaviour.rotationalLimitRight === 0
     && behaviour.wiggleXAmp === 0 && behaviour.wiggleYAmp === 0
     && behaviour.mouth === "none" && behaviour.eye === "none"
     && behaviour.physRotation === null;
@@ -120,8 +136,18 @@ export function readBehaviour(script: string): Behaviour {
     try {
       const raw: unknown = JSON.parse(trimmed.slice(META.length));
       if (!raw || typeof raw !== "object") break;
-      const parsed = { ...DEFAULT_BEHAVIOUR, ...(raw as Partial<Behaviour>) };
-      return { ...parsed, physRotation: typeof parsed.physRotation === "number" ? parsed.physRotation : null };
+      const source = raw as Record<string, unknown>;
+      const merged: Behaviour = { ...DEFAULT_BEHAVIOUR, ...(source as Partial<Behaviour>) };
+      // Старый общий предел (±N) переносим в два односторонних.
+      if (typeof source.rotationalLimit === "number"
+        && source.rotationalLimitLeft === undefined && source.rotationalLimitRight === undefined) {
+        const magnitude = Math.abs(source.rotationalLimit);
+        merged.rotationalLimitLeft = magnitude;
+        merged.rotationalLimitRight = magnitude;
+      }
+      merged.physRotation = typeof merged.physRotation === "number" ? merged.physRotation : null;
+      merged.wiggleRandom = merged.wiggleRandom === true;
+      return merged;
     } catch {
       break;
     }
@@ -136,60 +162,99 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   const scale = hasParent ? "inherit" : "1";
   const body: string[] = [];
 
-  const position = behaviour.smooth > 0 || behaviour.spring > 0;
-  const wiggleX = behaviour.wiggleXAmp > 0 && behaviour.wiggleXFreq > 0;
-  const wiggleY = behaviour.wiggleYAmp > 0 && behaviour.wiggleYFreq > 0;
-
-  const axis = (name: "x" | "y", wiggleAmp: number, wiggleFreq: number): string => {
-    let expression = hasParent ? `inherit + follow(offset, parent).${name}` : "0";
-    if (behaviour.smooth > 0) expression = `smooth(${expression}, ${num(behaviour.smooth * 260)})`;
-    if (behaviour.spring > 0) {
-      const { frequency, damping } = springParams(behaviour.spring);
-      expression = `spring(${expression}, ${num(frequency)}, ${num(damping)})`;
-    }
-    if (wiggleAmp > 0 && wiggleFreq > 0) {
-      expression = `${expression} + noise(${seed + (name === "x" ? 0 : 1)}, ${num(wiggleFreq)}) * ${num(wiggleAmp)}`;
-    }
-    return expression;
+  const wiggle = (axis: "x" | "y", amplitude: number, frequency: number): string | null => {
+    if (amplitude <= 0 || frequency <= 0) return null;
+    const localSeed = seed + (axis === "x" ? 0 : 1);
+    if (behaviour.wiggleRandom) return `noise(${localSeed}, ${num(frequency)}) * ${num(amplitude)}`;
+    const phase = ((localSeed % 100) / 100) * 2 * Math.PI;
+    return `sin(time * 2 * pi * ${num(frequency)} + ${num(phase)}) * ${num(amplitude)}`;
   };
 
-  if (position || wiggleX) body.push(`x = ${axis("x", behaviour.wiggleXAmp, behaviour.wiggleXFreq)}`);
-  if (position || wiggleY) body.push(`y = ${axis("y", behaviour.wiggleYAmp, behaviour.wiggleYFreq)}`);
+  const position = behaviour.smooth > 0 || behaviour.spring > 0;
+  const bounce = behaviour.bounce > 0;
+  const wiggleX = wiggle("x", behaviour.wiggleXAmp, behaviour.wiggleXFreq);
+  const wiggleY = wiggle("y", behaviour.wiggleYAmp, behaviour.wiggleYFreq);
+
+  // Фильтр ставится ПОСЛЕ сборки цели: так drag/пружина гасят и наследство
+  // родителя, и покачивание, и подпрыгивание — реакцию объекта в абсолюте.
+  const filtered = (expression: string): string => {
+    let result = expression;
+    if (behaviour.smooth > 0) result = `smooth(${result}, ${num(behaviour.smooth * 260)})`;
+    if (behaviour.spring > 0) {
+      const { frequency, damping } = springParams(behaviour.spring);
+      result = `spring(${result}, ${num(frequency)}, ${num(damping)})`;
+    }
+    return result;
+  };
+
+  const target = (axis: "x" | "y") => (hasParent ? `inherit + follow(offset, parent).${axis}` : "0");
+
+  if (position || wiggleX) {
+    const parts = [target("x"), wiggleX].filter(Boolean).join(" + ");
+    body.push(`x = ${filtered(parts)}`);
+  }
+  if (position || wiggleY || bounce) {
+    const parts = [target("y")];
+    if (bounce) {
+      const hop = `mic.speak * ${num(behaviour.bounce)}`;
+      // Если внешнего фильтра нет, подпрыгивание сглаживает собственная пружина:
+      // иначе объект дёргался бы мгновенно.
+      parts.push(`- ${position ? hop : `spring(${hop}, 2.2, 0.55)`}`);
+    }
+    if (wiggleY) parts.push(`+ ${wiggleY}`);
+    body.push(`y = ${filtered(parts.join(" "))}`);
+  }
 
   const drag = behaviour.rotationalDrag !== 0;
-  const limit = behaviour.rotationalLimit > 0;
-  const physical = behaviour.physRotation !== null && heavyAngle(object.pivot) !== null;
-  if (behaviour.rotationSmooth > 0 || behaviour.rotationSpring > 0 || drag || physical) {
+  const limitLeft = Math.max(0, behaviour.rotationalLimitLeft);
+  const limitRight = Math.max(0, behaviour.rotationalLimitRight);
+  const rotFilter = behaviour.rotationSmooth > 0 || behaviour.rotationSpring > 0;
+  const heavy = heavyAngle(object.pivot);
+  const physical = behaviour.physRotation !== null && heavy !== null;
+
+  // Фильтр поворота — отдельная функция: он ставится и на наследуемый угол,
+  // и на собственный доворот. Две независимые цепочки (у каждой свой узел
+  // состояния) дают честный предел: он ограничивает именно отклонение.
+  const rotateFilter = (expression: string): string => {
+    let result = expression;
+    if (behaviour.rotationSmooth > 0) result = `smooth(${result}, ${num(behaviour.rotationSmooth * 260)})`;
+    if (behaviour.rotationSpring > 0) {
+      const { frequency, damping } = springParams(behaviour.rotationSpring);
+      result = `spring(${result}, ${num(frequency)}, ${num(damping)})`;
+    }
+    return result;
+  };
+
+  if (physical || rotFilter || drag) {
     let expression: string;
-    const { frequency, damping } = springParams(behaviour.physSmooth);
     if (physical) {
       // Мировая ориентация: тяжёлая сторона смотрит в угол physRotation.
-      const heavy = heavyAngle(object.pivot)!;
-      const target = behaviour.physRotation! - heavy - object.base.rotation;
-      expression = `spring(${num(target)}, ${num(frequency)}, ${num(damping)})`;
+      const aim = behaviour.physRotation! - heavy! - object.base.rotation;
+      const { frequency, damping } = springParams(behaviour.physSmooth);
+      expression = `spring(${num(aim)}, ${num(frequency)}, ${num(damping)})`;
     } else {
-      expression = hasParent ? "inherit" : "0";
-      if (behaviour.rotationSmooth > 0) expression = `smooth(${expression}, ${num(behaviour.rotationSmooth * 260)})`;
-      if (behaviour.rotationSpring > 0) {
-        const spring = springParams(behaviour.rotationSpring);
-        expression = `spring(${expression}, ${num(spring.frequency)}, ${num(spring.damping)})`;
-      }
+      const base = hasParent ? "inherit" : "0";
+      expression = rotFilter ? rotateFilter(base) : base;
     }
     if (drag) {
-      const push = `spring(mic.speak * ${num(behaviour.rotationalDrag)}, 2.4, 0.35)`;
-      expression = `${expression} + ${limit ? `limit(${push}, ${num(-behaviour.rotationalLimit)}, ${num(behaviour.rotationalLimit)})` : push}`;
+      const push = `mic.speak * ${num(behaviour.rotationalDrag)}`;
+      let shaped = (!physical && rotFilter) ? rotateFilter(push) : `spring(${push}, 2.4, 0.35)`;
+      if (limitLeft > 0 || limitRight > 0) shaped = `limit(${shaped}, ${num(-limitLeft)}, ${num(limitRight)})`;
+      expression = `${expression} + ${shaped}`;
     }
     body.push(`rotation = ${expression}`);
   }
 
-  if (behaviour.squash > 0) {
+  if (behaviour.squash !== 0) {
     // Отдельной переменной в скрипте объекта быть не может (имя слева — это
     // параметр), поэтому прошлое значение сквоша берём из `state.sizeY`:
     // sizeY = inherit * (1 + s), значит s_prev = state.sizeY - inherit.
-    const target = `mic.speak * ${num(behaviour.squash)}`;
-    const past = `(state.sizeY - ${scale})`;
+    // Сравниваем модули: сквош бывает отрицательным, и тогда «рост» цели
+    // означает уменьшение sizeY.
+    const value = `mic.speak * ${num(behaviour.squash)}`;
+    const past = `abs(state.sizeY - ${scale})`;
     body.push(
-      `sizeY = ${scale} * (1 + smooth(${target}, ${target} > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}))`,
+      `sizeY = ${scale} * (1 + smooth(${value}, abs(${value}) > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}))`,
       `sizeX = ${scale} * 2 - sizeY`,
     );
   }
