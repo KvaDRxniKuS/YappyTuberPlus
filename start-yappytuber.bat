@@ -120,7 +120,7 @@ goto :eof
 
 rem --- клонирование ----------------------------------------------------------
 if exist "%APP_DIR%\.git" goto update
-if exist "%APP_DIR%\package.json" goto no_repo
+if exist "%APP_DIR%\package.json" goto attach_repo
 echo.
 echo == Клонирование ветки %BRANCH%
 if exist "%APP_DIR%" goto clone_failed
@@ -131,6 +131,39 @@ if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
 git clone "%REPO_URL%" "%APP_DIR%"
 if errorlevel 1 goto clone_failed
 goto update
+
+rem --- папка скачана архивом -------------------------------------------------
+:attach_repo
+cd /d "%APP_DIR%"
+if errorlevel 1 goto bad_dir
+echo.
+echo ** Папка без .git: похоже, скачан ZIP-архив. Включаю автообновление.
+echo    Содержимое приводится к текущей версии ветки; ваши новые файлы не удаляются.
+git init -q >nul 2>&1
+git remote remove origin >nul 2>&1
+git remote add origin "%REPO_URL%"
+git fetch origin --prune >nul 2>&1
+if errorlevel 1 goto attach_failed
+set "ATTACH="
+git rev-parse --verify --quiet "origin/%BRANCH%" >nul 2>&1
+if not errorlevel 1 set "ATTACH=%BRANCH%"
+if defined ATTACH goto attach_branch
+git rev-parse --verify --quiet "origin/%FALLBACK_BRANCH%" >nul 2>&1
+if errorlevel 1 goto attach_failed
+set "ATTACH=%FALLBACK_BRANCH%"
+:attach_branch
+git symbolic-ref HEAD "refs/heads/%ATTACH%" >nul 2>&1
+git reset --hard "origin/%ATTACH%" >nul 2>&1
+if errorlevel 1 goto attach_failed
+echo == Автообновление включено: ветка %ATTACH%.
+goto update
+
+:attach_failed
+rem Откат: убираем полуподключённый .git, файлы пользователя не трогаем.
+if exist "%APP_DIR%\.git" rmdir /s /q "%APP_DIR%\.git"
+echo ** Не удалось подключить репозиторий - запускаю текущие файлы без автообновления.
+echo    Проверьте доступ к GitHub; для приватного репозитория войдите в Git Credential Manager.
+goto deps
 
 rem --- обновление ------------------------------------------------------------
 :update
@@ -150,7 +183,7 @@ git rev-parse --verify --quiet "origin/%BRANCH%" >nul 2>&1
 if not errorlevel 1 set "HAS_BRANCH=1"
 git rev-parse --verify --quiet "origin/%FALLBACK_BRANCH%" >nul 2>&1
 if not errorlevel 1 set "HAS_MAIN=1"
-if not defined HAS_BRANCH if not defined HAS_MAIN goto no_remote
+if not defined HAS_BRANCH if not defined HAS_MAIN goto update_skipped
 if not defined HAS_BRANCH (
   set "TARGET=%FALLBACK_BRANCH%"
   goto target_ready
@@ -169,17 +202,30 @@ if %STAMP_MAIN% GTR %STAMP_BRANCH% set "TARGET=%FALLBACK_BRANCH%"
 echo Ветка обновления: %TARGET%
 
 set "DIRTY="
-for /f "delims=" %%i in ('git status --porcelain') do set "DIRTY=1"
+git rev-parse --verify --quiet HEAD >nul 2>&1
+if errorlevel 1 goto check_branch
+rem Только правки отслеживаемых файлов: новые файлы пользователя не трогаем.
+for /f "delims=" %%i in ('git status --porcelain --untracked-files=no') do set "DIRTY=1"
 if defined DIRTY (
-  echo ** Локальные изменения сохраняю в git stash - yappytuber auto-backup.
-  git stash push -u -m "yappytuber auto-backup" >nul 2>&1
+  echo ** Правки файлов репозитория сохраняю в git stash - yappytuber auto-backup.
+  git stash push -m "yappytuber auto-backup" >nul 2>&1
 )
 
+:check_branch
 set "CURRENT="
 for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CURRENT=%%i"
 if /i "%CURRENT%"=="%TARGET%" goto branch_ready
+if not defined CURRENT goto first_checkout
 git checkout "%TARGET%" >nul 2>&1
 if errorlevel 1 git checkout -b "%TARGET%" "origin/%TARGET%" >nul 2>&1
+goto branch_ready
+
+:first_checkout
+rem Репозиторий без коммитов (например, после git init): ставим ветку и файлы.
+git symbolic-ref HEAD "refs/heads/%TARGET%" >nul 2>&1
+git reset --hard "origin/%TARGET%" >nul 2>&1
+if errorlevel 1 goto update_failed
+
 :branch_ready
 git merge --ff-only "origin/%TARGET%" >nul 2>&1
 if errorlevel 1 (
@@ -191,10 +237,6 @@ if errorlevel 1 (
 for /f "delims=" %%i in ('git log -1 --oneline') do echo Коммит: %%i
 goto deps
 
-:no_repo
-echo.
-echo ** Автообновление недоступно: папка не является git-репозиторием.
-cd /d "%APP_DIR%"
 
 rem --- зависимости -----------------------------------------------------------
 :deps
@@ -283,10 +325,9 @@ echo.
 echo ОШИБКА: не найден Node.js. Установите Node.js 20 или новее: https://nodejs.org/
 goto fail
 
-:no_remote
-echo.
-echo ОШИБКА: на удалённом репозитории нет ветки %BRANCH% и нет %FALLBACK_BRANCH%.
-goto fail
+:update_skipped
+echo ** Ветки не получены с удалённого репозитория - продолжаю без обновления.
+goto deps
 
 :update_failed
 echo.

@@ -31,6 +31,24 @@ step() { printf '\n== %s\n' "$*"; }
 warn() { printf '!! %s\n' "$*" >&2; }
 fail() { printf 'ОШИБКА: %s\n' "$*" >&2; exit 1; }
 
+# Превращает распакованный архив (папка без .git) в git-копию, чтобы работало
+# автообновление. Возвращает 0 при успехе; содержимое приводится к ветке.
+attach_repo() {
+  step "Папка без .git: включаю автообновление"
+  local dir="$1"
+  # Откат: не оставляем полуподключённый репозиторий после неудачи.
+  attach_rollback() { rm -rf "$dir/.git"; return 1; }
+  git -C "$dir" init -q >/dev/null 2>&1 || return 1
+  git -C "$dir" remote add origin "$REPO_URL" >/dev/null 2>&1 || { attach_rollback; return 1; }
+  git -C "$dir" fetch origin --prune >/dev/null 2>&1 || { attach_rollback; return 1; }
+  local attach="$BRANCH"
+  git -C "$dir" rev-parse --verify --quiet "origin/$attach" >/dev/null || attach="$FALLBACK_BRANCH"
+  git -C "$dir" rev-parse --verify --quiet "origin/$attach" >/dev/null || { attach_rollback; return 1; }
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$attach" >/dev/null 2>&1 || { attach_rollback; return 1; }
+  git -C "$dir" reset --hard "origin/$attach" >/dev/null 2>&1 || { attach_rollback; return 1; }
+  say "Автообновление включено: ветка $attach."
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-open) OPEN=0 ;;
@@ -77,10 +95,12 @@ if [ -z "$APP_DIR" ]; then
 fi
 say "Папка проекта: $APP_DIR"
 
-# --- клонирование -----------------------------------------------------------
+# --- клонирование или подключение архива ------------------------------------
 if [ ! -d "$APP_DIR/.git" ]; then
   if [ -f "$APP_DIR/package.json" ]; then
-    warn "папка без git-репозитория: автообновление пропущено, просто запускаю."
+    # Скачали ZIP вместо git clone — подключаем репозиторий на месте.
+    attach_repo "$APP_DIR" \
+      || warn "не удалось подключить репозиторий — запускаю текущие файлы без автообновления."
   else
     step "Клонирование ветки $BRANCH"
     if ! git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"; then
@@ -102,38 +122,50 @@ if [ -d ".git" ]; then
   # Берём ту ветку, где последний коммит новее: сессионную или main.
   HAS_BRANCH=0
   HAS_MAIN=0
+  TARGET=""
   git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null && HAS_BRANCH=1
   git rev-parse --verify --quiet "origin/$FALLBACK_BRANCH" >/dev/null && HAS_MAIN=1
-  if [ "$HAS_BRANCH" = "0" ] && [ "$HAS_MAIN" = "0" ]; then
-    fail "на удалённом репозитории нет ни $BRANCH, ни $FALLBACK_BRANCH"
+  TARGET=""
+  if [ "$HAS_BRANCH$HAS_MAIN" = "00" ]; then
+    warn "ветки не получены с удалённого репозитория — продолжаю без обновления."
   fi
-  if [ "$HAS_BRANCH" = "1" ] && [ "$HAS_MAIN" = "1" ]; then
-    STAMP_BRANCH="$(git log -1 --format=%ct "origin/$BRANCH" 2>/dev/null || echo 0)"
-    STAMP_MAIN="$(git log -1 --format=%ct "origin/$FALLBACK_BRANCH" 2>/dev/null || echo 0)"
-    if [ "${STAMP_MAIN:-0}" -gt "${STAMP_BRANCH:-0}" ]; then TARGET="$FALLBACK_BRANCH"; else TARGET="$BRANCH"; fi
-  elif [ "$HAS_BRANCH" = "1" ]; then
-    TARGET="$BRANCH"
-  else
-    warn "ветка $BRANCH не найдена на удалённом репозитории, использую $FALLBACK_BRANCH."
-    TARGET="$FALLBACK_BRANCH"
-  fi
-  say "Ветка обновления: $TARGET"
+  if [ "$HAS_BRANCH$HAS_MAIN" != "00" ]; then
+    if [ "$HAS_BRANCH" = "1" ] && [ "$HAS_MAIN" = "1" ]; then
+      STAMP_BRANCH="$(git log -1 --format=%ct "origin/$BRANCH" 2>/dev/null || echo 0)"
+      STAMP_MAIN="$(git log -1 --format=%ct "origin/$FALLBACK_BRANCH" 2>/dev/null || echo 0)"
+      if [ "${STAMP_MAIN:-0}" -gt "${STAMP_BRANCH:-0}" ]; then TARGET="$FALLBACK_BRANCH"; else TARGET="$BRANCH"; fi
+    elif [ "$HAS_BRANCH" = "1" ]; then
+      TARGET="$BRANCH"
+    else
+      warn "ветка $BRANCH не найдена на удалённом репозитории, использую $FALLBACK_BRANCH."
+      TARGET="$FALLBACK_BRANCH"
+    fi
+    say "Ветка обновления: $TARGET"
 
-  if [ -n "$(git status --porcelain)" ]; then
-    warn "в папке есть локальные изменения — сохраняю их в git stash (yappytuber auto-backup)."
-    git stash push -u -m "yappytuber auto-backup $(date '+%Y-%m-%d %H:%M:%S')" >/dev/null \
-      || warn "не удалось сохранить локальные изменения."
-  fi
+    # Только правки отслеживаемых файлов: новые пользовательские файлы
+    # остаются на месте, reset --hard их и так не трогает.
+    if [ -n "$(git status --porcelain --untracked-files=no)" ] && git rev-parse --verify --quiet HEAD >/dev/null; then
+      warn "есть правки файлов репозитория — сохраняю их в git stash (yappytuber auto-backup)."
+      git stash push -m "yappytuber auto-backup $(date '+%Y-%m-%d %H:%M:%S')" >/dev/null \
+        || warn "не удалось сохранить локальные изменения."
+    fi
 
-  CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
-  if [ "$CURRENT" != "$TARGET" ]; then
-    git checkout "$TARGET" >/dev/null 2>&1 || git checkout -b "$TARGET" "origin/$TARGET" >/dev/null 2>&1
+    CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+    if [ "$CURRENT" != "$TARGET" ]; then
+      if [ -z "$CURRENT" ]; then
+        git symbolic-ref HEAD "refs/heads/$TARGET" >/dev/null 2>&1
+        git reset --hard "origin/$TARGET" >/dev/null || fail "не удалось обновить ветку $TARGET"
+        CURRENT="$TARGET"
+      else
+        git checkout "$TARGET" >/dev/null 2>&1 || git checkout -b "$TARGET" "origin/$TARGET" >/dev/null 2>&1
+      fi
+    fi
+    if ! git merge --ff-only "origin/$TARGET" >/dev/null 2>&1; then
+      warn "ветка разошлась с удалённой — жёсткий сброс; прежнее состояние доступно через git reflog."
+      git reset --hard "origin/$TARGET" >/dev/null || fail "не удалось обновить ветку $TARGET"
+    fi
+    say "Ветка: $(git rev-parse --abbrev-ref HEAD) · $(git log -1 --format='%h %s')"
   fi
-  if ! git merge --ff-only "origin/$TARGET" >/dev/null 2>&1; then
-    warn "ветка разошлась с удалённой — жёсткий сброс; прежнее состояние доступно через git reflog."
-    git reset --hard "origin/$TARGET" >/dev/null || fail "не удалось обновить ветку $TARGET"
-  fi
-  say "Ветка: $(git rev-parse --abbrev-ref HEAD) · $(git log -1 --format='%h %s')"
 else
   say "Автообновление недоступно: папка не является git-репозиторием."
 fi
