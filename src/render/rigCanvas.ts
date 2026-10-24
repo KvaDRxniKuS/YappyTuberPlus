@@ -107,18 +107,21 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
   return multiplyAffine(multiplyAffine(multiplyAffine(translate, rotate), skew), scale);
 }
 
-/** Sprites in draw order: computed `layer` first, then preset order. */
+/**
+ * Спрайты в порядке отрисовки: слой, затем структура.
+ *
+ * Порядок считается здесь, а не берётся из кадра движка, по двум причинам:
+ * слой из скрипта и базовый слой должны действовать одинаково в любой момент
+ * (в том числе на паузе, когда кадр не обновляется), а при равном слое поверх
+ * обязан быть тот, кто выше в структуре, — индекс в массиве пресета про это
+ * не знает. Смена слоя применяется сразу, без перезапуска движка.
+ */
 export function orderedSprites(preset: RigPreset, frame: RigFrame | null): RigObject[] {
   const sprites = preset.objects.filter((object) => object.kind === "sprite");
-  if (!frame) {
-    // Без кадра порядок считаем по базовой позе, но с тем же правилом:
-    // при равном слое выше в структуре — значит поверх.
-    const paths = structurePaths(preset.objects);
-    return [...sprites].sort((a, b) => (a.base.layer - b.base.layer)
-      || frontness(paths.get(a.id), paths.get(b.id)));
-  }
-  const positions = new Map(frame.order.map((id, index) => [id, index]));
-  return [...sprites].sort((a, b) => (positions.get(a.id) ?? 9999) - (positions.get(b.id) ?? 9999));
+  const paths = structurePaths(preset.objects);
+  const layerOf = (object: RigObject) => frame?.objects[object.id]?.layer ?? object.base.layer;
+  return [...sprites].sort((a, b) => (layerOf(a) - layerOf(b))
+    || frontness(paths.get(a.id), paths.get(b.id)));
 }
 
 export interface DrawRigOptions {

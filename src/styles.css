@@ -179,6 +179,28 @@ input, select { color: var(--text); }
 .number-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .number-field > span { color: #737e89; font-size: 8px; }
 .number-field > div { height: 26px; display: flex; align-items: center; border: 1px solid #313740; background: #181b20; border-radius: 4px; }
+/* Свои стрелки вместо нативных: горизонтально, крупнее и в цвет панели. */
+.number-field input::-webkit-outer-spin-button,
+.number-field input::-webkit-inner-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
+.number-field input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.number-stepper { gap: 0; padding-right: 3px; }
+.number-stepper .step-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 21px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #2f363f;
+  border-radius: 4px;
+  background: #1f242b;
+  color: #9fb0ba;
+  cursor: pointer;
+}
+.number-stepper .step-button:first-of-type { margin-left: 3px; }
+.number-stepper .step-button + .step-button { margin-left: 3px; }
+.number-stepper .step-button:hover { border-color: #557a70; background: #26333a; color: #c8e3da; }
+.number-stepper .step-button:active { background: #2f3f46; color: #e2f6ee; }
 .number-field input { width: 100%; min-width: 0; height: 100%; padding: 0 5px; border: 0; background: transparent; font-family: "Cascadia Code", monospace; font-size: 9px; font-variant-numeric: tabular-nums; }
 .number-field input:focus { outline: none; }
 .number-field > div:focus-within { border-color: #609c8c; }

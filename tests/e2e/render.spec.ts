@@ -53,7 +53,11 @@ test("renderer draws sprites in computed order with base pose and opacity", () =
   drawRig(context, preset, frame, assets);
 
   const sprites = orderedSprites(preset, frame).map((object) => object.id);
-  expect(sprites).toEqual(order.filter((id) => preset.objects.find((object) => object.id === id)?.kind === "sprite"));
+  // Порядок считает редактор — слой и структура, — а массив `order` из кадра
+  // больше не решает, кто поверх: иначе смена слоя ждала бы перезапуска движка.
+  expect(sprites).not.toEqual(order.filter((id) => preset.objects.find((object) => object.id === id)?.kind === "sprite"));
+  expect(sprites.indexOf("mouth")).toBeGreaterThan(sprites.indexOf("mouth_closed"));
+  expect(sprites.indexOf("head")).toBeGreaterThan(sprites.indexOf("eye_left"));
   const draws = calls.filter((call) => call.startsWith("draw "));
   expect(draws).toHaveLength(sprites.length);
   expect(calls.filter((call) => call === "save")).toHaveLength(draws.length);

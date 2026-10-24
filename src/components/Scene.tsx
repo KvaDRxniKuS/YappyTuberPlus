@@ -44,7 +44,15 @@ interface SceneProps {
 type Camera = { zoom: number; x: number; y: number };
 type Marquee = { shape: "rect" | "lasso"; start: Point; current: Point; points: Point[] };
 type Interaction =
-  | { type: "drag"; ids: string[]; start: Point; initial: Record<string, BasePose> }
+  | {
+      type: "drag";
+      ids: string[];
+      start: Point;
+      initial: Record<string, BasePose>;
+      /** Кого выбрать, если это окажется клик без перетаскивания. */
+      pending: string | null;
+      moved: boolean;
+    }
   | { type: "pan"; startX: number; startY: number; camera: Camera }
   | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
   | null;
@@ -260,12 +268,13 @@ export function Scene(props: SceneProps) {
     };
   };
 
-  const hitTest = (point: { x: number; y: number }): RigObject | null => {
+  const hitTest = (point: { x: number; y: number }, accept?: (object: RigObject) => boolean): RigObject | null => {
     const current = propsRef.current;
     const frame = current.frameRef.current;
     const ordered = orderedSprites(current.preset, frame);
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
       const object = ordered[index];
+      if (accept && !accept(object)) continue;
       const values = frame?.objects[object.id] || staticValues(object);
       if (values.visible === 0) continue;
       const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
@@ -394,13 +403,28 @@ export function Scene(props: SceneProps) {
             }
             if (event.ctrlKey || event.metaKey) { current.onSelect(hit.id, "toggle"); return; }
             if (event.shiftKey) { current.onSelect(hit.id, "add"); return; }
-            // Клик по части выделенной группы не сбрасывает выборку: тащим группу целиком.
-            const inside = isSelectedTree(current.preset, hit.id, current.selectedIds);
-            if (!inside) current.onSelect(hit.id, "replace");
-            const ids = inside ? selectionRoots(current.preset.objects, current.selectedIds) : [hit.id];
-            current.onDragStart();
+            // Выделение в структуре важнее того, кто оказался сверху: если точка
+            // попала в выделенный объект (или его потомка), тащим выборку, а
+            // верхний объект выбирается только кликом без перетаскивания.
+            const inSelection = (object: RigObject) => isSelectedTree(current.preset, object.id, current.selectedIds);
+            const inside = inSelection(hit);
+            const under = inside ? hit : hitTest(point, inSelection);
             const initial = Object.fromEntries(current.preset.objects.map((object) => [object.id, { ...object.base }]));
-            interaction.current = { type: "drag", ids, start: point, initial };
+            if (under) {
+              current.onDragStart();
+              interaction.current = {
+                type: "drag",
+                ids: selectionRoots(current.preset.objects, current.selectedIds),
+                start: point,
+                initial,
+                pending: inside ? null : hit.id,
+                moved: false,
+              };
+              return;
+            }
+            current.onSelect(hit.id, "replace");
+            current.onDragStart();
+            interaction.current = { type: "drag", ids: [hit.id], start: point, initial, pending: null, moved: false };
           }}
           onPointerMove={(event) => {
             const current = interaction.current;
@@ -426,6 +450,7 @@ export function Scene(props: SceneProps) {
               return;
             }
             const point = scenePoint(event);
+            if (Math.hypot(point.x - current.start.x, point.y - current.start.y) > 2) current.moved = true;
             let delta = { x: point.x - current.start.x, y: point.y - current.start.y };
             if (event.shiftKey) {
               if (Math.abs(delta.x) >= Math.abs(delta.y)) delta = { x: delta.x, y: 0 };
@@ -441,6 +466,11 @@ export function Scene(props: SceneProps) {
               finishMarquee(current);
               marqueeRef.current = null;
               dirty.current = true;
+            }
+            // Верхний объект выбирается только настоящим кликом: короткое
+            // нажатие без движения, а не перетаскивание поверх выделения.
+            if (current?.type === "drag" && !current.moved && current.pending) {
+              propsRef.current.onSelect(current.pending, "replace");
             }
             if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           }}

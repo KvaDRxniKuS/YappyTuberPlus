@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Crosshair, Eye, EyeOff, Layers, Link2, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, Layers, Link2, RotateCcw } from "lucide-react";
 import type { BasePose, RigFrame, RigObject } from "../types";
 import { scriptValue, setScriptValue } from "../engine/preset";
 
@@ -30,16 +30,32 @@ function NumberField({ label, value, step = 1, onCommit, suffix }: {
     if (Number.isFinite(parsed)) onCommit(parsed);
     else setDraft(String(value));
   };
+  // Стрелки горизонтальные и свои: нативные спиннеры мелкие и стоят столбиком.
+  const nudge = (direction: -1 | 1) => {
+    const next = Number((value + direction * step).toFixed(4));
+    setDraft(String(Number(next.toFixed(4))));
+    onCommit(next);
+  };
   return (
     <label className="number-field">
       <span>{label}</span>
-      <div><input
-        type="number" value={draft} step={step}
-        onFocus={() => setFocused(true)}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => { setFocused(false); commit(); }}
-        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-      />{suffix && <em>{suffix}</em>}</div>
+      <div className="number-stepper">
+        <input
+          type="number" value={draft} step={step}
+          onFocus={() => setFocused(true)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => { setFocused(false); commit(); }}
+          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+        />{suffix && <em>{suffix}</em>}
+        <button
+          type="button" className="step-button" title={`${label}: −${step}`}
+          onClick={(event) => { event.preventDefault(); nudge(-1); }}
+        ><ChevronLeft size={14} /></button>
+        <button
+          type="button" className="step-button" title={`${label}: +${step}`}
+          onClick={(event) => { event.preventDefault(); nudge(1); }}
+        ><ChevronRight size={14} /></button>
+      </div>
     </label>
   );
 }

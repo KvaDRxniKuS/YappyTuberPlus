@@ -1,4 +1,4 @@
-import type { RigObject } from "../types";
+import type { BasePose, RigObject } from "../types";
 import { setParent } from "./preset";
 import { selectionRoots } from "./selection";
 
@@ -182,4 +182,56 @@ export function reorderNeighbor(
     return { targetId: candidate, position: direction < 0 ? "before" : "after" };
   }
   return null;
+}
+
+/**
+ * Дочерние объекты едут за базовой позой родителя.
+ *
+ * Иерархия в ядре динамическая: `inherit` и `follow()` передают детям только
+ * изменения из скрипта. Базовая поза хранится абсолютно, поэтому поворот или
+ * масштаб родителя в инспекторе (и сдвиг через «Δ»-поля) должен сам перенести
+ * базы потомков — иначе ребёнок «отклеивается» и не меняет ни угол, ни место.
+ *
+ * `handled` — объекты, которые правятся этой же операцией: они и их поддеревья
+ * пропускаются, иначе сдвиг применился бы дважды.
+ */
+export function propagateBase(
+  objects: RigObject[],
+  id: string,
+  before: BasePose,
+  after: BasePose,
+  handled: Iterable<string> = [],
+): RigObject[] {
+  const skip = new Set<string>();
+  for (const handledId of handled) {
+    for (const object of subtreeBlock(objects, handledId)) skip.add(object.id);
+  }
+  const descendants = subtreeBlock(objects, id).filter((object) => object.id !== id && !skip.has(object.id));
+  if (!descendants.length) return objects;
+
+  const scaleX = before.sizeX === 0 ? 1 : after.sizeX / before.sizeX;
+  const scaleY = before.sizeY === 0 ? 1 : after.sizeY / before.sizeY;
+  const deltaRotation = after.rotation - before.rotation;
+  const shiftX = after.x - before.x;
+  const shiftY = after.y - before.y;
+  if (scaleX === 1 && scaleY === 1 && deltaRotation === 0 && shiftX === 0 && shiftY === 0) return objects;
+
+  const radians = (deltaRotation * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const moved = new Map<string, BasePose>();
+  for (const object of descendants) {
+    // Поворот и масштаб идут вокруг пивота родителя — точки `base.x/base.y`.
+    const dx = (object.base.x - before.x) * scaleX;
+    const dy = (object.base.y - before.y) * scaleY;
+    moved.set(object.id, {
+      ...object.base,
+      x: before.x + dx * cos - dy * sin + shiftX,
+      y: before.y + dx * sin + dy * cos + shiftY,
+      rotation: object.base.rotation + deltaRotation,
+      sizeX: object.base.sizeX * scaleX,
+      sizeY: object.base.sizeY * scaleY,
+    });
+  }
+  return objects.map((object) => (moved.has(object.id) ? { ...object, base: moved.get(object.id) as BasePose } : object));
 }

@@ -18,7 +18,7 @@ import {
 } from "./engine/preset";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
-import { reorderNeighbor, reorderObjects } from "./engine/structure";
+import { propagateBase, reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
@@ -374,31 +374,46 @@ export default function App() {
 
 
   const updateObject = useCallback((next: RigObject, options: boolean | CommitOptions = true) => {
-    commit((current) => ({ ...current, objects: current.objects.map((object) => object.id === next.id ? next : object) }), options);
+    commit((current) => {
+      const previous = current.objects.find((object) => object.id === next.id);
+      const objects = current.objects.map((object) => object.id === next.id ? next : object);
+      // Поворот, масштаб и сдвиг родителя тянут за собой потомков — иначе
+      // группа «отклеивается» от своих детей.
+      const propagated = previous
+        ? propagateBase(objects, next.id, previous.base, next.base)
+        : objects;
+      return { ...current, objects: propagated };
+    }, options);
   }, [commit]);
 
   /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
   const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
     const current = presetRef.current;
     const ids = new Set(selectionRef.current);
-    commit({
-      ...current,
-      objects: current.objects.map((object) => (ids.has(object.id)
-        ? { ...object, base: { ...object.base, ...patch } }
-        : object)),
-    }, { label: "Правка выделения", coalesce });
+    let objects = current.objects.map((object) => (ids.has(object.id)
+      ? { ...object, base: { ...object.base, ...patch } }
+      : object));
+    // У каждого выделенного родителя потомки едут за его новой базой.
+    for (const object of current.objects) {
+      if (!ids.has(object.id)) continue;
+      const nextBase = { ...object.base, ...patch };
+      objects = propagateBase(objects, object.id, object.base, nextBase, ids);
+    }
+    commit({ ...current, objects }, { label: "Правка выделения", coalesce });
   }, [commit]);
 
   /** Относительный сдвиг всей выборки. */
   const offsetSelected = useCallback((delta: { x?: number; y?: number }) => {
     const current = presetRef.current;
     const ids = new Set(selectionRef.current);
-    commit({
-      ...current,
-      objects: current.objects.map((object) => (ids.has(object.id)
-        ? { ...object, base: { ...object.base, x: object.base.x + (delta.x || 0), y: object.base.y + (delta.y || 0) } }
-        : object)),
-    }, { label: "Смещение выделения", coalesce: "multi-offset" });
+    const shift = (base: BasePose): BasePose => ({ ...base, x: base.x + (delta.x || 0), y: base.y + (delta.y || 0) });
+    let objects = current.objects.map((object) => (ids.has(object.id) ? { ...object, base: shift(object.base) } : object));
+    // Сдвиг выделения тянет и потомков — как перетаскивание на сцене.
+    for (const object of current.objects) {
+      if (!ids.has(object.id)) continue;
+      objects = propagateBase(objects, object.id, object.base, shift(object.base), ids);
+    }
+    commit({ ...current, objects }, { label: "Смещение выделения", coalesce: "multi-offset" });
   }, [commit]);
 
   const setSelectedLayer = useCallback((layer: number) => {
@@ -530,17 +545,32 @@ export default function App() {
     setSelection(roots.map((root) => bySource.get(root)!.id));
   };
 
-  const reparent = (id: string, parentId: string | null) => {
-    if (id === parentId || (parentId && isDescendant(preset.objects, parentId, id))) {
-      notify("Нельзя прикрепить объект к себе или своему потомку");
+  /**
+   * Вложение и открепление работают со всей выборкой сразу: раньше перетаскивание
+   * нескольких строк в группу переносило только последний объект, потому что
+   * каждый вызов коммитил из одного и того же старого пресета.
+   */
+  const reparent = (ids: string[], parentId: string | null) => {
+    const current = presetRef.current;
+    const moving = new Set(ids.filter((id) => id !== parentId));
+    if (moving.size !== ids.length) {
+      notify("Нельзя прикрепить объект к себе");
       return;
     }
-    const object = preset.objects.find((item) => item.id === id);
-    if (!object || object.parentId === parentId) return;
-    commit({
-      ...preset,
-      objects: preset.objects.map((item) => item.id === id ? setParent(item, parentId) : item),
+    for (const id of moving) {
+      if (parentId && isDescendant(current.objects, parentId, id)) {
+        notify("Нельзя прикрепить объект к своему потомку");
+        return;
+      }
+    }
+    let changed = false;
+    const objects = current.objects.map((object) => {
+      if (!moving.has(object.id) || object.parentId === parentId) return object;
+      changed = true;
+      return setParent(object, parentId);
     });
+    if (!changed) return;
+    commit({ ...current, objects }, { label: parentId ? "Вложение в группу" : "Открепление от группы" });
   };
 
   /** Загрузка файла через input — путь для браузерного режима разработки. */

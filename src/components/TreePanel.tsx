@@ -23,7 +23,8 @@ interface TreePanelProps {
   onDelete: () => void;
   onDuplicate: () => void;
   onToggleVisibility: (id: string) => void;
-  onReparent: (id: string, parentId: string | null) => void;
+  /** Вложение и открепление применяются ко всей перетаскиваемой выборке. */
+  onReparent: (ids: string[], parentId: string | null) => void;
   /** Перестановка строк: вставка перед/после цели, порядок = порядок отрисовки. */
   onReorder: (ids: string[], targetId: string, position: "before" | "after") => void;
 }
@@ -106,7 +107,7 @@ export function TreePanel(props: TreePanelProps) {
                 event.preventDefault();
                 const position = drop?.id === object.id ? drop.position : "inside";
                 if (dragIds.length && !invalidDrop) {
-                  if (position === "inside") for (const id of dragIds) props.onReparent(id, object.id);
+                  if (position === "inside") props.onReparent(dragIds, object.id);
                   else props.onReorder(dragIds, object.id, position);
                 }
                 setDragIds([]);
@@ -166,7 +167,7 @@ export function TreePanel(props: TreePanelProps) {
           onDragOver={(event) => { if (dragIds.length) { event.preventDefault(); setDrop({ id: "root", position: "inside" }); } }}
           onDrop={(event) => {
             event.preventDefault();
-            for (const id of dragIds) props.onReparent(id, null);
+            props.onReparent(dragIds, null);
             setDragIds([]); setDrop(null);
           }}
         >
