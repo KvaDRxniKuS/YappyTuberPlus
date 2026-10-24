@@ -370,8 +370,10 @@ impl Rig {
             };
             let value = self.inputs.values.get(&source).copied().unwrap_or(0.0);
             let high = value > 0.5;
+            // Первое наблюдение запоминает текущее значение: иначе `change`
+            // срабатывал бы на старте сцены, а `down` — на уже зажатой клавише.
             let state = self.event_state.entry(index).or_insert(EventState {
-                last: 0.0,
+                last: value,
                 since: 0.0,
                 fired: false,
             });
