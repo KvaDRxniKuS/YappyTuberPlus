@@ -54,6 +54,16 @@ start-yappytuber.bat --branch main  :: другая ветка
 Если нужен запуск вообще без консоли и без Node.js — соберите приложение
 (`npm run tauri build`) и ставьте установщик: см. [`BUILD.md`](BUILD.md).
 
+Для сборки есть два отдельных файла:
+
+- **`install-build-tools.bat`** — ставит Node.js, Rust, Visual Studio Build Tools (C++)
+  и WebView2, если их нет (нужны права администратора и интернет);
+- **`build-yappytuber.bat`** — собирает `.exe` и установщик, результат открывает в
+  проводнике. Флаги: `--no-bundle` (только `.exe`), `--fast` (без пересборки WASM).
+
+Третий вариант — вообще ничего не ставить: вкладка **Actions** → **Сборка Windows** →
+**Run workflow** на GitHub, готовый установщик появится в артефактах.
+
 ## Linux / macOS
 
 ```bash

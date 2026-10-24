@@ -120,6 +120,16 @@ Node.js и WebView2; ядро собирается с target `wasm32-unknown-unk
 Готовые файлы: `src-tauri/target/release/yappytuberplus.exe` и
 `src-tauri/target/release/bundle/nsis/YappyTuberPlus_<версия>_x64-setup.exe`.
 
+Без консоли и без ручной установки компонентов:
+
+1. **`install-build-tools.bat`** — ставит Node.js LTS, Rust, Visual Studio Build Tools (C++)
+   и WebView2, если их нет (нужен интернет и подтверждение UAC);
+2. **`build-yappytuber.bat`** — собирает `.exe` и установщик и открывает папку с результатом
+   (`--no-bundle` — только `.exe`, `--fast` — без пересборки WASM-ядра).
+
+Если ставить ничего не хочется, установщик соберёт GitHub: **Actions** →
+**Сборка Windows** → **Run workflow**, готовый файл появится в артефактах.
+
 Пошагово, с требованиями и разбором ошибок — [`docs/BUILD.md`](docs/BUILD.md).
 В текущей Linux-среде нативная часть проверена через `cargo check`; Windows-установщик
 здесь не создавался.
@@ -193,6 +203,10 @@ YappyTuberPlus/
 ├── tests/e2e/                # проверки Playwright: браузер и headless
 ├── start-yappytuber.bat      # обновление и запуск для Windows
 ├── start-yappytuber.sh       # то же для Linux/macOS
+├── install-build-tools.bat   # установка Node.js, Rust, Build Tools, WebView2
+├── build-yappytuber.bat      # сборка .exe и установщика (Windows)
+├── build-yappytuber.sh       # сборка для Linux/macOS
+├── .github/workflows/        # сборка Windows-версии в Actions
 ├── scripts/
 │   ├── build-wasm.mjs
 │   ├── generate-demo-sprites.mjs

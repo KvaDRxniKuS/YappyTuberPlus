@@ -47,6 +47,53 @@ xcode-select --install
 Важно: **`.exe` собирается только на Windows.** Кросс-сборка с Linux/macOS для Windows
 в Tauri не поддерживается — на Linux получится `.deb`/AppImage, на macOS — `.app`/`.dmg`.
 
+### Автоматическая установка (Windows)
+
+Два двойных клика вместо консоли:
+
+1. **`install-build-tools.bat`** — проверяет и ставит всё нужное: Git, Node.js LTS,
+   Visual Studio Build Tools с C++, Rust (`x86_64-pc-windows-msvc`), WebView2.
+   Просит права администратора (UAC), качает компоненты из интернета.
+   Ключи: `--check` — только показать, чего не хватает; `--yes` — без подтверждения.
+2. **`build-yappytuber.bat`** — ставит npm-зависимости и собирает `.exe` с установщиком.
+   Ключи: `--no-bundle` — только `.exe`; `--fast` — без пересборки WASM-ядра.
+
+Первый запуск установки долгий: Build Tools — это 2–4 ГБ и 10–20 минут, дальше
+всё быстро. Скрипты можно запускать повторно — они не переставляют уже готовое.
+
+### Сборка на GitHub без установки инструментов
+
+Если не хочется ставить Rust и Visual Studio, `.exe` соберёт GitHub Actions.
+Готовый файл workflow лежит в папке проекта: `.github/workflows/build-windows.yml`.
+Его нужно один раз добавить в репозиторий — через веб-интерфейс GitHub:
+
+1. В репозитории: **Add file** → **Create new file**.
+2. Имя файла: `.github/workflows/build-windows.yml`.
+3. Вставьте содержимое файла из папки проекта и нажмите **Commit changes**.
+4. Вкладка **Actions** → **Сборка Windows** → **Run workflow**.
+
+Через 10–15 минут готовый набор (приложение и установщик) лежит в артефакте
+`YappyTuberPlus-windows`. На тег `v*` дополнительно создаётся черновик релиза
+с установщиком.
+
+Ключевые шаги этого workflow, если собирать его заново:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: actions/setup-node@v4
+  with: { node-version: 22, cache: npm }
+- uses: dtolnay/rust-toolchain@stable
+  with: { targets: wasm32-unknown-unknown }
+- run: npm ci
+- run: npm run tauri build
+- uses: actions/upload-artifact@v4
+  with:
+    name: YappyTuberPlus-windows
+    path: |
+      src-tauri/target/release/yappytuberplus.exe
+      src-tauri/target/release/bundle/nsis/*.exe
+```
+
 ## 2. Подготовка проекта
 
 ```bash
