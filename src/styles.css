@@ -225,7 +225,9 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .compact-section { padding-bottom: 8px; }
 
 .right-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.right-tabs { height: 41px; flex: 0 0 41px; display: flex; align-items: end; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border-soft); }
+.right-tabs { height: 41px; flex: 0 0 41px; display: flex; align-items: end; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border-soft); overflow-x: auto; scrollbar-width: none; }
+.right-tabs::-webkit-scrollbar { height: 0; }
+.right-tabs button { flex: none; }
 .right-tabs button { height: 34px; display: flex; align-items: center; gap: 5px; padding: 0 9px; border-bottom: 2px solid transparent; color: #77818c; font-size: 9px; }
 .right-tabs button:hover { color: #c0c7cf; }
 .right-tabs button.active { color: var(--accent); border-bottom-color: var(--accent-dim); }
@@ -289,6 +291,27 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .function-chip-title { width: 100%; color: #5d6873; font-size: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
 .function-chips code { padding: 2px 5px; border-radius: 3px; background: #252a30; color: #7f9aa6; font-size: 8px; cursor: pointer; }
 .function-chips code:hover { background: #2f3941; color: #a8d3c8; }
+
+/* ---------- Пресет поведения ---------- */
+.behaviour-panel { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 16px; }
+.behaviour-empty { flex: 1; padding: 30px 16px; }
+.behaviour-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+.behaviour-head b { color: #ccd5dd; font-size: 11.5px; font-weight: 600; }
+.behaviour-note { margin: 0 0 11px; color: #77828c; font-size: 9px; line-height: 1.5; }
+.behaviour-section { padding: 9px 0; border-top: 1px solid #262b32; }
+.behaviour-section .section-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: #adb6bf; font-size: 9.5px; font-weight: 650; }
+.behaviour-section .section-title span { display: flex; align-items: center; gap: 6px; }
+.behaviour-hint { margin: 0 0 8px; color: #6b7681; font-size: 8.5px; line-height: 1.45; }
+.behaviour-row { margin-bottom: 7px; }
+.behaviour-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.behaviour-row-head span { color: #85909a; font-size: 9px; }
+.behaviour-row-head span small { display: block; color: #5b656f; font-size: 8px; }
+.behaviour-row-head b { color: #9da7b1; font-size: 9px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.behaviour-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: #85909a; font-size: 9px; }
+.behaviour-phys-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.behaviour-phys-head small { color: #5f6a74; font-size: 8.5px; }
+.behaviour-phys-head .button { height: 24px; padding: 0 9px; font-size: 9px; }
+.behaviour-phys-head .button.active { border-color: var(--accent-dim); color: var(--accent); }
 
 .inputs-panel { flex: 1; min-height: 0; overflow: auto; padding: 11px; }
 .input-actions { display: flex; gap: 6px; }

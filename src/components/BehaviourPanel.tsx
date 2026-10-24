@@ -1,0 +1,219 @@
+import { useMemo } from "react";
+import { RotateCw, Spline, Waves, Wind, X } from "lucide-react";
+import type { RigObject } from "../types";
+import {
+  DEFAULT_BEHAVIOUR, heavyAngle, readBehaviour, writeBehaviour, type Behaviour, type VisibilityRule,
+} from "../engine/behaviour";
+
+interface BehaviourPanelProps {
+  object: RigObject | null;
+  onChange: (script: string) => void;
+}
+
+function Row({ label, hint, value, min, max, step, unit, onCommit }: {
+  label: string;
+  hint?: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  onCommit: (value: number) => void;
+}) {
+  const clamp = (input: number) => Math.min(max, Math.max(min, input));
+  return (
+    <div className="behaviour-row">
+      <div className="behaviour-row-head">
+        <span>{label}{hint && <small>{hint}</small>}</span>
+        <b>{value}{unit}</b>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onCommit(clamp(Number(event.target.value)))}
+      />
+    </div>
+  );
+}
+
+function StateRow({ label, value, onChange, titles }: {
+  label: string;
+  value: VisibilityRule;
+  onChange: (value: VisibilityRule) => void;
+  titles: Record<VisibilityRule, string>;
+}) {
+  const options: Array<{ id: VisibilityRule; text: string }> = [
+    { id: "none", text: "×" },
+    { id: "open", text: "открыт" },
+    { id: "closed", text: "закрыт" },
+  ];
+  return (
+    <div className="behaviour-state">
+      <span>{label}</span>
+      <div className="segmented small">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            className={value === option.id ? "active" : ""}
+            title={titles[option.id]}
+            onClick={() => onChange(option.id)}
+          >
+            {option.text}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Пресет поведения в духе PNGTuber: ползунки вместо формул. Каждое изменение
+ * переписывает блок в скрипте объекта, поэтому вкладка «Объект» всегда
+ * показывает, что именно считается.
+ */
+export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
+  const behaviour = useMemo(
+    () => (object ? readBehaviour(object.script) : { ...DEFAULT_BEHAVIOUR }),
+    [object?.script],
+  );
+
+  if (!object) {
+    return <div className="empty-state behaviour-empty"><Spline size={24} /><p>Выберите объект: пресет поведения настраивается для каждого объекта отдельно</p></div>;
+  }
+
+  const patch = (next: Partial<Behaviour>) => {
+    if (!object) return;
+    const written = writeBehaviour(object.script, { ...behaviour, ...next }, object);
+    onChange(written.script);
+  };
+
+  const hasParent = Boolean(object.parentId);
+  const heavy = heavyAngle(object.pivot);
+
+  return (
+    <div className="behaviour-panel">
+      <div className="behaviour-head">
+        <div>
+          <span className="eyebrow">ПРЕСЕТ ПОВЕДЕНИЯ</span>
+          <b>{object.name}</b>
+        </div>
+        <button
+          className="icon-button"
+          title="Сбросить поведение: блок из скрипта удалится"
+          onClick={() => onChange(writeBehaviour(object.script, DEFAULT_BEHAVIOUR, object).script)}
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <p className="behaviour-note">
+        Ползунки превращаются в формулы — они лежат блоком в начале скрипта на вкладке «Объект».
+        Ниже блока можно писать что угодно своё.
+      </p>
+
+      <section className="behaviour-section">
+        <div className="section-title"><span><Waves size={12} /> Следование за родителем</span></div>
+        {!hasParent && <p className="behaviour-hint">У объекта нет родителя: сглаживание и пружина начнут работать, когда вы вложите его в группу.</p>}
+        <Row label="Сглаживание" hint="drag: 0 — сразу за родителем" unit="" value={behaviour.smooth}
+          min={0} max={1} step={0.01} onCommit={(smooth) => patch({ smooth })} />
+        <Row label="Пружина" hint="догоняет с перелётом" unit="" value={behaviour.spring}
+          min={0} max={1} step={0.01} onCommit={(spring) => patch({ spring })} />
+        <Row label="Сглаживание поворота" unit="" value={behaviour.rotationSmooth}
+          min={0} max={1} step={0.01} onCommit={(rotationSmooth) => patch({ rotationSmooth })} />
+        <Row label="Пружина поворота" unit="" value={behaviour.rotationSpring}
+          min={0} max={1} step={0.01} onCommit={(rotationSpring) => patch({ rotationSpring })} />
+      </section>
+
+      <section className="behaviour-section">
+        <div className="section-title"><span><Wind size={12} /> Сквош от речи</span></div>
+        <Row label="Сила" hint="сжатие по одной оси, растяжение по другой" unit="" value={behaviour.squash}
+          min={0} max={1} step={0.01} onCommit={(squash) => patch({ squash })} />
+        <Row label="Скорость деформации" unit=" мс" value={behaviour.squashIn}
+          min={20} max={600} step={10} onCommit={(squashIn) => patch({ squashIn })} />
+        <Row label="Скорость возврата" unit=" мс" value={behaviour.squashOut}
+          min={20} max={600} step={10} onCommit={(squashOut) => patch({ squashOut })} />
+      </section>
+
+      <section className="behaviour-section">
+        <div className="section-title"><span><RotateCw size={12} /> Доворот и пределы</span></div>
+        <Row label="Доворот при речи" hint="подпружиненный, ±180°" unit="°" value={behaviour.rotationalDrag}
+          min={-180} max={180} step={1} onCommit={(rotationalDrag) => patch({ rotationalDrag })} />
+        <Row label="Предел поворота" hint="ограничивает собственное отклонение" unit="°" value={behaviour.rotationalLimit}
+          min={0} max={180} step={1} onCommit={(rotationalLimit) => patch({ rotationalLimit })} />
+      </section>
+
+      <section className="behaviour-section">
+        <div className="section-title"><span><Waves size={12} /> Покачивание</span></div>
+        <Row label="X · частота" unit=" Гц" value={behaviour.wiggleXFreq}
+          min={0} max={8} step={0.1} onCommit={(wiggleXFreq) => patch({ wiggleXFreq })} />
+        <Row label="X · амплитуда" unit=" px" value={behaviour.wiggleXAmp}
+          min={0} max={60} step={0.5} onCommit={(wiggleXAmp) => patch({ wiggleXAmp })} />
+        <Row label="Y · частота" unit=" Гц" value={behaviour.wiggleYFreq}
+          min={0} max={8} step={0.1} onCommit={(wiggleYFreq) => patch({ wiggleYFreq })} />
+        <Row label="Y · амплитуда" unit=" px" value={behaviour.wiggleYAmp}
+          min={0} max={60} step={0.5} onCommit={(wiggleYAmp) => patch({ wiggleYAmp })} />
+      </section>
+
+      <section className="behaviour-section">
+        <div className="section-title"><span><X size={12} /> Видимость</span></div>
+        <StateRow
+          label="Рот"
+          value={behaviour.mouth}
+          onChange={(mouth) => patch({ mouth })}
+          titles={{
+            none: "не управлять видимостью",
+            open: "виден, когда персонаж говорит",
+            closed: "виден, когда персонаж молчит",
+          }}
+        />
+        <StateRow
+          label="Глаз"
+          value={behaviour.eye}
+          onChange={(eye) => patch({ eye })}
+          titles={{
+            none: "не управлять видимостью",
+            open: "виден, когда глаза открыты",
+            closed: "виден на моргании",
+          }}
+        />
+        <p className="behaviour-hint">
+          Если заданы оба, условия перемножаются: слой виден, когда верно и то, и другое.
+          Имена входов — стандартные: речь из модуля `mic`, моргание из `auto`.
+        </p>
+      </section>
+
+      <section className="behaviour-section">
+        <div className="section-title"><span><RotateCw size={12} /> Мировая физика</span></div>
+        <p className="behaviour-hint">
+          Пружина ориентирует «тяжёлую» сторону (ту, что дальше от пивота) в мировой угол: 0° — вниз,
+          90° — вправо, 180° — вверх. Пивот должен быть сдвинут к краю.
+        </p>
+        {heavy === null
+          ? <p className="behaviour-hint">Пивот по центру: физике не за что тянуть. Сдвиньте пивот к краю спрайта в инспекторе.</p>
+          : (
+            <>
+              <div className="behaviour-phys-head">
+                <button
+                  className={`button secondary ${behaviour.physRotation !== null ? "active" : ""}`}
+                  onClick={() => patch({ physRotation: behaviour.physRotation === null ? 0 : null })}
+                >
+                  {behaviour.physRotation === null ? "Включить" : "Выключить"}
+                </button>
+                <small>угол тяжёлой стороны: {Math.round(heavy)}°</small>
+              </div>
+              {behaviour.physRotation !== null && (
+                <>
+                  <Row label="Мировой угол" unit="°" value={behaviour.physRotation}
+                    min={-180} max={180} step={1} onCommit={(physRotation) => patch({ physRotation })} />
+                  <Row label="Плавность" hint="0 — жёстко, 1 — вязко" unit="" value={behaviour.physSmooth}
+                    min={0} max={1} step={0.01} onCommit={(physSmooth) => patch({ physSmooth })} />
+                </>
+              )}
+            </>
+          )}
+      </section>
+    </div>
+  );
+}

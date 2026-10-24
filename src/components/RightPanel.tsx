@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, SlidersHorizontal } from "lucide-react";
+import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, SlidersHorizontal, Spline } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
 import { InputsPanel } from "./InputsPanel";
+import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
@@ -27,6 +28,8 @@ interface RightPanelProps {
   devices: DeviceOption[];
   audioError: string | null;
   onObjectScript: (script: string) => void;
+  /** Пресет поведения: пишет блок формул в скрипт выбранного объекта. */
+  onBehaviour: (script: string) => void;
   onGlobalScript: (script: string) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
@@ -38,11 +41,15 @@ interface RightPanelProps {
   cancelCalibration: CalibrationApi["cancelCalibration"];
 }
 
-type Tab = "object" | "globals" | "inputs" | "modules";
+type Tab = "behaviour" | "object" | "globals" | "inputs" | "modules";
 
 export function RightPanel(props: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("object");
-  useEffect(() => { setTab("object"); }, [props.selected?.id]);
+  // Смена выделения не выбивает из «Входов», «Модулей» и «Поведения»:
+  // там как раз удобно переключать объекты подряд.
+  useEffect(() => {
+    setTab((current) => (current === "behaviour" || current === "inputs" || current === "modules" ? current : "object"));
+  }, [props.selected?.id]);
   // Значения кадра — свёрнутая секция: скрипт забирает всю высоту колонки,
   // а кадр открывается по клику и не висит пустой третью экрана.
   const [valuesOpen, setValuesOpen] = useState(false);
@@ -53,13 +60,16 @@ export function RightPanel(props: RightPanelProps) {
   return (
     <aside className="right-panel panel-surface">
       <div className="right-tabs">
+        <button className={tab === "behaviour" ? "active" : ""} onClick={() => setTab("behaviour")}><Spline size={14} /> Поведение</button>
         <button className={tab === "object" ? "active" : ""} onClick={() => setTab("object")}><Braces size={14} /> Объект</button>
         <button className={tab === "globals" ? "active" : ""} onClick={() => setTab("globals")}><Globe2 size={14} /> Глобальные</button>
         <button className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}><SlidersHorizontal size={14} /> Входы</button>
         <button className={tab === "modules" ? "active" : ""} onClick={() => setTab("modules")}><Blocks size={14} /> Модули</button>
       </div>
 
-      {tab === "modules" ? (
+      {tab === "behaviour" ? (
+        <BehaviourPanel object={props.selected} onChange={props.onBehaviour} />
+      ) : tab === "modules" ? (
         <ModulesPanel
           modules={props.modules}
           devices={props.devices}

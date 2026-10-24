@@ -799,6 +799,7 @@ export default function App() {
           devices={moduleInputs.devices}
           audioError={moduleInputs.error}
           onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
+          onBehaviour={(script) => { if (selected) updateObject({ ...selected, script }, { label: "Поведение", coalesce: "behaviour" }); }}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
