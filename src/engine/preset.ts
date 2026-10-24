@@ -1,7 +1,10 @@
 import { childScript, rootScript } from "../data/demoPreset";
+import { ensureModules } from "../modules/values";
 import {
-  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type OverlayConfig, type RigObject, type RigPreset,
+  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type ModuleInstance, type OverlayConfig,
+  type RigObject, type RigPreset,
 } from "../types";
+import { isKnownModuleType, moduleDefinition } from "../modules/registry";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -119,7 +122,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
   if (!value || typeof value !== "object") return null;
   const preset = value as Partial<RigPreset>;
   if (preset.version !== 2 || !Array.isArray(preset.objects) || !preset.canvas) return null;
-  return {
+  return ensureModules({
     version: 2,
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
@@ -138,7 +141,37 @@ export function normalizePreset(value: unknown): RigPreset | null {
       fpsLimit: Math.min(240, Math.max(1, Math.round(preset.runtime?.fpsLimit || 60))),
     },
     overlay: normalizeOverlay(preset.overlay),
-  };
+    modules: normalizeModules(preset.modules),
+  });
+}
+
+/** Приводит список модулей к известным типам; чужие сохраняются как `manual`. */
+export function normalizeModules(value: unknown): ModuleInstance[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const modules: ModuleInstance[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Partial<ModuleInstance>;
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const type = item.type && isKnownModuleType(item.type) ? item.type : "manual";
+    const config = item.config && typeof item.config === "object" ? item.config : {};
+    modules.push({
+      name,
+      type,
+      enabled: item.enabled !== false,
+      source: item.source === "manual" ? "manual" : moduleDefinition(type).audio ? "live" : "manual",
+      config: {
+        deviceId: typeof config.deviceId === "string" ? config.deviceId : undefined,
+        gain: Number.isFinite(config.gain) ? Number(config.gain) : undefined,
+        threshold: Number.isFinite(config.threshold) ? Number(config.threshold) : undefined,
+        processing: config.processing === true,
+      },
+    });
+  }
+  return modules;
 }
 
 const SCALE_MODES = new Set(["contain", "cover", "stretch", "pixel"]);

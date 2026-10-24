@@ -1,4 +1,4 @@
-import { DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type RigObject, type RigPreset } from "../types";
+import { DEFAULT_BASE, DEFAULT_MODULES, DEFAULT_OVERLAY, type BasePose, type RigObject, type RigPreset } from "../types";
 
 export const rootScript = (overrides: Partial<Record<string, string>> = {}) => `
 x = 0
@@ -34,11 +34,12 @@ layer = inherit
 
 /**
  * The demo swaps two mouth sprites: open while the character speaks, otherwise
- * a closed smile. `talking` comes from the microphone or the manual test toggle,
- * `speak` also follows the test slider, so both cases are covered.
+ * a closed smile. Both values приходят из модуля `mic`: `mic.talking` — флаг
+ * разговора, `mic.speak` — сглаженная громкость. Если модуль выключен, входы
+ * дают нули и рот остаётся закрытым.
  */
-export const TALKING_OPEN = "talking > 0 or speak > 0.02 ? 1 : 0";
-export const TALKING_CLOSED = "talking > 0 or speak > 0.02 ? 0 : 1";
+export const TALKING_OPEN = "mic.talking > 0 or mic.speak > 0.02 ? 1 : 0";
+export const TALKING_CLOSED = "mic.talking > 0 or mic.speak > 0.02 ? 0 : 1";
 
 const base = (x: number, y: number, overrides: Partial<BasePose> = {}): BasePose => ({
   ...DEFAULT_BASE, x, y, ...overrides,
@@ -66,6 +67,7 @@ export function createEmptyPreset(name = "Без названия"): RigPreset {
     globals: "",
     runtime: { fpsMode: "limited", fpsLimit: 60 },
     overlay: { ...DEFAULT_OVERLAY },
+    modules: [],
     objects: [],
   };
 }
@@ -77,10 +79,11 @@ export function createDemoPreset(): RigPreset {
     canvas: { width: 1000, height: 600 },
     globals: `blink_min = 2500
 blink_max = 6500
-blink = max(autoblink(blink_min, blink_max), signal.blink)
+blink = max(autoblink(blink_min, blink_max), manual.blink)
 breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
     runtime: { fpsMode: "limited", fpsLimit: 60 },
     overlay: { ...DEFAULT_OVERLAY },
+    modules: DEFAULT_MODULES.map((module) => ({ ...module, config: { ...module.config } })),
     objects: [
       object("character", "Персонаж", "group", null, null, 500, 520, base(500, 330), rootScript({
         x: "sin(time * 0.8) * 5",
@@ -91,7 +94,7 @@ breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
         sizeY: "inherit * (0.995 + breath * 0.01)",
       })),
       object("head_group", "Голова · группа", "group", "body", null, 380, 300, base(500, 225), childScript({
-        rotation: "inherit + sin(time * 1.6) * 2.2 + speak * 1.5",
+        rotation: "inherit + sin(time * 1.6) * 2.2 + mic.speak * 1.5",
         // Голова выше тела по слою: тело стоит в структуре выше и при равном
         // слое перекрывало бы подбородок (правило «верхняя строка — поверх»).
         layer: "inherit + 0.5",
@@ -106,8 +109,8 @@ breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
         layer: "inherit + 1",
       })),
       object("mouth", "Рот · открыт", "sprite", "head_group", "/assets/demo/mouth_open.png", 140, 70, base(500, 300, { layer: 2 }), childScript({
-        sizeX: "inherit * (0.85 + max(speak, talking * 0.6) * 0.3)",
-        sizeY: "inherit * (0.4 + max(speak, talking * 0.6) * 1.7 + 0.05 * sin(time * 18))",
+        sizeX: "inherit * (0.85 + max(mic.speak, mic.talking * 0.6) * 0.3)",
+        sizeY: "inherit * (0.4 + max(mic.speak, mic.talking * 0.6) * 1.7 + 0.05 * sin(time * 18))",
         visible: TALKING_OPEN,
         layer: "inherit + 1",
       })),

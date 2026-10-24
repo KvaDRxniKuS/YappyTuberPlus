@@ -159,6 +159,7 @@ export function scenePreset(
     globals: "",
     runtime: { fpsMode: "limited", fpsLimit: 60 },
     overlay: config,
+    modules: [],
     objects: scene.objects.map((object) => ({
       ...object,
       base: bases?.[object.id] ? { ...object.base, ...bases[object.id] } : object.base,

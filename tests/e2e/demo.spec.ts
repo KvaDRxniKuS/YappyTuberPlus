@@ -89,15 +89,19 @@ test("the whole demo preset compiles and ticks in the Rust core", async () => {
 
   const created = call({ op: "create", config });
   const inputs = {
-    speak: 0, loudness: 0, db: -60, talking: 0,
-    viseme_a: 0, viseme_e: 0, viseme_i: 0, viseme_o: 0, viseme_u: 0, signals: {},
+    values: { "mic.speak": 0, "mic.loudness": 0, "mic.db": -60, "mic.talking": 0 },
+    signals: {},
   };
   const silent = call({ op: "tick", handle: created.handle, now: 0.016, inputs, paused: false, resetClock: true });
   expect(silent.frame.diagnostics).toEqual([]);
   expect(silent.frame.objects.mouth.visible).toBe(0);
   expect(silent.frame.objects.mouth_closed.visible).toBe(1);
 
-  const speaking = call({ op: "tick", handle: created.handle, now: 0.032, inputs: { ...inputs, talking: 1, speak: 0.5 }, paused: false, resetClock: false });
+  const speaking = call({
+    op: "tick", handle: created.handle, now: 0.032,
+    inputs: { ...inputs, values: { ...inputs.values, "mic.talking": 1, "mic.speak": 0.5 } },
+    paused: false, resetClock: false,
+  });
   expect(speaking.frame.diagnostics).toEqual([]);
   expect(speaking.frame.objects.mouth.visible).toBe(1);
   expect(speaking.frame.objects.mouth_closed.visible).toBe(0);

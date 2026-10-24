@@ -178,50 +178,19 @@ pub enum NodeKey {
     Param(String, Param),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Значения входов, приходящие от модулей редактора.
+///
+/// Ядро не знает имён входов заранее: набор задаётся модулями, поэтому ключи —
+/// произвольные строки вида `<модуль>.<вход>`, например `mic.talking` или
+/// `viseme_left.a`. Отдельный канал `signals` (`signal.<имя>`) остаётся для
+/// плагинов и ручных сигналов.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputValues {
     #[serde(default)]
-    pub speak: f64,
-    #[serde(default)]
-    pub loudness: f64,
-    #[serde(default = "default_db")]
-    pub db: f64,
-    #[serde(default)]
-    pub talking: f64,
-    #[serde(default)]
-    pub viseme_a: f64,
-    #[serde(default)]
-    pub viseme_e: f64,
-    #[serde(default)]
-    pub viseme_i: f64,
-    #[serde(default)]
-    pub viseme_o: f64,
-    #[serde(default)]
-    pub viseme_u: f64,
-    #[serde(default)]
     pub signals: HashMap<String, f64>,
-}
-
-fn default_db() -> f64 {
-    -60.0
-}
-
-impl Default for InputValues {
-    fn default() -> Self {
-        Self {
-            speak: 0.0,
-            loudness: 0.0,
-            db: -60.0,
-            talking: 0.0,
-            viseme_a: 0.0,
-            viseme_e: 0.0,
-            viseme_i: 0.0,
-            viseme_o: 0.0,
-            viseme_u: 0.0,
-            signals: HashMap::new(),
-        }
-    }
+    /// Ключи вида `<модуль>.<вход>`; набор задаёт редактор.
+    #[serde(default)]
+    pub values: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

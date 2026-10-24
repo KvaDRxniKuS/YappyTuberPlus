@@ -63,6 +63,8 @@ export interface RigPreset {
   globals: string;
   runtime: RuntimeConfig;
   overlay: OverlayConfig;
+  /** Экземпляры модулей: именно они поставляют входы вида `<имя>.<вход>`. */
+  modules: ModuleInstance[];
 }
 
 export type ObjectFrame = Record<ParamName, number>;
@@ -77,17 +79,42 @@ export interface RigFrame {
   diagnostics: string[];
 }
 
+/**
+ * Значения входов, которые получает ядро.
+ *
+ * `values` — плоский словарь `<имя модуля>.<вход>`, например `mic.talking`.
+ * Ядро не знает имён заранее: набор целиком определяется модулями.
+ * `signals` — свободный канал `signal.<имя>` для плагинов и ручных сигналов.
+ */
 export interface InputValues {
-  speak: number;
-  loudness: number;
-  db: number;
-  talking: number;
-  viseme_a: number;
-  viseme_e: number;
-  viseme_i: number;
-  viseme_o: number;
-  viseme_u: number;
+  values: Record<string, number>;
   signals: Record<string, number>;
+}
+
+export type ModuleType = "loudness" | "viseme" | "manual";
+
+/** Откуда экземпляр берёт значения: с микрофона или из ползунков. */
+export type ModuleSource = "live" | "manual";
+
+export interface ModuleConfig {
+  /** Идентификатор устройства из `navigator.mediaDevices`. */
+  deviceId?: string;
+  /** Множитель уровня до расчёта входов. */
+  gain?: number;
+  /** Порог речи в дБ для `talking`. */
+  threshold?: number;
+  /** Обработка браузера: эхоподавление, шумоподавление, АРУ. */
+  processing?: boolean;
+}
+
+/** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */
+export interface ModuleInstance {
+  /** Уникальное имя латиницей: буквы, цифры и `_`; точка в скрипте. */
+  name: string;
+  type: ModuleType;
+  enabled: boolean;
+  source: ModuleSource;
+  config: ModuleConfig;
 }
 
 /** Геометрические подсказки в сцене: выключены, только выделенное или всё. */
@@ -116,11 +143,25 @@ export interface EditorLayout {
   showPivots: GuideMode;
 }
 
-export const DEFAULT_INPUTS: InputValues = {
-  speak: 0, loudness: 0, db: -60, talking: 0,
-  viseme_a: 0, viseme_e: 0, viseme_i: 0, viseme_o: 0, viseme_u: 0,
-  signals: {},
-};
+export const DEFAULT_INPUTS: InputValues = { values: {}, signals: {} };
+
+/** Набор модулей нового пресета: микрофон и ручные входы. */
+export const DEFAULT_MODULES: ModuleInstance[] = [
+  {
+    name: "mic",
+    type: "loudness",
+    enabled: true,
+    source: "live",
+    config: { gain: 1, threshold: -43, processing: false },
+  },
+  {
+    name: "manual",
+    type: "manual",
+    enabled: true,
+    source: "manual",
+    config: {},
+  },
+];
 
 export const DEFAULT_LAYOUT: EditorLayout = {
   leftWidth: 248,

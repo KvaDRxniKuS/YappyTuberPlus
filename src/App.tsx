@@ -10,6 +10,7 @@ import { Inspector } from "./components/Inspector";
 import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
+import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
@@ -21,9 +22,10 @@ import { reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
+import { useModuleInputs } from "./hooks/useModuleInputs";
 import {
-  DEFAULT_INPUTS, DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
-  type InputValues, type RigObject, type RigPreset,
+  DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
+  type ModuleInstance, type RigObject, type RigPreset,
 } from "./types";
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
@@ -55,25 +57,27 @@ export default function App() {
   const [selection, setSelection] = useState<string[]>(() => (preset.objects[0] ? [preset.objects[0].id] : []));
   const [renameId, setRenameId] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
-  const [inputs, setInputs] = useState<InputValues>(DEFAULT_INPUTS);
   const [layout, setLayout] = useState<EditorLayout>(loadLayout);
   const [paused, setPaused] = useState(false);
   const [tool, setTool] = useState<SceneTool>("move");
   const [showGrid, setShowGrid] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  /** Пресет, ждущий решения по модулям при открытии. */
+  const [pending, setPending] = useState<{ preset: RigPreset; path: string | null } | null>(null);
   const [stopped, setStopped] = useState(false);
   const [presetPath, setPresetPath] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const presetRef = useRef(preset);
-  const inputsRef = useRef(inputs);
+  const moduleInputs = useModuleInputs(preset.modules);
+  const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
   const selectionRef = useRef(selection);
   const imageInput = useRef<HTMLInputElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
   presetRef.current = preset;
-  inputsRef.current = inputs;
+  inputsRef.current = moduleInputs.inputs;
   selectionRef.current = selection;
 
   const overlay = useOverlayHost(preset);
@@ -178,21 +182,56 @@ export default function App() {
     }
   }, [notify]);
 
+  /**
+   * Открывает пресет. Если набор модулей отличается от текущего, сначала
+   * спрашиваем: применить модули пресета, оставить текущие или отключить все.
+   */
+  const applyOpenedPreset = useCallback((next: RigPreset, path: string | null) => {
+    const incoming = next.modules;
+    if (!sameModules(presetRef.current.modules, incoming)) {
+      setPending({ preset: next, path });
+      return;
+    }
+    commit(next, { label: "Открытие пресета" });
+    setPresetPath(path);
+    setSavedAt(null);
+    setSelection(next.objects[0] ? [next.objects[0].id] : []);
+  }, [commit]);
+
+  const resolvePending = useCallback((choice: "apply" | "keep" | "disable") => {
+    if (!pending) return;
+    const modules = choice === "apply"
+      ? pending.preset.modules
+      : choice === "keep"
+        ? presetRef.current.modules
+        : [];
+    const result: RigPreset = { ...pending.preset, modules };
+    setPending(null);
+    commit(result, {
+      label: choice === "apply" ? "Модули пресета" : choice === "disable" ? "Модули отключены" : "Пресет с текущими модулями",
+    });
+    setPresetPath(pending.path);
+    setSavedAt(null);
+    setSelection(result.objects[0] ? [result.objects[0].id] : []);
+    notify(choice === "apply"
+      ? "Применены модули пресета"
+      : choice === "disable"
+        ? "Входы отключены: все значения нулевые"
+        : "Оставлен текущий набор модулей");
+  }, [pending, commit, notify]);
+
   const openFile = useCallback(async () => {
     if (!isTauri()) { presetInput.current?.click(); return; }
     try {
       const result = await openPresetFile();
-      commit(result.preset, { label: "Открытие файла" });
-      setPresetPath(result.path);
-      setSavedAt(null);
-      setSelection(result.preset.objects[0] ? [result.preset.objects[0].id] : []);
+      applyOpenedPreset(result.preset, result.path);
       notify(`Открыт ${fileNameOf(result.path) || "пресет"}`);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (!/отмен/i.test(message)) notify(message);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commit, notify]);
+  }, [applyOpenedPreset, notify]);
 
   const togglePause = useCallback(() => {
     setStopped(false);
@@ -364,11 +403,11 @@ export default function App() {
     }, { label: visible ? "Показать выделение" : "Скрыть выделение" });
   }, [commit]);
 
-  const updateInputs = useCallback((patch: Partial<InputValues>) => {
-    const next = { ...inputsRef.current, ...patch };
-    inputsRef.current = next;
-    setInputs(next);
-  }, []);
+  /** Модули живут в пресете, поэтому их правки попадают в историю. */
+  const updateModules = useCallback((modules: ModuleInstance[], label?: string) => {
+    const current = presetRef.current;
+    commit({ ...current, modules }, { label: label || "Модули" });
+  }, [commit]);
 
   const importSprites = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -483,10 +522,7 @@ export default function App() {
     try {
       const parsed = normalizePreset(JSON.parse(await file.text()));
       if (!parsed) throw new Error("Это не пресет YappyTuberPlus версии 2");
-      commit(migrateDemoPreset(parsed));
-      setPresetPath(null);
-      setSavedAt(null);
-      setSelection(parsed.objects[0] ? [parsed.objects[0].id] : []);
+      applyOpenedPreset(migrateDemoPreset(parsed), null);
       notify("Пресет загружен из файла");
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Ошибка загрузки пресета");
@@ -676,13 +712,24 @@ export default function App() {
           globalScript={preset.globals}
           frame={engine.snapshot}
           engineError={engine.error}
-          inputs={inputs}
+          inputs={moduleInputs.inputs}
+          modules={preset.modules}
+          audio={moduleInputs.audio}
+          manual={moduleInputs.manual}
+          devices={moduleInputs.devices}
+          audioActive={moduleInputs.active}
+          audioError={moduleInputs.error}
           editorHeight={layout.rightEditorHeight}
           onEditorHeight={(delta) => resize("rightEditorHeight", delta)}
           onResetEditorHeight={() => setLayout((current) => ({ ...current, rightEditorHeight: DEFAULT_LAYOUT.rightEditorHeight }))}
           onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
-          onInputs={updateInputs}
+          onModules={updateModules}
+          onManual={moduleInputs.setManual}
+          onPulse={moduleInputs.pulse}
+          onStartAudio={() => void moduleInputs.start()}
+          onStopAudio={moduleInputs.stop}
+          onRefreshDevices={() => void moduleInputs.refreshDevices()}
         /></div>
       </div>
 
@@ -709,6 +756,12 @@ export default function App() {
 
       <input ref={imageInput} type="file" accept="image/png,image/webp" multiple hidden onChange={(event) => { void importSprites(event.target.files); event.target.value = ""; }} />
       <input ref={presetInput} type="file" accept=".json,.yappy.json,application/json" hidden onChange={(event) => { void importPreset(event.target.files?.[0]); event.target.value = ""; }} />
+      {pending && <ModuleApplyDialog
+        modules={pending.preset.modules}
+        onApply={() => resolvePending("apply")}
+        onKeep={() => resolvePending("keep")}
+        onDisable={() => resolvePending("disable")}
+      />}
       {overlayOpen && <OverlayDialog
         config={overlayConfig}
         viewers={overlay.viewers}
@@ -771,4 +824,13 @@ function readFile(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error || new Error("Ошибка чтения файла"));
     reader.readAsDataURL(file);
   });
+}
+
+/** Совпадают ли наборы модулей по именам и типам (настройки устройств не важны). */
+function sameModules(a: ModuleInstance[], b: ModuleInstance[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (module: ModuleInstance) => `${module.name}:${module.type}`;
+  const left = a.map(key).sort();
+  const right = b.map(key).sort();
+  return left.every((value, index) => value === right[index]);
 }

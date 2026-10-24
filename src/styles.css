@@ -396,3 +396,149 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 }
 .tree-row.drop-before::before { top: -1px; }
 .tree-row.drop-after::after { bottom: -1px; }
+
+/* ---------- Модули и входы ---------- */
+.modules-panel,
+.inputs-panel { display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow: auto; }
+
+.module-actions { display: flex; align-items: center; gap: 8px; }
+
+.module-list { display: flex; flex-direction: column; gap: 8px; }
+
+.module-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: #14181c;
+}
+
+.module-card.disabled { opacity: .55; }
+.module-card header { display: flex; align-items: center; gap: 7px; }
+
+.module-enabled { width: 13px; height: 13px; accent-color: var(--accent); }
+
+.module-name {
+  min-width: 0;
+  width: 110px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #0f1215;
+  color: #d8e2e8;
+  font: 11px "Cascadia Code", ui-monospace, monospace;
+}
+
+.module-name:focus { outline: none; border-color: var(--accent); }
+
+.module-type {
+  flex: 1;
+  color: #7f8a94;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+}
+
+.module-source { display: flex; align-items: center; gap: 8px; }
+.module-hint { color: #6c7780; font-size: 9px; }
+
+.module-settings { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.module-number {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #8b959e;
+  font-size: 9px;
+}
+
+.module-number input {
+  width: 62px;
+  padding: 3px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #0f1215;
+  color: #cfd9e0;
+  font: 10px "Cascadia Code", ui-monospace, monospace;
+}
+
+.module-check { display: flex; align-items: center; gap: 5px; color: #8b959e; font-size: 9px; }
+.module-check input { accent-color: var(--accent); }
+
+.module-card footer { display: flex; flex-wrap: wrap; gap: 4px; }
+.module-card footer code {
+  padding: 2px 5px;
+  border: 1px solid #252c33;
+  border-radius: 3px;
+  color: #9fb4c2;
+  font: 9px "Cascadia Code", ui-monospace, monospace;
+}
+
+.module-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.module-add > span { display: flex; align-items: center; gap: 5px; color: #7f8a94; font-size: 9px; }
+.module-add > div { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.module-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: #14181c;
+}
+
+.module-group.disabled { opacity: .5; }
+
+.module-group-head { display: flex; align-items: center; gap: 7px; }
+.module-group-head code { color: #b9cbd7; font: 11px "Cascadia Code", ui-monospace, monospace; }
+.module-group-head span { flex: 1; color: #7f8a94; font-size: 9px; text-transform: uppercase; letter-spacing: .6px; }
+.module-group-head small { color: #6c7780; font-size: 9px; }
+
+.input-flag { display: flex; align-items: center; gap: 8px; }
+.input-flag code { flex: 1; color: #8d99a3; font: 9px "Cascadia Code", ui-monospace, monospace; }
+
+.meter-track.slim { flex: 1; height: 5px; }
+
+/* ---------- Диалог модулей при открытии пресета ---------- */
+.module-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #14181c;
+  box-shadow: 0 24px 70px #000a;
+  overflow: hidden;
+}
+
+.module-dialog .dialog-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; overflow: auto; }
+
+.module-dialog-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.module-dialog-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #101418;
+  color: #8b959e;
+  font-size: 10px;
+}
+.module-dialog-list code { color: #b9cbd7; font: 11px "Cascadia Code", ui-monospace, monospace; }
+.module-dialog-list span { flex: 1; color: #7f8a94; }
+.module-dialog-list small { color: #66717a; }
+
+.dialog-note.small { color: #66717a; font-size: 10px; line-height: 1.5; }

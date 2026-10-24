@@ -11,7 +11,7 @@ const language = StreamLanguage.define({
     if (stream.match(/^\/\/.*/)) return "comment";
     if (stream.match(/^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/)) return "number";
     if (stream.match(/^(?:and|or|not|inherit|parent|offset)\b/)) return "keyword";
-    if (stream.match(/^(?:time|dt|speak|loudness|db|talking|canvasWidth|canvasHeight|width|height|pi|e)\b/)) return "variableName.special";
+    if (stream.match(/^(?:time|dt|canvasWidth|canvasHeight|width|height|pi|e|signal)\b/)) return "variableName.special";
     if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*(?=\s*\()/)) return "function";
     if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*/)) return "variableName";
     if (stream.match(/^[+\-*/%^<>=?:]+/)) return "operator";
@@ -37,23 +37,26 @@ const FUNCTIONS = [
   "px", "uv", "pxv", "uvv", "smooth", "spring", "rnd", "noise", "shake", "random", "autoblink",
 ];
 const PARAMETERS = ["x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer"];
-const INPUTS = ["time", "dt", "speak", "loudness", "db", "talking", "blink", "breath", "parent", "inherit", "offset", "width", "height", "canvasWidth", "canvasHeight"];
+// Входы приходят из модулей и подставляются в автодополнение динамически.
+const INPUTS = ["time", "dt", "signal", "parent", "inherit", "offset", "width", "height", "canvasWidth", "canvasHeight"];
 
 interface ScriptEditorProps {
   value: string;
   objectIds: string[];
   globals: string[];
+  /** Полные имена входов модулей: `mic.talking`, `manual.blink`. */
+  moduleInputs?: string[];
   onApply: (value: string) => void;
 }
 
-export function ScriptEditor({ value, objectIds, globals, onApply }: ScriptEditorProps) {
+export function ScriptEditor({ value, objectIds, globals, moduleInputs = [], onApply }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const applyRef = useRef(onApply);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const completionData = useRef({ objectIds, globals });
+  const completionData = useRef({ objectIds, globals, moduleInputs });
   applyRef.current = onApply;
-  completionData.current = { objectIds, globals };
+  completionData.current = { objectIds, globals, moduleInputs };
 
   useEffect(() => {
     if (!host.current) return;
@@ -65,8 +68,8 @@ export function ScriptEditor({ value, objectIds, globals, onApply }: ScriptEdito
     const completion = (context: CompletionContext) => {
       const word = context.matchBefore(/[A-Za-z0-9_.]*/);
       if (!word || (word.from === word.to && !context.explicit)) return null;
-      const { objectIds: ids, globals: globalNames } = completionData.current;
-      const options = [...new Set([...ids, ...globalNames, ...PARAMETERS, ...INPUTS, ...FUNCTIONS])].map((label) => ({
+      const { objectIds: ids, globals: globalNames, moduleInputs: inputNames } = completionData.current;
+      const options = [...new Set([...ids, ...globalNames, ...PARAMETERS, ...INPUTS, ...inputNames, ...FUNCTIONS])].map((label) => ({
         label,
         type: FUNCTIONS.includes(label) ? "function" : PARAMETERS.includes(label) ? "property" : "variable",
       }));

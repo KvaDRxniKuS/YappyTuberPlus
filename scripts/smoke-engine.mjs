@@ -43,7 +43,7 @@ const config = {
     {
       id: "head", name: "Head", kind: "sprite", image: null, parentId: null,
       pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 200, height: 200,
-      script: "x = smooth(speak * 10, 120)\ny = wave * 5\nrotation = sin(time) * 4",
+      script: "x = smooth(mic.speak * 10, 120)\ny = wave * 5\nrotation = sin(time) * 4",
     },
     {
       id: "eye", name: "Eye", kind: "sprite", image: null, parentId: "head",
@@ -54,8 +54,8 @@ const config = {
 };
 
 const inputs = {
-  speak: 0.5, loudness: 0.4, db: -20, talking: 1,
-  viseme_a: 0, viseme_e: 0, viseme_i: 0, viseme_o: 0, viseme_u: 0, signals: {},
+  values: { "mic.speak": 0.5, "mic.loudness": 0.4, "mic.db": -20, "mic.talking": 1 },
+  signals: {},
 };
 
 const created = call({ op: "create", config });
@@ -93,21 +93,33 @@ const mouthConfig = {
     {
       id: "mouth", name: "Рот · открыт", kind: "sprite", image: null, parentId: null,
       pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 140, height: 70,
-      script: "visible = talking > 0 or speak > 0.02 ? 1 : 0",
+      script: "visible = mic.talking > 0 or mic.speak > 0.02 ? 1 : 0",
     },
     {
       id: "mouth_closed", name: "Рот · закрыт", kind: "sprite", image: null, parentId: null,
       pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 140, height: 70,
-      script: "visible = talking > 0 or speak > 0.02 ? 0 : 1",
+      script: "visible = mic.talking > 0 or mic.speak > 0.02 ? 0 : 1",
     },
   ],
 };
 const mouthEngine = call({ op: "create", config: mouthConfig });
-const silent = call({ op: "tick", handle: mouthEngine.handle, now: 0.1, inputs: { ...inputs, talking: 0, speak: 0 }, paused: false, resetClock: true });
+const silent = call({
+  op: "tick", handle: mouthEngine.handle, now: 0.1,
+  inputs: { ...inputs, values: { ...inputs.values, "mic.talking": 0, "mic.speak": 0 } },
+  paused: false, resetClock: true,
+});
 assert(silent.frame.objects.mouth.visible === 0 && silent.frame.objects.mouth_closed.visible === 1, "при молчании виден закрытый рот");
-const speaking = call({ op: "tick", handle: mouthEngine.handle, now: 0.2, inputs: { ...inputs, talking: 1, speak: 0.4 }, paused: false, resetClock: false });
+const speaking = call({
+  op: "tick", handle: mouthEngine.handle, now: 0.2,
+  inputs: { ...inputs, values: { ...inputs.values, "mic.talking": 1, "mic.speak": 0.4 } },
+  paused: false, resetClock: false,
+});
 assert(speaking.frame.objects.mouth.visible === 1 && speaking.frame.objects.mouth_closed.visible === 0, "при речи виден открытый рот");
-const loud = call({ op: "tick", handle: mouthEngine.handle, now: 0.3, inputs: { ...inputs, talking: 0, speak: 0.3 }, paused: false, resetClock: false });
+const loud = call({
+  op: "tick", handle: mouthEngine.handle, now: 0.3,
+  inputs: { ...inputs, values: { ...inputs.values, "mic.talking": 0, "mic.speak": 0.3 } },
+  paused: false, resetClock: false,
+});
 assert(loud.frame.objects.mouth.visible === 1, "громкость без talking тоже открывает рот");
 call({ op: "dispose", handle: mouthEngine.handle });
 

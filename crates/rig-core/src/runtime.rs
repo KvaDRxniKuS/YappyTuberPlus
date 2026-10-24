@@ -487,6 +487,14 @@ impl Rig {
                 })
             }
             Expr::Member { expr, name } => {
+                // Входы модулей адресуются как `<модуль>.<вход>`: если такого
+                // ключа нет, работает обычный доступ к полям (.x/.y, параметры).
+                if let Expr::Name(base) = expr.as_ref() {
+                    let key = format!("{}.{}", base, name);
+                    if let Some(value) = self.inputs.values.get(&key) {
+                        return Value::Number(*value);
+                    }
+                }
                 let target = self.eval_expr(expr, context);
                 match target {
                     Value::Vector(vector) => match name.as_str() {
@@ -522,15 +530,6 @@ impl Rig {
             "e" => return Value::Number(E),
             "time" => return Value::Number(self.time),
             "dt" => return Value::Number(self.dt),
-            "speak" => return Value::Number(self.inputs.speak),
-            "loudness" => return Value::Number(self.inputs.loudness),
-            "db" => return Value::Number(self.inputs.db),
-            "talking" => return Value::Number(self.inputs.talking),
-            "viseme_a" => return Value::Number(self.inputs.viseme_a),
-            "viseme_e" => return Value::Number(self.inputs.viseme_e),
-            "viseme_i" => return Value::Number(self.inputs.viseme_i),
-            "viseme_o" => return Value::Number(self.inputs.viseme_o),
-            "viseme_u" => return Value::Number(self.inputs.viseme_u),
             "canvasWidth" => return Value::Number(self.preset.canvas.width),
             "canvasHeight" => return Value::Number(self.preset.canvas.height),
             "signal" => return Value::Signals,
@@ -1271,6 +1270,33 @@ mod tests {
         let frame = tick(&mut rig, 0.0);
         assert_eq!(frame.objects["a"]["visible"], 1.0);
         assert!(!frame.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn module_inputs_are_dotted_and_dynamic() {
+        let mut rig = Rig::new(preset(
+            vec![object("a", None, "x = mic.talking * 2\ny = viseme.a")],
+            "",
+        ))
+        .unwrap();
+        let mut inputs = InputValues::default();
+        inputs.values.insert("mic.talking".into(), 1.0);
+        inputs.values.insert("viseme.a".into(), 0.25);
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        assert_eq!(frame.objects["a"]["x"], 2.0);
+        assert_eq!(frame.objects["a"]["y"], 0.25);
+        assert!(frame.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn missing_module_input_is_reported() {
+        let mut rig = Rig::new(preset(vec![object("a", None, "x = mic.unknown")], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert_eq!(frame.objects["a"]["x"], 0.0);
+        assert!(frame
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("неизвестное имя")));
     }
 
     #[test]

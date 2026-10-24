@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { Braces, CircleAlert, Gauge, Globe2, SlidersHorizontal } from "lucide-react";
-import type { InputValues, RigFrame, RigObject } from "../types";
+import { Blocks, Braces, CircleAlert, Gauge, Globe2, SlidersHorizontal } from "lucide-react";
+import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
+import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
 import { InputsPanel } from "./InputsPanel";
+import { ModulesPanel } from "./ModulesPanel";
+import { moduleInputs as moduleInputKeys } from "../modules/values";
 import { Splitter } from "./Splitter";
 
 interface RightPanelProps {
@@ -15,15 +18,26 @@ interface RightPanelProps {
   frame: RigFrame | null;
   engineError: string | null;
   inputs: InputValues;
+  modules: ModuleInstance[];
+  audio: Record<string, AudioFrame>;
+  manual: Record<string, number>;
+  devices: DeviceOption[];
+  audioActive: boolean;
+  audioError: string | null;
   editorHeight: number;
   onEditorHeight: (delta: number) => void;
   onResetEditorHeight: () => void;
   onObjectScript: (script: string) => void;
   onGlobalScript: (script: string) => void;
-  onInputs: (patch: Partial<InputValues>) => void;
+  onModules: (modules: ModuleInstance[], label?: string) => void;
+  onManual: (key: string, value: number) => void;
+  onPulse: (key: string) => void;
+  onStartAudio: () => void;
+  onStopAudio: () => void;
+  onRefreshDevices: () => void;
 }
 
-type Tab = "object" | "globals" | "inputs";
+type Tab = "object" | "globals" | "inputs" | "modules";
 
 export function RightPanel(props: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("object");
@@ -38,9 +52,35 @@ export function RightPanel(props: RightPanelProps) {
         <button className={tab === "object" ? "active" : ""} onClick={() => setTab("object")}><Braces size={14} /> Объект</button>
         <button className={tab === "globals" ? "active" : ""} onClick={() => setTab("globals")}><Globe2 size={14} /> Глобальные</button>
         <button className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}><SlidersHorizontal size={14} /> Входы</button>
+        <button className={tab === "modules" ? "active" : ""} onClick={() => setTab("modules")}><Blocks size={14} /> Модули</button>
       </div>
 
-      {tab === "inputs" ? <InputsPanel inputs={props.inputs} frame={props.frame} onChange={props.onInputs} /> : <>
+      {tab === "modules" ? (
+        <ModulesPanel
+          modules={props.modules}
+          devices={props.devices}
+          active={props.audioActive}
+          error={props.audioError}
+          onChange={props.onModules}
+          onStart={props.onStartAudio}
+          onStop={props.onStopAudio}
+          onRefreshDevices={props.onRefreshDevices}
+        />
+      ) : tab === "inputs" ? (
+        <InputsPanel
+          modules={props.modules}
+          inputs={props.inputs}
+          audio={props.audio}
+          manual={props.manual}
+          active={props.audioActive}
+          error={props.audioError}
+          frame={props.frame}
+          onStart={props.onStartAudio}
+          onStop={props.onStopAudio}
+          onManual={props.onManual}
+          onPulse={props.onPulse}
+        />
+      ) : <>
         <div className="script-workspace" style={{ height: props.editorHeight }}>
           <div className="script-caption">
             <span>
@@ -54,6 +94,7 @@ export function RightPanel(props: RightPanelProps) {
             value={editorValue}
             objectIds={props.objects.map((object) => object.id)}
             globals={props.globals}
+            moduleInputs={props.modules.flatMap((module) => moduleInputKeys(module).map((item) => item.key))}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}
         </div>
