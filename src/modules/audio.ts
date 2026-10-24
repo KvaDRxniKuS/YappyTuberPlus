@@ -47,6 +47,8 @@ interface Analyser {
   frequency: Float32Array<ArrayBuffer> | null;
   /** Прошлое сглаженное значение `speak`: без него сглаживание не работает. */
   lastSpeak: number;
+  /** Момент прошлого расчёта: от него считается шаг сглаживания `speak`. */
+  lastTick: number;
   /** Ключ потока: `default` или конкретный `deviceId`. */
   streamKey: string;
   settings: ModuleConfig;
@@ -127,6 +129,7 @@ export class AudioInputEngine {
       samples: new Float32Array(analyser.fftSize),
       frequency: bands ? new Float32Array(analyser.frequencyBinCount) : null,
       lastSpeak: 0,
+      lastTick: performance.now(),
       streamKey,
       settings,
     });
@@ -280,7 +283,16 @@ export class AudioInputEngine {
       const rms = Math.sqrt(sum / samples.length) * gain;
       const db = rms > 0.000001 ? Math.max(-80, 20 * Math.log10(rms)) : -80;
       const speakTarget = clamp((db + 52) / 34, 0, 1);
-      const speak = item.lastSpeak + (speakTarget - item.lastSpeak) * (speakTarget > item.lastSpeak ? 0.45 : 0.16);
+      // Сглаживание `speak` задаётся в миллисекундах и считается по настоящему
+      // шагу таймера: таймер может просыпаться реже, и фиксированные 0.45/0.16
+      // тогда означали бы разную скорость на разных машинах.
+      const now = performance.now();
+      const step = clamp((now - item.lastTick) / 1000, 0.005, 0.25);
+      item.lastTick = now;
+      const attack = readMillis(settings.attack, 70);
+      const release = readMillis(settings.release, 220);
+      const alpha = smoothingAlpha(step, speakTarget > item.lastSpeak ? attack : release);
+      const speak = item.lastSpeak + (speakTarget - item.lastSpeak) * alpha;
       item.lastSpeak = speak;
       const current: AudioFrame = {
         speak,
@@ -371,6 +383,24 @@ function averageLevelSpectrum(frames: Array<{ bands: number[]; level: number }>)
     for (let index = 0; index < sum.length; index += 1) sum[index] += frame.bands[index] ?? 0;
   }
   return unitVector(sum.map((value) => value / source.length));
+}
+
+/**
+ * Доля пути до цели за шаг `dt` секунд при постоянной времени `milliseconds`.
+ * `0` — не двигаться вовсе, `1` — прыгнуть сразу: так «Атака = 0 мс» означает
+ * мгновенную реакцию без особых случаев.
+ */
+export function smoothingAlpha(dtSeconds: number, milliseconds: number): number {
+  const tau = Math.max(0, milliseconds) / 1000;
+  if (!(tau > 0)) return 1;
+  if (!(dtSeconds > 0)) return 0;
+  return 1 - Math.exp(-dtSeconds / tau);
+}
+
+/** Миллисекунды из настроек: битое значение заменяется запасным. */
+function readMillis(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? clamp(parsed, 0, 2000) : fallback;
 }
 
 function clamp(value: number, min: number, max: number): number {
