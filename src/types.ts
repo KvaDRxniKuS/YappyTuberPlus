@@ -107,6 +107,16 @@ export type ModuleSource = "live" | "manual";
  * Настройки экземпляра. Ключи задаёт шаблон модуля (`fields` в JSON),
  * поэтому набор открытый.
  */
+/** Одна визема экземпляра: имя в скрипте, подпись и эталонный спектр. */
+export interface VisemeEntry {
+  /** Имя входа: `viseme.a`, `viseme.o_umlaut`. Только латиница. */
+  name: string;
+  /** Как показывать в панели: `ö`, `a`. */
+  label: string;
+  /** Эталонный спектр (32 числа, единичная длина) или null, пока не калиброван. */
+  template: number[] | null;
+}
+
 export interface ModuleConfig {
   /** Идентификатор устройства из `navigator.mediaDevices`. */
   deviceId?: string;
@@ -116,7 +126,13 @@ export interface ModuleConfig {
   threshold?: number;
   /** Обработка браузера: эхоподавление, шумоподавление, АРУ. */
   processing?: boolean;
-  [key: string]: number | string | boolean | undefined;
+  /** Виземы экземпляра: список входов задаётся настройками, а не шаблоном. */
+  visemes?: VisemeEntry[];
+  /** Нормализовать сумму визем к 1. */
+  normalize?: boolean;
+  /** Порог слышимости для визем, дБ. */
+  gate?: number;
+  [key: string]: number | string | boolean | VisemeEntry[] | undefined;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */

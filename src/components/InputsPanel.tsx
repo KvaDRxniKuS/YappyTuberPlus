@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { AudioLines, ChevronDown } from "lucide-react";
-import type { InputValues, ModuleInstance, RigFrame } from "../types";
-import type { AudioFrame } from "../modules/audio";
+import type { InputValues, ModuleInstance, RigFrame, VisemeEntry } from "../types";
+import { frameValue, type AudioFrame } from "../modules/audio";
 import { inputDefault, inputRange, moduleDefinition, type ModuleInputSpec } from "../modules/registry";
-import { inputEnabled, inputKey } from "../modules/values";
+import { inputEnabled, inputKey, instanceInputs } from "../modules/values";
+import { visemeEntries } from "../modules/viseme";
+import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
-interface InputsPanelProps {
+interface InputsPanelProps extends CalibrationApi {
   modules: ModuleInstance[];
   inputs: InputValues;
   audio: Record<string, AudioFrame>;
@@ -14,6 +16,7 @@ interface InputsPanelProps {
   error: string | null;
   frame: RigFrame | null;
   onManual: (key: string, value: number) => void;
+  onModules: (modules: ModuleInstance[], label?: string) => void;
 }
 
 /**
@@ -25,6 +28,7 @@ interface InputsPanelProps {
  */
 export function InputsPanel(props: InputsPanelProps) {
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  const recorder = useVisemeRecorder(props);
   const isCollapsed = (name: string) => collapsed.includes(name);
   const toggle = (name: string) => {
     setCollapsed((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
@@ -40,6 +44,7 @@ export function InputsPanel(props: InputsPanelProps) {
 
   return (
     <div className="inputs-panel">
+      {recorder.error && <div className="inline-error">{recorder.error}</div>}
       {liveModules.length > 0 && (
         <div className={`audio-meter ${liveModules.length ? "live" : ""}`}>
           <AudioLines size={18} />
@@ -56,6 +61,7 @@ export function InputsPanel(props: InputsPanelProps) {
         const definition = moduleDefinition(module.type);
         const live = module.enabled && module.source === "live" && definition.audio === true;
         const auto = definition.kind === "autoblink";
+        const specs = instanceInputs(module);
         return (
           <section className={`module-group ${module.enabled ? "" : "disabled"}`} key={module.name}>
             <button
@@ -73,37 +79,68 @@ export function InputsPanel(props: InputsPanelProps) {
             </button>
             {isCollapsed(module.name) && (
               <span className="module-group-summary">
-                {definition.inputs
+                {specs
                   .filter((spec) => inputEnabled(module, spec.name))
                   .map((spec) => inputKey(module, spec.name))
                   .join(" · ") || "входы выключены"}
               </span>
             )}
             {!isCollapsed(module.name) && live && props.error && <div className="inline-error">{props.error}</div>}
-            {!isCollapsed(module.name) && definition.inputs.map((spec) => {
+            {!isCollapsed(module.name) && specs.map((spec) => {
               const key = inputKey(module, spec.name);
               const on = inputEnabled(module, spec.name);
               const range = inputRange(module, spec);
+              const viseme = definition.kind === "viseme";
               const value = !module.enabled || !on
                 ? undefined
                 : live
-                  ? props.audio[module.name]?.[spec.name] ?? inputDefault(spec)
+                  ? viseme
+                    ? props.inputs.values[key] ?? 0
+                    : frameValue(props.audio[module.name], spec.name) ?? inputDefault(spec)
                   : auto
                     ? props.auto[key] ?? range.min
                     : props.manual[key] ?? range.min;
+              const entry = viseme ? visemeEntries(module).find((item) => item.name === spec.name) : undefined;
+              const active = recorder.recording?.key === key;
               return (
-                <InputRow
-                  key={key}
-                  spec={spec}
-                  name={key}
-                  value={value}
-                  min={range.min}
-                  max={range.max}
-                  step={range.step}
-                  mode={live || auto ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
-                  reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}
-                  onChange={(next) => props.onManual(key, next)}
-                />
+                <div className="input-line" key={key}>
+                  <InputRow
+                    spec={spec}
+                    name={key}
+                    value={value}
+                    min={range.min}
+                    max={range.max}
+                    step={range.step}
+                    mode={live || auto ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
+                    reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}
+                    onChange={(next) => props.onManual(key, next)}
+                    action={viseme ? (
+                      <CalibrateButton
+                        title={entry?.template ? "Перезаписать эталон виземы (3 с)" : "Записать эталон виземы (3 с)"}
+                        recording={active}
+                        disabled={!!recorder.recording && !active}
+                        onClick={() => {
+                          if (!entry) return;
+                          void recorder.start(key, module.config, (template) => {
+                            const visemes: VisemeEntry[] = visemeEntries(module).map((item) => (item.name === entry.name ? { ...item, template } : item));
+                            props.onModules(
+                              props.modules.map((item) => (item.name === module.name ? { ...item, config: { ...item.config, visemes } } : item)),
+                              "Калибровка виземы",
+                            );
+                          });
+                        }}
+                      />
+                    ) : undefined}
+                  />
+                  {active && (
+                    <SpectrumBars
+                      bands={recorder.recording?.bands}
+                      active
+                      progress={recorder.recording?.progress}
+                      title="Пишу 3 секунды: спектр звука"
+                    />
+                  )}
+                </div>
               );
             })}
           </section>
@@ -131,6 +168,8 @@ function InputRow(props: {
   mode: "read" | "flag" | "slider";
   reason: string | null;
   onChange: (value: number) => void;
+  /** Дополнительная кнопка в строке значения: у визем это запись эталона. */
+  action?: React.ReactNode;
 }) {
   const { spec, value } = props;
   const off = props.reason !== null || value === undefined;
@@ -165,7 +204,7 @@ function InputRow(props: {
   if (props.mode === "read") {
     return (
       <label className="input-slider live">
-        <span><code>{props.name}</code><b>{display}</b></span>
+        <span><code>{props.name}</code><b>{display}</b>{props.action}</span>
         <div className="meter-track slim"><span style={{ width: `${Math.round(percent * 100)}%` }} /></div>
       </label>
     );
@@ -173,7 +212,7 @@ function InputRow(props: {
 
   return (
     <label className="input-slider">
-      <span><code>{props.name}</code><b>{display}</b></span>
+      <span><code>{props.name}</code><b>{display}</b>{props.action}</span>
       <input
         type="range"
         min={props.min}

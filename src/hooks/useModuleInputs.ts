@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { InputValues, ModuleInstance } from "../types";
-import { AudioInputEngine, type AudioFrame, type DeviceOption } from "../modules/audio";
+import type { InputValues, ModuleConfig, ModuleInstance } from "../types";
+import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOption } from "../modules/audio";
 import { inputRange, moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey } from "../modules/values";
 
@@ -20,6 +20,9 @@ export interface ModuleInputsApi {
   stop: () => void;
   setManual: (key: string, value: number) => void;
   refreshDevices: () => Promise<void>;
+  /** Записать эталон виземы: 3 секунды, средний спектр. */
+  calibrate: (settings: ModuleConfig, onFrame?: (frame: CalibrationFrame) => void) => Promise<number[] | null>;
+  cancelCalibration: () => void;
 }
 
 const BLINK_TICK = 33;
@@ -147,7 +150,7 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
       for (const module of liveModules) {
         if (cancelled) return;
         try {
-          await current.attach(module.name, module.config);
+          await current.attach(module.name, module.config, moduleDefinition(module.type).kind === "viseme");
         } catch (reason) {
           if (cancelled) return;
           setError(describe(reason));
@@ -224,6 +227,12 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
     setManualValues((current) => ({ ...current, [key]: value }));
   }, []);
 
+  const calibrate = useCallback(
+    (settings: ModuleConfig, onFrame?: (frame: CalibrationFrame) => void) => engine().calibrate(settings, { onFrame }),
+    [engine],
+  );
+  const cancelCalibration = useCallback(() => engineRef.current?.cancelCalibration(), []);
+
   const inputs = useMemo<InputValues>(() => ({
     values: composeValues(modules, { audio, manual, auto }),
     signals: {},
@@ -232,7 +241,7 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
 
   return {
     inputs, audio, manual, auto, devices, active, error, contextState,
-    start, stop, setManual, refreshDevices,
+    start, stop, setManual, refreshDevices, calibrate, cancelCalibration,
   };
 }
 

@@ -1,16 +1,24 @@
 {
   "id": "viseme",
   "title": "Viseme",
-  "description": "Ручные виземы A/E/I/O/U — заглушка вместо настоящего липсинка.",
+  "description": "Похожесть звука на звук: калибровка по микрофону, свои виземы, нормализация суммы.",
   "kind": "viseme",
-  "audio": false,
-  "inputs": [
-    { "name": "a", "label": "A", "kind": "level", "min": 0, "max": 1 },
-    { "name": "e", "label": "E", "kind": "level", "min": 0, "max": 1 },
-    { "name": "i", "label": "I", "kind": "level", "min": 0, "max": 1 },
-    { "name": "o", "label": "O", "kind": "level", "min": 0, "max": 1 },
-    { "name": "u", "label": "U", "kind": "level", "min": 0, "max": 1 }
+  "audio": true,
+  "inputs": [],
+  "fields": [
+    { "key": "deviceId", "label": "Устройство", "type": "device", "default": "default" },
+    { "key": "gate", "label": "Порог слышимости", "type": "number", "min": -80, "max": 0, "step": 1, "default": -50, "suffix": "дБ", "hint": "Ниже порога все виземы нулевые." },
+    { "key": "normalize", "label": "Нормализовать итог", "type": "flag", "default": true, "hint": "Сумма визем приводится к 1, чтобы морфинг не выходил за границы." }
   ],
-  "fields": [],
-  "defaults": {}
+  "defaults": {
+    "gate": -50,
+    "normalize": true,
+    "visemes": [
+      { "name": "a", "label": "a", "template": null },
+      { "name": "e", "label": "e", "template": null },
+      { "name": "i", "label": "i", "template": null },
+      { "name": "o", "label": "o", "template": null },
+      { "name": "u", "label": "u", "template": null }
+    ]
+  }
 }

@@ -6,6 +6,7 @@ import { ScriptEditor } from "./ScriptEditor";
 import { InputsPanel } from "./InputsPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
+import type { CalibrationApi } from "./VisemeCalibration";
 import { Splitter } from "./Splitter";
 
 interface RightPanelProps {
@@ -32,6 +33,8 @@ interface RightPanelProps {
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
   onRefreshDevices: () => void;
+  calibrate: CalibrationApi["calibrate"];
+  cancelCalibration: CalibrationApi["cancelCalibration"];
 }
 
 type Tab = "object" | "globals" | "inputs" | "modules";
@@ -59,6 +62,8 @@ export function RightPanel(props: RightPanelProps) {
           error={props.audioError}
           onChange={props.onModules}
           onRefreshDevices={props.onRefreshDevices}
+          calibrate={props.calibrate}
+          cancelCalibration={props.cancelCalibration}
         />
       ) : tab === "inputs" ? (
         <InputsPanel
@@ -70,6 +75,9 @@ export function RightPanel(props: RightPanelProps) {
           error={props.audioError}
           frame={props.frame}
           onManual={props.onManual}
+          onModules={props.onModules}
+          calibrate={props.calibrate}
+          cancelCalibration={props.cancelCalibration}
         />
       ) : <>
         <div className="script-workspace" style={{ height: props.editorHeight }}>

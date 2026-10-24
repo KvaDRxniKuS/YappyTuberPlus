@@ -65,7 +65,11 @@ test("входы собираются как <модуль>.<вход> для в
 
 test("выключенный вход не уходит в кадр", () => {
   const mic = module("mic", "loudness", { disabledInputs: ["db", "loudness"] });
-  const values = composeValues([mic], { audio: { mic: { speak: 0.5, db: -20 } }, manual: {}, auto: {} });
+  const values = composeValues([mic], {
+    audio: { mic: { speak: 0.5, loudness: 0.6, db: -20, talking: 1 } },
+    manual: {},
+    auto: {},
+  });
   expect(values["mic.speak"]).toBe(0.5);
   expect(values["mic.db"]).toBeUndefined();
   expect(values["mic.loudness"]).toBeUndefined();

@@ -5,6 +5,7 @@ import {
   type RigObject, type RigPreset,
 } from "../types";
 import { hasModule, libraryEmpty, moduleDefinition, type ModuleField } from "../modules/registry";
+import { sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -175,6 +176,27 @@ function normalizeConfig(fields: ModuleField[], raw: unknown): Record<string, nu
   return config;
 }
 
+/** Виземы экземпляра: имена латиницей, эталоны — массивы нужной длины. */
+function normalizeVisemesConfig(raw: unknown) {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const list = Array.isArray(source.visemes) ? source.visemes : [];
+  const entries: Array<{ name: string; label: string; template: number[] | null }> = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const name = uniqueVisemeName(entries, sanitizeVisemeName(typeof entry.name === "string" ? entry.name : ""));
+    const template = Array.isArray(entry.template)
+      ? entry.template.map((value) => (Number.isFinite(Number(value)) ? Number(value) : 0))
+      : null;
+    entries.push({
+      name,
+      label: typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 12) : name,
+      template: template && template.length > 0 ? template : null,
+    });
+  }
+  return entries;
+}
+
 /** Приводит список модулей к известным шаблонам; неизвестные остаются как есть. */
 export function normalizeModules(value: unknown): ModuleInstance[] {
   if (!Array.isArray(value)) return [];
@@ -191,15 +213,21 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const rawType = typeof item.type === "string" ? item.type : "";
     const type = !rawType ? "manual" : libraryEmpty() || hasModule(rawType) ? rawType : "manual";
     const definition = moduleDefinition(type);
+    const knownInputs = definition.kind === "viseme"
+      ? normalizeVisemesConfig(item.config).map((entry) => entry.name)
+      : definition.inputs.map((spec) => spec.name);
     const disabled = Array.isArray(item.disabledInputs)
-      ? item.disabledInputs.filter((input): input is string => typeof input === "string" && definition.inputs.some((spec) => spec.name === input))
+      ? item.disabledInputs.filter((input): input is string => typeof input === "string" && knownInputs.includes(input))
       : [];
     modules.push({
       name,
       type,
       enabled: item.enabled !== false,
       source: item.source === "manual" || !definition.audio ? "manual" : "live",
-      config: normalizeConfig(definition.fields, item.config),
+      config: {
+        ...normalizeConfig(definition.fields, item.config),
+        ...(definition.kind === "viseme" ? { visemes: normalizeVisemesConfig(item.config) } : {}),
+      },
       ...(disabled.length > 0 ? { disabledInputs: disabled } : {}),
     });
   }

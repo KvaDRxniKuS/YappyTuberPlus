@@ -1,14 +1,26 @@
 import type { InputValues, ModuleInstance, RigPreset } from "../types";
 import { DEFAULT_MODULES } from "../types";
 import { inputDefault, inputRange, moduleDefinition, type ModuleDefinition, type ModuleInputSpec } from "./registry";
+import { computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
+import { frameValue, type AudioFrame } from "./audio";
 
 /** Полное имя входа: `mic.talking`. Именно так оно пишется в скрипте. */
 export function inputKey(module: ModuleInstance, input: string): string {
   return `${module.name}.${input}`;
 }
 
+/**
+ * Входы экземпляра. У обычных шаблонов они заданы в JSON, у визем список свой
+ * у каждого экземпляра (пользователь добавляет и калибрует звуки сам).
+ */
+export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
+  const definition = moduleDefinition(module.type);
+  if (definition.kind === "viseme") return visemeInputs(module);
+  return definition.inputs;
+}
+
 export function moduleInputs(module: ModuleInstance): Array<{ key: string; spec: ModuleInputSpec }> {
-  return moduleDefinition(module.type).inputs.map((spec) => ({ key: inputKey(module, spec.name), spec }));
+  return instanceInputs(module).map((spec) => ({ key: inputKey(module, spec.name), spec }));
 }
 
 /** Включён ли конкретный вход: выключенные не считаются и не уходят в кадр. */
@@ -52,7 +64,7 @@ export function validateModules(modules: ModuleInstance[]): string[] {
   return problems;
 }
 
-export type ModuleAudioValues = Record<string, Record<string, number>>;
+export type ModuleAudioValues = Record<string, AudioFrame>;
 
 export interface ModuleSources {
   /** Живые значения по имени модуля: `{ mic: { speak: 0.4, … } }`. */
@@ -73,11 +85,30 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
   for (const module of modules) {
     if (!module.enabled) continue;
     const definition = moduleDefinition(module.type);
-    for (const spec of definition.inputs) {
+    const specs = instanceInputs(module);
+
+    if (definition.kind === "viseme") {
+      const frame = sources.audio[module.name];
+      const computed = module.source === "live"
+        ? computeVisemes(module, frame?.bands, frame?.db ?? -80)
+        : null;
+      const local: Record<string, number> = {};
+      for (const spec of specs) {
+        if (!inputEnabled(module, spec.name)) continue;
+        const key = inputKey(module, spec.name);
+        const manual = sources.manual[key];
+        local[key] = computed ? computed[spec.name] ?? 0 : Number.isFinite(manual as number) ? (manual as number) : 0;
+      }
+      const final = module.config.normalize === true ? normalizeVisemes(local) : local;
+      Object.assign(values, final);
+      continue;
+    }
+
+    for (const spec of specs) {
       if (!inputEnabled(module, spec.name)) continue;
       const key = inputKey(module, spec.name);
       let value: number | undefined;
-      if (definition.kind === "loudness" && module.source === "live") value = sources.audio[module.name]?.[spec.name];
+      if (definition.kind === "loudness" && module.source === "live") value = frameValue(sources.audio[module.name], spec.name);
       else if (definition.kind === "autoblink") value = sources.auto[key];
       else value = sources.manual[key];
       values[key] = Number.isFinite(value as number) ? (value as number) : fallbackValue(module, definition, spec);

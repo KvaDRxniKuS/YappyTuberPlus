@@ -751,6 +751,8 @@ export default function App() {
           onModules={updateModules}
           onManual={moduleInputs.setManual}
           onRefreshDevices={() => void moduleInputs.refreshDevices()}
+          calibrate={moduleInputs.calibrate}
+          cancelCalibration={moduleInputs.cancelCalibration}
         /></div>
       </div>
 

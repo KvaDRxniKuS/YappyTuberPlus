@@ -9,10 +9,12 @@ import {
   type ModuleDefinition, type ModuleField,
 } from "../modules/registry";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
-import { inputEnabled, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
+import { inputEnabled, instanceInputs, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
 import { Switch } from "./Switch";
+import { VisemeEditor } from "./VisemeEditor";
+import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
-interface ModulesPanelProps {
+interface ModulesPanelProps extends CalibrationApi {
   modules: ModuleInstance[];
   devices: DeviceOption[];
   error: string | null;
@@ -33,6 +35,7 @@ export function ModulesPanel(props: ModulesPanelProps) {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const library = useModuleLibrary();
+  const recorder = useVisemeRecorder(props);
 
   useEffect(() => {
     // Свёрнутость живёт в компоненте: после перезапуска карточки снова раскрыты.
@@ -52,7 +55,7 @@ export function ModulesPanel(props: ModulesPanelProps) {
     props.onChange(props.modules.map((module) => (module.name === name ? { ...module, ...change } : module)), label);
   };
 
-  const patchConfig = (module: ModuleInstance, key: string, value: number | string | boolean, label?: string) => {
+  const patchConfig = (module: ModuleInstance, key: string, value: ModuleInstance["config"][string], label?: string) => {
     patch(module.name, { config: { ...module.config, [key]: value } }, label);
   };
 
@@ -195,6 +198,23 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     </div>
                   )}
 
+                  {definition.kind === "viseme" && (
+                    <VisemeEditor
+                      module={module}
+                      recorder={recorder}
+                      calibrate={props.calibrate}
+                      cancelCalibration={props.cancelCalibration}
+                      onVisemes={(visemes, label) => patchConfig(module, "visemes", visemes, label)}
+                      onRenameInput={(from, to) => {
+                        const disabled = module.disabledInputs;
+                        if (!disabled || !disabled.includes(from)) return;
+                        patch(module.name, {
+                          disabledInputs: disabled.map((name) => (name === from ? to : name)),
+                        }, "Переименование виземы");
+                      }}
+                    />
+                  )}
+
                   {fields.length > 0 && (
                     <div className="module-fields">
                       {fields.map((field) => (
@@ -218,7 +238,7 @@ export function ModulesPanel(props: ModulesPanelProps) {
 
                   <footer className="module-inputs">
                     <span className="module-inputs-title">Входы</span>
-                    {definition.inputs.map((spec) => {
+                    {instanceInputs(module).map((spec) => {
                       const on = inputEnabled(module, spec.name);
                       const range = inputRange(module, spec);
                       return (
@@ -234,7 +254,7 @@ export function ModulesPanel(props: ModulesPanelProps) {
                         </button>
                       );
                     })}
-                    {definition.inputs.length === 0 && <span className="muted">шаблон без входов</span>}
+                    {instanceInputs(module).length === 0 && <span className="muted">шаблон без входов</span>}
                   </footer>
                 </>
               )}
@@ -275,7 +295,9 @@ export function ModulesPanel(props: ModulesPanelProps) {
                   <b>{definition.title}</b>
                   <small>{definition.description || definition.id}</small>
                 </span>
-                <span className="module-palette-inputs">{definition.inputs.map((input) => input.name).join(" · ")}</span>
+                <span className="module-palette-inputs">
+                  {definition.kind === "viseme" ? "свои виземы" : definition.inputs.map((input) => input.name).join(" · ")}
+                </span>
               </button>
             ))}
             {!library.ready && <p className="muted">Читаю папку modules…</p>}
