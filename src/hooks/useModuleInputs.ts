@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InputValues, ModuleConfig, ModuleInstance } from "../types";
 import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOption } from "../modules/audio";
 import { inputRange, moduleDefinition } from "../modules/registry";
-import { composeValues, inputEnabled, inputKey } from "../modules/values";
+import { composeValues, inputEnabled, inputKey, isPointerKind } from "../modules/values";
+import { usePointerInputs } from "./usePointerInputs";
 
 export interface ModuleInputsApi {
   /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
@@ -233,11 +234,19 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   );
   const cancelCalibration = useCallback(() => engineRef.current?.cancelCalibration(), []);
 
+  // Клавиатура и мышь: значения считаются только пока есть включённый модуль.
+  const pointerActive = useMemo(
+    () => modules.some((module) => module.enabled && isPointerKind(moduleDefinition(module.type).kind)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modules, libraryVersion],
+  );
+  const pointer = usePointerInputs(pointerActive);
+
   const inputs = useMemo<InputValues>(() => ({
-    values: composeValues(modules, { audio, manual, auto }),
+    values: composeValues(modules, { audio, manual, auto, pointer }),
     signals: {},
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [modules, audio, manual, auto, libraryVersion]);
+  }), [modules, audio, manual, auto, pointer, libraryVersion]);
 
   return {
     inputs, audio, manual, auto, devices, active, error, contextState,

@@ -1,11 +1,12 @@
 import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules } from "../modules/values";
 import {
-  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type ModuleConfig, type ModuleInstance,
+  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type KeyboardKey, type ModuleConfig, type ModuleInstance,
   type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
 } from "../types";
 import { hasModule, libraryEmpty, moduleDefinition, type ModuleField } from "../modules/registry";
 import { VISEME_BANDS, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
+import { keyInputName, uniqueKeyName } from "../modules/pointer";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -200,6 +201,22 @@ function normalizeVisemesConfig(raw: unknown): VisemeEntry[] {
   return entries;
 }
 
+/** Клавиши клавиатурного модуля: код клавиши и уникальное имя входа. */
+function normalizeKeyboardKeys(raw: unknown): KeyboardKey[] {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const list = Array.isArray(source.keys) ? source.keys : [];
+  const keys: KeyboardKey[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const code = typeof entry.code === "string" ? entry.code.trim() : "";
+    if (!code || keys.some((key) => key.code === code)) continue;
+    const rawName = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : keyInputName(code);
+    keys.push({ code, name: uniqueKeyName(keys, rawName) });
+  }
+  return keys;
+}
+
 /** Приводит список модулей к известным шаблонам; неизвестные остаются как есть. */
 export function normalizeModules(value: unknown): ModuleInstance[] {
   if (!Array.isArray(value)) return [];
@@ -221,16 +238,21 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     // нормализация по пустому набору полей выбросила бы виземы и калибровки —
     // ровно то, что случилось с настройками `manual` до этого.
     const unknown = libraryEmpty() || !hasModule(type);
-    const visemes = definition.kind === "viseme" || Array.isArray((item.config as ModuleConfig | undefined)?.visemes)
+    const rawConfig = item.config && typeof item.config === "object" ? { ...(item.config as ModuleConfig) } : {};
+    const visemes = definition.kind === "viseme" || Array.isArray(rawConfig.visemes)
       ? normalizeVisemesConfig(item.config)
       : null;
-    const knownInputs = definition.kind === "viseme" || visemes
-      ? (visemes ?? []).map((entry) => entry.name)
-      : definition.inputs.map((spec) => spec.name);
+    const keys = definition.kind === "keyboard" || Array.isArray(rawConfig.keys)
+      ? normalizeKeyboardKeys(item.config)
+      : null;
+    const knownInputs = visemes
+      ? visemes.map((entry) => entry.name)
+      : keys
+        ? keys.map((key) => key.name)
+        : definition.inputs.map((spec) => spec.name);
     const disabled = Array.isArray(item.disabledInputs)
       ? item.disabledInputs.filter((input): input is string => typeof input === "string" && knownInputs.includes(input))
       : [];
-    const rawConfig = item.config && typeof item.config === "object" ? { ...(item.config as ModuleConfig) } : {};
     modules.push({
       name,
       type,
@@ -241,6 +263,9 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
       config: {
         ...(unknown ? rawConfig : normalizeConfig(definition.fields, item.config)),
         ...(visemes ? { visemes } : {}),
+        ...(keys ? { keys } : {}),
+        // Код клавиши — не поле шаблона, но он обязан пережить любую загрузку.
+        ...(typeof rawConfig.code === "string" && rawConfig.code.trim() ? { code: rawConfig.code.trim() } : {}),
       },
       ...(disabled.length > 0 ? { disabledInputs: disabled } : {}),
     });

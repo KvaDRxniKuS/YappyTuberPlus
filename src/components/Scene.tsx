@@ -326,7 +326,7 @@ export function Scene(props: SceneProps) {
           <button title="Вписать сцену" onClick={fit}><Focus size={15} /></button>
         </div>
       </div>
-      <div className={`scene-viewport tool-${props.tool}`} ref={viewport}>
+      <div className={`scene-viewport tool-${props.tool}`} ref={viewport} data-scene="viewport">
         <canvas
           ref={canvas}
           onPointerDown={(event) => {

@@ -1,0 +1,18 @@
+{
+  "id": "mouse",
+  "title": "Mouse",
+  "description": "Курсор по сцене, смещение за кадр, кнопки и колесо.",
+  "kind": "mouse",
+  "audio": false,
+  "inputs": [
+    { "name": "x", "label": "Курсор X", "kind": "level", "min": 0, "max": 1, "step": 0.001, "hint": "0 — левый край сцены, 1 — правый" },
+    { "name": "y", "label": "Курсор Y", "kind": "level", "min": 0, "max": 1, "step": 0.001, "hint": "0 — верх сцены, 1 — низ" },
+    { "name": "dx", "label": "Смещение X", "kind": "level", "min": -1, "max": 1, "step": 0.001, "hint": "Сдвиг курсора за кадр" },
+    { "name": "dy", "label": "Смещение Y", "kind": "level", "min": -1, "max": 1, "step": 0.001, "hint": "Сдвиг курсора за кадр" },
+    { "name": "left", "label": "Левая кнопка", "kind": "flag", "min": 0, "max": 1, "step": 1 },
+    { "name": "right", "label": "Правая кнопка", "kind": "flag", "min": 0, "max": 1, "step": 1 },
+    { "name": "wheel", "label": "Колесо", "kind": "level", "min": -1, "max": 1, "step": 0.01, "hint": "Один щелчок ≈ 1, сбрасывается каждый кадр" }
+  ],
+  "fields": [],
+  "defaults": {}
+}

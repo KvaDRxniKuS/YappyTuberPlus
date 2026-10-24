@@ -6,6 +6,7 @@ import {
 } from "./registry";
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { frameValue, type AudioFrame } from "./audio";
+import { keyboardKeys, keyLabel, type PointerFrame, type MouseSample } from "./pointer";
 
 /** Полное имя входа: `mic.talking`. Именно так оно пишется в скрипте. */
 export function inputKey(module: ModuleInstance, input: string): string {
@@ -19,7 +20,23 @@ export function inputKey(module: ModuleInstance, input: string): string {
 export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   const definition = moduleDefinition(module.type);
   if (definition.kind === "viseme") return visemeInputs(module);
+  if (definition.kind === "keyboard") {
+    return keyboardKeys(module).map((key) => ({
+      name: key.name,
+      label: keyLabel(key.code),
+      min: 0,
+      max: 1,
+      step: 1,
+      kind: "flag" as const,
+      hint: `${keyLabel(key.code)} (${key.code}): 1, пока клавиша нажата`,
+    }));
+  }
   return definition.inputs;
+}
+
+/** Клавиатура, одиночная клавиша и мышь берут значения не из ползунков, а из хука. */
+export function isPointerKind(kind: string): boolean {
+  return kind === "keyboard" || kind === "key" || kind === "mouse";
 }
 
 export function moduleInputs(module: ModuleInstance): Array<{ key: string; spec: ModuleInputSpec }> {
@@ -79,6 +96,8 @@ export interface ModuleSources {
   manual: Record<string, number>;
   /** Значения по таймеру (моргание и прочие авто-модули), ключ — полный. */
   auto: Record<string, number>;
+  /** Клавиатура и мышь: снимок за кадр. */
+  pointer?: PointerFrame;
 }
 
 /**
@@ -92,6 +111,36 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
     if (!module.enabled) continue;
     const definition = moduleDefinition(module.type);
     const specs = instanceInputs(module);
+
+    if (definition.kind === "keyboard") {
+      const sample = sources.pointer?.keys;
+      for (const key of keyboardKeys(module)) {
+        if (!inputEnabled(module, key.name)) continue;
+        values[inputKey(module, key.name)] = sample?.[key.code]?.down ?? 0;
+      }
+      continue;
+    }
+
+    if (definition.kind === "key") {
+      const code = typeof module.config.code === "string" ? module.config.code : "";
+      const sample = code ? sources.pointer?.keys[code] : undefined;
+      for (const spec of specs) {
+        if (!inputEnabled(module, spec.name)) continue;
+        const value = spec.name === "hold" ? sample?.hold : spec.name === "hits" ? sample?.hits : sample?.down;
+        values[inputKey(module, spec.name)] = Number.isFinite(value as number) ? (value as number) : 0;
+      }
+      continue;
+    }
+
+    if (definition.kind === "mouse") {
+      const mouse = sources.pointer?.mouse;
+      for (const spec of specs) {
+        if (!inputEnabled(module, spec.name)) continue;
+        const value = mouse ? mouse[spec.name as keyof MouseSample] : 0;
+        values[inputKey(module, spec.name)] = Number.isFinite(value) ? value : 0;
+      }
+      continue;
+    }
 
     if (definition.kind === "viseme") {
       const frame = sources.audio[module.name];

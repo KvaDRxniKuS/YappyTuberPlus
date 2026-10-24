@@ -1,3 +1,6 @@
+#[cfg(target_os = "windows")]
+mod pointer;
+
 use rig_core::RuntimeStore;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -50,6 +53,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(RuntimeStore::default()))
+        .setup(|app| {
+            // Глобальные клавиатура и мышь: хук только читает ввод и шлёт события
+            // в окно редактора. На других платформах модули работают от window.
+            #[cfg(target_os = "windows")]
+            pointer::spawn(app.handle().clone());
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             rig_call,
             preset_default_dir,

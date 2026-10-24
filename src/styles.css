@@ -889,3 +889,65 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border-color: #a8e8d6;
   color: #14241f;
 }
+
+/* ---------- Клавиатурные модули ---------- */
+.key-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #101418;
+}
+
+.key-editor-head,
+.key-row {
+  display: grid;
+  grid-template-columns: minmax(58px, 84px) minmax(62px, 96px) auto;
+  gap: 5px;
+  align-items: center;
+}
+
+.key-editor-head {
+  color: #5d6872;
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.key-row { padding: 2px 0; border-top: 1px solid #171c21; }
+
+.key-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid #2c353d;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #171c21;
+  color: #cfd9e0;
+  font-size: 9.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.key-name {
+  min-width: 0;
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid #242c34;
+  border-radius: 4px;
+  background: #0f1215;
+  color: #cfd9e0;
+  font: 9px "Cascadia Code", ui-monospace, monospace;
+}
+
+.key-name:focus { outline: none; border-color: #609c8c; }
+
+.key-add { align-self: flex-start; }
+.key-capture { color: #e0b06f; font-size: 9px; }
+.key-picker { display: flex; align-items: center; gap: 6px; }

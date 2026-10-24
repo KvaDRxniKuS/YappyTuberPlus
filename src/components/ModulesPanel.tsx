@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ChevronDown, Copy, Mic, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X,
+  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
-import type { ModuleInstance } from "../types";
+import type { ModuleInstance, ModuleKind } from "../types";
 import type { DeviceOption } from "../modules/audio";
 import {
   fieldVisible, inputRange, moduleDefaults, moduleDefinition,
@@ -12,6 +12,7 @@ import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import { inputEnabled, instanceInputs, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
 import { Switch } from "./Switch";
 import { VisemeEditor } from "./VisemeEditor";
+import { KeyPicker, KeyboardKeysEditor } from "./KeyboardEditor";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
 interface ModulesPanelProps extends CalibrationApi {
@@ -198,6 +199,27 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     </div>
                   )}
 
+                  {definition.kind === "keyboard" && (
+                    <KeyboardKeysEditor
+                      module={module}
+                      onKeys={(keys, label) => patchConfig(module, "keys", keys, label)}
+                    />
+                  )}
+
+                  {definition.kind === "key" && (
+                    <div className="module-fields">
+                      <div className="module-field">
+                        <span className="module-field-label">Клавиша</span>
+                        <div className="module-field-value">
+                          <KeyPicker
+                            code={typeof module.config.code === "string" ? module.config.code : "Space"}
+                            onChange={(code) => patchConfig(module, "code", code, "Клавиша модуля")}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {definition.kind === "viseme" && (
                     <VisemeEditor
                       module={module}
@@ -289,13 +311,17 @@ export function ModulesPanel(props: ModulesPanelProps) {
           <div className="module-palette-list">
             {paletteItems.map((definition) => (
               <button key={definition.id} className="module-palette-item" onClick={() => add(definition)}>
-                <span className="module-palette-icon">{definition.audio ? <Mic size={14} /> : <SlidersHorizontal size={14} />}</span>
+                <span className="module-palette-icon">{paletteIcon(definition.kind)}</span>
                 <span className="module-palette-text">
                   <b>{definition.title}</b>
                   <small>{definition.description || definition.id}</small>
                 </span>
                 <span className="module-palette-inputs">
-                  {definition.kind === "viseme" ? "свои виземы" : definition.inputs.map((input) => input.name).join(" · ")}
+                  {definition.kind === "viseme"
+                    ? "свои виземы"
+                    : definition.kind === "keyboard"
+                      ? "клавиши из настроек"
+                      : definition.inputs.map((input) => input.name).join(" · ")}
                 </span>
               </button>
             ))}
@@ -311,6 +337,14 @@ export function ModulesPanel(props: ModulesPanelProps) {
       )}
     </div>
   );
+}
+
+/** Иконка шаблона в палитре: по ней видно, откуда модуль берёт значения. */
+function paletteIcon(kind: ModuleKind) {
+  if (kind === "loudness") return <Mic size={14} />;
+  if (kind === "keyboard" || kind === "key") return <Keyboard size={14} />;
+  if (kind === "mouse") return <MousePointerClick size={14} />;
+  return <SlidersHorizontal size={14} />;
 }
 
 /** Контрол поля без подписи: подпись рисует сетка карточки. */

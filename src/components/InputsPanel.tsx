@@ -3,7 +3,7 @@ import { AudioLines, ChevronDown } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, VisemeEntry } from "../types";
 import { frameValue, type AudioFrame } from "../modules/audio";
 import { inputDefault, inputRange, moduleDefinition, type ModuleInputSpec } from "../modules/registry";
-import { inputEnabled, inputKey, instanceInputs } from "../modules/values";
+import { inputEnabled, inputKey, instanceInputs, isPointerKind } from "../modules/values";
 import { visemeEntries } from "../modules/viseme";
 import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
@@ -61,6 +61,7 @@ export function InputsPanel(props: InputsPanelProps) {
         const definition = moduleDefinition(module.type);
         const live = module.enabled && module.source === "live" && definition.audio === true;
         const auto = definition.kind === "autoblink";
+        const pointer = isPointerKind(definition.kind);
         const specs = instanceInputs(module);
         return (
           <section className={`module-group ${module.enabled ? "" : "disabled"}`} key={module.name}>
@@ -74,7 +75,7 @@ export function InputsPanel(props: InputsPanelProps) {
               <code>{module.name}</code>
               <span>{definition.title}</span>
               <small>
-                {!module.enabled ? "выключен" : live ? "микрофон" : auto ? "авто" : "ручной"}
+                {!module.enabled ? "выключен" : live ? "микрофон" : auto ? "авто" : pointer ? "ввод" : "ручной"}
               </small>
             </button>
             {isCollapsed(module.name) && (
@@ -93,13 +94,15 @@ export function InputsPanel(props: InputsPanelProps) {
               const viseme = definition.kind === "viseme";
               const value = !module.enabled || !on
                 ? undefined
-                : live
-                  ? viseme
-                    ? props.inputs.values[key] ?? 0
-                    : frameValue(props.audio[module.name], spec.name) ?? inputDefault(spec)
-                  : auto
-                    ? props.auto[key] ?? range.min
-                    : props.manual[key] ?? range.min;
+                : pointer
+                  ? props.inputs.values[key] ?? 0
+                  : live
+                    ? viseme
+                      ? props.inputs.values[key] ?? 0
+                      : frameValue(props.audio[module.name], spec.name) ?? inputDefault(spec)
+                    : auto
+                      ? props.auto[key] ?? range.min
+                      : props.manual[key] ?? range.min;
               const entry = viseme ? visemeEntries(module).find((item) => item.name === spec.name) : undefined;
               const active = recorder.recording?.key === key;
               return (
@@ -111,7 +114,7 @@ export function InputsPanel(props: InputsPanelProps) {
                     min={range.min}
                     max={range.max}
                     step={range.step}
-                    mode={live || auto ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
+                    mode={live || auto || pointer ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
                     reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}
                     onChange={(next) => props.onManual(key, next)}
                     action={viseme ? (

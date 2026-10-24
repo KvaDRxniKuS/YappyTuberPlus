@@ -1,0 +1,14 @@
+{
+  "id": "key",
+  "title": "Key",
+  "description": "Одна клавиша: нажата ли, сколько держится и сколько раз нажали.",
+  "kind": "key",
+  "audio": false,
+  "inputs": [
+    { "name": "down", "label": "Нажата", "kind": "flag", "min": 0, "max": 1, "step": 1, "hint": "1, пока клавиша нажата" },
+    { "name": "hold", "label": "Держится", "kind": "level", "min": 0, "max": 10, "step": 0.01, "hint": "Секунды удержания, сбрасывается при отпускании" },
+    { "name": "hits", "label": "Нажатий", "kind": "level", "min": 0, "max": 9999, "step": 1, "hint": "Счётчик нажатий с запуска" }
+  ],
+  "fields": [],
+  "defaults": { "code": "Space" }
+}

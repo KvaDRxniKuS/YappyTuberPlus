@@ -12,6 +12,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Глобальный хук ввода: только слушает, ничего не перехватывает.
+rdev = "0.5"
+
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 serde = { version = "1", features = ["derive"] }

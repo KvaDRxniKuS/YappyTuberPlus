@@ -95,7 +95,7 @@ export interface InputValues {
  * Реализация модуля в коде. Шаблоны из папки `modules` описывают входы и
  * настройки, а поведение выбирается по этому полю.
  */
-export type ModuleKind = "loudness" | "manual" | "autoblink" | "viseme";
+export type ModuleKind = "loudness" | "manual" | "autoblink" | "viseme" | "keyboard" | "key" | "mouse";
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */
 export type ModuleType = string;
@@ -107,6 +107,14 @@ export type ModuleSource = "live" | "manual";
  * Настройки экземпляра. Ключи задаёт шаблон модуля (`fields` в JSON),
  * поэтому набор открытый.
  */
+/** Клавиша в клавиатурном модуле: код и имя входа. */
+export interface KeyboardKey {
+  /** `event.code`: `Space`, `KeyA`, `ShiftLeft`. Не зависит от раскладки. */
+  code: string;
+  /** Имя входа: `keyboard.space`. */
+  name: string;
+}
+
 /** Одна визема экземпляра: имя в скрипте, подпись и эталонный спектр. */
 export interface VisemeEntry {
   /** Имя входа: `viseme.a`, `viseme.o_umlaut`. Только латиница. */
@@ -128,11 +136,15 @@ export interface ModuleConfig {
   processing?: boolean;
   /** Виземы экземпляра: список входов задаётся настройками, а не шаблоном. */
   visemes?: VisemeEntry[];
+  /** Клавиши клавиатурного модуля: тоже список экземпляра. */
+  keys?: KeyboardKey[];
+  /** Код клавиши у модуля «одна клавиша»: `Space`, `KeyA`. */
+  code?: string;
   /** Нормализовать сумму визем к 1. */
   normalize?: boolean;
   /** Порог слышимости для визем, дБ. */
   gate?: number;
-  [key: string]: number | string | boolean | VisemeEntry[] | undefined;
+  [key: string]: number | string | boolean | VisemeEntry[] | KeyboardKey[] | undefined;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */
