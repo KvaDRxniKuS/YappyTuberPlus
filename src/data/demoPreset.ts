@@ -32,6 +32,14 @@ layer = inherit
   return overrides[name] !== undefined ? `${name} = ${overrides[name]}` : line;
 }).join("\n");
 
+/**
+ * The demo swaps two mouth sprites: open while the character speaks, otherwise
+ * a closed smile. `talking` comes from the microphone or the manual test toggle,
+ * `speak` also follows the test slider, so both cases are covered.
+ */
+export const TALKING_OPEN = "talking > 0 or speak > 0.02 ? 1 : 0";
+export const TALKING_CLOSED = "talking > 0 or speak > 0.02 ? 0 : 1";
+
 const base = (x: number, y: number, overrides: Partial<BasePose> = {}): BasePose => ({
   ...DEFAULT_BASE, x, y, ...overrides,
 });
@@ -81,9 +89,14 @@ breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
         sizeY: "inherit * (1 - blink * 0.9)",
         layer: "inherit + 1",
       })),
-      object("mouth", "Рот", "sprite", "head_group", "/assets/demo/mouth.png", 140, 70, base(500, 300, { layer: 2 }), childScript({
-        sizeX: "inherit * (0.85 + speak * 0.3)",
-        sizeY: "inherit * (0.4 + speak * 1.7 + 0.05 * sin(time * 18))",
+      object("mouth", "Рот · открыт", "sprite", "head_group", "/assets/demo/mouth_open.png", 140, 70, base(500, 300, { layer: 2 }), childScript({
+        sizeX: "inherit * (0.85 + max(speak, talking * 0.6) * 0.3)",
+        sizeY: "inherit * (0.4 + max(speak, talking * 0.6) * 1.7 + 0.05 * sin(time * 18))",
+        visible: TALKING_OPEN,
+        layer: "inherit + 1",
+      })),
+      object("mouth_closed", "Рот · закрыт", "sprite", "head_group", "/assets/demo/mouth_closed.png", 140, 70, base(500, 300, { layer: 2 }), childScript({
+        visible: TALKING_CLOSED,
         layer: "inherit + 1",
       })),
       object("arm_left", "Рука · левая", "sprite", "body", "/assets/demo/arm.png", 100, 250, base(355, 325, { rotation: 8, layer: -2 }), childScript({
@@ -96,4 +109,34 @@ breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
       }), { x: 0.5, y: 0.15 }),
     ],
   };
+}
+
+/**
+ * Older demo presets stored in the browser only have the open mouth. Adds the
+ * closed sprite (and the speaking rule) without touching anything else.
+ */
+export function withDemoMouth(preset: RigPreset): RigPreset {
+  const open = preset.objects.find(
+    (object) => object.id === "mouth" && object.image?.startsWith("/assets/demo/mouth"),
+  );
+  if (!open || preset.objects.some((object) => object.id === "mouth_closed")) return preset;
+
+  const closed: RigObject = {
+    ...open,
+    id: "mouth_closed",
+    name: "Рот · закрыт",
+    image: "/assets/demo/mouth_closed.png",
+    base: { ...open.base },
+    script: open.script.replace(/^visible\s*=.*$/m, `visible = ${TALKING_CLOSED}`),
+  };
+  if (!/^visible\s*=/m.test(closed.script)) closed.script += `\nvisible = ${TALKING_CLOSED}`;
+
+  const objects = preset.objects.map((object) => {
+    if (object.id !== "mouth") return object;
+    const speaking = object.script.replace(/^visible\s*=.*$/m, `visible = ${TALKING_OPEN}`);
+    return { ...object, script: /^visible\s*=/m.test(object.script) ? speaking : `${object.script}\nvisible = ${TALKING_OPEN}` };
+  });
+  const index = objects.findIndex((object) => object.id === "mouth");
+  objects.splice(index + 1, 0, closed);
+  return { ...preset, objects };
 }

@@ -10,7 +10,7 @@ import { Inspector } from "./components/Inspector";
 import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
-import { createDemoPreset } from "./data/demoPreset";
+import { createDemoPreset, withDemoMouth } from "./data/demoPreset";
 import {
   baseUpdates, descendantIds, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
   scriptValue, setParent, setScriptValue, uniqueId,
@@ -28,7 +28,11 @@ const LAYOUT_KEY = "yappytuberplus.layout.v1";
 function loadPreset(): RigPreset {
   try {
     const stored = localStorage.getItem(PRESET_KEY);
-    if (stored) return normalizePreset(JSON.parse(stored)) || createDemoPreset();
+    if (stored) {
+      const normalized = normalizePreset(JSON.parse(stored));
+      // Presets saved before the closed mouth existed are migrated in place.
+      if (normalized) return withDemoMouth(normalized);
+    }
   } catch { /* use demo */ }
   return createDemoPreset();
 }

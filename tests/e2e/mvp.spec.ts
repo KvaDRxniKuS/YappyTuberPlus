@@ -5,7 +5,7 @@ async function openStudio(page: Page) {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await expect(page.locator(".engine-status")).toHaveClass(/ready/, { timeout: 15_000 });
-  await expect(page.locator(".tree-row")).toHaveCount(9);
+  await expect(page.locator(".tree-row")).toHaveCount(10);
   await expect(page.locator("canvas")).toBeVisible();
   return errors;
 }
@@ -127,7 +127,7 @@ test("pause and single-step keep the runtime responsive", async ({ page }) => {
 test("PNG import adds a usable sprite", async ({ page }) => {
   await openStudio(page);
   await page.locator('input[type="file"][accept="image/png,image/webp"]').setInputFiles("public/assets/demo/eye.png");
-  await expect(page.locator(".tree-row")).toHaveCount(10);
+  await expect(page.locator(".tree-row")).toHaveCount(11);
   await expect(page.locator(".inspector-title input")).toHaveValue("eye");
   const preset = await readPreset(page);
   expect(preset.objects.at(-1).image).toMatch(/^data:image\/png;base64,/);

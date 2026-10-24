@@ -85,5 +85,31 @@ assert(!bad.ok && /ID/.test(bad.error), "некорректный ID откло�
 const missing = call({ op: "tick", handle: 999, now: 3, inputs, paused: false, resetClock: false });
 assert(!missing.ok, "обращение к удалённому движку возвращает ошибку");
 
+// Demo mouth: two sprites, exactly one visible depending on speech.
+const mouthConfig = {
+  canvas: { width: 1000, height: 600 },
+  globals: "",
+  objects: [
+    {
+      id: "mouth", name: "Рот · открыт", kind: "sprite", image: null, parentId: null,
+      pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 140, height: 70,
+      script: "visible = talking > 0 or speak > 0.02 ? 1 : 0",
+    },
+    {
+      id: "mouth_closed", name: "Рот · закрыт", kind: "sprite", image: null, parentId: null,
+      pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 140, height: 70,
+      script: "visible = talking > 0 or speak > 0.02 ? 0 : 1",
+    },
+  ],
+};
+const mouthEngine = call({ op: "create", config: mouthConfig });
+const silent = call({ op: "tick", handle: mouthEngine.handle, now: 0.1, inputs: { ...inputs, talking: 0, speak: 0 }, paused: false, resetClock: true });
+assert(silent.frame.objects.mouth.visible === 0 && silent.frame.objects.mouth_closed.visible === 1, "при молчании виден закрытый рот");
+const speaking = call({ op: "tick", handle: mouthEngine.handle, now: 0.2, inputs: { ...inputs, talking: 1, speak: 0.4 }, paused: false, resetClock: false });
+assert(speaking.frame.objects.mouth.visible === 1 && speaking.frame.objects.mouth_closed.visible === 0, "при речи виден открытый рот");
+const loud = call({ op: "tick", handle: mouthEngine.handle, now: 0.3, inputs: { ...inputs, talking: 0, speak: 0.3 }, paused: false, resetClock: false });
+assert(loud.frame.objects.mouth.visible === 1, "громкость без talking тоже открывает рот");
+call({ op: "dispose", handle: mouthEngine.handle });
+
 call({ op: "dispose", handle: 1 });
 console.log("\nДвижок Rust/WASM работает.");

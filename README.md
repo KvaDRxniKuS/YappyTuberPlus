@@ -40,7 +40,9 @@
 - Тестовые `speak`, `loudness`, `talking`, виземы и ручное моргание.
 - Микрофон через Web Audio в браузерном MVP: RMS, пик, dB и сглаженный уровень речи.
 - Автосохранение в localStorage, явное сохранение, импорт и экспорт JSON-пресета версии 2.
-- Демонстрационный риг из отдельных PNG-спрайтов.
+- Демонстрационный риг из отдельных PNG-спрайтов: два рта в одной точке — открытый при речи и
+  закрытая улыбка при молчании (`talking` от микрофона или тестового тумблера, а также `speak`).
+- Спрайты демо генерируются воспроизводимо: `node scripts/generate-demo-sprites.mjs`.
 
 ### OBS-оверлей
 
@@ -53,7 +55,25 @@
 
 Подробности и настройка захвата: [`docs/OVERLAY.md`](docs/OVERLAY.md).
 
-## Запуск редактора
+## Быстрый запуск одним файлом
+
+Не нужно ничего вводить в консоль:
+
+- **Windows** — двойной клик по `start-yappytuber.bat`;
+- **Linux/macOS** — `./start-yappytuber.sh`.
+
+Файл сам скачивает крайние обновления, при необходимости предлагает поставить Git и
+Node.js через `winget`, выполняет `npm ci`, собирает WASM-ядро (если есть Rust) и
+открывает редактор в браузере. Подробности и параметры — [`docs/LAUNCHER.md`](docs/LAUNCHER.md).
+
+```bat
+start-yappytuber.bat --no-open      :: без автооткрытия браузера
+start-yappytuber.bat --no-bridge    :: без моста для OBS
+start-yappytuber.bat --no-serve     :: только обновить и собрать
+start-yappytuber.bat --tauri        :: нативное окно Tauri
+```
+
+## Запуск редактора вручную
 
 Требования: Node.js 20+, Rust stable и target `wasm32-unknown-unknown`.
 
@@ -107,8 +127,9 @@ npx playwright install chromium
 ```
 
 Текущий набор: **10 Rust-тестов**, **10 проверок движка в Node** (`test:engine`),
-**8 headless-проверок** Playwright (протокол оверлея, heartbeat, дедупликация кадров, таймауты,
-view transform и рендер через записывающий контекст) и **11 браузерных проверок**.
+**12 headless-проверок** Playwright (протокол оверлея, heartbeat, дедупликация кадров,
+таймауты, view transform, рендер через записывающий контекст, комплект демо-рта и его
+миграция для ранее сохранённых пресетов) и **11 браузерных проверок**.
 Проверяются запуск WASM, реальный лимит 30 FPS, resize панели, перемещение поддерева на
 сцене, сохранение формул при перепривязке, редактирование скрипта через инспектор,
 пауза/шаг, импорт PNG, передача сцены и кадров в окно оверлея и сохранение его настроек.
@@ -147,12 +168,16 @@ YappyTuberPlus/
 │   └── rig_core.wasm         # собранное Rust-ядро
 ├── overlay.html              # страница оверлея (второй entry Vite)
 ├── tests/e2e/                # проверки Playwright: браузер и headless
+├── start-yappytuber.bat      # обновление и запуск для Windows
+├── start-yappytuber.sh       # то же для Linux/macOS
 ├── scripts/
 │   ├── build-wasm.mjs
+│   ├── generate-demo-sprites.mjs
 │   ├── overlay-bridge.mjs    # локальный WS-мост для OBS Browser Source
 │   └── smoke-engine.mjs
 ├── docs/DESIGN.md
 ├── docs/OVERLAY.md
+├── docs/LAUNCHER.md
 └── reference/
 ```
 
