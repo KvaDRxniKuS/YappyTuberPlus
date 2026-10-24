@@ -228,6 +228,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .right-tabs button.active { color: var(--accent); border-bottom-color: var(--accent-dim); }
 /* Правая колонка: редактор забирает всю высоту, значения кадра — свёрнутая секция. */
 .script-workspace { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.script-workspace > .empty-state { flex: 1 1 auto; min-height: 0; }
 .script-caption { height: 28px; flex: 0 0 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 11px; background: #1b1e23; color: #6c7680; font-family: monospace; font-size: 8px; border-bottom: 1px solid #292f36; }
 .autosave-note { color: #4f5d59; font-family: Inter, sans-serif; font-size: 7px; }
 .code-editor { flex: 1; min-height: 0; overflow: hidden; background: #1b1e23; }
