@@ -21,8 +21,8 @@ interface RightPanelProps {
   modules: ModuleInstance[];
   audio: Record<string, AudioFrame>;
   manual: Record<string, number>;
+  auto: Record<string, number>;
   devices: DeviceOption[];
-  audioActive: boolean;
   audioError: string | null;
   editorHeight: number;
   onEditorHeight: (delta: number) => void;
@@ -31,9 +31,6 @@ interface RightPanelProps {
   onGlobalScript: (script: string) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
-  onPulse: (key: string) => void;
-  onStartAudio: () => void;
-  onStopAudio: () => void;
   onRefreshDevices: () => void;
 }
 
@@ -59,11 +56,8 @@ export function RightPanel(props: RightPanelProps) {
         <ModulesPanel
           modules={props.modules}
           devices={props.devices}
-          active={props.audioActive}
           error={props.audioError}
           onChange={props.onModules}
-          onStart={props.onStartAudio}
-          onStop={props.onStopAudio}
           onRefreshDevices={props.onRefreshDevices}
         />
       ) : tab === "inputs" ? (
@@ -72,13 +66,10 @@ export function RightPanel(props: RightPanelProps) {
           inputs={props.inputs}
           audio={props.audio}
           manual={props.manual}
-          active={props.audioActive}
+          auto={props.auto}
           error={props.audioError}
           frame={props.frame}
-          onStart={props.onStartAudio}
-          onStop={props.onStopAudio}
           onManual={props.onManual}
-          onPulse={props.onPulse}
         />
       ) : <>
         <div className="script-workspace" style={{ height: props.editorHeight }}>

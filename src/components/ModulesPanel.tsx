@@ -1,53 +1,65 @@
-import { useState } from "react";
-import { AudioLines, Copy, Mic, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
-import type { ModuleInstance, ModuleType } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import { AudioLines, Copy, Mic, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
+import type { ModuleInstance } from "../types";
 import type { DeviceOption } from "../modules/audio";
-import { MODULES, moduleDefinition } from "../modules/registry";
-import { inputKey, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
+import {
+  fieldVisible, inputRange, moduleDefaults, moduleDefinition,
+  type ModuleDefinition, type ModuleField,
+} from "../modules/registry";
+import { useModuleLibrary } from "../hooks/useModuleLibrary";
+import { inputEnabled, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
 
 interface ModulesPanelProps {
   modules: ModuleInstance[];
   devices: DeviceOption[];
-  active: boolean;
   error: string | null;
   onChange: (modules: ModuleInstance[], label?: string) => void;
-  onStart: () => void;
-  onStop: () => void;
   onRefreshDevices: () => void;
 }
 
 /**
- * Список экземпляров модулей. Один тип можно добавить сколько угодно раз:
- * два Loudness с разными микрофонами дают входы `mic_left.*` и `mic_right.*`.
+ * Панель модулей: сверху поиск по уже включённым, снизу — библиотека шаблонов.
+ *
+ * Входы модуля можно выключать по одному: выключенный вход не считается и не
+ * уходит в кадр, поэтому ошибку «неизвестное имя» видно сразу.
  */
 export function ModulesPanel(props: ModulesPanelProps) {
+  const [query, setQuery] = useState("");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const library = useModuleLibrary();
+
   const problems = validateModules(props.modules);
 
   const patch = (name: string, change: Partial<ModuleInstance>, label?: string) => {
     props.onChange(props.modules.map((module) => (module.name === name ? { ...module, ...change } : module)), label);
   };
 
+  const patchConfig = (module: ModuleInstance, key: string, value: number | string | boolean, label?: string) => {
+    patch(module.name, { config: { ...module.config, [key]: value } }, label);
+  };
+
   const rename = (name: string, raw: string) => {
     const next = sanitizeModuleName(raw);
     if (!next || next === name) return;
-    const taken = props.modules.some((module) => module.name === next);
-    if (taken) return;
+    if (props.modules.some((module) => module.name === next)) return;
     props.onChange(
       props.modules.map((module) => (module.name === name ? { ...module, name: next } : module)),
       "Переименование модуля",
     );
   };
 
-  const add = (type: ModuleType) => {
-    const definition = moduleDefinition(type);
+  const add = (definition: ModuleDefinition) => {
     const instance: ModuleInstance = {
-      name: uniqueModuleName(props.modules, type),
-      type,
+      name: uniqueModuleName(props.modules, definition.id),
+      type: definition.id,
       enabled: true,
       source: definition.audio ? "live" : "manual",
-      config: { ...definition.defaults },
+      config: moduleDefaults(definition),
     };
     props.onChange([...props.modules, instance], "Добавление модуля");
+    setPaletteOpen(false);
+    setPaletteQuery("");
   };
 
   const duplicate = (module: ModuleInstance) => {
@@ -55,24 +67,63 @@ export function ModulesPanel(props: ModulesPanelProps) {
       ...module,
       name: uniqueModuleName(props.modules, `${module.name}_copy`),
       config: { ...module.config },
+      disabledInputs: module.disabledInputs ? [...module.disabledInputs] : undefined,
     };
     props.onChange([...props.modules, instance], "Дублирование модуля");
   };
 
+  const toggleInput = (module: ModuleInstance, input: string, enabled: boolean) => {
+    const current = module.disabledInputs || [];
+    const next = enabled ? current.filter((name) => name !== input) : [...current, input];
+    patch(module.name, { disabledInputs: next.length > 0 ? next : undefined },
+      enabled ? `Вход ${input} включён` : `Вход ${input} выключен`);
+  };
+
+  const needle = query.trim().toLowerCase();
+  const visibleModules = useMemo(() => {
+    if (!needle) return props.modules;
+    return props.modules.filter((module) => {
+      const definition = moduleDefinition(module.type);
+      const haystack = [module.name, definition.title, definition.id, ...moduleInputs(module).map((item) => item.key)].join(" ").toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [props.modules, needle]);
+
+  const paletteItems = useMemo(() => {
+    const items = library.definitions;
+    const paletteNeedle = paletteQuery.trim().toLowerCase();
+    if (!paletteNeedle) return items;
+    return items.filter((definition) =>
+      [definition.title, definition.id, definition.description].join(" ").toLowerCase().includes(paletteNeedle));
+  }, [library.definitions, paletteQuery]);
+
   return (
     <div className="modules-panel">
-      <div className="module-actions">
-        <button className={`mic-button ${props.active ? "active" : ""}`} onClick={() => (props.active ? props.onStop() : props.onStart())}>
-          <Mic size={14} /> {props.active ? "Микрофоны включены" : "Включить микрофоны"}
-        </button>
-        <button className="icon-button" title="Обновить список устройств" onClick={props.onRefreshDevices}><AudioLines size={14} /></button>
+      <div className="module-search">
+        <Search size={13} />
+        <input
+          value={query}
+          placeholder="Поиск по модулям и входам"
+          spellCheck={false}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        {query && <button className="icon-button" title="Сбросить поиск" onClick={() => setQuery("")}><X size={12} /></button>}
+        <b>{props.modules.length}</b>
       </div>
+
       {props.error && <div className="inline-error">{props.error}</div>}
       {problems.length > 0 && <div className="inline-error">{problems.join(" · ")}</div>}
 
       <div className="module-list">
-        {props.modules.map((module) => {
+        {props.modules.length === 0 && (
+          <p className="muted">Модулей нет. Добавьте шаблон из библиотеки — входы появятся во вкладке «Входы».</p>
+        )}
+        {props.modules.length > 0 && visibleModules.length === 0 && (
+          <p className="muted">Ничего не нашлось по запросу «{query}».</p>
+        )}
+        {visibleModules.map((module) => {
           const definition = moduleDefinition(module.type);
+          const live = module.enabled && definition.audio === true && module.source === "live";
           return (
             <section className={`module-card ${module.enabled ? "" : "disabled"}`} key={module.name}>
               <header>
@@ -101,75 +152,51 @@ export function ModulesPanel(props: ModulesPanelProps) {
                 ><Trash2 size={13} /></button>
               </header>
 
+              {definition.description && <p className="module-description">{definition.description}</p>}
+
               {definition.audio && (
-                <>
-                  <div className="module-source">
-                    <div className="segmented small">
-                      <button className={module.source === "live" ? "active" : ""} onClick={() => patch(module.name, { source: "live" }, "Источник модуля")}>Микрофон</button>
-                      <button className={module.source === "manual" ? "active" : ""} onClick={() => patch(module.name, { source: "manual" }, "Источник модуля")}>Ползунки</button>
-                    </div>
-                    <span className="module-hint">{module.source === "live" ? "значения идут со звука" : "значения из вкладки «Входы»"}</span>
+                <div className="module-source">
+                  <div className="segmented small">
+                    <button className={module.source === "live" ? "active" : ""} onClick={() => patch(module.name, { source: "live" }, "Источник модуля")}>Микрофон</button>
+                    <button className={module.source === "manual" ? "active" : ""} onClick={() => patch(module.name, { source: "manual" }, "Источник модуля")}>Ползунок</button>
                   </div>
-                  {module.source === "live" && (
-                    <label className="select-field">
-                      <span>Устройство</span>
-                      <select
-                        value={module.config.deviceId || "default"}
-                        onChange={(event) => patch(module.name, {
-                          config: { ...module.config, deviceId: event.target.value === "default" ? undefined : event.target.value },
-                        }, "Микрофон модуля")}
-                      >
-                        <option value="default">Системный по умолчанию</option>
-                        {props.devices.map((device) => (
-                          <option key={device.id} value={device.id}>{device.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </>
+                  <span className="module-hint">
+                    {module.source === "live" ? "рабочий режим: значения со звука" : "отладка: значения ставятся вручную"}
+                  </span>
+                </div>
               )}
 
-              <div className="module-settings">
-                {definition.audio && module.source === "live" && (
-                  <>
-                    <label className="module-number">
-                      <span>Усиление</span>
-                      <input
-                        type="number" min={0.1} max={8} step={0.1}
-                        value={module.config.gain ?? 1}
-                        onChange={(event) => patch(module.name, {
-                          config: { ...module.config, gain: clamp(Number(event.target.value), 0.1, 8) },
-                        }, "Усиление микрофона")}
-                      />
-                    </label>
-                    <label className="module-number">
-                      <span>Порог речи, дБ</span>
-                      <input
-                        type="number" min={-80} max={0} step={1}
-                        value={module.config.threshold ?? -43}
-                        onChange={(event) => patch(module.name, {
-                          config: { ...module.config, threshold: clamp(Number(event.target.value), -80, 0) },
-                        }, "Порог речи")}
-                      />
-                    </label>
-                    <label className="module-check">
-                      <input
-                        type="checkbox"
-                        checked={module.config.processing === true}
-                        onChange={(event) => patch(module.name, {
-                          config: { ...module.config, processing: event.target.checked },
-                        }, "Обработка звука")}
-                      />
-                      <span>Шумоподавление</span>
-                    </label>
-                  </>
-                )}
+              <div className="module-fields">
+                {definition.fields.filter((field) => fieldVisible(field, module.config)).map((field) => (
+                  <FieldControl
+                    key={field.key}
+                    field={field}
+                    module={module}
+                    devices={props.devices}
+                    live={live}
+                    onValue={(value, label) => patchConfig(module, field.key, value, label)}
+                    onRefreshDevices={props.onRefreshDevices}
+                  />
+                ))}
               </div>
 
-              <footer>
-                {moduleDefinition(module.type).inputs.map((spec) => (
-                  <code key={spec.name} title={spec.label}>{inputKey(module, spec.name)}</code>
-                ))}
+              <footer className="module-inputs">
+                <span className="module-inputs-title">Входы</span>
+                {definition.inputs.map((spec) => {
+                  const on = inputEnabled(module, spec.name);
+                  const range = inputRange(module, spec);
+                  return (
+                    <label className={`module-input-chip ${on ? "" : "off"}`} key={spec.name} title={spec.hint || `${range.min}…${range.max}`}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(event) => toggleInput(module, spec.name, event.target.checked)}
+                      />
+                      <code>{module.name}.{spec.name}</code>
+                    </label>
+                  );
+                })}
+                {definition.inputs.length === 0 && <span className="muted">шаблон без входов</span>}
               </footer>
             </section>
           );
@@ -177,20 +204,128 @@ export function ModulesPanel(props: ModulesPanelProps) {
       </div>
 
       <div className="module-add">
-        <span><Plus size={12} /> Добавить модуль</span>
-        <div>
-          {MODULES.map((definition) => (
-            <button key={definition.type} className="button secondary" onClick={() => add(definition.type)}>
-              {definition.audio ? <Mic size={13} /> : <SlidersHorizontal size={13} />} {definition.title}
-            </button>
-          ))}
-        </div>
+        <button className={`button primary module-add-button ${paletteOpen ? "active" : ""}`} onClick={() => setPaletteOpen(!paletteOpen)}>
+          <Plus size={14} /> Добавить модуль
+        </button>
+        <button className="icon-button" title="Обновить список микрофонов" onClick={props.onRefreshDevices}><AudioLines size={14} /></button>
       </div>
+
+      {paletteOpen && (
+        <div className="module-palette">
+          <div className="module-search">
+            <Search size={13} />
+            <input
+              autoFocus
+              value={paletteQuery}
+              placeholder="Поиск по библиотеке шаблонов"
+              spellCheck={false}
+              onChange={(event) => setPaletteQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") { setPaletteOpen(false); setPaletteQuery(""); }
+                if (event.key === "Enter" && paletteItems[0]) add(paletteItems[0]);
+              }}
+            />
+            <button className="icon-button" title="Закрыть" onClick={() => { setPaletteOpen(false); setPaletteQuery(""); }}><X size={12} /></button>
+          </div>
+          <div className="module-palette-list">
+            {paletteItems.map((definition) => (
+              <button key={definition.id} className="module-palette-item" onClick={() => add(definition)}>
+                <span className="module-palette-icon">{definition.audio ? <Mic size={14} /> : <SlidersHorizontal size={14} />}</span>
+                <span className="module-palette-text">
+                  <b>{definition.title}</b>
+                  <small>{definition.description || definition.id}</small>
+                </span>
+                <span className="module-palette-inputs">{definition.inputs.map((input) => input.name).join(" · ")}</span>
+              </button>
+            ))}
+            {!library.ready && <p className="muted">Читаю папку modules…</p>}
+            {library.ready && paletteItems.length === 0 && <p className="muted">В папке modules нет шаблонов под этот запрос.</p>}
+          </div>
+          <p className="module-palette-note">
+            Шаблоны лежат в папке <code>modules</code>: <code>{library.definitions.length}</code> шт.
+            Настройки шаблона — входы и поля — читаются из JSON.
+          </p>
+          {library.error && <div className="inline-error">{library.error}</div>}
+        </div>
+      )}
     </div>
   );
 }
 
-function clamp(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
+function FieldControl(props: {
+  field: ModuleField;
+  module: ModuleInstance;
+  devices: DeviceOption[];
+  live: boolean;
+  onValue: (value: number | string | boolean, label?: string) => void;
+  onRefreshDevices: () => void;
+}) {
+  const { field, module } = props;
+  const value = module.config[field.key] ?? field.default;
+
+  if (field.type === "flag") {
+    return (
+      <label className="module-check" title={field.hint}>
+        <input type="checkbox" checked={value === true} onChange={(event) => props.onValue(event.target.checked, field.label)} />
+        <span>{field.label}</span>
+      </label>
+    );
+  }
+
+  if (field.type === "device") {
+    return (
+      <label className="select-field module-device">
+        <span>{field.label}</span>
+        <div>
+          <select
+            value={typeof value === "string" && value ? value : "default"}
+            onChange={(event) => props.onValue(event.target.value === "default" ? "" : event.target.value, "Микрофон модуля")}
+          >
+            <option value="default">Системный по умолчанию</option>
+            {props.devices.map((device) => (
+              <option key={device.id} value={device.id}>{device.label}</option>
+            ))}
+          </select>
+          <button className="icon-button" title="Обновить список микрофонов" onClick={props.onRefreshDevices}><RefreshCw size={12} /></button>
+        </div>
+      </label>
+    );
+  }
+
+  if (field.type === "select") {
+    const options = field.options || [];
+    return (
+      <label className="select-field" title={field.hint}>
+        <span>{field.label}</span>
+        <select
+          value={String(value ?? options[0]?.value ?? "")}
+          onChange={(event) => props.onValue(event.target.value, field.label)}
+        >
+          {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </label>
+    );
+  }
+
+  const numeric = typeof value === "number" ? value : Number(value ?? field.default ?? 0);
+  return (
+    <label className="module-number" title={field.hint}>
+      <span>{field.label}{field.suffix ? `, ${field.suffix}` : ""}</span>
+      <input
+        type="number"
+        min={field.min}
+        max={field.max}
+        step={field.step ?? 1}
+        value={Number.isFinite(numeric) ? numeric : 0}
+        onChange={(event) => props.onValue(clampNumber(Number(event.target.value), field), field.label)}
+      />
+    </label>
+  );
+}
+
+function clampNumber(value: number, field: ModuleField): number {
+  if (!Number.isFinite(value)) return Number(field.default ?? 0);
+  const min = field.min ?? -Infinity;
+  const max = field.max ?? Infinity;
   return Math.min(max, Math.max(min, value));
 }

@@ -542,3 +542,127 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .module-dialog-list small { color: #66717a; }
 
 .dialog-note.small { color: #66717a; font-size: 10px; line-height: 1.5; }
+
+/* ---------- Панель модулей: поиск, поля шаблона, библиотека ---------- */
+.module-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: #0f1215;
+  color: #6c7780;
+}
+
+.module-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: #d8e2e8; font-size: 10px; }
+.module-search input:focus { outline: none; }
+.module-search input::placeholder { color: #55606a; }
+.module-search b { color: #6c7780; font-size: 9px; font-variant-numeric: tabular-nums; }
+
+.module-description { margin: 0; color: #6d7883; font-size: 9px; line-height: 1.45; }
+
+.module-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.module-device > div { display: flex; align-items: center; gap: 4px; }
+.module-device select { max-width: 200px; }
+
+.module-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding-top: 7px;
+  border-top: 1px dashed #232a31;
+}
+
+.module-inputs-title {
+  color: #5d6872;
+  font-size: 8px;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+
+.module-input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border: 1px solid #252c33;
+  border-radius: 3px;
+  color: #9fb4c2;
+  cursor: pointer;
+}
+
+.module-input-chip code { font: 9px "Cascadia Code", ui-monospace, monospace; }
+.module-input-chip input { width: 10px; height: 10px; accent-color: var(--accent); }
+.module-input-chip.off { opacity: .42; }
+.module-input-chip.off code { text-decoration: line-through; }
+
+.module-add-button { flex: 1; justify-content: center; }
+.module-add-button.active { border-color: var(--accent-dim); color: var(--accent); }
+
+.module-palette {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #171b20;
+  box-shadow: 0 -10px 26px #00000066;
+}
+
+.module-palette-list { display: flex; flex-direction: column; gap: 3px; max-height: 230px; overflow: auto; }
+
+.module-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.module-palette-item:hover { background: #1e242a; border-color: #2b333b; }
+
+.module-palette-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: #82d5c112;
+  color: var(--accent);
+}
+
+.module-palette-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.module-palette-text b { color: #cdd8df; font-size: 10px; font-weight: 600; }
+.module-palette-text small { color: #6d7883; font-size: 8.5px; line-height: 1.35; }
+.module-palette-inputs { color: #55606a; font: 8px "Cascadia Code", ui-monospace, monospace; white-space: nowrap; }
+.module-palette-note { margin: 0; color: #5d6872; font-size: 8px; line-height: 1.45; }
+.module-palette-note code { color: #7f8a94; }
+
+.input-slider em { color: #5d6872; font-size: 8px; font-style: normal; }
+
+/* ---------- Стартовая заглушка, пока читается папка modules ---------- */
+.app-loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-loading > span { font-size: 15px; font-weight: 650; letter-spacing: -.3px; }
+.app-loading > span span { color: var(--accent); }
+.app-loading > small { color: var(--faint); font-size: 9px; letter-spacing: .4px; }

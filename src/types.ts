@@ -91,11 +91,22 @@ export interface InputValues {
   signals: Record<string, number>;
 }
 
-export type ModuleType = "loudness" | "viseme" | "manual";
+/**
+ * Реализация модуля в коде. Шаблоны из папки `modules` описывают входы и
+ * настройки, а поведение выбирается по этому полю.
+ */
+export type ModuleKind = "loudness" | "manual" | "autoblink" | "viseme";
+
+/** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */
+export type ModuleType = string;
 
 /** Откуда экземпляр берёт значения: с микрофона или из ползунков. */
 export type ModuleSource = "live" | "manual";
 
+/**
+ * Настройки экземпляра. Ключи задаёт шаблон модуля (`fields` в JSON),
+ * поэтому набор открытый.
+ */
 export interface ModuleConfig {
   /** Идентификатор устройства из `navigator.mediaDevices`. */
   deviceId?: string;
@@ -105,6 +116,7 @@ export interface ModuleConfig {
   threshold?: number;
   /** Обработка браузера: эхоподавление, шумоподавление, АРУ. */
   processing?: boolean;
+  [key: string]: number | string | boolean | undefined;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */
@@ -115,6 +127,11 @@ export interface ModuleInstance {
   enabled: boolean;
   source: ModuleSource;
   config: ModuleConfig;
+  /**
+   * Выключенные входы. Такой вход не считается и не уходит в кадр вовсе:
+   * ядро сообщит «неизвестное имя», если скрипт его всё-таки читает.
+   */
+  disabledInputs?: string[];
 }
 
 /** Геометрические подсказки в сцене: выключены, только выделенное или всё. */
@@ -146,6 +163,7 @@ export interface EditorLayout {
 export const DEFAULT_INPUTS: InputValues = { values: {}, signals: {} };
 
 /** Набор модулей нового пресета: микрофон и ручные входы. */
+/** Стартовый набор нового пресета: микрофон, авто-моргание и ручной вход. */
 export const DEFAULT_MODULES: ModuleInstance[] = [
   {
     name: "mic",
@@ -155,11 +173,18 @@ export const DEFAULT_MODULES: ModuleInstance[] = [
     config: { gain: 1, threshold: -43, processing: false },
   },
   {
+    name: "auto",
+    type: "autoblink",
+    enabled: true,
+    source: "manual",
+    config: { period: 4200, hold: 140, jitter: 35, min: 0, max: 1 },
+  },
+  {
     name: "manual",
     type: "manual",
     enabled: true,
     source: "manual",
-    config: {},
+    config: { mode: "number", min: 0, max: 1, step: 0.01 },
   },
 ];
 

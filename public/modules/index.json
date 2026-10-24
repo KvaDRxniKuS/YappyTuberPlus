@@ -1,0 +1,3 @@
+{
+  "modules": ["loudness", "autoblink", "manual", "viseme"]
+}

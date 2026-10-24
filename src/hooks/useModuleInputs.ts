@@ -1,39 +1,49 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InputValues, ModuleInstance } from "../types";
 import { AudioInputEngine, type AudioFrame, type DeviceOption } from "../modules/audio";
-import { moduleDefinition } from "../modules/registry";
-import { composeValues } from "../modules/values";
+import { inputRange, moduleDefinition } from "../modules/registry";
+import { composeValues, inputEnabled, inputKey } from "../modules/values";
 
 export interface ModuleInputsApi {
-  /** Готовый набор для ядра: `mic.talking`, `manual.blink` и прочие входы. */
+  /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
   inputs: InputValues;
   audio: Record<string, AudioFrame>;
   manual: Record<string, number>;
+  /** Значения авто-модулей (моргание по таймеру). */
+  auto: Record<string, number>;
   devices: DeviceOption[];
-  /** Звук включён пользователем (жест был, разрешение запрошено). */
+  /** Звук запущен: есть хотя бы один включённый микрофонный модуль. */
   active: boolean;
   error: string | null;
   contextState: string;
   start: () => Promise<void>;
   stop: () => void;
   setManual: (key: string, value: number) => void;
-  pulse: (key: string, durationMs?: number) => void;
   refreshDevices: () => Promise<void>;
 }
 
+const BLINK_TICK = 33;
+
 /**
- * Связывает модули с ядром. Живые модули получают значения из аудио,
- * ручные — из ползунков; всё сводится в плоский словарь `<имя>.<вход>`.
+ * Связывает модули с ядром. Микрофонные модули берут значения из звука,
+ * ручные — из ползунков, авто-модули (моргание) считаются по таймеру.
+ *
+ * Кнопки «включить микрофон» больше нет: звук поднимается сам, как только в
+ * модели появляется включённый микрофонный модуль. Браузер требует жест, чтобы
+ * `AudioContext` вышел из `suspended`, поэтому первое нажатие в приложении
+ * дополнительно будит контекст.
  */
-export function useModuleInputs(modules: ModuleInstance[]): ModuleInputsApi {
+export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): ModuleInputsApi {
   const engineRef = useRef<AudioInputEngine | null>(null);
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [audio, setAudio] = useState<Record<string, AudioFrame>>({});
   const [manual, setManualValues] = useState<Record<string, number>>({});
+  const [auto, setAuto] = useState<Record<string, number>>({});
   const [devices, setDevices] = useState<DeviceOption[]>([]);
   const [contextState, setContextState] = useState("closed");
-  const pulseTimers = useRef(new Map<string, number>());
+  const starting = useRef(false);
+  const schedules = useRef(new Map<string, { next: number; until: number }>());
 
   const engine = useCallback(() => {
     if (!engineRef.current) engineRef.current = new AudioInputEngine();
@@ -57,9 +67,65 @@ export function useModuleInputs(modules: ModuleInstance[]): ModuleInputsApi {
 
   const liveModules = useMemo(
     () => modules.filter((module) => module.enabled && module.source === "live" && moduleDefinition(module.type).audio),
-    [modules],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modules, libraryVersion],
   );
   const liveKey = JSON.stringify(liveModules.map((module) => [module.name, module.config.deviceId, module.config.processing]));
+  const needsAudio = liveModules.length > 0;
+
+  const start = useCallback(async () => {
+    if (starting.current) return;
+    starting.current = true;
+    setError(null);
+    const current = engine();
+    try {
+      await current.start((values) => setAudio(values));
+      setActive(true);
+      setContextState(current.state);
+      await refreshDevices();
+    } catch (reason) {
+      setError(describe(reason));
+      setActive(false);
+      setContextState(current.state);
+    } finally {
+      starting.current = false;
+    }
+  }, [engine, refreshDevices]);
+
+  const stop = useCallback(() => {
+    engineRef.current?.stop();
+    setActive(false);
+    setAudio({});
+    setContextState(engineRef.current?.state ?? "closed");
+  }, []);
+
+  // Звук поднимается сам: модуль микрофона включён — значит, он нужен.
+  useEffect(() => {
+    if (!needsAudio) {
+      if (active) stop();
+      return;
+    }
+    if (!active && !starting.current) void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsAudio]);
+
+  // Первый жест пользователя в приложении — повод разбудить AudioContext,
+  // если браузер не дал создать его «молча». Контекст может остаться
+  // `suspended` уже после успешного start(), поэтому проверяем его состояние,
+  // а не только флаг active.
+  useEffect(() => {
+    const wake = () => {
+      if (!needsAudio) return;
+      const current = engineRef.current;
+      if (!current || current.state === "suspended") void start();
+    };
+    window.addEventListener("pointerdown", wake);
+    window.addEventListener("keydown", wake);
+    return () => {
+      window.removeEventListener("pointerdown", wake);
+      window.removeEventListener("keydown", wake);
+    };
+  }, [needsAudio, active, start]);
 
   /** Пересобирает подключения к микрофонам при смене модулей или устройств. */
   useEffect(() => {
@@ -99,58 +165,86 @@ export function useModuleInputs(modules: ModuleInstance[]): ModuleInputsApi {
     if (current) for (const module of liveModules) current.setSettings(module.name, module.config);
   }, [active, liveModules]);
 
+  // --- авто-модули: моргание по таймеру -------------------------------------
+  const autoModules = useMemo(
+    () => modules.filter((module) => module.enabled && moduleDefinition(module.type).kind === "autoblink"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modules, libraryVersion],
+  );
+  const autoKey = JSON.stringify(autoModules.map((module) => [
+    module.name,
+    module.config.period, module.config.hold, module.config.jitter, module.config.min, module.config.max,
+    module.disabledInputs,
+  ]));
+
+  useEffect(() => {
+    schedules.current.clear();
+    if (autoModules.length === 0) {
+      setAuto({});
+      return;
+    }
+    const tick = () => {
+      const now = performance.now();
+      const next: Record<string, number> = {};
+      for (const module of autoModules) {
+        const definition = moduleDefinition(module.type);
+        const spec = definition.inputs[0];
+        if (!spec || !inputEnabled(module, spec.name)) continue;
+        const range = inputRange(module, spec);
+        const period = clamp(Number(module.config.period) || 4200, 500, 20000);
+        const hold = clamp(Number(module.config.hold) || 140, 40, 2000);
+        const jitter = clamp(Number(module.config.jitter) || 0, 0, 90) / 100;
+        let schedule = schedules.current.get(module.name);
+        if (!schedule) {
+          // Первое моргание — не сразу, а через половину интервала: так не
+          // выглядит, будто персонаж моргает при каждом запуске.
+          schedule = { next: now + period * (0.5 + Math.random() * 0.5), until: 0 };
+          schedules.current.set(module.name, schedule);
+        }
+        if (now >= schedule.next) {
+          schedule.until = now + hold;
+          schedule.next = now + Math.max(hold + 40, period * (1 + (Math.random() * 2 - 1) * jitter));
+        }
+        next[inputKey(module, spec.name)] = now < schedule.until ? range.max : range.min;
+      }
+      setAuto((current) => sameRecord(current, next) ? current : next);
+    };
+    tick();
+    const timer = window.setInterval(tick, BLINK_TICK);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey]);
+
   useEffect(() => () => {
-    for (const timer of pulseTimers.current.values()) window.clearTimeout(timer);
-    pulseTimers.current.clear();
     engineRef.current?.dispose();
     engineRef.current = null;
-  }, []);
-
-  const start = useCallback(async () => {
-    setError(null);
-    const current = engine();
-    try {
-      await current.start((values) => setAudio(values));
-      setActive(true);
-      setContextState(current.state);
-      await refreshDevices();
-    } catch (reason) {
-      setError(describe(reason));
-      setActive(false);
-      setContextState(current.state);
-    }
-  }, [engine, refreshDevices]);
-
-  const stop = useCallback(() => {
-    engineRef.current?.stop();
-    setActive(false);
-    setAudio({});
-    setContextState(engineRef.current?.state ?? "closed");
   }, []);
 
   const setManual = useCallback((key: string, value: number) => {
     setManualValues((current) => ({ ...current, [key]: value }));
   }, []);
 
-  const pulse = useCallback((key: string, durationMs = 160) => {
-    setManualValues((current) => ({ ...current, [key]: 1 }));
-    const existing = pulseTimers.current.get(key);
-    if (existing) window.clearTimeout(existing);
-    pulseTimers.current.set(key, window.setTimeout(() => {
-      pulseTimers.current.delete(key);
-      setManualValues((current) => ({ ...current, [key]: 0 }));
-    }, durationMs));
-  }, []);
-
   const inputs = useMemo<InputValues>(() => ({
-    values: composeValues(modules, audio, manual),
+    values: composeValues(modules, { audio, manual, auto }),
     signals: {},
-  }), [modules, audio, manual]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [modules, audio, manual, auto, libraryVersion]);
 
   return {
-    inputs, audio, manual, devices, active, error, contextState,
-    start, stop, setManual, pulse, refreshDevices,
+    inputs, audio, manual, auto, devices, active, error, contextState,
+    start, stop, setManual, refreshDevices,
   };
+}
+
+function sameRecord(left: Record<string, number>, right: Record<string, number>): boolean {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 function describe(reason: unknown): string {

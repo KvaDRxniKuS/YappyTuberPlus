@@ -1,0 +1,16 @@
+{
+  "id": "viseme",
+  "title": "Viseme",
+  "description": "Ручные виземы A/E/I/O/U — заглушка вместо настоящего липсинка.",
+  "kind": "viseme",
+  "audio": false,
+  "inputs": [
+    { "name": "a", "label": "A", "kind": "level", "min": 0, "max": 1 },
+    { "name": "e", "label": "E", "kind": "level", "min": 0, "max": 1 },
+    { "name": "i", "label": "I", "kind": "level", "min": 0, "max": 1 },
+    { "name": "o", "label": "O", "kind": "level", "min": 0, "max": 1 },
+    { "name": "u", "label": "U", "kind": "level", "min": 0, "max": 1 }
+  ],
+  "fields": [],
+  "defaults": {}
+}

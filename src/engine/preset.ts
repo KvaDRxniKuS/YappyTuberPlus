@@ -4,7 +4,7 @@ import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type ModuleInstance, type OverlayConfig,
   type RigObject, type RigPreset,
 } from "../types";
-import { isKnownModuleType, moduleDefinition } from "../modules/registry";
+import { hasModule, moduleDefinition, type ModuleField } from "../modules/registry";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -145,7 +145,37 @@ export function normalizePreset(value: unknown): RigPreset | null {
   });
 }
 
-/** Приводит список модулей к известным типам; чужие сохраняются как `manual`. */
+/** Приводит настройки экземпляра к полям шаблона: типы и границы. */
+function normalizeConfig(fields: ModuleField[], raw: unknown): Record<string, number | string | boolean | undefined> {
+  const source = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const config: Record<string, number | string | boolean | undefined> = {};
+  for (const field of fields) {
+    const value = source[field.key] ?? field.default;
+    if (field.type === "flag") {
+      config[field.key] = value === true;
+      continue;
+    }
+    if (field.type === "number") {
+      const parsed = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(parsed)) { config[field.key] = field.default; continue; }
+      const min = field.min ?? -Infinity;
+      const max = field.max ?? Infinity;
+      config[field.key] = Math.min(max, Math.max(min, parsed));
+      continue;
+    }
+    // select/device: строка; пустое значение означает «по умолчанию».
+    config[field.key] = typeof value === "string" && value ? value : field.default;
+  }
+  // Поля, которых нет в шаблоне, но которые были сохранены раньше, не теряем:
+  // так ручные настройки не пропадают при правке JSON.
+  for (const [key, value] of Object.entries(source)) {
+    if (key in config) continue;
+    if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") config[key] = value;
+  }
+  return config;
+}
+
+/** Приводит список модулей к известным шаблонам; неизвестные остаются как есть. */
 export function normalizeModules(value: unknown): ModuleInstance[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -156,19 +186,18 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const name = typeof item.name === "string" ? item.name.trim() : "";
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    const type = item.type && isKnownModuleType(item.type) ? item.type : "manual";
-    const config = item.config && typeof item.config === "object" ? item.config : {};
+    const type = typeof item.type === "string" && hasModule(item.type) ? item.type : "manual";
+    const definition = moduleDefinition(type);
+    const disabled = Array.isArray(item.disabledInputs)
+      ? item.disabledInputs.filter((input): input is string => typeof input === "string" && definition.inputs.some((spec) => spec.name === input))
+      : [];
     modules.push({
       name,
       type,
       enabled: item.enabled !== false,
-      source: item.source === "manual" ? "manual" : moduleDefinition(type).audio ? "live" : "manual",
-      config: {
-        deviceId: typeof config.deviceId === "string" ? config.deviceId : undefined,
-        gain: Number.isFinite(config.gain) ? Number(config.gain) : undefined,
-        threshold: Number.isFinite(config.threshold) ? Number(config.threshold) : undefined,
-        processing: config.processing === true,
-      },
+      source: item.source === "manual" || !definition.audio ? "manual" : "live",
+      config: normalizeConfig(definition.fields, item.config),
+      ...(disabled.length > 0 ? { disabledInputs: disabled } : {}),
     });
   }
   return modules;

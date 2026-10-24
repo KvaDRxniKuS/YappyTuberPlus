@@ -77,9 +77,7 @@ export function createDemoPreset(): RigPreset {
     version: 2,
     name: "Mochi — стартовый риг",
     canvas: { width: 1000, height: 600 },
-    globals: `blink_min = 2500
-blink_max = 6500
-blink = max(autoblink(blink_min, blink_max), manual.blink)
+    globals: `blink = auto.blink
 breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
     runtime: { fpsMode: "limited", fpsLimit: 60 },
     overlay: { ...DEFAULT_OVERLAY },

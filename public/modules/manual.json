@@ -1,0 +1,20 @@
+{
+  "id": "manual",
+  "title": "Manual",
+  "description": "Ручной вход: тумблер 0/1 или число с границами. Всегда регулируется ползунком.",
+  "kind": "manual",
+  "audio": false,
+  "inputs": [
+    { "name": "value", "label": "Значение", "kind": "level", "min": 0, "max": 1 }
+  ],
+  "fields": [
+    { "key": "mode", "label": "Режим", "type": "select", "default": "number", "options": [
+      { "value": "flag", "label": "0 / 1" },
+      { "value": "number", "label": "Число" }
+    ] },
+    { "key": "min", "label": "Минимум", "type": "number", "min": -1000, "max": 1000, "step": 0.01, "default": 0, "showWhen": { "mode": "number" } },
+    { "key": "max", "label": "Максимум", "type": "number", "min": -1000, "max": 1000, "step": 0.01, "default": 1, "showWhen": { "mode": "number" } },
+    { "key": "step", "label": "Шаг", "type": "number", "min": 0.001, "max": 100, "step": 0.001, "default": 0.01, "showWhen": { "mode": "number" } }
+  ],
+  "defaults": { "mode": "number", "min": 0, "max": 1, "step": 0.01 }
+}

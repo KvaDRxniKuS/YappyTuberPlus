@@ -1,38 +1,95 @@
-import { test, expect } from "@playwright/test";
-import { composeValues, ensureModules, migrateLegacyScript, sanitizeModuleName, uniqueModuleName, validateModules } from "../../src/modules/values";
+import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  moduleDefaults, moduleDefinition, normalizeDefinition, registerDefinitions,
+} from "../../src/modules/registry";
+import {
+  composeValues, ensureModules, migrateLegacyScript, sanitizeModuleName, uniqueModuleName, validateModules,
+} from "../../src/modules/values";
 import { normalizeModules } from "../../src/engine/preset";
 import { createDemoPreset, createEmptyPreset } from "../../src/data/demoPreset";
-import { DEFAULT_MODULES, type RigPreset } from "../../src/types";
+import { DEFAULT_MODULES, type ModuleInstance, type RigPreset } from "../../src/types";
+
+/**
+ * В браузере шаблоны читаются из папки `modules` через fetch, а в Node его нет —
+ * поэтому тесты кладут те же JSON-файлы в библиотеку руками.
+ */
+test.beforeAll(() => {
+  const directory = join(process.cwd(), "public", "modules");
+  const index = JSON.parse(readFileSync(join(directory, "index.json"), "utf8")) as { modules: string[] };
+  const definitions = index.modules
+    .map((id) => normalizeDefinition(JSON.parse(readFileSync(join(directory, `${id}.json`), "utf8"))))
+    .filter((definition) => definition !== null);
+  registerDefinitions(definitions);
+});
+
+const module = (name: string, type: string, extra: Partial<ModuleInstance> = {}): ModuleInstance => ({
+  name,
+  type,
+  enabled: true,
+  source: moduleDefinition(type).audio ? "live" : "manual",
+  config: moduleDefaults(moduleDefinition(type)),
+  ...extra,
+});
+
+test("библиотека шаблонов читается из папки modules", () => {
+  expect(moduleDefinition("loudness").inputs.map((input) => input.name)).toEqual(["speak", "loudness", "db", "talking"]);
+  expect(moduleDefinition("autoblink").inputs.map((input) => input.name)).toEqual(["blink"]);
+  expect(moduleDefinition("manual").inputs.map((input) => input.name)).toEqual(["value"]);
+  // Поля с настройками есть у каждого нового модуля.
+  expect(moduleDefinition("autoblink").fields.map((field) => field.key)).toContain("period");
+  expect(moduleDefinition("manual").fields.map((field) => field.key)).toContain("mode");
+});
 
 test("входы собираются как <модуль>.<вход> для включённых модулей", () => {
   const modules = [
-    { name: "mic_left", type: "loudness" as const, enabled: true, source: "live" as const, config: {} },
-    { name: "mic_right", type: "loudness" as const, enabled: true, source: "live" as const, config: {} },
-    { name: "off", type: "loudness" as const, enabled: false, source: "live" as const, config: {} },
+    module("mic_left", "loudness"),
+    module("mic_right", "loudness"),
+    module("off", "loudness", { enabled: false }),
   ];
-  const values = composeValues(
-    modules,
-    {
+  const values = composeValues(modules, {
+    audio: {
       mic_left: { speak: 0.6, loudness: 0.8, db: -18, talking: 1 },
       mic_right: { speak: 0.1, loudness: 0.2, db: -44, talking: 0 },
       off: { speak: 1, loudness: 1, db: 0, talking: 1 },
     },
-    {},
-  );
+    manual: {},
+    auto: {},
+  });
   expect(values["mic_left.talking"]).toBe(1);
   expect(values["mic_right.db"]).toBe(-44);
   // Выключенный модуль не попадает в словарь вообще.
-  expect(values["off.talking"]).toBeUndefined();
   expect(Object.keys(values).filter((key) => key.startsWith("off."))).toHaveLength(0);
 });
 
-test("ручной модуль берёт значения из ползунков, а не из звука", () => {
-  const modules = [
-    { name: "viseme", type: "viseme" as const, enabled: true, source: "manual" as const, config: {} },
-  ];
-  const values = composeValues(modules, {}, { "viseme.a": 0.4 });
-  expect(values["viseme.a"]).toBe(0.4);
-  expect(values["viseme.e"]).toBe(0);
+test("выключенный вход не уходит в кадр", () => {
+  const mic = module("mic", "loudness", { disabledInputs: ["db", "loudness"] });
+  const values = composeValues([mic], { audio: { mic: { speak: 0.5, db: -20 } }, manual: {}, auto: {} });
+  expect(values["mic.speak"]).toBe(0.5);
+  expect(values["mic.db"]).toBeUndefined();
+  expect(values["mic.loudness"]).toBeUndefined();
+});
+
+test("ручной модуль берёт значение из ползунка, авто-модуль — из таймера", () => {
+  const manual = module("manual", "manual");
+  const auto = module("auto", "autoblink");
+  const values = composeValues([manual, auto], {
+    audio: {},
+    manual: { "manual.value": 0.4 },
+    auto: { "auto.blink": 1 },
+  });
+  expect(values["manual.value"]).toBe(0.4);
+  expect(values["auto.blink"]).toBe(1);
+});
+
+test("границы ручного и авто-модуля берутся из настроек экземпляра", () => {
+  const manual = module("manual", "manual", { config: { ...moduleDefinition("manual").defaults, min: -5, max: 5 } });
+  const auto = module("auto", "autoblink", { config: { ...moduleDefinition("autoblink").defaults, min: 0.2, max: 0.9 } });
+  // Пока ползунок не трогали, ручной вход стоит на минимуме своих границ.
+  const values = composeValues([manual, auto], { audio: {}, manual: {}, auto: {} });
+  expect(values["manual.value"]).toBe(-5);
+  expect(values["auto.blink"]).toBe(0.2);
 });
 
 test("имена модулей пригодны для скрипта и не повторяются", () => {
@@ -56,8 +113,11 @@ test("старые входы переписываются в имена мод�
   expect(migrated.used.sort()).toEqual(["mic", "viseme"]);
 
   const blinking = migrateLegacyScript("blink = max(autoblink(1000, 2000), signal.blink)");
-  expect(blinking.script).toContain("manual.blink");
-  expect(blinking.used).toContain("manual");
+  expect(blinking.script).toContain("auto.blink");
+  expect(blinking.used).toContain("auto");
+
+  const manualBlink = migrateLegacyScript("x = manual.blink * 2");
+  expect(manualBlink.script).toBe("x = auto.blink * 2");
 });
 
 test("переименование не задевает похожие идентификаторы", () => {
@@ -77,8 +137,8 @@ test("пресет без модулей получает набор модул�
     })),
   } as unknown as RigPreset;
   const fixed = ensureModules(legacy);
-  expect(fixed.modules.map((module) => module.name)).toEqual(["mic", "manual"]);
-  expect(fixed.globals).toContain("manual.blink");
+  expect(fixed.modules.map((item) => item.name)).toEqual(["mic", "auto", "manual"]);
+  expect(fixed.globals).toContain("auto.blink");
   expect(fixed.objects.some((object) => object.script.includes("mic.talking"))).toBe(true);
 });
 
@@ -93,27 +153,33 @@ test("пресет с виземами получает модуль Viseme", ()
     }],
   } as unknown as RigPreset;
   const fixed = ensureModules(legacy);
-  expect(fixed.modules.map((module) => module.name)).toContain("viseme");
+  expect(fixed.modules.map((item) => item.name)).toContain("viseme");
   expect(fixed.objects[0].script).toBe("x = viseme.a * 10");
 });
 
-test("нормализация модулей отбрасывает дубли и чужие типы", () => {
+test("нормализация модулей отбрасывает дубли, чужие типы и лишние входы", () => {
   const modules = normalizeModules([
-    { name: "mic", type: "loudness", enabled: true, source: "live", config: { gain: 2 } },
+    { name: "mic", type: "loudness", enabled: true, source: "live", config: { gain: 2, threshold: -1000 } },
     { name: "mic", type: "manual", enabled: true },
     { name: "weird", type: "unknown-type", enabled: false },
+    { name: "auto", type: "autoblink", enabled: true, disabledInputs: ["blink", "нет-такого"] },
     { name: "", type: "manual" },
   ]);
-  expect(modules).toHaveLength(2);
+  expect(modules).toHaveLength(3);
+  // Усиление сохраняется, а порог зажимается в границы поля.
   expect(modules[0].config.gain).toBe(2);
+  expect(modules[0].config.threshold).toBe(-80);
   expect(modules[1].type).toBe("manual");
+  expect(modules[2].source).toBe("manual");
+  // Неизвестное имя входа отбрасывается, известное остаётся выключенным.
+  expect(modules[2].disabledInputs).toEqual(["blink"]);
   expect(validateModules(modules)).toHaveLength(0);
 });
 
 test("демо-пресет и пустой пресет согласованы с модулями", () => {
   const demo = createDemoPreset();
   expect(demo.modules).toHaveLength(DEFAULT_MODULES.length);
-  expect(demo.globals).toContain("manual.blink");
+  expect(demo.globals).toContain("auto.blink");
   expect(demo.objects.some((object) => object.script.includes("mic.talking"))).toBe(true);
   expect(createEmptyPreset("x").modules).toEqual([]);
 });

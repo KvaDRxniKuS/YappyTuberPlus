@@ -44,7 +44,7 @@ interface ScriptEditorProps {
   value: string;
   objectIds: string[];
   globals: string[];
-  /** Полные имена входов модулей: `mic.talking`, `manual.blink`. */
+  /** Полные имена входов модулей: `mic.talking`, `auto.blink`, `manual.value`. */
   moduleInputs?: string[];
   onApply: (value: string) => void;
 }

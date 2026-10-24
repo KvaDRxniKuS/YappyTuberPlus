@@ -23,6 +23,7 @@ import { useRigEngine } from "./engine/useRigEngine";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { useModuleInputs } from "./hooks/useModuleInputs";
+import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
   type ModuleInstance, type RigObject, type RigPreset,
@@ -69,7 +70,8 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const presetRef = useRef(preset);
-  const moduleInputs = useModuleInputs(preset.modules);
+  const library = useModuleLibrary();
+  const moduleInputs = useModuleInputs(preset.modules, library.version);
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
   const selectionRef = useRef(selection);
@@ -539,6 +541,17 @@ export default function App() {
     });
   };
 
+  // Библиотека модулей читается из папки modules при старте. Ждём её, иначе
+  // первый кадр ушёл бы в ядро без входов и завалил диагностику именами.
+  if (!library.ready) {
+    return (
+      <div className="app-loading">
+        <span>YappyTuber<span>Plus</span></span>
+        <small>Загрузка модулей…</small>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -716,8 +729,8 @@ export default function App() {
           modules={preset.modules}
           audio={moduleInputs.audio}
           manual={moduleInputs.manual}
+          auto={moduleInputs.auto}
           devices={moduleInputs.devices}
-          audioActive={moduleInputs.active}
           audioError={moduleInputs.error}
           editorHeight={layout.rightEditorHeight}
           onEditorHeight={(delta) => resize("rightEditorHeight", delta)}
@@ -726,9 +739,6 @@ export default function App() {
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
-          onPulse={moduleInputs.pulse}
-          onStartAudio={() => void moduleInputs.start()}
-          onStopAudio={moduleInputs.stop}
           onRefreshDevices={() => void moduleInputs.refreshDevices()}
         /></div>
       </div>
