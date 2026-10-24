@@ -8,6 +8,8 @@ import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
 import { Splitter } from "./Splitter";
+import type { ScriptCheck } from "../engine/scripts";
+import { namedTriggers } from "../engine/scripts";
 
 interface RightPanelProps {
   selected: RigObject | null;
@@ -32,6 +34,10 @@ interface RightPanelProps {
   onGlobalScript: (script: string) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
+  /** Вставка готового блока события в скрипт. */
+  onInsertSnippet: (snippet: string) => void;
+  /** Проверка скрипта в ядре: подсветка ошибки. */
+  checkScript?: ScriptCheck;
   calibrate: CalibrationApi["calibrate"];
   cancelCalibration: CalibrationApi["cancelCalibration"];
 }
@@ -74,6 +80,7 @@ export function RightPanel(props: RightPanelProps) {
           frame={props.frame}
           onManual={props.onManual}
           onModules={props.onModules}
+          onInsertSnippet={props.onInsertSnippet}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />
@@ -92,6 +99,8 @@ export function RightPanel(props: RightPanelProps) {
             objectIds={props.objects.map((object) => object.id)}
             globals={props.globals}
             moduleInputs={props.modules.flatMap((module) => moduleInputKeys(module).map((item) => item.key))}
+            triggers={namedTriggers(props.globalScript)}
+            onCheck={props.checkScript}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}
         </div>

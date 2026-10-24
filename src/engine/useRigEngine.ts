@@ -178,6 +178,20 @@ export function useRigEngine(
     setEpoch((value) => value + 1);
   }, []);
 
+  /**
+   * Проверка одного скрипта: возвращает место ошибки разбора или `null`.
+   * Старое ядро не знает запрос `check` — тогда подсветки просто нет.
+   */
+  const checkScript = useCallback(async (source: string) => {
+    if (!backend) return null;
+    try {
+      const response = await backend.call({ op: "check", source });
+      return response.ok ? response.scriptError ?? null : null;
+    } catch {
+      return null;
+    }
+  }, [backend]);
+
   return {
     frameRef,
     snapshot,
@@ -186,5 +200,6 @@ export function useRigEngine(
     actualFps,
     backendLabel: backend?.label || "Rust · загрузка",
     resetTimeline,
+    checkScript,
   };
 }

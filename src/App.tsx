@@ -20,6 +20,7 @@ import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
 import { propagateBase, reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
+import { appendSnippet } from "./engine/scripts";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { useModuleInputs } from "./hooks/useModuleInputs";
@@ -800,6 +801,8 @@ export default function App() {
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
+          onInsertSnippet={insertEventSnippet}
+          checkScript={engine.checkScript}
           calibrate={moduleInputs.calibrate}
           cancelCalibration={moduleInputs.cancelCalibration}
         /></div>
@@ -852,6 +855,18 @@ export default function App() {
 
   function updateObjectScriptGlobals(globals: string) {
     commit({ ...presetRef.current, globals });
+  }
+
+  /**
+   * Вставка готового блока события из панели входов: в скрипт выбранного
+   * объекта, а если ничего не выбрано — в глобальный скрипт.
+   */
+  function insertEventSnippet(snippet: string) {
+    if (selected) {
+      updateObject({ ...selected, script: appendSnippet(selected.script, snippet) }, { label: "Вставка события" });
+    } else {
+      updateObjectScriptGlobals(appendSnippet(presetRef.current.globals, snippet));
+    }
   }
 }
 

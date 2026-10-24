@@ -1,5 +1,5 @@
 use crate::model::{BaseUpdate, Frame, InputValues, NodeKey, ObjectKind, Param, RigPreset, Vec2};
-use crate::parser::{parse_script, BinaryOp, EventKind, Expr, UnaryOp};
+use crate::parser::{parse_script, AssignTarget, BinaryOp, EventKind, EventSource, Expr, UnaryOp};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -14,12 +14,19 @@ enum Value {
     Signals,
 }
 
-/// Блок события, готовый к исполнению: источник, тип и цели тела.
+/// Условие, по которому срабатывает готовый блок события.
+#[derive(Debug, Clone)]
+enum CompiledTrigger {
+    /// `on start` — первый кадр после запуска или остановки.
+    Start,
+    /// Вход модуля: значение берётся из `inputs.values`.
+    Input { source: String, kind: EventKind },
+}
+
+/// Блок события, готовый к исполнению: условие, владелец и цели тела.
 #[derive(Debug, Clone)]
 struct CompiledEvent {
-    /// Вход-источник: `mouse.left`, `mic.talking`.
-    source: String,
-    kind: EventKind,
+    trigger: CompiledTrigger,
     /// Объект, в скрипте которого записан блок; `None` — глобальные переменные.
     owner: Option<String>,
     /// Что присвоить при срабатывании: узел и выражение.
@@ -71,9 +78,15 @@ pub struct Rig {
     cycle_nodes: BTreeSet<NodeKey>,
     diagnostics: BTreeSet<String>,
     states: HashMap<StateKey, RuntimeState>,
-    /// Блоки `on event.…` из глобального скрипта и скриптов объектов.
+    /// Блоки `on …` из глобального скрипта и скриптов объектов.
     events: Vec<CompiledEvent>,
     event_state: HashMap<usize, EventState>,
+    /// Записи чужим объектам из обычных присваиваний: применяются последними.
+    writes: Vec<(NodeKey, Arc<Expr>)>,
+    /// Первый кадр после запуска/остановки: для `on start`.
+    started: bool,
+    /// Ошибки разбора скриптов: сцена работает, а редактор показывает место ошибки.
+    compile_diagnostics: BTreeSet<String>,
     /// Переменные, которые существуют только потому, что их меняют события:
     /// между срабатываниями они держат значение прошлого кадра.
     persistent_globals: HashSet<String>,
@@ -138,59 +151,152 @@ impl Rig {
         let mut expressions = HashMap::new();
         let mut global_names = Vec::new();
         let mut events: Vec<CompiledEvent> = Vec::new();
+        let mut writes: Vec<(NodeKey, Arc<Expr>)> = Vec::new();
         let mut persistent_globals: HashSet<String> = HashSet::new();
-        let globals_script =
-            parse_script(&preset.globals).map_err(|e| format!("глобальные: {}", e))?;
-        for (name, expr) in &globals_script.assignments {
-            global_names.push(name.clone());
-            expressions.insert(NodeKey::Global(name.clone()), expr.clone());
-        }
-        for block in &globals_script.events {
-            let mut body = Vec::new();
-            for (name, expr) in &block.body {
-                if !global_names.iter().any(|existing| existing == name) {
-                    global_names.push(name.clone());
+        let mut compile_diagnostics: BTreeSet<String> = BTreeSet::new();
+        // Именованные события объявляются только в глобальном скрипте: так у них
+        // одно имя на всю сцену, и любой объект может на него подписаться.
+        let mut triggers: HashMap<String, (String, EventKind)> = HashMap::new();
+
+        match parse_script(&preset.globals) {
+            Ok(script) => {
+                for decl in &script.triggers {
+                    triggers.insert(decl.name.clone(), (decl.source.clone(), decl.kind.clone()));
                 }
-                if !expressions.contains_key(&NodeKey::Global(name.clone())) {
-                    persistent_globals.insert(name.clone());
+                for (target, expr) in &script.assignments {
+                    match target {
+                        AssignTarget::Local(name) => {
+                            global_names.push(name.clone());
+                            expressions.insert(NodeKey::Global(name.clone()), expr.clone());
+                        }
+                        AssignTarget::Foreign { object, param } => {
+                            match foreign_key(object, param, &object_indices) {
+                                Ok(key) => writes.push((key, expr.clone())),
+                                Err(message) => {
+                                    compile_diagnostics.insert(format!("глобальные: {}", message));
+                                }
+                            }
+                        }
+                    }
                 }
-                body.push((NodeKey::Global(name.clone()), expr.clone()));
+                for block in &script.events {
+                    let trigger = match resolve_trigger(&block.source, &triggers) {
+                        Ok(trigger) => trigger,
+                        Err(message) => {
+                            compile_diagnostics.insert(format!("глобальные: {}", message));
+                            continue;
+                        }
+                    };
+                    let mut body = Vec::new();
+                    for (target, expr) in &block.body {
+                        let key = match target {
+                            AssignTarget::Local(name) => {
+                                if !global_names.iter().any(|existing| existing == name) {
+                                    global_names.push(name.clone());
+                                }
+                                if !expressions.contains_key(&NodeKey::Global(name.clone())) {
+                                    persistent_globals.insert(name.clone());
+                                }
+                                NodeKey::Global(name.clone())
+                            }
+                            AssignTarget::Foreign { object, param } => {
+                                match foreign_key(object, param, &object_indices) {
+                                    Ok(key) => key,
+                                    Err(message) => {
+                                        compile_diagnostics.insert(format!("глобальные: {}", message));
+                                        continue;
+                                    }
+                                }
+                            }
+                        };
+                        body.push((key, expr.clone()));
+                    }
+                    events.push(CompiledEvent {
+                        trigger,
+                        owner: None,
+                        body,
+                    });
+                }
             }
-            events.push(CompiledEvent {
-                source: block.source.clone(),
-                kind: block.kind.clone(),
-                owner: None,
-                body,
-            });
+            Err(error) => {
+                compile_diagnostics.insert(format!("глобальные: {}", error));
+            }
         }
         global_names.sort();
 
         for object in &preset.objects {
-            let script =
-                parse_script(&object.script).map_err(|e| format!("{}: {}", object.id, e))?;
-            for (name, expr) in &script.assignments {
-                let param = Param::parse(name).ok_or_else(|| {
-                    format!(
-                        "{}: нельзя присвоить неизвестный параметр '{}'",
-                        object.id, name
-                    )
-                })?;
-                expressions.insert(NodeKey::Param(object.id.clone(), param), expr.clone());
+            let script = match parse_script(&object.script) {
+                Ok(script) => script,
+                Err(error) => {
+                    compile_diagnostics.insert(format!("{}: {}", object.id, error));
+                    continue;
+                }
+            };
+            if !script.triggers.is_empty() {
+                compile_diagnostics.insert(format!(
+                    "{}: 'trigger' объявляется только в глобальном скрипте",
+                    object.id
+                ));
+            }
+            for (target, expr) in &script.assignments {
+                match target {
+                    AssignTarget::Local(name) => match Param::parse(name) {
+                        Some(param) => {
+                            expressions
+                                .insert(NodeKey::Param(object.id.clone(), param), expr.clone());
+                        }
+                        None => {
+                            compile_diagnostics.insert(format!(
+                                "{}: нельзя присвоить неизвестный параметр '{}'",
+                                object.id, name
+                            ));
+                        }
+                    },
+                    AssignTarget::Foreign { object: other, param } => {
+                        match foreign_key(other, param, &object_indices) {
+                            Ok(key) => writes.push((key, expr.clone())),
+                            Err(message) => {
+                                compile_diagnostics.insert(format!("{}: {}", object.id, message));
+                            }
+                        }
+                    }
+                }
             }
             for block in &script.events {
+                let trigger = match resolve_trigger(&block.source, &triggers) {
+                    Ok(trigger) => trigger,
+                    Err(message) => {
+                        compile_diagnostics.insert(format!("{}: {}", object.id, message));
+                        continue;
+                    }
+                };
                 let mut body = Vec::new();
-                for (name, expr) in &block.body {
-                    let param = Param::parse(name).ok_or_else(|| {
-                        format!(
-                            "{}: в блоке события нельзя присвоить '{}'",
-                            object.id, name
-                        )
-                    })?;
-                    body.push((NodeKey::Param(object.id.clone(), param), expr.clone()));
+                for (target, expr) in &block.body {
+                    let key = match target {
+                        AssignTarget::Local(name) => match Param::parse(name) {
+                            Some(param) => NodeKey::Param(object.id.clone(), param),
+                            None => {
+                                compile_diagnostics.insert(format!(
+                                    "{}: в блоке события нельзя присвоить '{}'",
+                                    object.id, name
+                                ));
+                                continue;
+                            }
+                        },
+                        AssignTarget::Foreign { object: other, param } => {
+                            match foreign_key(other, param, &object_indices) {
+                                Ok(key) => key,
+                                Err(message) => {
+                                    compile_diagnostics.insert(format!("{}: {}", object.id, message));
+                                    continue;
+                                }
+                            }
+                        }
+                    };
+                    body.push((key, expr.clone()));
                 }
                 events.push(CompiledEvent {
-                    source: block.source.clone(),
-                    kind: block.kind.clone(),
+                    trigger,
                     owner: Some(object.id.clone()),
                     body,
                 });
@@ -225,6 +331,9 @@ impl Rig {
             states: HashMap::new(),
             events,
             event_state: HashMap::new(),
+            writes,
+            started: false,
+            compile_diagnostics,
             persistent_globals,
             inputs: InputValues::default(),
             now: 0.0,
@@ -285,8 +394,25 @@ impl Rig {
         // Стоп и перезапуск обнуляют события: следующее нажатие снова первое.
         if reset_clock {
             self.event_state.clear();
+            self.started = false;
         }
         self.fire_events();
+
+        // Записи чужим объектам идут сразу после событий: для всех остальных
+        // формул этого кадра параметр уже «задан снаружи», поэтому собственная
+        // формула объекта его не пересчитывает.
+        let writes = self.writes.clone();
+        for (key, expression) in writes {
+            let context = match &key {
+                NodeKey::Global(_) => NodeKey::Global(String::new()),
+                NodeKey::Param(id, _) => NodeKey::Param(id.clone(), Param::X),
+            };
+            let mut value = self.numeric(&expression, &context);
+            if matches!(&key, NodeKey::Param(_, Param::Visible)) {
+                value = value.round().clamp(0.0, 1.0);
+            }
+            self.cache.insert(key, value);
+        }
 
         let global_names = self.global_names.clone();
         for name in &global_names {
@@ -311,7 +437,12 @@ impl Rig {
             globals: BTreeMap::new(),
             objects: BTreeMap::new(),
             order: Vec::new(),
-            diagnostics: self.diagnostics.iter().cloned().collect(),
+            diagnostics: self
+                .compile_diagnostics
+                .iter()
+                .chain(self.diagnostics.iter())
+                .cloned()
+                .collect(),
         };
         for name in global_names {
             let key = NodeKey::Global(name.clone());
@@ -364,58 +495,69 @@ impl Rig {
     fn fire_events(&mut self) {
         let now = self.time;
         let seq = self.seq;
+        let first_frame = !self.started;
         for index in 0..self.events.len() {
-            let (source, kind, owner, body) = {
+            let (trigger, owner, body) = {
                 let event = &self.events[index];
                 (
-                    event.source.clone(),
-                    event.kind.clone(),
+                    event.trigger.clone(),
                     event.owner.clone(),
                     event.body.clone(),
                 )
             };
-            let value = self.inputs.values.get(&source).copied().unwrap_or(0.0);
-            let high = value > 0.5;
-            // `relax` — то же удержание, только условие обратное.
-            let active = if matches!(kind, EventKind::Relax(_)) { !high } else { high };
-            // Первое наблюдение запоминает текущее значение: иначе `change`
-            // срабатывал бы на старте сцены, а `down` — на уже зажатой клавише.
-            let state = self.event_state.entry(index).or_insert(EventState {
-                last: value,
-                since: 0.0,
-                fired: false,
-                active: false,
-                armed: 0,
-            });
-            let fired = match kind {
-                EventKind::Down => state.last <= 0.5 && high,
-                EventKind::Up => state.last > 0.5 && !high,
-                EventKind::Change => (value - state.last).abs() > 1e-9,
-                // Удержание срабатывает не в кадре, когда условие выполнилось, а
-                // следующим: так даже `hold(0)` и `relax(0)` отличаются от
-                // `down`/`up` и дают «на кадр позже».
-                EventKind::Hold(seconds) | EventKind::Relax(seconds) => {
-                    if !active {
-                        state.fired = false;
-                        state.active = false;
-                        false
+            let fired = match &trigger {
+                // `on start` — первый кадр после запуска, остановки или перезапуска.
+                CompiledTrigger::Start => first_frame,
+                CompiledTrigger::Input { source, kind } => {
+                    let value = self.inputs.values.get(source).copied().unwrap_or(0.0);
+                    let high = value > 0.5;
+                    // `relax` — то же удержание, только условие обратное.
+                    let active = if matches!(kind, EventKind::Relax(_)) {
+                        !high
                     } else {
-                        if !state.active {
-                            state.active = true;
-                            state.since = now;
-                            state.armed = seq;
-                            state.fired = false;
+                        high
+                    };
+                    // Первое наблюдение запоминает текущее значение: иначе `change`
+                    // срабатывал бы на старте сцены, а `down` — на уже зажатой клавише.
+                    let state = self.event_state.entry(index).or_insert(EventState {
+                        last: value,
+                        since: 0.0,
+                        fired: false,
+                        active: false,
+                        armed: 0,
+                    });
+                    let fired = match kind {
+                        EventKind::Down => state.last <= 0.5 && high,
+                        EventKind::Up => state.last > 0.5 && !high,
+                        EventKind::Change => (value - state.last).abs() > 1e-9,
+                        // Удержание срабатывает не в кадре, когда условие выполнилось,
+                        // а следующим: так даже `hold(0)` и `relax(0)` отличаются от
+                        // `down`/`up` и дают «на кадр позже».
+                        EventKind::Hold(seconds) | EventKind::Relax(seconds) => {
+                            if !active {
+                                state.fired = false;
+                                state.active = false;
+                                false
+                            } else {
+                                if !state.active {
+                                    state.active = true;
+                                    state.since = now;
+                                    state.armed = seq;
+                                    state.fired = false;
+                                }
+                                if !state.fired && seq > state.armed && now - state.since >= *seconds {
+                                    state.fired = true;
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                         }
-                        if !state.fired && seq > state.armed && now - state.since >= seconds {
-                            state.fired = true;
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    };
+                    state.last = value;
+                    fired
                 }
             };
-            state.last = value;
             if !fired {
                 continue;
             }
@@ -424,10 +566,15 @@ impl Rig {
                 None => NodeKey::Global(String::new()),
             };
             for (key, expression) in body {
-                let result = self.numeric(&expression, &context);
+                let mut result = self.numeric(&expression, &context);
+                // visible живёт в 0/1, и запись чужому объекту — не исключение.
+                if matches!(&key, NodeKey::Param(_, Param::Visible)) {
+                    result = result.round().clamp(0.0, 1.0);
+                }
                 self.cache.insert(key, result);
             }
         }
+        self.started = true;
     }
 
     fn eval_node(&mut self, key: &NodeKey) -> f64 {
@@ -1195,6 +1342,53 @@ impl Rig {
     }
 }
 
+/// Ключ узла для записи чужому объекту: `head.rotation` → `Param("head", Rotation)`.
+fn foreign_key(
+    object: &str,
+    param: &str,
+    indices: &HashMap<String, usize>,
+) -> Result<NodeKey, String> {
+    if !indices.contains_key(object) {
+        return Err(format!("объекта '{}' нет в сцене", object));
+    }
+    let parsed = Param::parse(param)
+        .ok_or_else(|| format!("у объекта '{}' нет параметра '{}'", object, param))?;
+    Ok(NodeKey::Param(object.to_string(), parsed))
+}
+
+/// Условие блока: встроенный `start`, объявленное имя `trigger` или прямой вход.
+fn resolve_trigger(
+    source: &EventSource,
+    triggers: &HashMap<String, (String, EventKind)>,
+) -> Result<CompiledTrigger, String> {
+    Ok(match source {
+        EventSource::Start => CompiledTrigger::Start,
+        EventSource::Input { source, kind } => CompiledTrigger::Input {
+            source: source.clone(),
+            kind: kind.clone(),
+        },
+        EventSource::Named(name) => match triggers.get(name) {
+            Some((input, kind)) => CompiledTrigger::Input {
+                source: input.clone(),
+                kind: kind.clone(),
+            },
+            None => {
+                let mut known: Vec<&str> = triggers.keys().map(String::as_str).collect();
+                known.sort();
+                let list = if known.is_empty() {
+                    "объявленных имён нет".to_string()
+                } else {
+                    known.join(", ")
+                };
+                return Err(format!(
+                    "неизвестное событие '{}'; объявите 'trigger {} = модуль.вход.тип' ({})",
+                    name, name, list
+                ));
+            }
+        },
+    })
+}
+
 fn key_name(key: &NodeKey) -> String {
     match key {
         NodeKey::Global(name) => format!("global.{}", name),
@@ -1273,6 +1467,10 @@ enum Request {
     Validate {
         config: RigPreset,
     },
+    /// Разбор одного скрипта: редактор подсвечивает место ошибки.
+    Check {
+        source: String,
+    },
     Tick {
         handle: u32,
         #[serde(default)]
@@ -1322,6 +1520,18 @@ impl RuntimeStore {
             Request::Validate { config } => match Rig::new(config) {
                 Ok(_) => json!({"ok": true, "diagnostics": []}),
                 Err(error) => json!({"ok": false, "error": error}),
+            },
+            Request::Check { source } => match parse_script(&source) {
+                Ok(_) => json!({"ok": true, "scriptError": JsonValue::Null}),
+                Err(error) => json!({
+                    "ok": true,
+                    "scriptError": {
+                        "line": error.line,
+                        "column": error.column,
+                        "length": error.length,
+                        "message": error.message,
+                    },
+                }),
             },
             Request::Tick {
                 handle,
@@ -1593,6 +1803,74 @@ mod tests {
         let second = tick_with(&mut rig, 0.099, &[("mouse.left", 1.0)]);
         assert_eq!(second.objects["o"]["x"], 2.0);
         assert_eq!(release.objects["o"]["x"], 1.0);
+    }
+
+    #[test]
+    fn start_block_runs_once_per_launch() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = boot")],
+            "on start {\n  boot = boot + 1\n}",
+        ))
+        .unwrap();
+        let first = tick_with(&mut rig, 0.0, &[]);
+        assert_eq!(first.objects["o"]["x"], 1.0);
+        let second = tick_with(&mut rig, 0.033, &[]);
+        assert_eq!(second.objects["o"]["x"], 1.0);
+        // Стоп и перезапуск снова делают кадр первым.
+        let reset = rig.tick(0.066, InputValues::default(), false, true, None);
+        assert_eq!(reset.objects["o"]["x"], 2.0);
+    }
+
+    #[test]
+    fn named_trigger_is_shared_between_scripts() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = counter")],
+            "trigger kick = mouse.left.down\non kick {\n  counter = counter + 1\n}",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
+        let press = tick_with(&mut rig, 0.033, &[("mouse.left", 1.0)]);
+        assert_eq!(press.objects["o"]["x"], 1.0);
+        let held = tick_with(&mut rig, 0.066, &[("mouse.left", 1.0)]);
+        assert_eq!(held.objects["o"]["x"], 1.0);
+        tick_with(&mut rig, 0.099, &[("mouse.left", 0.0)]);
+        let again = tick_with(&mut rig, 0.132, &[("mouse.left", 1.0)]);
+        assert_eq!(again.objects["o"]["x"], 2.0);
+    }
+
+    #[test]
+    fn foreign_write_overrides_formula_and_is_readable() {
+        let mut rig = Rig::new(preset(
+            vec![
+                object("head", None, "x = 5"),
+                object("eye", None, "y = head.x"),
+            ],
+            "head.x = 42",
+        ))
+        .unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[]);
+        assert_eq!(frame.objects["head"]["x"], 42.0);
+        assert_eq!(frame.objects["eye"]["y"], 42.0);
+        assert!(frame.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn unknown_names_report_diagnostics_without_killing_the_scene() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = a")],
+            "on kick {\n  a = 1\n}\nbogus.x = 1",
+        ))
+        .unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[]);
+        assert!(frame
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("неизвестное событие 'kick'")));
+        assert!(frame
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("объекта 'bogus' нет в сцене")));
+        assert_eq!(frame.objects["o"]["x"], 0.0);
     }
 
     #[test]

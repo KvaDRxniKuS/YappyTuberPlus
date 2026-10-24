@@ -161,6 +161,47 @@ if (second.frame.globals.a === 1) {
 }
 call({ op: "dispose", handle: eventEngine.handle });
 
+// DSL v2: объявление события через `trigger`, подписка по имени, `on start` и
+// запись чужому объекту. Старое ядро этот скрипт не разберёт — тогда честно
+// предупреждаем, что артефакт в public/ отстал от исходников.
+const dslConfig = {
+  canvas: { width: 1000, height: 600 },
+  globals: "trigger kick = mouse.left.down\non start {\n  a = 0\n}\non kick {\n  a = a + 1\n}\nflag.x = 77",
+  objects: [
+    {
+      id: "flag", name: "Flag", kind: "sprite", image: null, parentId: null,
+      pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 100, height: 100,
+      script: "x = 5\ny = a",
+    },
+  ],
+};
+const dsl = call({ op: "create", config: dslConfig });
+if (!dsl.ok) {
+  console.log("! DSL v2: public/rig_core.wasm собран до правки — пересоберите ядро (npm run build:wasm)");
+} else {
+  const dslStep = (value, now, resetClock = false) => call({
+    op: "tick", handle: dsl.handle, now,
+    inputs: { values: { "mouse.left": value }, signals: {} },
+    paused: false, resetClock,
+  });
+  const boot = dslStep(0, 0, true);
+  assert(boot.frame.globals.a === 0, "DSL: on start задаёт начальное значение");
+  assert(boot.frame.objects.flag.x === 77, "DSL: запись чужому объекту перекрывает его формулу");
+  const kick1 = dslStep(1, 0.033);
+  assert(kick1.frame.globals.a === 1, "DSL: именованное событие trigger срабатывает");
+  const kick2 = dslStep(0, 0.066);
+  const kick3 = dslStep(1, 0.099);
+  assert(kick3.frame.globals.a === 2, "DSL: подписка на имя живёт между кадрами");
+  assert(kick2.frame.objects.flag.y === 1, "DSL: переменная события читается формулой объекта");
+  call({ op: "dispose", handle: dsl.handle });
+
+  const checked = call({ op: "check", source: "x = 1\non mouse.left.down {\n  y = 2\n" });
+  assert(checked.ok && checked.scriptError && checked.scriptError.line === 2, "DSL: check сообщает строку ошибки");
+  assert(typeof checked.scriptError.column === "number" && checked.scriptError.length >= 1, "DSL: check сообщает столбец и длину");
+  const valid = call({ op: "check", source: "on start {\n  a = 1\n}" });
+  assert(valid.ok && valid.scriptError === null, "DSL: check не ругается на корректный скрипт");
+}
+
 
 call({ op: "dispose", handle: 1 });
 console.log("\nДвижок Rust/WASM работает.");

@@ -499,7 +499,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, String> {
     ExpressionParser::new(source)?.parse()
 }
 
-/// Условие, по которому срабатывает блок `on event.… { … }`.
+/// Условие, по которому срабатывает блок события.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
     /// Значение перешло из нуля в единицу: нажатие, начало речи.
@@ -514,81 +514,118 @@ pub enum EventKind {
     Relax(f64),
 }
 
-/// Блок `on event.<модуль>.<вход>.<тип> { имя = выражение … }`.
-#[derive(Debug, Clone)]
-pub struct EventBlock {
-    /// Вход-источник без префикса `event`: `mouse.left`, `mic.talking`.
-    pub source: String,
-    pub kind: EventKind,
-    pub body: Vec<(String, Arc<Expr>)>,
+/// Откуда берётся событие.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventSource {
+    /// Первый кадр после запуска: `on start { … }`.
+    Start,
+    /// Прямая подписка на вход модуля: `on mouse.left.down { … }`.
+    Input { source: String, kind: EventKind },
+    /// Именованное событие из `trigger`: `on kick { … }`.
+    Named(String),
 }
 
-/// Разобранный скрипт: обычные присваивания и блоки событий.
+/// Куда пишет присваивание.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssignTarget {
+    /// Своё имя: параметр объекта или глобальная переменная.
+    Local(String),
+    /// Чужой объект: `head.rotation = …`.
+    Foreign { object: String, param: String },
+}
+
+/// Объявление именованного события: `trigger kick = mouse.left.down`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TriggerDecl {
+    pub name: String,
+    pub source: String,
+    pub kind: EventKind,
+}
+
+/// Блок `on … { имя = выражение … }`.
+#[derive(Debug, Clone)]
+pub struct EventBlock {
+    pub source: EventSource,
+    pub body: Vec<(AssignTarget, Arc<Expr>)>,
+}
+
+/// Ошибка разбора с местом в тексте: редактор подчёркивает этот диапазон.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptError {
+    /// Строка с единицы.
+    pub line: usize,
+    /// Столбец с единицы.
+    pub column: usize,
+    /// Длина подчёркивания в символах.
+    pub length: usize,
+    pub message: String,
+}
+
+impl ScriptError {
+    fn new(line: usize, column: usize, length: usize, message: impl Into<String>) -> Self {
+        Self {
+            line,
+            column,
+            length: length.max(1),
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ScriptError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "строка {}, столбец {}: {}",
+            self.line, self.column, self.message
+        )
+    }
+}
+
+/// Разобранный скрипт: присваивания, блоки событий и объявления `trigger`.
 #[derive(Debug, Default)]
 pub struct Script {
-    pub assignments: Vec<(String, Arc<Expr>)>,
+    pub assignments: Vec<(AssignTarget, Arc<Expr>)>,
     pub events: Vec<EventBlock>,
+    pub triggers: Vec<TriggerDecl>,
 }
 
 fn valid_identifier(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Разбор заголовка `on event.mouse.left.down(…)`: вход и тип условия.
-fn parse_event_header(header: &str, line: usize) -> Result<(String, EventKind), String> {
-    let text = header.trim();
-    let rest = text
-        .strip_prefix("on")
-        .ok_or_else(|| format!("строка {}: ожидалось 'on event.модуль.вход.тип'", line))?
-        .trim_start();
-    let path = rest.strip_prefix("event.").ok_or_else(|| {
-        format!(
-            "строка {}: после 'on' ожидалось 'event.модуль.вход.тип'",
-            line
-        )
-    })?;
-    let parts: Vec<&str> = path.split('.').collect();
-    if parts.len() != 3 {
-        return Err(format!(
-            "строка {}: нужно 'event.модуль.вход.тип', а не '{}'",
-            line, text
-        ));
+/// Ключевое слово в начале строки отдельным словом: `on`, `trigger`.
+fn keyword_at<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = text.strip_prefix(keyword)?;
+    match rest.chars().next() {
+        Some(c) if c.is_ascii_alphanumeric() || c == '_' => None,
+        _ => Some(rest),
     }
-    let module = parts[0].trim();
-    let input = parts[1].trim();
-    if !valid_identifier(module) || !valid_identifier(input) {
-        return Err(format!(
-            "строка {}: имя модуля и входа — латиница, цифры и '_'",
-            line
-        ));
-    }
-    let raw = parts[2].trim();
-    let (name, argument) = match raw.split_once('(') {
-        Some((name, tail)) => {
-            let inner = tail.strip_suffix(')').ok_or_else(|| {
-                format!("строка {}: у '{}' не закрыта скобка", line, raw)
-            })?;
-            (name.trim(), Some(inner.trim()))
-        }
-        None => (raw, None),
-    };
-    let mut seconds = 0.0;
-    if matches!(name, "hold" | "relax") {
-        if let Some(value) = argument {
-            if !value.is_empty() {
-                seconds = value.parse::<f64>().map_err(|_| {
-                    format!("строка {}: время в '{}' должно быть числом", line, raw)
+}
+
+/// Тип условия из текста: `down`, `hold(0.5)`, `relax(1)`.
+fn kind_from(name: &str, argument: Option<&str>) -> Result<EventKind, String> {
+    let seconds = match name {
+        "hold" | "relax" => match argument.map(str::trim) {
+            Some(value) if !value.is_empty() => {
+                let parsed = value.parse::<f64>().map_err(|_| {
+                    format!("время в '{}' должно быть числом", name)
                 })?;
-                if !seconds.is_finite() || seconds < 0.0 {
-                    return Err(format!(
-                        "строка {}: время в '{}' не может быть отрицательным",
-                        line, raw
-                    ));
+                if !parsed.is_finite() || parsed < 0.0 {
+                    return Err(format!("время в '{}' не может быть отрицательным", name));
                 }
+                parsed
             }
+            _ => 0.0,
+        },
+        _ => {
+            if argument.is_some() {
+                return Err(format!("у события '{}' нет аргументов", name));
+            }
+            0.0
         }
-    }
-    let kind = match name {
+    };
+    Ok(match name {
         "down" => EventKind::Down,
         "up" => EventKind::Up,
         "change" => EventKind::Change,
@@ -596,135 +633,345 @@ fn parse_event_header(header: &str, line: usize) -> Result<(String, EventKind), 
         "relax" => EventKind::Relax(seconds),
         other => {
             return Err(format!(
-                "строка {}: неизвестный тип события '{}'; ожидалось down, up, change, hold(сек) или relax(сек)",
-                line, other
+                "неизвестный тип события '{}'; ожидалось down, up, change, hold(сек) или relax(сек)",
+                other
             ))
         }
-    };
-    Ok((format!("{}.{}", module, input), kind))
+    })
 }
 
-pub fn parse_script(source: &str) -> Result<Script, String> {
+/// `mouse.left.hold(0.5)` → (`mouse.left`, `hold`, `0.5`).
+fn split_event_path(text: &str) -> (&str, &str, Option<&str>) {
+    if text.ends_with(')') {
+        if let Some(open) = text.rfind('(') {
+            let before = &text[..open];
+            let argument = &text[open + 1..text.len() - 1];
+            let trimmed = before.trim_end();
+            let name_start = trimmed
+                .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .map(|index| index + 1)
+                .unwrap_or(0);
+            return (&before[..name_start], &trimmed[name_start..], Some(argument));
+        }
+    }
+    match text.rfind('.') {
+        Some(index) => (&text[..index], &text[index + 1..], None),
+        None => ("", text, None),
+    }
+}
+
+/// Разбор условия события: `start`, `mouse.left.down`, `mic.talking.hold(0.5)`, `kick`.
+fn parse_event_source(raw: &str) -> Result<EventSource, String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Err("пустое условие события".into());
+    }
+    // `event.` — необязательный префикс: `on event.mouse.left.down` = `on mouse.left.down`.
+    let path = text.strip_prefix("event.").unwrap_or(text).trim();
+    if !path.contains('.') {
+        if !valid_identifier(path) {
+            return Err(format!("некорректное имя события '{}'", raw.trim()));
+        }
+        return Ok(if path == "start" {
+            EventSource::Start
+        } else {
+            EventSource::Named(path.to_string())
+        });
+    }
+    let (head, name, argument) = split_event_path(path);
+    let head = head.trim().trim_end_matches('.');
+    let parts: Vec<&str> = head.split('.').collect();
+    if parts.len() != 2 || !valid_identifier(parts[0].trim()) || !valid_identifier(parts[1].trim()) {
+        return Err(format!(
+            "ожидалось 'модуль.вход.тип' или имя события, а не '{}'",
+            raw.trim()
+        ));
+    }
+    let kind = kind_from(name.trim(), argument)?;
+    Ok(EventSource::Input {
+        source: format!("{}.{}", parts[0].trim(), parts[1].trim()),
+        kind,
+    })
+}
+
+/// Разбор цели присваивания: `x`, `speed` или `head.rotation`.
+fn parse_target(text: &str) -> Result<AssignTarget, String> {
+    let trimmed = text.trim();
+    let parts: Vec<&str> = trimmed.split('.').collect();
+    match parts.len() {
+        1 if valid_identifier(trimmed) => Ok(AssignTarget::Local(trimmed.to_string())),
+        2 if valid_identifier(parts[0].trim()) && valid_identifier(parts[1].trim()) => {
+            Ok(AssignTarget::Foreign {
+                object: parts[0].trim().to_string(),
+                param: parts[1].trim().to_string(),
+            })
+        }
+        _ => Err(format!(
+            "некорректная цель '{}'; ожидалось 'имя' или 'объект.параметр'",
+            trimmed
+        )),
+    }
+}
+
+/// Позиция из сообщения парсера выражений: «ожидалось выражение на позиции 5».
+fn position_from_message(message: &str) -> usize {
+    const MARKER: &str = "на позиции ";
+    if let Some(index) = message.rfind(MARKER) {
+        let digits: String = message[index + MARKER.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if let Ok(value) = digits.parse::<usize>() {
+            return value.saturating_sub(1);
+        }
+    }
+    0
+}
+
+/// Один оператор `цель = выражение` с точным местом ошибки.
+fn parse_assignment(
+    text: &str,
+    line: usize,
+    column: usize,
+    next_call_id: &mut u32,
+) -> Result<(AssignTarget, Arc<Expr>), ScriptError> {
+    let equal = text.find('=').ok_or_else(|| {
+        ScriptError::new(
+            line,
+            column,
+            text.len(),
+            "ожидалось присваивание 'имя = выражение'",
+        )
+    })?;
+    if text[equal..].starts_with("==") {
+        return Err(ScriptError::new(
+            line,
+            column + equal,
+            2,
+            "ожидалось присваивание 'имя = выражение'",
+        ));
+    }
+    let target_text = &text[..equal];
+    let expression_text = &text[equal + 1..];
+    let target = parse_target(target_text).map_err(|message| {
+        ScriptError::new(line, column, target_text.trim_end().len(), message)
+    })?;
+    let expression = expression_text.trim();
+    if expression.is_empty() {
+        return Err(ScriptError::new(
+            line,
+            column + equal + 1,
+            1,
+            "справа от '=' нет выражения",
+        ));
+    }
+    let expression_column =
+        column + equal + 1 + (expression_text.len() - expression_text.trim_start().len());
+    let expr = parse_expression(expression).map_err(|message| {
+        let shift = position_from_message(&message);
+        ScriptError::new(
+            line,
+            expression_column + shift,
+            expression.len() - shift.min(expression.len()),
+            message,
+        )
+    })?;
+    let mut counter = CountCalls(*next_call_id);
+    counter.visit(&expr);
+    *next_call_id = counter.0;
+    Ok((target, Arc::new(expr)))
+}
+
+/// Разбор скрипта: присваивания, блоки `on …` и объявления `trigger`.
+///
+/// Строки разбираются по одной, поэтому ошибка всегда знает свою строку и
+/// столбец — редактор подчёркивает ровно это место.
+pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
     let mut script = Script::default();
     let mut next_call_id = 0u32;
     let lines: Vec<&str> = source.lines().collect();
     let mut index = 0usize;
     while index < lines.len() {
         let line_number = index + 1;
-        let line = lines[index]
-            .split("//")
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if line.is_empty() {
+        let raw = lines[index];
+        let code = raw.split("//").next().unwrap_or("");
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
             index += 1;
             continue;
         }
-        // Блок события: `on event.<модуль>.<вход>.<тип> { … }`.
-        if line.starts_with("on") && line[2..].trim_start().starts_with("event") {
-            let open = line.find('{').ok_or_else(|| {
-                format!("строка {}: у блока события нет '{{'", line_number)
+        let column = code.len() - code.trim_start().len() + 1;
+
+        // `trigger имя = модуль.вход.тип`
+        if let Some(rest) = keyword_at(trimmed, "trigger") {
+            let body = rest.trim();
+            let equal = body.find('=').ok_or_else(|| {
+                ScriptError::new(
+                    line_number,
+                    column,
+                    trimmed.len(),
+                    "ожидалось 'trigger имя = модуль.вход.тип'",
+                )
             })?;
-            let (event_source, kind) = parse_event_header(&line[..open], line_number)?;
-            let mut raw_body: Vec<String> = Vec::new();
-            let rest = &line[open + 1..];
-            let mut closed = match rest.find('}') {
-                Some(close) => {
-                    raw_body.push(rest[..close].to_string());
-                    true
-                }
-                None => {
-                    raw_body.push(rest.to_string());
-                    false
+            let name = body[..equal].trim();
+            if !valid_identifier(name) {
+                return Err(ScriptError::new(
+                    line_number,
+                    column + "trigger".len() + 1,
+                    name.len(),
+                    "имя события — латиница, цифры и '_'",
+                ));
+            }
+            if name == "start" {
+                return Err(ScriptError::new(
+                    line_number,
+                    column + "trigger".len() + 1,
+                    name.len(),
+                    "имя 'start' занято встроенным событием",
+                ));
+            }
+            let value_text = &body[equal + 1..];
+            let value = value_text.trim();
+            let value_column = column + equal + 1 + (value_text.len() - value_text.trim_start().len());
+            if value.is_empty() {
+                return Err(ScriptError::new(
+                    line_number,
+                    value_column,
+                    1,
+                    "после '=' ожидалось 'модуль.вход.тип'",
+                ));
+            }
+            let parsed = parse_event_source(value).map_err(|message| {
+                ScriptError::new(line_number, value_column, value.len(), message)
+            })?;
+            let (source_name, kind) = match parsed {
+                EventSource::Input { source, kind } => (source, kind),
+                _ => {
+                    return Err(ScriptError::new(
+                        line_number,
+                        value_column,
+                        value.len(),
+                        "trigger ждёт 'модуль.вход.тип'",
+                    ))
                 }
             };
-            if !closed {
-                while index + 1 < lines.len() {
-                    index += 1;
-                    let trimmed = lines[index].split("//").next().unwrap_or("").trim();
-                    if trimmed == "}" {
-                        closed = true;
-                        break;
+            if script.triggers.iter().any(|entry| entry.name == name) {
+                return Err(ScriptError::new(
+                    line_number,
+                    column,
+                    trimmed.len(),
+                    format!("событие '{}' уже объявлено", name),
+                ));
+            }
+            script.triggers.push(TriggerDecl {
+                name: name.to_string(),
+                source: source_name,
+                kind,
+            });
+            index += 1;
+            continue;
+        }
+
+        // Блок события: `on <условие> { … }`.
+        if let Some(rest) = keyword_at(trimmed, "on") {
+            let open = rest.find('{').ok_or_else(|| {
+                ScriptError::new(line_number, column, trimmed.len(), "у блока события нет '{'")
+            })?;
+            let header_text = &rest[..open];
+            let header = header_text.trim();
+            let header_column = column + "on".len() + (header_text.len() - header_text.trim_start().len());
+            if header.is_empty() {
+                return Err(ScriptError::new(
+                    line_number,
+                    header_column,
+                    trimmed.len(),
+                    "после 'on' ожидалось условие: 'start', 'имя' или 'модуль.вход.тип'",
+                ));
+            }
+            let event_source = parse_event_source(header).map_err(|message| {
+                ScriptError::new(line_number, header_column, header.len(), message)
+            })?;
+
+            let mut body_lines: Vec<(usize, usize, String)> = Vec::new();
+            let mut closed = false;
+            let after_open = &rest[open + 1..];
+            match after_open.find('}') {
+                Some(close) => {
+                    let text = after_open[..close].trim();
+                    if !text.is_empty() {
+                        body_lines.push((line_number, column, text.to_string()));
                     }
-                    if let Some(text) = trimmed.strip_suffix('}') {
-                        raw_body.push(text.trim().to_string());
-                        closed = true;
-                        break;
-                    }
-                    raw_body.push(trimmed.to_string());
+                    closed = true;
                 }
-                if !closed {
-                    return Err(format!(
-                        "строка {}: блок события не закрыт '}}'",
-                        line_number
-                    ));
+                None => {
+                    let text = after_open.trim();
+                    if !text.is_empty() {
+                        body_lines.push((line_number, column, text.to_string()));
+                    }
+                    while index + 1 < lines.len() {
+                        index += 1;
+                        let next_raw = lines[index];
+                        let next_code = next_raw.split("//").next().unwrap_or("");
+                        let next_trimmed = next_code.trim();
+                        let next_column = next_code.len() - next_code.trim_start().len() + 1;
+                        if next_trimmed == "}" {
+                            closed = true;
+                            break;
+                        }
+                        if let Some(text) = next_trimmed.strip_suffix('}') {
+                            let text = text.trim();
+                            if !text.is_empty() {
+                                body_lines.push((index + 1, next_column, text.to_string()));
+                            }
+                            closed = true;
+                            break;
+                        }
+                        if !next_trimmed.is_empty() {
+                            body_lines.push((index + 1, next_column, next_trimmed.to_string()));
+                        }
+                    }
                 }
             }
+            if !closed {
+                return Err(ScriptError::new(
+                    line_number,
+                    column,
+                    trimmed.len(),
+                    "блок события не закрыт '}'",
+                ));
+            }
             let mut body = Vec::new();
-            for raw in raw_body {
-                let text = raw.trim();
-                if text.is_empty() {
-                    continue;
-                }
-                let (name, expression) = text.split_once('=').ok_or_else(|| {
-                    format!(
-                        "строка {}: в блоке события ожидалось 'имя = выражение'",
-                        line_number
-                    )
-                })?;
-                let name = name.trim();
-                if !valid_identifier(name) {
-                    return Err(format!(
-                        "строка {}: некорректное имя '{}'",
-                        line_number, name
-                    ));
-                }
-                let expr = parse_expression(expression.trim())
-                    .map_err(|error| format!("строка {}: {}", line_number, error))?;
-                let mut counter = CountCalls(next_call_id);
-                counter.visit(&expr);
-                next_call_id = counter.0;
-                body.push((name.to_string(), Arc::new(expr)));
+            for (body_line, body_column, text) in body_lines {
+                body.push(parse_assignment(
+                    &text,
+                    body_line,
+                    body_column,
+                    &mut next_call_id,
+                )?);
             }
             script.events.push(EventBlock {
                 source: event_source,
-                kind,
                 body,
             });
             index += 1;
             continue;
         }
-        let (name, expression) = line.split_once('=').ok_or_else(|| {
-            format!(
-                "строка {}: ожидалось присваивание 'имя = выражение'",
-                line_number
-            )
-        })?;
-        let name = name.trim();
-        if !valid_identifier(name) {
-            return Err(format!(
-                "строка {}: некорректное имя '{}'; ожидался ASCII-идентификатор",
-                line_number, name
-            ));
+
+        let statement = parse_assignment(trimmed, line_number, column, &mut next_call_id)?;
+        if let AssignTarget::Local(name) = &statement.0 {
+            let duplicate = script.assignments.iter().any(|(existing, _)| {
+                matches!(existing, AssignTarget::Local(other) if other == name)
+            });
+            if duplicate {
+                return Err(ScriptError::new(
+                    line_number,
+                    column,
+                    name.len(),
+                    format!("'{}' присваивается дважды", name),
+                ));
+            }
         }
-        if script
-            .assignments
-            .iter()
-            .any(|(existing, _)| existing == name)
-        {
-            return Err(format!(
-                "строка {}: параметр '{}' присваивается дважды",
-                line_number, name
-            ));
-        }
-        let expr = parse_expression(expression.trim())
-            .map_err(|error| format!("строка {}: {}", line_number, error))?;
-        // IDs are unique within one script. They are scoped by node in the runtime.
-        let mut counter = CountCalls(next_call_id);
-        counter.visit(&expr);
-        next_call_id = counter.0;
-        script.assignments.push((name.to_string(), Arc::new(expr)));
+        script.assignments.push(statement);
         index += 1;
     }
     Ok(script)
@@ -791,27 +1038,88 @@ mod tests {
     #[test]
     fn event_blocks_parse() {
         let script = parse_script(
-            "a = 0\non event.mouse.left.down {\n  a = !a\n  b = 1\n}\n",
+            "a = 0\non mouse.left.down {\n  a = !a\n  b = 1\n}\n",
         )
         .unwrap();
         assert_eq!(script.assignments.len(), 1);
         assert_eq!(script.events.len(), 1);
-        assert_eq!(script.events[0].source, "mouse.left");
-        assert!(matches!(script.events[0].kind, EventKind::Down));
+        match &script.events[0].source {
+            EventSource::Input { source, kind } => {
+                assert_eq!(source, "mouse.left");
+                assert!(matches!(kind, EventKind::Down));
+            }
+            other => panic!("ожидался входной источник, а не {:?}", other),
+        }
         assert_eq!(script.events[0].body.len(), 2);
     }
 
     #[test]
     fn event_hold_takes_seconds() {
-        let script = parse_script("on event.mic.talking.hold(0.5) { a = 1 }").unwrap();
-        assert_eq!(script.events[0].source, "mic.talking");
-        assert!(matches!(script.events[0].kind, EventKind::Hold(value) if (value - 0.5).abs() < 1e-9));
+        // Точка внутри `hold(0.5)` не должна ломать разбор пути.
+        let script = parse_script("on mic.talking.hold(0.5) { a = 1 }").unwrap();
+        match &script.events[0].source {
+            EventSource::Input { source, kind } => {
+                assert_eq!(source, "mic.talking");
+                assert!(matches!(kind, EventKind::Hold(value) if (*value - 0.5).abs() < 1e-9));
+            }
+            other => panic!("ожидался входной источник, а не {:?}", other),
+        }
     }
 
     #[test]
     fn event_unknown_type_is_rejected() {
-        assert!(parse_script("on event.mouse.left.tap { a = 1 }").is_err());
-        assert!(parse_script("on event.mouse.left.down { a = 1").is_err());
+        assert!(parse_script("on mouse.left.tap { a = 1 }").is_err());
+        assert!(parse_script("on mouse.left.down { a = 1").is_err());
+        assert!(parse_script("on mouse.talking { a = 1 }").is_err());
+    }
+
+    #[test]
+    fn trigger_declares_named_event() {
+        let script = parse_script(
+            "trigger kick = mouse.left.down\ntrigger breath = Mic.talking.relax(0.6)\non kick { a = 1 }",
+        )
+        .unwrap();
+        assert_eq!(script.triggers.len(), 2);
+        assert_eq!(script.triggers[0].name, "kick");
+        assert_eq!(script.triggers[0].source, "mouse.left");
+        assert!(matches!(&script.triggers[1].kind, EventKind::Relax(value) if (*value - 0.6).abs() < 1e-9));
+        assert!(matches!(&script.events[0].source, EventSource::Named(name) if name == "kick"));
+    }
+
+    #[test]
+    fn start_and_event_prefix_parse() {
+        let script = parse_script("on start { a = 0 }\non event.key.space.up { a = 1 }").unwrap();
+        assert!(matches!(&script.events[0].source, EventSource::Start));
+        match &script.events[1].source {
+            EventSource::Input { source, kind } => {
+                assert_eq!(source, "key.space");
+                assert!(matches!(kind, EventKind::Up));
+            }
+            other => panic!("ожидался входной источник, а не {:?}", other),
+        }
+    }
+
+    #[test]
+    fn foreign_assignment_parses() {
+        let script = parse_script("head.rotation = 15\non mouse.left.down { head.x = 5 }").unwrap();
+        assert!(matches!(
+            &script.assignments[0].0,
+            AssignTarget::Foreign { object, param } if object == "head" && param == "rotation"
+        ));
+        assert!(matches!(
+            &script.events[0].body[0].0,
+            AssignTarget::Foreign { object, param } if object == "head" && param == "x"
+        ));
+    }
+
+    #[test]
+    fn errors_carry_line_and_column() {
+        let error = parse_script("x = 1\ny = 2 +\n").unwrap_err();
+        assert_eq!(error.line, 2);
+        assert!(error.column >= 1);
+        assert!(!error.message.is_empty());
+        let trigger_error = parse_script("trigger kick = down").unwrap_err();
+        assert_eq!(trigger_error.line, 1);
     }
 
     #[test]

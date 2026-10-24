@@ -69,6 +69,14 @@ export interface RigPreset {
 
 export type ObjectFrame = Record<ParamName, number>;
 
+/** Место ошибки скрипта: строка и столбец с единицы, длина подчёркивания. */
+export interface ScriptErrorInfo {
+  line: number;
+  column: number;
+  length: number;
+  message: string;
+}
+
 export interface RigFrame {
   seq: number;
   time: number;

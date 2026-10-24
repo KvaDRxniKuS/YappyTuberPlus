@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { AudioLines, ChevronDown } from "lucide-react";
+import { AudioLines, ChevronDown, Code2, RefreshCw, Trash2 } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, VisemeEntry } from "../types";
 import { frameValue, type AudioFrame } from "../modules/audio";
-import { inputDefault, inputRange, moduleDefinition, type ModuleInputSpec } from "../modules/registry";
+import {
+  inputDefault, inputRange, moduleDefaults, moduleDefinition, refreshLibrary, type ModuleInputSpec,
+} from "../modules/registry";
 import { inputEnabled, inputKey, instanceInputs, isPointerKind } from "../modules/values";
 import { visemeEntries } from "../modules/viseme";
 import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
+import { eventSnippet } from "../engine/scripts";
 
 interface InputsPanelProps extends CalibrationApi {
   modules: ModuleInstance[];
@@ -17,6 +20,8 @@ interface InputsPanelProps extends CalibrationApi {
   frame: RigFrame | null;
   onManual: (key: string, value: number) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
+  /** Вставка готового блока события в текущий скрипт. */
+  onInsertSnippet: (snippet: string) => void;
 }
 
 /**
@@ -28,7 +33,28 @@ interface InputsPanelProps extends CalibrationApi {
  */
 export function InputsPanel(props: InputsPanelProps) {
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  // «Действия» — список готовых блоков событий для модуля.
+  const [actions, setActions] = useState<string[]>([]);
   const recorder = useVisemeRecorder(props);
+  const isActionsOpen = (name: string) => actions.includes(name);
+  const toggleActions = (name: string) => {
+    setActions((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
+  };
+  /** Перечитать шаблон из папки modules и вернуть настройки к умолчаниям. */
+  const reloadTemplate = async (module: ModuleInstance) => {
+    await refreshLibrary();
+    const config = moduleDefaults(moduleDefinition(module.type));
+    props.onModules(
+      props.modules.map((item) => (item.name === module.name ? { ...item, config } : item)),
+      "Обновление модуля из шаблона",
+    );
+  };
+  const removeModule = (module: ModuleInstance) => {
+    props.onModules(
+      props.modules.filter((item) => item.name !== module.name),
+      "Удаление модуля",
+    );
+  };
   const isCollapsed = (name: string) => collapsed.includes(name);
   const toggle = (name: string) => {
     setCollapsed((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
@@ -65,19 +91,70 @@ export function InputsPanel(props: InputsPanelProps) {
         const specs = instanceInputs(module);
         return (
           <section className={`module-group ${module.enabled ? "" : "disabled"}`} key={module.name}>
-            <button
-              type="button"
-              className={`module-group-head ${isCollapsed(module.name) ? "collapsed" : ""}`}
-              title={isCollapsed(module.name) ? "Развернуть входы" : "Свернуть входы"}
-              onClick={() => toggle(module.name)}
-            >
-              <ChevronDown size={12} />
-              <code>{module.name}</code>
-              <span>{definition.title}</span>
+            <div className={`module-group-head ${isCollapsed(module.name) ? "collapsed" : ""}`}>
+              <button
+                type="button"
+                className="module-group-toggle"
+                title={isCollapsed(module.name) ? "Развернуть входы" : "Свернуть входы"}
+                onClick={() => toggle(module.name)}
+              >
+                <ChevronDown size={12} />
+                <code>{module.name}</code>
+                <span>{definition.title}</span>
+              </button>
               <small>
                 {!module.enabled ? "выключен" : live ? "микрофон" : auto ? "авто" : pointer ? "ввод" : "ручной"}
               </small>
-            </button>
+              <div className="module-group-tools">
+                <button
+                  type="button"
+                  className={`tool-chip ${isActionsOpen(module.name) ? "active" : ""}`}
+                  title="Действия: какие блоки событий можно поставить"
+                  onClick={() => toggleActions(module.name)}
+                >
+                  <Code2 size={11} /> действия
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Перечитать шаблон из папки modules и сбросить настройки"
+                  onClick={() => { void reloadTemplate(module); }}
+                >
+                  <RefreshCw size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button danger"
+                  title="Удалить модуль"
+                  onClick={() => removeModule(module)}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+            {isActionsOpen(module.name) && (
+              <div className="module-actions">
+                <p className="module-actions-hint">
+                  Клик вставляет блок в текущий скрипт: своё имя объявляется в глобальных
+                  {" "}<code>trigger … = …</code>, подписка — <code>on …</code>.
+                </p>
+                {specs.filter((spec) => inputEnabled(module, spec.name)).flatMap((spec) => {
+                  const key = inputKey(module, spec.name);
+                  return ["down", "up", "change", "hold(0.5)", "relax(0.5)"].map((kind) => (
+                    <code
+                      key={`${key}.${kind}`}
+                      title={`Вставить блок события ${key}.${kind}`}
+                      onClick={() => props.onInsertSnippet(eventSnippet(`${key}.${kind}`))}
+                    >
+                      {key}.{kind}
+                    </code>
+                  ));
+                })}
+                {specs.every((spec) => !inputEnabled(module, spec.name)) && (
+                  <span className="muted">У модуля нет включённых входов — событий не будет.</span>
+                )}
+              </div>
+            )}
             {isCollapsed(module.name) && (
               <span className="module-group-summary">
                 {specs

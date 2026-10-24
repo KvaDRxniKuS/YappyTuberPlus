@@ -244,6 +244,17 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .diagnostic { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 5px; padding: 6px 7px; border-radius: 4px; background: #ddb77d0a; color: var(--warning); font-size: 8px; line-height: 1.4; }
 .diagnostic.error { background: #df8d910c; color: var(--danger); }
 .diagnostic svg { flex: none; margin-top: 1px; }
+.script-error-line {
+  padding: 4px 10px;
+  border-top: 1px solid #3a2626;
+  background: #2a1d1e;
+  color: #e0a3a3;
+  font-family: monospace;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .signature-hint { padding: 4px 10px; border-top: 1px solid #262b32; background: #1d2127; color: #9fd3c6; font-family: monospace; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signature-hint[data-empty="true"] { color: #5c6771; }
 .function-chips { max-height: 92px; overflow: auto; padding: 6px 10px 8px; border-top: 1px solid #262b32; background: #1b1e23; }
@@ -809,18 +820,65 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .module-group-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   width: 100%;
+}
+
+.module-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: none;
+  color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.module-group-head > svg { color: #5d6872; flex: none; transition: transform .15s; }
-.module-group-head.collapsed > svg { transform: rotate(-90deg); }
+.module-group-toggle > svg { color: #5d6872; flex: none; transition: transform .15s; }
+.module-group-head.collapsed .module-group-toggle > svg { transform: rotate(-90deg); }
 .module-group-summary { color: #5d6872; font: 8.5px "Cascadia Code", ui-monospace, monospace; }
+
+/* Действия модуля: готовые блоки событий, перечитать шаблон, удалить */
+.module-group-tools { display: flex; align-items: center; gap: 2px; flex: none; }
+.module-group-tools .icon-button { padding: 2px; }
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 5px;
+  border: 1px solid #2c333a;
+  border-radius: 3px;
+  background: #20252b;
+  color: #78838d;
+  font-size: 8px;
+  cursor: pointer;
+}
+.tool-chip:hover { color: #a9b6c0; border-color: #3a444d; }
+.tool-chip.active { color: #9fd3c6; border-color: #35564f; background: #1f2b2a; }
+.module-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 152px;
+  overflow: auto;
+  padding: 6px 0 2px;
+  border-top: 1px dashed #2a3037;
+}
+.module-actions-hint { width: 100%; margin: 0 0 2px; color: #66717b; font-size: 8.5px; line-height: 1.45; }
+.module-actions-hint code { color: #93b0c8; font-family: monospace; }
+.module-actions code {
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #252a30;
+  color: #8fb3ad;
+  font-size: 8px;
+  cursor: pointer;
+}
+.module-actions code:hover { background: #2f3941; color: #b6e2d6; }
 
 /* ---------- Виземы: список звуков, калибровка, спектр ---------- */
 .viseme-editor {

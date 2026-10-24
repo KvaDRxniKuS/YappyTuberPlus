@@ -155,15 +155,17 @@ impl Param {
         }
     }
 
+    /// Имена параметров в скрипте. Канонические — как в `as_str`; короткие и
+    /// «с подчёркиванием» оставлены синонимами, чтобы формулы читались удобнее.
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "x" => Param::X,
             "y" => Param::Y,
-            "rotation" => Param::Rotation,
-            "sizeX" => Param::SizeX,
-            "sizeY" => Param::SizeY,
-            "skewX" => Param::SkewX,
-            "skewY" => Param::SkewY,
+            "rotation" | "rot" => Param::Rotation,
+            "sizeX" | "size_x" => Param::SizeX,
+            "sizeY" | "size_y" => Param::SizeY,
+            "skewX" | "skew_x" => Param::SkewX,
+            "skewY" | "skew_y" => Param::SkewY,
             "opacity" => Param::Opacity,
             "visible" => Param::Visible,
             "layer" => Param::Layer,
