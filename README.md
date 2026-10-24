@@ -111,11 +111,18 @@ npm run preview
 В `src-tauri` находится нативная команда `rig_call`, подключённая к тому же `RuntimeStore`. Конфигурация рассчитана на Windows и NSIS.
 
 ```bash
-npm run tauri dev
-npm run tauri build
+npm run tauri dev      # нативное окно, фронтенд из Vite
+npm run tauri build    # .exe и установщик NSIS, фронтенд внутри
 ```
 
-Для Windows-сборки нужны Rust, Node.js, WebView2 и стандартные инструменты сборки Tauri/MSVC. В текущей Linux-среде нативная часть проверена через `cargo check`; Windows-установщик здесь не создавался.
+Для Windows-сборки нужны Rust (`stable-x86_64-pc-windows-msvc`), MSVC Build Tools,
+Node.js и WebView2; ядро собирается с target `wasm32-unknown-unknown`.
+Готовые файлы: `src-tauri/target/release/yappytuberplus.exe` и
+`src-tauri/target/release/bundle/nsis/YappyTuberPlus_<версия>_x64-setup.exe`.
+
+Пошагово, с требованиями и разбором ошибок — [`docs/BUILD.md`](docs/BUILD.md).
+В текущей Linux-среде нативная часть проверена через `cargo check`; Windows-установщик
+здесь не создавался.
 
 ## Проверки
 
@@ -194,6 +201,7 @@ YappyTuberPlus/
 ├── docs/DESIGN.md
 ├── docs/OVERLAY.md
 ├── docs/LAUNCHER.md
+├── docs/BUILD.md             # сборка нативного приложения и установщика
 └── reference/
 ```
 
