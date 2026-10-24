@@ -8,13 +8,13 @@ export const VISEME_BANDS = 32;
 export const VISEME_BASE: VisemeEntry[] = ["a", "e", "i", "o", "u"].map((name) => ({
   name,
   label: name,
-  template: null,
+  templates: [],
 }));
 
 /** Список визем экземпляра. Пропавшие/битые записи отбрасываются. */
 export function visemeEntries(module: ModuleInstance): VisemeEntry[] {
   const raw = module.config.visemes;
-  if (!Array.isArray(raw) || raw.length === 0) return VISEME_BASE.map((entry) => ({ ...entry }));
+  if (!Array.isArray(raw) || raw.length === 0) return VISEME_BASE.map((entry) => ({ ...entry, templates: [] }));
   return raw;
 }
 
@@ -27,8 +27,52 @@ export function visemeInputs(module: ModuleInstance): ModuleInputSpec[] {
     max: 1,
     step: 0.01,
     kind: "level" as const,
-    hint: entry.template ? "откалибровано" : "нет калибровки: значения нулевые",
+    hint: entry.templates.length > 0
+      ? `вариантов записи: ${entry.templates.length}`
+      : "нет калибровки: значения нулевые",
   }));
+}
+
+/** Центр полосы `index`: полосы логарифмические от 80 Гц до 8 кГц. */
+export function bandFrequency(index: number): number {
+  return 80 * Math.exp(((index + 0.5) / VISEME_BANDS) * Math.log(8000 / 80));
+}
+
+/**
+ * Вес полосы. Гласные различаются формантами примерно 250–3000 Гц; выше —
+ * шипящие и шум микрофона, ниже — гул. Края учитываются, но слабее.
+ */
+export function bandWeight(frequency: number): number {
+  if (frequency < 150 || frequency > 4500) return 0.3;
+  if (frequency < 250) return 0.3 + ((frequency - 150) / 100) * 0.7;
+  if (frequency > 3000) return 1 - ((frequency - 3000) / 1500) * 0.7;
+  return 1;
+}
+
+/**
+ * Признак звука из средних амплитуд полос.
+ *
+ * 1. Амплитуды переводятся в дБ: так одинаковый сдвиг громкости становится
+ *    прибавкой константы.
+ * 2. Вычитается средний уровень (взвешенный): громкость микрофона и общий
+ *    наклон АЧХ перестают влиять.
+ * 3. Полосы 250–3000 Гц получают больший вес, остальные — меньший.
+ * 4. Вектор приводится к единичной длине: дальше сравнивается только форма.
+ *
+ * Без шагов 1–3 все гласные «похожи» на 0.8–0.9: их объединяет общий спад
+ * спектра, и разница формант тонет в нём.
+ */
+export function spectrumShape(amplitudes: number[]): number[] {
+  const decibels = amplitudes.map((value) => 20 * Math.log10(Math.max(value, 1e-7)));
+  let weighted = 0;
+  let weightSum = 0;
+  for (let index = 0; index < decibels.length; index += 1) {
+    const weight = bandWeight(bandFrequency(index));
+    weighted += decibels[index] * weight;
+    weightSum += weight;
+  }
+  const mean = weightSum > 0 ? weighted / weightSum : 0;
+  return unitVector(decibels.map((value, index) => (value - mean) * bandWeight(bandFrequency(index))));
 }
 
 /** Вектор единичной длины: сравнивать спектры нужно по форме, а не по громкости. */
@@ -52,11 +96,12 @@ export function averageSpectrum(frames: number[][]): number[] | null {
 }
 
 /**
- * Похожесть текущего спектра на эталон: косинус в квадрате. Квадрат нужен,
- * чтобы «похоже» не превращалось в «везде 0.9»: у близких звуков косинус и
- * так высокий, а различать надо именно форму рта.
+ * Похожесть текущего спектра на эталон: косинус в квадрате.
+ *
+ * Спектры приходят уже центрированными по уровню (см. `spectrumFeatures`),
+ * поэтому косинус меряет форму, а не громкость и не наклон микрофона.
  */
-export function similarity(bands: number[], template: number[] | null): number {
+export function similarity(bands: number[], template: number[] | null | undefined): number {
   if (!template || template.length !== bands.length) return 0;
   let dot = 0;
   for (let index = 0; index < bands.length; index += 1) dot += bands[index] * template[index];
@@ -64,19 +109,35 @@ export function similarity(bands: number[], template: number[] | null): number {
   return Math.pow(Math.min(1, dot), 2);
 }
 
+/** Лучшая похожесть по всем вариантам записи: у звука бывает несколько произношений. */
+export function bestSimilarity(bands: number[], templates: number[][]): number {
+  let best = 0;
+  for (const template of templates) best = Math.max(best, similarity(bands, template));
+  return best;
+}
+
 /**
- * Значения визем по текущему кадру звука. В тишине (ниже порога `gate`) все
- * виземы нулевые: иначе шум микрофона давал бы «похожесть» на всё сразу.
+ * Значения визем по текущему кадру звука.
+ *
+ * `contrast` — степень, в которую возводится похожесть: чем больше, тем резче
+ * выделяется самый близкий звук и тем меньше «фонит» остальным. В тишине (ниже
+ * порога `gate`) все виземы нулевые.
  */
-export function computeVisemes(module: ModuleInstance, bands: number[] | undefined, db: number): Record<string, number> {
-  const gate = Number(module.config.gate ?? -50);
+export function computeVisemes(
+  module: ModuleInstance,
+  bands: number[] | undefined,
+  db: number,
+  gate = Number(module.config.gate ?? -50),
+): Record<string, number> {
   // Гейт не ступенькой, а рампой в 12 дБ: на самом пороге виземы не дёргаются
   // между нулём и полным значением.
   const openness = clamp((db - gate) / 12 + 0.5, 0, 1);
+  const contrast = clamp(Number(module.config.contrast ?? 3), 1, 8);
   const values: Record<string, number> = {};
   const audible = openness > 0 && Array.isArray(bands) && bands.length === VISEME_BANDS;
   for (const entry of visemeEntries(module)) {
-    values[entry.name] = audible ? similarity(bands as number[], entry.template) * openness : 0;
+    const raw = audible ? bestSimilarity(bands as number[], entry.templates) : 0;
+    values[entry.name] = raw > 0 ? Math.pow(raw, contrast) * openness : 0;
   }
   return values;
 }
@@ -102,6 +163,11 @@ const CYRILLIC: Record<string, string> = {
   с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch",
   ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
 };
+
+/** Только латиница, цифры и `_`: имя входа попадает в выражение скрипта. */
+export function visemeNameAllowed(raw: string): boolean {
+  return /^[a-z0-9_]*$/.test(raw);
+}
 
 /**
  * Имя входа виземы: латиница, цифры и `_` — иначе выражение не скомпилируется.

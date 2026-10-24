@@ -1,24 +1,77 @@
 {
   "id": "viseme",
   "title": "Viseme",
-  "description": "Похожесть звука на звук: калибровка по микрофону, свои виземы, нормализация суммы.",
+  "description": "Похожесть звука на записанные эталоны: свои звуки, варианты произношения, нормализация суммы.",
   "kind": "viseme",
   "audio": true,
   "inputs": [],
   "fields": [
-    { "key": "deviceId", "label": "Устройство", "type": "device", "default": "default" },
-    { "key": "gate", "label": "Порог слышимости", "type": "number", "min": -80, "max": 0, "step": 1, "default": -50, "suffix": "дБ", "hint": "Ниже порога все виземы нулевые." },
-    { "key": "normalize", "label": "Нормализовать итог", "type": "flag", "default": true, "hint": "Сумма визем приводится к 1, чтобы морфинг не выходил за границы." }
+    {
+      "key": "deviceId",
+      "label": "Устройство",
+      "type": "device",
+      "default": "default"
+    },
+    {
+      "key": "gate",
+      "label": "Порог слышимости",
+      "type": "number",
+      "min": -80,
+      "max": 0,
+      "step": 1,
+      "default": -50,
+      "suffix": "дБ",
+      "hint": "Ниже порога все виземы нулевые."
+    },
+    {
+      "key": "contrast",
+      "label": "Контраст",
+      "type": "number",
+      "min": 1,
+      "max": 8,
+      "step": 0.5,
+      "default": 3,
+      "suffix": "×",
+      "hint": "Больше — резче выделяется самый похожий звук, меньше — виземы ближе друг к другу."
+    },
+    {
+      "key": "normalize",
+      "label": "Нормализовать итог",
+      "type": "flag",
+      "default": true,
+      "hint": "Сумма визем приводится к 1, чтобы морфинг не выходил за границы."
+    }
   ],
   "defaults": {
     "gate": -50,
     "normalize": true,
     "visemes": [
-      { "name": "a", "label": "a", "template": null },
-      { "name": "e", "label": "e", "template": null },
-      { "name": "i", "label": "i", "template": null },
-      { "name": "o", "label": "o", "template": null },
-      { "name": "u", "label": "u", "template": null }
-    ]
+      {
+        "name": "a",
+        "label": "a",
+        "templates": []
+      },
+      {
+        "name": "e",
+        "label": "e",
+        "templates": []
+      },
+      {
+        "name": "i",
+        "label": "i",
+        "templates": []
+      },
+      {
+        "name": "o",
+        "label": "o",
+        "templates": []
+      },
+      {
+        "name": "u",
+        "label": "u",
+        "templates": []
+      }
+    ],
+    "contrast": 3
   }
 }

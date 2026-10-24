@@ -1,11 +1,11 @@
 import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules } from "../modules/values";
 import {
-  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type ModuleInstance, type OverlayConfig,
-  type RigObject, type RigPreset,
+  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type ModuleConfig, type ModuleInstance,
+  type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
 } from "../types";
 import { hasModule, libraryEmpty, moduleDefinition, type ModuleField } from "../modules/registry";
-import { sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
+import { VISEME_BANDS, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -176,22 +176,25 @@ function normalizeConfig(fields: ModuleField[], raw: unknown): Record<string, nu
   return config;
 }
 
-/** Виземы экземпляра: имена латиницей, эталоны — массивы нужной длины. */
-function normalizeVisemesConfig(raw: unknown) {
+/**
+ * Виземы экземпляра: имена латиницей, эталоны — векторы нужной длины.
+ * Вариантов записи у одной виземы может быть сколько угодно; битые отбрасываем.
+ */
+function normalizeVisemesConfig(raw: unknown): VisemeEntry[] {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const list = Array.isArray(source.visemes) ? source.visemes : [];
-  const entries: Array<{ name: string; label: string; template: number[] | null }> = [];
+  const entries: VisemeEntry[] = [];
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
     const entry = item as Record<string, unknown>;
     const name = uniqueVisemeName(entries, sanitizeVisemeName(typeof entry.name === "string" ? entry.name : ""));
-    const template = Array.isArray(entry.template)
-      ? entry.template.map((value) => (Number.isFinite(Number(value)) ? Number(value) : 0))
-      : null;
+    const templates = (Array.isArray(entry.templates) ? entry.templates : [])
+      .filter((template): template is unknown[] => Array.isArray(template) && template.length === VISEME_BANDS)
+      .map((template) => template.map((value) => (Number.isFinite(Number(value)) ? Number(value) : 0)));
     entries.push({
       name,
       label: typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 12) : name,
-      template: template && template.length > 0 ? template : null,
+      templates,
     });
   }
   return entries;
@@ -208,25 +211,36 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const name = typeof item.name === "string" ? item.name.trim() : "";
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    // Пока папка modules не прочитана, список шаблонов пуст: подменять тип
-    // «manual» нельзя, иначе все модули пресета станут ручными при первом рендере.
+    // Тип не подменяем: неизвестный шаблон показывается как «шаблон не найден»,
+    // а не превращается молча в Manual с единственным входом `manual.value`.
+    // Пока папка modules не прочитана, проверять нечего — тип сохраняется как есть.
     const rawType = typeof item.type === "string" ? item.type : "";
-    const type = !rawType ? "manual" : libraryEmpty() || hasModule(rawType) ? rawType : "manual";
+    const type = !rawType ? "manual" : rawType;
     const definition = moduleDefinition(type);
-    const knownInputs = definition.kind === "viseme"
-      ? normalizeVisemesConfig(item.config).map((entry) => entry.name)
+    // Шаблон ещё не прочитан (или его нет): настройки не трогаем вовсе. Иначе
+    // нормализация по пустому набору полей выбросила бы виземы и калибровки —
+    // ровно то, что случилось с настройками `manual` до этого.
+    const unknown = libraryEmpty() || !hasModule(type);
+    const visemes = definition.kind === "viseme" || Array.isArray((item.config as ModuleConfig | undefined)?.visemes)
+      ? normalizeVisemesConfig(item.config)
+      : null;
+    const knownInputs = definition.kind === "viseme" || visemes
+      ? (visemes ?? []).map((entry) => entry.name)
       : definition.inputs.map((spec) => spec.name);
     const disabled = Array.isArray(item.disabledInputs)
       ? item.disabledInputs.filter((input): input is string => typeof input === "string" && knownInputs.includes(input))
       : [];
+    const rawConfig = item.config && typeof item.config === "object" ? { ...(item.config as ModuleConfig) } : {};
     modules.push({
       name,
       type,
       enabled: item.enabled !== false,
-      source: item.source === "manual" || !definition.audio ? "manual" : "live",
+      // Пока шаблон неизвестен, источник не переключаем: иначе микрофонный
+      // модуль после перезагрузки молча становится «Ползунком».
+      source: item.source === "manual" || (!unknown && !definition.audio) ? "manual" : "live",
       config: {
-        ...normalizeConfig(definition.fields, item.config),
-        ...(definition.kind === "viseme" ? { visemes: normalizeVisemesConfig(item.config) } : {}),
+        ...(unknown ? rawConfig : normalizeConfig(definition.fields, item.config)),
+        ...(visemes ? { visemes } : {}),
       },
       ...(disabled.length > 0 ? { disabledInputs: disabled } : {}),
     });

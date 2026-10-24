@@ -867,3 +867,25 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .input-line .spectrum { margin-bottom: 6px; }
 .input-slider > span { align-items: center; gap: 6px; }
 .input-slider > span b { margin-left: auto; }
+
+/* ---------- Варианты записи виземы ---------- */
+.viseme-variants { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.viseme-variant { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.viseme-variant .spectrum { flex: 1; height: 14px; }
+.viseme-variant.recording .spectrum { height: 20px; }
+.variant-remove { opacity: .55; }
+.variant-remove:hover { opacity: 1; color: #e0816f; }
+.viseme-empty { color: #4f5a63; font-size: 9px; font-style: italic; }
+.viseme-rec { color: #e0816f; font-size: 8px; animation: viseme-pulse 1s ease-in-out infinite; }
+.viseme-add-variant { color: #7fd3b8; }
+.viseme-add-variant.recording { color: #e0816f; }
+.viseme-add-variant:disabled { opacity: .4; }
+.viseme-row { grid-template-columns: minmax(52px, 74px) minmax(62px, 88px) minmax(0, 1fr) auto; align-items: start; }
+.viseme-row .viseme-label, .viseme-row .viseme-name, .viseme-row .viseme-actions { margin-top: 2px; }
+
+/* Активная кнопка палитры: раньше цвет текста совпадал с фоном. */
+.module-add-button.active {
+  background: #93d9c6;
+  border-color: #a8e8d6;
+  color: #14241f;
+}

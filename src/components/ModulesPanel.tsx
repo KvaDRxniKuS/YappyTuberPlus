@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  AudioLines, ChevronDown, Copy, Mic, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X,
+  ChevronDown, Copy, Mic, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { ModuleInstance } from "../types";
 import type { DeviceOption } from "../modules/audio";
@@ -267,7 +267,6 @@ export function ModulesPanel(props: ModulesPanelProps) {
         <button className={`button primary module-add-button ${paletteOpen ? "active" : ""}`} onClick={() => setPaletteOpen(!paletteOpen)}>
           <Plus size={14} /> Добавить модуль
         </button>
-        <button className="icon-button" title="Обновить список микрофонов" onClick={props.onRefreshDevices}><AudioLines size={14} /></button>
       </div>
 
       {paletteOpen && (

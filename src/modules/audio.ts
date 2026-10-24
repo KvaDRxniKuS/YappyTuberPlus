@@ -1,5 +1,5 @@
 import type { ModuleConfig } from "../types";
-import { VISEME_BANDS, unitVector } from "./viseme";
+import { VISEME_BANDS, bandFrequency, bandWeight, spectrumShape, unitVector } from "./viseme";
 
 export interface DeviceOption {
   id: string;
@@ -328,9 +328,9 @@ function sameFrame(previous: Record<string, AudioFrame> | null, next: Record<str
 }
 
 /**
- * АЧХ → 32 лог-полосы 80 Гц–8 кГц. Внутри полосы берём среднюю амплитуду,
- * иначе верхние полосы (там в разы больше бинов) забирали бы весь вес, и
- * эталон зависел бы от тембра шума, а не от формы рта.
+ * АЧХ → 32 лог-полосы 80 Гц–8 кГц → признак формы (см. `spectrumShape`).
+ * Внутри полосы берём среднюю амплитуду, иначе верхние полосы (там в разы
+ * больше бинов) забирали бы весь вес.
  */
 function readSpectrum(analyser: AnalyserNode, frequency: Float32Array<ArrayBuffer>): { bands: number[]; level: number } {
   analyser.getFloatFrequencyData(frequency);
@@ -346,13 +346,13 @@ function readSpectrum(analyser: AnalyserNode, frequency: Float32Array<ArrayBuffe
     const hz = bin * binHz;
     if (hz < low || hz >= high) continue;
     const index = Math.min(VISEME_BANDS - 1, Math.floor((Math.log(hz / low) / ratio) * VISEME_BANDS));
-    const power = Math.pow(10, frequency[bin] / 20);
-    sums[index] += power;
+    const amplitude = Math.pow(10, frequency[bin] / 20);
+    sums[index] += amplitude;
     counts[index] += 1;
-    level += power;
+    level += amplitude;
   }
-  const bands = sums.map((sum, index) => (counts[index] > 0 ? sum / counts[index] : 0));
-  return { bands: unitVector(bands), level };
+  const means = sums.map((sum, index) => (counts[index] > 0 ? sum / counts[index] : 0));
+  return { bands: spectrumShape(means), level };
 }
 
 /**

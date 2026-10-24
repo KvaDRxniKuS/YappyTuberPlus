@@ -113,8 +113,8 @@ export interface VisemeEntry {
   name: string;
   /** Как показывать в панели: `ö`, `a`. */
   label: string;
-  /** Эталонный спектр (32 числа, единичная длина) или null, пока не калиброван. */
-  template: number[] | null;
+  /** Эталонные спектры (варианты произношения): 32 числа, единичная длина. */
+  templates: number[][];
 }
 
 export interface ModuleConfig {

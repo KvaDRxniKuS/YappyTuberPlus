@@ -5,8 +5,8 @@ import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefiniti
 import { composeValues, instanceInputs } from "../../src/modules/values";
 import { normalizeModules } from "../../src/engine/preset";
 import {
-  averageSpectrum, computeVisemes, normalizeVisemes, sanitizeVisemeName, uniqueVisemeName, unitVector,
-  VISEME_BANDS,
+  averageSpectrum, bandFrequency, bestSimilarity, computeVisemes, normalizeVisemes, sanitizeVisemeName,
+  spectrumShape, uniqueVisemeName, unitVector, visemeNameAllowed, VISEME_BANDS,
 } from "../../src/modules/viseme";
 import type { ModuleInstance, VisemeEntry } from "../../src/types";
 
@@ -24,20 +24,54 @@ function shape(center: number, width = 4): number[] {
   return unitVector(Array.from({ length: VISEME_BANDS }, (_, index) => Math.exp(-((index - center) ** 2) / (2 * width * width))));
 }
 
+/** Синтетические гласные: форманты + спад АЧХ (как у настоящего голоса). */
+const FORMANTS: Record<string, number[]> = {
+  a: [730, 1090, 2440],
+  e: [530, 1840, 2480],
+  i: [270, 2290, 3010],
+  o: [570, 840, 2410],
+  u: [300, 870, 2240],
+};
+
+function vowel(name: string, pitch = 120, shift = 0): number[] {
+  const formants = FORMANTS[name];
+  const amplitudes = Array.from({ length: VISEME_BANDS }, (_, index) => {
+    const hz = bandFrequency(index);
+    let decibels = -3 * Math.log2(hz / 80);
+    formants.forEach((formant, position) => {
+      const distance = Math.log2(hz / (formant * (1 + shift)));
+      decibels += ([12, 10, 8][position] * Math.exp(-(distance * distance) / (2 * 0.11 * 0.11))) / (1 + position * 0.35);
+    });
+    return Math.pow(10, decibels / 20);
+  });
+  // Гармоники голоса: от основного тона, затухают.
+  for (let harmonic = 1; harmonic * pitch < 8000; harmonic += 1) {
+    const hz = harmonic * pitch;
+    if (hz < 80) continue;
+    const index = Array.from({ length: VISEME_BANDS }, (_, position) => bandFrequency(position))
+      .findIndex((center) => center >= hz);
+    if (index >= 0) amplitudes[index] *= 1 + 0.4 * Math.exp(-harmonic / 6);
+  }
+  return spectrumShape(amplitudes);
+}
+
 function visemeModule(visemes: VisemeEntry[], extra: Partial<ModuleInstance> = {}): ModuleInstance {
   return {
     name: "mouth",
     type: "viseme",
     enabled: true,
     source: "live",
-    config: { ...moduleDefaults(moduleDefinition("viseme")), visemes, normalize: true, gate: -50 },
+    config: {
+      ...moduleDefaults(moduleDefinition("viseme")),
+      visemes, normalize: true, gate: -50, contrast: 3,
+    },
     ...extra,
   };
 }
 
 const entries = (): VisemeEntry[] => [
-  { name: "a", label: "a", template: shape(8) },
-  { name: "o", label: "o", template: shape(18) },
+  { name: "a", label: "a", templates: [shape(8)] },
+  { name: "o", label: "o", templates: [shape(18)] },
 ];
 
 test("шаблон viseme берёт звук, но входы задаёт экземпляр", () => {
@@ -66,6 +100,45 @@ test("значение виземы — похожесть спектра, в т
   expect(silent["mouth.o"]).toBe(0);
 });
 
+test("несколько вариантов записи усиливают визему", () => {
+  const single: VisemeEntry[] = [{ name: "o", label: "o", templates: [vowel("o", 110)] }];
+  const many: VisemeEntry[] = [{ name: "o", label: "o", templates: [vowel("o", 110), vowel("o", 180), vowel("o", 250)] }];
+  const sound = vowel("o", 200);
+  expect(bestSimilarity(sound, many[0].templates)).toBeGreaterThan(bestSimilarity(sound, single[0].templates));
+
+  // Варианты переживают сохранение в пресет.
+  const modules = normalizeModules([visemeModule(many)]);
+  const stored = modules[0].config.visemes as VisemeEntry[];
+  expect(stored[0].templates).toHaveLength(3);
+  expect(stored[0].templates[0]).toHaveLength(VISEME_BANDS);
+});
+
+test("синтетические гласные различаются по форме, а не по громкости", () => {
+  const templates: VisemeEntry[] = Object.keys(FORMANTS).map((name) => ({
+    name, label: name, templates: [vowel(name, 100), vowel(name, 180), vowel(name, 260)],
+  }));
+  for (const [name, formants] of Object.entries(FORMANTS)) {
+    expect(formants.length).toBe(3);
+    for (const pitch of [95, 140, 220]) {
+      const bands = vowel(name, pitch);
+      const scores = templates.map((entry) => [entry.name, bestSimilarity(bands, entry.templates)] as const);
+      const best = scores.reduce((left, right) => (right[1] > left[1] ? right : left));
+      expect(best[0], `${name}@${pitch}`).toBe(name);
+    }
+  }
+});
+
+test("контраст увеличивает разрыв между своим и чужим звуком", () => {
+  const templates: VisemeEntry[] = Object.keys(FORMANTS).map((name) => ({
+    name, label: name, templates: [vowel(name, 150)],
+  }));
+  const bands = vowel("a", 150);
+  const soft = computeVisemes(visemeModule(templates, { config: { visemes: templates, gate: -50, contrast: 1, normalize: false } }), bands, -10);
+  const sharp = computeVisemes(visemeModule(templates, { config: { visemes: templates, gate: -50, contrast: 6, normalize: false } }), bands, -10);
+  const gap = (values: Record<string, number>) => values.a - Math.max(values.e, values.i, values.o, values.u);
+  expect(gap(sharp)).toBeGreaterThan(gap(soft));
+});
+
 test("нормализация приводит сумму к единице, но не оживляет тишину", () => {
   const normalized = normalizeVisemes({ a: 0.8, o: 0.8 });
   expect(normalized.a).toBeCloseTo(0.5, 6);
@@ -90,9 +163,13 @@ test("имена визем: латиница в скрипте, подпись 
   expect(sanitizeVisemeName("ы")).toBe("y");
   expect(sanitizeVisemeName("О")).toBe("o");
   expect(sanitizeVisemeName("2 звук")).toBe("v_2_zvuk");
-  const list: VisemeEntry[] = [{ name: "o", label: "о", template: null }];
+  // Ручной ввод имени принимает только допустимые символы.
+  expect(visemeNameAllowed("o_umlaut2")).toBe(true);
+  expect(visemeNameAllowed("ö")).toBe(false);
+  expect(visemeNameAllowed("a b")).toBe(false);
+  const list: VisemeEntry[] = [{ name: "o", label: "о", templates: [] }];
   expect(uniqueVisemeName(list, "ö")).toBe("o_umlaut");
-  expect(uniqueVisemeName([...list, { name: "o_umlaut", label: "ö", template: null }], "ö")).toBe("o_umlaut_2");
+  expect(uniqueVisemeName([...list, { name: "o_umlaut", label: "ö", templates: [] }], "ö")).toBe("o_umlaut_2");
 });
 
 test("ключи визем считаются по экземпляру, а не по шаблону", () => {
@@ -109,7 +186,7 @@ test("пресет сохраняет калибровки и чистит би�
   expect(modules).toHaveLength(1);
   const stored = modules[0].config.visemes as VisemeEntry[];
   expect(stored.map((entry) => entry.name)).toEqual(["a", "o"]);
-  expect(stored[0].template).toHaveLength(VISEME_BANDS);
+  expect(stored[0].templates[0]).toHaveLength(VISEME_BANDS);
   // Выключенным остаётся только существующий вход.
   expect(modules[0].disabledInputs).toEqual(["a"]);
 });

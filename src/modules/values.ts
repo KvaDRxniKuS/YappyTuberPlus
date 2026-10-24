@@ -1,7 +1,10 @@
 import type { InputValues, ModuleInstance, RigPreset } from "../types";
 import { DEFAULT_MODULES } from "../types";
-import { inputDefault, inputRange, moduleDefinition, type ModuleDefinition, type ModuleInputSpec } from "./registry";
-import { computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
+import {
+  hasModule, inputDefault, inputRange, libraryEmpty, moduleDefaults, moduleDefinition,
+  type ModuleDefinition, type ModuleInputSpec,
+} from "./registry";
+import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { frameValue, type AudioFrame } from "./audio";
 
 /** Полное имя входа: `mic.talking`. Именно так оно пишется в скрипте. */
@@ -60,6 +63,9 @@ export function validateModules(modules: ModuleInstance[]): string[] {
     else if (!/^[a-z_][a-z0-9_]*$/.test(module.name)) problems.push(`Имя «${module.name}» не подходит для скрипта`);
     else if (seen.has(module.name)) problems.push(`Имя «${module.name}» повторяется`);
     seen.add(module.name);
+    if (!libraryEmpty() && !hasModule(module.type)) {
+      problems.push(`Шаблон «${module.type}» не найден в папке modules`);
+    }
   }
   return problems;
 }
@@ -207,7 +213,13 @@ export function ensureModules(preset: RigPreset): RigPreset {
     ? preset.modules
     : defaultModules()).map((module) => ({ ...module, config: { ...module.config } }));
   if ((used.has("viseme") || usesVisemeInputs(scripts)) && !modules.some((module) => module.type === "viseme")) {
-    modules.push({ name: "viseme", type: "viseme", enabled: true, source: "manual", config: {} });
+    modules.push({
+      name: "viseme",
+      type: "viseme",
+      enabled: true,
+      source: "manual",
+      config: { ...moduleDefaults(moduleDefinition("viseme")), visemes: VISEME_BASE.map((entry) => ({ ...entry, templates: [] })) },
+    });
   }
   if (used.has("auto") && !modules.some((module) => module.type === "autoblink")) {
     modules.push({ name: "auto", type: "autoblink", enabled: true, source: "manual", config: { ...DEFAULT_MODULES[1].config } });

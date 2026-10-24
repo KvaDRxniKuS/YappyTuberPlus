@@ -116,13 +116,15 @@ export function InputsPanel(props: InputsPanelProps) {
                     onChange={(next) => props.onManual(key, next)}
                     action={viseme ? (
                       <CalibrateButton
-                        title={entry?.template ? "Перезаписать эталон виземы (3 с)" : "Записать эталон виземы (3 с)"}
+                        title={entry?.templates.length ? `Добавить вариант записи виземы (${entry.templates.length} есть, 3 с)` : "Записать эталон виземы (3 с)"}
                         recording={active}
                         disabled={!!recorder.recording && !active}
                         onClick={() => {
                           if (!entry) return;
                           void recorder.start(key, module.config, (template) => {
-                            const visemes: VisemeEntry[] = visemeEntries(module).map((item) => (item.name === entry.name ? { ...item, template } : item));
+                            const visemes: VisemeEntry[] = visemeEntries(module).map((item) => (
+                              item.name === entry.name ? { ...item, templates: [...item.templates, template] } : item
+                            ));
                             props.onModules(
                               props.modules.map((item) => (item.name === module.name ? { ...item, config: { ...item.config, visemes } } : item)),
                               "Калибровка виземы",

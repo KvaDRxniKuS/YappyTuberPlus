@@ -173,11 +173,25 @@ test("нормализация модулей отбрасывает дубли,
   // Усиление сохраняется, а порог зажимается в границы поля.
   expect(modules[0].config.gain).toBe(2);
   expect(modules[0].config.threshold).toBe(-80);
-  expect(modules[1].type).toBe("manual");
+  // Неизвестный шаблон не подменяется на Manual: иначе модуль молча получит
+  // единственный вход `manual.value` вместо своих.
+  expect(modules[1].type).toBe("unknown-type");
   expect(modules[2].source).toBe("manual");
   // Неизвестное имя входа отбрасывается, известное остаётся выключенным.
   expect(modules[2].disabledInputs).toEqual(["blink"]);
-  expect(validateModules(modules)).toHaveLength(0);
+  expect(validateModules(modules)).toEqual(["Шаблон «unknown-type» не найден в папке modules"]);
+});
+
+test("неизвестный шаблон не теряет настройки, виземы и источник", () => {
+  const visemes = [{ name: "o_umlaut", label: "ö", templates: [new Array(32).fill(0.17)] }];
+  const modules = normalizeModules([
+    { name: "future", type: "future-module", enabled: true, source: "live", config: { visemes, gain: 2 } },
+  ]);
+  expect(modules[0].type).toBe("future-module");
+  expect(modules[0].source).toBe("live");
+  // Калибровки и свои звуки переживают открытие пресета.
+  expect(modules[0].config.visemes).toEqual(visemes);
+  expect(modules[0].config.gain).toBe(2);
 });
 
 test("демо-пресет и пустой пресет согласованы с модулями", () => {
