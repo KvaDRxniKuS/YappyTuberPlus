@@ -326,6 +326,7 @@ export default function App() {
    * Горячие клавиши. Сравниваем `event.code`, а не `event.key`: при русской
    * раскладке Ctrl+Z приходит как «я», и на `key` сочетания просто не срабатывают.
    */
+  const deleteRef = useRef<() => void>(() => {});
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -351,6 +352,10 @@ export default function App() {
       } else if (event.altKey && event.code === "ArrowDown") {
         event.preventDefault();
         moveSelected(1);
+      } else if (event.code === "Delete" || event.code === "Backspace") {
+        // Delete и Backspace удаляют выделение; в полях ввода до этого места не доходит.
+        event.preventDefault();
+        deleteRef.current();
       } else if (!command && event.code === "KeyV") setTool("move");
       else if (!command && event.code === "KeyM") setTool("marquee");
       else if (!command && event.code === "KeyL") setTool("lasso");
@@ -426,14 +431,18 @@ export default function App() {
     if (!files?.length) return;
     pushUndo("Импорт спрайтов");
     const current = presetRef.current;
+    // Все спрайты встают в центр холста: раньше каждый следующий сдвигался на
+    // 28 px, и пачка картинок уезжала по диагонали.
+    const centerX = Math.round(current.canvas.width / 2);
+    const centerY = Math.round(current.canvas.height / 2);
     const added: RigObject[] = [];
     try {
-      for (const [index, file] of Array.from(files).entries()) {
+      for (const file of Array.from(files)) {
         const dataUrl = await readFile(file);
         const bitmap = await createImageBitmap(file);
         const name = file.name.replace(/\.[^.]+$/, "");
         const id = uniqueId([...current.objects, ...added], name);
-        added.push(makeSprite(id, name, dataUrl, bitmap.width, bitmap.height, 500 + index * 28, 300 + index * 28));
+        added.push(makeSprite(id, name, dataUrl, bitmap.width, bitmap.height, centerX, centerY));
         bitmap.close();
       }
       setPreset({ ...current, objects: [...current.objects, ...added] });
@@ -478,6 +487,8 @@ export default function App() {
     const fallback = replacementOf.get(primaryId || "") ?? null;
     setSelection(fallback ? [fallback] : objects[0] ? [objects[0].id] : []);
   };
+  // Delete объявлен ниже горячих клавиш, поэтому обработчик берёт его через ref.
+  deleteRef.current = deleteSelected;
 
   /** Дублирование: копируется поддерево каждого корня выборки, копии встают рядом. */
   const duplicateSelected = () => {
@@ -687,6 +698,12 @@ export default function App() {
             onToggleGrid={() => setShowGrid(!showGrid)}
             onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}
             onCyclePivots={() => setLayout((current) => ({ ...current, showPivots: nextGuideMode(current.showPivots) }))}
+            onCanvasSize={(width, height) => {
+              const current = presetRef.current;
+              if (current.canvas.width === width && current.canvas.height === height) return;
+              commit({ ...current, canvas: { width, height } }, { label: `Холст ${width} × ${height}` });
+              notify(`Холст: ${width} × ${height}`);
+            }}
             onSelect={(id, mode) => {
               if (mode === "toggle") toggleSelection(id!);
               else if (mode === "add") { if (id) selectMany([id], "add"); }

@@ -13,6 +13,7 @@ import {
   boxFromCorners, boxFromPoints, boxIntersects, polygonIntersectsBox, selectionRoots,
   type Box, type Point,
 } from "../engine/selection";
+import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 
 export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso";
 
@@ -31,6 +32,8 @@ interface SceneProps {
   onToggleGrid: () => void;
   onCycleBounds: () => void;
   onCyclePivots: () => void;
+  /** Правка размера холста из подписи у артборда. */
+  onCanvasSize: (width: number, height: number) => void;
   onSelect: (id: string | null, mode: SelectMode) => void;
   onSelectMany: (ids: string[], mode: "replace" | "add") => void;
   onDragStart: () => void;
@@ -67,6 +70,11 @@ export function Scene(props: SceneProps) {
   const spaceDown = useRef(false);
   const initialized = useRef(false);
   const marqueeRef = useRef<Marquee | null>(null);
+  // Размер холста правится прямо по подписи у артборда: подпись — HTML-кнопка
+  // поверх канвы, а её положение обновляет draw() вместе с камерой.
+  const sizeLabel = useRef<HTMLDivElement>(null);
+  const [editingSize, setEditingSize] = useState(false);
+  const [sizeDraft, setSizeDraft] = useState("");
   // Тень артборда — тяжёлый blur. Рисуем её один раз в отдельный холст и потом
   // просто растягиваем: размытие на каждом кадре заметно грузило процессор.
   const shadowRef = useRef<HTMLCanvasElement | null>(null);
@@ -126,9 +134,11 @@ export function Scene(props: SceneProps) {
     ctx.strokeRect(0, 0, preset.canvas.width, preset.canvas.height);
     ctx.restore();
 
-    ctx.fillStyle = "#77818c";
-    ctx.font = "10px Inter, system-ui, sans-serif";
-    ctx.fillText(`${preset.canvas.width} × ${preset.canvas.height}`, Math.max(8, x + 2), Math.max(14, y - 10));
+    const label = sizeLabel.current;
+    if (label) {
+      label.style.left = `${Math.max(6, x + 2)}px`;
+      label.style.top = `${Math.max(2, y - 24)}px`;
+    }
     drawMarquee(ctx, marqueeRef.current);
   };
 
@@ -161,6 +171,17 @@ export function Scene(props: SceneProps) {
     const { canvas: scene } = props.preset;
     const zoom = Math.max(0.05, Math.min((width - 70) / scene.width, (height - 70) / scene.height, 2));
     setCamera({ zoom, x: (width - scene.width * zoom) / 2, y: (height - scene.height * zoom) / 2 });
+  };
+
+  /** Принять введённый размер; мусор и значения вне диапазона просто отбрасываем. */
+  const applyCanvasSize = () => {
+    const size = parseCanvasSize(sizeDraft);
+    setEditingSize(false);
+    dirty.current = true;
+    if (!size) return;
+    const current = propsRef.current.preset.canvas;
+    if (sameCanvasSize(size, { width: current.width, height: current.height })) return;
+    propsRef.current.onCanvasSize(size.width, size.height);
   };
 
   useEffect(() => {
@@ -436,6 +457,35 @@ export function Scene(props: SceneProps) {
             setCamera({ zoom, x: point.x - scene.x * zoom, y: point.y - scene.y * zoom });
           }}
         />
+        <div className="scene-canvas-size" ref={sizeLabel}>
+          {editingSize ? (
+            <input
+              className="scene-canvas-size-field"
+              value={sizeDraft}
+              autoFocus
+              spellCheck={false}
+              title="Ширина × высота холста, затем Enter"
+              onChange={(event) => setSizeDraft(event.target.value)}
+              onFocus={(event) => event.target.select()}
+              onBlur={() => applyCanvasSize()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") applyCanvasSize();
+                else if (event.key === "Escape") { setEditingSize(false); dirty.current = true; }
+              }}
+            />
+          ) : (
+            <button
+              className="scene-canvas-size-text"
+              title="Размер холста — нажмите, чтобы изменить"
+              onClick={() => {
+                setSizeDraft(formatCanvasSize(propsRef.current.preset.canvas));
+                setEditingSize(true);
+              }}
+            >
+              {formatCanvasSize(props.preset.canvas)}
+            </button>
+          )}
+        </div>
       </div>
       <div className="scene-statusbar">
         <span>

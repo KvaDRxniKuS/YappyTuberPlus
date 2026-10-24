@@ -136,6 +136,19 @@ input, select { color: var(--text); }
 .tool-separator { width: 1px; height: 16px; margin: 0 4px; background: var(--border); }
 .scene-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #14171b; }
 .scene-viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+/* Подпись размера холста: и текст, и поле правки — слева сверху у артборда. */
+.scene-canvas-size { position: absolute; z-index: 3; left: 6px; top: 2px; }
+.scene-canvas-size-text,
+.scene-canvas-size-field {
+  font: 10px Inter, system-ui, sans-serif; line-height: 14px;
+  padding: 1px 5px; color: #77818c; background: #14171bcc;
+  border: 1px solid transparent; border-radius: 4px; cursor: text;
+}
+.scene-canvas-size-text:hover { color: #c6d0d9; border-color: #3a434d; }
+.scene-canvas-size-field {
+  width: 104px; color: #e8eef4; background: #1b2026;
+  border-color: #6fb4a3; outline: none;
+}
 .scene-viewport.tool-move canvas { cursor: default; }
 .scene-viewport.tool-pivot canvas { cursor: crosshair; }
 .scene-viewport.tool-pan canvas { cursor: grab; }
