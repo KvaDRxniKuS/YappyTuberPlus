@@ -1,15 +1,23 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FileImage,
   Folder, FolderPlus, Import, Plus, Trash2,
 } from "lucide-react";
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
+import { rangeIds, selectionRoots } from "../engine/selection";
 
 interface TreePanelProps {
   objects: RigObject[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  selectedIds: string[];
+  primaryId: string | null;
+  renamingId: string | null;
+  onSelect: (id: string | null) => void;
+  onToggleSelect: (id: string) => void;
+  onSelectRange: (ids: string[]) => void;
+  onRename: (id: string, name: string) => void;
+  onRequestRename: (id: string | null) => void;
+  onRenameCancel: () => void;
   onImport: () => void;
   onAddGroup: () => void;
   onDelete: () => void;
@@ -21,10 +29,11 @@ interface TreePanelProps {
 interface Row { object: RigObject; depth: number }
 
 export function TreePanel(props: TreePanelProps) {
-  const { objects, selectedId } = props;
+  const { objects, selectedIds, primaryId } = props;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[]>([]);
   const [dropId, setDropId] = useState<string | null>(null);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const rows = useMemo(() => {
     const result: Row[] = [];
@@ -42,7 +51,8 @@ export function TreePanel(props: TreePanelProps) {
     return result;
   }, [objects, collapsed]);
 
-  const selected = objects.find((object) => object.id === selectedId);
+  const order = useMemo(() => rows.map((row) => row.object.id), [rows]);
+  const primary = objects.find((object) => object.id === primaryId) || null;
 
   return (
     <aside className="tree-panel panel-surface">
@@ -59,39 +69,57 @@ export function TreePanel(props: TreePanelProps) {
         <button onClick={props.onAddGroup}><FolderPlus size={14} /> Группа</button>
       </div>
 
-      <div className="object-tree" onDragLeave={() => setDropId(null)}>
+      <div
+        className="object-tree"
+        onDragLeave={() => setDropId(null)}
+        onClick={(event) => { if (event.target === event.currentTarget) props.onSelect(null); }}
+      >
         {rows.map(({ object, depth }) => {
           const hasChildren = objects.some((item) => item.parentId === object.id);
           const hidden = scriptValue(object.script, "visible") === "0" || object.base.visible === 0;
-          const invalidDrop = dragId === object.id || (!!dragId && isDescendant(objects, object.id, dragId));
+          const dragging = dragIds.includes(object.id);
+          const invalidDrop = dragging || (!!dragIds.length && dragIds.some((id) => isDescendant(objects, object.id, id)));
           return (
             <div
               key={object.id}
-              className={`tree-row ${selectedId === object.id ? "selected" : ""} ${dropId === object.id ? "drop-target" : ""}`}
+              className={[
+                "tree-row",
+                selectedSet.has(object.id) ? "selected" : "",
+                primaryId === object.id ? "primary" : "",
+                dropId === object.id ? "drop-target" : "",
+              ].filter(Boolean).join(" ")}
               style={{ "--depth": depth } as React.CSSProperties}
-              draggable
+              aria-selected={selectedSet.has(object.id)}
+              draggable={props.renamingId !== object.id}
               onDragStart={(event) => {
-                setDragId(object.id);
+                const ids = selectedSet.has(object.id) ? selectionRoots(objects, selectedIds) : [object.id];
+                setDragIds(ids);
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/yappy-object", object.id);
               }}
-              onDragEnd={() => { setDragId(null); setDropId(null); }}
+              onDragEnd={() => { setDragIds([]); setDropId(null); }}
               onDragOver={(event) => {
-                if (!dragId || invalidDrop) return;
+                if (!dragIds.length || invalidDrop) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
                 setDropId(object.id);
               }}
               onDrop={(event) => {
                 event.preventDefault();
-                if (dragId && !invalidDrop) props.onReparent(dragId, object.id);
-                setDragId(null);
+                if (dragIds.length && !invalidDrop) for (const id of dragIds) props.onReparent(id, object.id);
+                setDragIds([]);
                 setDropId(null);
               }}
-              onClick={() => props.onSelect(object.id)}
+              onClick={(event) => {
+                if (event.ctrlKey || event.metaKey) { props.onToggleSelect(object.id); return; }
+                if (event.shiftKey) { props.onSelectRange(rangeIds(order, primaryId, object.id)); return; }
+                props.onSelect(object.id);
+              }}
+              onDoubleClick={() => props.onRequestRename(object.id)}
             >
               <button
                 className={`tree-expander ${hasChildren ? "" : "empty"}`}
+                onDoubleClick={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation();
                   if (!hasChildren) return;
@@ -107,10 +135,17 @@ export function TreePanel(props: TreePanelProps) {
               <span className={`tree-thumbnail ${object.kind}`}>
                 {object.kind === "group" ? <Folder size={15} /> : object.image ? <img src={object.image} alt="" draggable={false} /> : <Box size={15} />}
               </span>
-              <span className="tree-name">{object.name}</span>
+              {props.renamingId === object.id
+                ? <TreeRename
+                    value={object.name}
+                    onCommit={(name) => props.onRename(object.id, name)}
+                    onCancel={props.onRenameCancel}
+                  />
+                : <span className="tree-name" title="F2 — переименовать">{object.name}</span>}
               <button
                 className="tree-eye"
                 title={hidden ? "Показать" : "Скрыть"}
+                onDoubleClick={(event) => event.stopPropagation()}
                 onClick={(event) => { event.stopPropagation(); props.onToggleVisibility(object.id); }}
               >
                 {hidden ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -120,11 +155,11 @@ export function TreePanel(props: TreePanelProps) {
         })}
         <div
           className={`root-drop-zone ${dropId === "root" ? "drop-target" : ""}`}
-          onDragOver={(event) => { if (dragId) { event.preventDefault(); setDropId("root"); } }}
+          onDragOver={(event) => { if (dragIds.length) { event.preventDefault(); setDropId("root"); } }}
           onDrop={(event) => {
             event.preventDefault();
-            if (dragId) props.onReparent(dragId, null);
-            setDragId(null); setDropId(null);
+            for (const id of dragIds) props.onReparent(id, null);
+            setDragIds([]); setDropId(null);
           }}
         >
           Перетащите сюда, чтобы открепить
@@ -132,13 +167,53 @@ export function TreePanel(props: TreePanelProps) {
       </div>
 
       <div className="tree-footer">
-        <span>{selected ? selected.id : "Ничего не выбрано"}</span>
+        <span>
+          {primary
+            ? `${primary.id}${selectedIds.length > 1 ? ` · выделено ${selectedIds.length}` : ""}`
+            : "Ничего не выбрано"}
+        </span>
         <div>
-          <button className="icon-button" title="Дублировать" disabled={!selected} onClick={props.onDuplicate}><Copy size={14} /></button>
-          <button className="icon-button danger" title="Удалить" disabled={!selected} onClick={props.onDelete}><Trash2 size={14} /></button>
+          <button className="icon-button" title="Дублировать · Ctrl+D" disabled={!selectedIds.length} onClick={props.onDuplicate}><Copy size={14} /></button>
+          <button className="icon-button danger" title="Удалить" disabled={!selectedIds.length} onClick={props.onDelete}><Trash2 size={14} /></button>
         </div>
       </div>
       <div className="tree-hint"><Import size={12} /> PNG или WebP · до 256 объектов</div>
     </aside>
+  );
+}
+
+/** Поле переименования прямо в строке дерева: Enter/blur — применить, Esc — отменить. */
+function TreeRename({ value, onCommit, onCancel }: {
+  value: string; onCommit: (name: string) => void; onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const input = useRef<HTMLInputElement>(null);
+  const finished = useRef(false);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  const finish = (commit: boolean) => {
+    if (finished.current) return;
+    finished.current = true;
+    if (commit) onCommit(draft); else onCancel();
+  };
+  return (
+    <span className="tree-rename">
+      <input
+        ref={input}
+        value={draft}
+        spellCheck={false}
+        onChange={(event) => setDraft(event.target.value)}
+        onClick={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onBlur={() => finish(true)}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") { event.preventDefault(); finish(true); }
+          else if (event.key === "Escape") { event.preventDefault(); finish(false); }
+        }}
+      />
+    </span>
   );
 }

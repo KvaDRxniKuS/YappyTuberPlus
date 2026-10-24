@@ -7,6 +7,8 @@ import { Splitter } from "./Splitter";
 
 interface RightPanelProps {
   selected: RigObject | null;
+  /** Сколько всего объектов выделено — скрипт показывается для основного. */
+  selectedCount: number;
   objects: RigObject[];
   globals: string[];
   globalScript: string;
@@ -41,7 +43,10 @@ export function RightPanel(props: RightPanelProps) {
       {tab === "inputs" ? <InputsPanel inputs={props.inputs} frame={props.frame} onChange={props.onInputs} /> : <>
         <div className="script-workspace" style={{ height: props.editorHeight }}>
           <div className="script-caption">
-            <span>{tab === "globals" ? "globals.rig" : `${props.selected?.id || "object"}.rig`}</span>
+            <span>
+              {tab === "globals" ? "globals.rig" : `${props.selected?.id || "object"}.rig`}
+              {tab === "object" && props.selectedCount > 1 && <b className="script-multi"> +{props.selectedCount - 1}</b>}
+            </span>
             <span className="autosave-note">авто · 420 мс</span>
           </div>
           {(tab === "globals" || props.selected) ? <ScriptEditor

@@ -138,3 +138,67 @@ test("PNG import adds a usable sprite", async ({ page }) => {
   const preset = await readPreset(page);
   expect(preset.objects.at(-1).image).toMatch(/^data:image\/png;base64,/);
 });
+
+test("Ctrl+клик и Shift+клик собирают мультивыделение", async ({ page }) => {
+  await openStudio(page);
+  const rows = page.locator(".tree-row");
+  await rows.nth(1).click();
+  await expect(page.locator(".tree-row.selected")).toHaveCount(1);
+
+  await rows.nth(3).click({ modifiers: ["Control"] });
+  await expect(page.locator(".tree-row.selected")).toHaveCount(2);
+  await expect(page.locator(".inspector-title-static")).toContainText("Выделено 2");
+
+  // Shift+клик: диапазон от основного (nth(3)) до кликнутого (nth(5)).
+  await rows.nth(5).click({ modifiers: ["Shift"] });
+  await expect(page.locator(".tree-row.selected")).toHaveCount(3);
+
+  // Ctrl+клик по уже выделенному убирает его из выборки.
+  await rows.nth(3).click({ modifiers: ["Control"] });
+  await expect(page.locator(".tree-row.selected")).toHaveCount(2);
+});
+
+test("F2 переименовывает объект в дереве и отменяется через Ctrl+Z", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".tree-row").filter({ hasText: "Тело" }).click();
+  await page.keyboard.press("F2");
+  const input = page.locator(".tree-rename input");
+  await expect(input).toBeFocused();
+  await input.fill("Корпус");
+  await input.press("Enter");
+  await expect(page.locator(".tree-row").filter({ hasText: "Корпус" })).toHaveCount(1);
+  await expect(page.locator(".tree-rename input")).toHaveCount(0);
+
+  await page.keyboard.press("Control+z");
+  await expect(page.locator(".tree-row").filter({ hasText: "Тело" })).toHaveCount(1);
+});
+
+test("рамка выделяет объекты, включая скрытые", async ({ page }) => {
+  await openStudio(page);
+  const eyeRow = page.locator(".tree-row").filter({ hasText: "Глаз · левый" });
+  await eyeRow.hover();
+  await eyeRow.locator(".tree-eye").click();
+
+  await page.getByTitle(/Выделение рамкой/).click();
+  const box = (await page.locator(".scene-viewport canvas").boundingBox())!;
+  await page.mouse.move(box.x + 3, box.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3, { steps: 12 });
+  await page.mouse.up();
+
+  await expect(page.locator(".tree-row.selected")).toHaveCount(10);
+});
+
+test("скрытие панели не растягивает канвас сцены", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".status-collapse").first().click();
+  await page.waitForTimeout(60);
+  const mismatch = await page.evaluate(() => {
+    const element = document.querySelector<HTMLCanvasElement>(".scene-viewport canvas")!;
+    const host = element.parentElement!;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    return Math.abs(element.width - Math.round(host.clientWidth * dpr))
+      + Math.abs(element.height - Math.round(host.clientHeight * dpr));
+  });
+  expect(mismatch).toBeLessThanOrEqual(2);
+});

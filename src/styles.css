@@ -349,3 +349,29 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 /* ---------- Подписи режимов на кнопках сцены ---------- */
 .scene-tools button { position: relative; width: auto; min-width: 27px; padding: 0 5px; gap: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .tool-state { font-size: 7px; letter-spacing: .2px; opacity: .85; }
+
+/* ---------- Мультивыделение: дерево, инспектор, сцена ---------- */
+.tree-row.primary { background: #6bc0aa1f; border-color: #74c8b359; }
+.tree-row.primary .tree-name { color: #e7f4f0; font-weight: 600; }
+.tree-rename { flex: 1; min-width: 0; display: flex; }
+.tree-rename input { width: 100%; min-width: 0; height: 22px; padding: 0 5px; border: 1px solid var(--accent-dim); border-radius: 4px; background: #12161a; color: #e6efec; font: inherit; font-size: 10.5px; }
+.tree-rename input:focus { outline: none; border-color: #8ad9c5; }
+
+.inspector-title-static { font-size: 11px; font-weight: 600; color: #e3eeeb; }
+.multi-list { display: flex; flex-direction: column; gap: 3px; max-height: 168px; overflow: auto; }
+.multi-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 7px; border: 1px solid transparent; border-radius: 5px; background: #ffffff05; color: #aeb6c0; text-align: left; font-size: 10px; }
+.multi-item:hover { background: #ffffff0c; }
+.multi-item.primary { background: #6bc0aa16; border-color: #74c8b340; color: #e3eeeb; }
+.multi-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #6d7a84; }
+.multi-dot.sprite { background: #6fb4a3; }
+.multi-dot.group { background: #e4bd7c; }
+.multi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-item i { color: var(--faint); font-style: normal; font-family: monospace; font-size: 8px; }
+.multi-actions { display: flex; gap: 6px; margin-top: 8px; }
+.multi-actions button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 26px; border: 1px solid #313740; border-radius: 5px; background: #1a1e23; color: #a9b3bd; font-size: 9px; }
+.multi-actions button:hover { border-color: #4a5560; color: #dbe4e9; }
+.hint { margin: 6px 0 0; color: var(--faint); font-size: 8px; line-height: 1.5; }
+.script-multi { color: var(--accent); font-weight: 600; }
+
+.scene-viewport.tool-marquee canvas,
+.scene-viewport.tool-lasso canvas { cursor: crosshair; }

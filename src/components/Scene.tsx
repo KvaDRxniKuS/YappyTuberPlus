@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
-  CircleDot, Crosshair, Focus, Grid3X3, Hand, LocateFixed, MousePointer2,
-  Scan, ZoomIn, ZoomOut,
+  BoxSelect, CircleDot, Crosshair, Focus, Grid3X3, Hand, LassoSelect,
+  LocateFixed, MousePointer2, Scan, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset } from "../types";
 import { GUIDE_LABEL } from "../types";
@@ -9,13 +9,20 @@ import {
   drawRig, invertAffine, objectMatrix, orderedSprites, SpriteAssets, staticValues,
   transformPoint, type Affine,
 } from "../render/rigCanvas";
+import {
+  boxFromCorners, boxFromPoints, boxIntersects, polygonIntersectsBox, selectionRoots,
+  type Box, type Point,
+} from "../engine/selection";
 
-export type SceneTool = "move" | "pivot" | "pan";
+export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso";
+
+export type SelectMode = "replace" | "toggle" | "add";
 
 interface SceneProps {
   preset: RigPreset;
   frameRef: RefObject<RigFrame | null>;
-  selectedId: string | null;
+  selectedIds: string[];
+  primaryId: string | null;
   tool: SceneTool;
   showGrid: boolean;
   bounds: GuideMode;
@@ -24,16 +31,19 @@ interface SceneProps {
   onToggleGrid: () => void;
   onCycleBounds: () => void;
   onCyclePivots: () => void;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, mode: SelectMode) => void;
+  onSelectMany: (ids: string[], mode: "replace" | "add") => void;
   onDragStart: () => void;
-  onDragObjects: (id: string, initial: Record<string, BasePose>, delta: { x: number; y: number }) => void;
+  onDragObjects: (ids: string[], initial: Record<string, BasePose>, delta: { x: number; y: number }) => void;
   onPivot: (id: string, pivot: { x: number; y: number }) => void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
+type Marquee = { shape: "rect" | "lasso"; start: Point; current: Point; points: Point[] };
 type Interaction =
-  | { type: "drag"; id: string; start: { x: number; y: number }; initial: Record<string, BasePose> }
+  | { type: "drag"; ids: string[]; start: Point; initial: Record<string, BasePose> }
   | { type: "pan"; startX: number; startY: number; camera: Camera }
+  | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
   | null;
 
 const GRID_COLOR = "#8fa3ad2e";
@@ -41,6 +51,7 @@ const GRID_MAJOR = "#8fa3ad59";
 const BOUNDS_COLOR = "#6fb4a3";
 const BOUNDS_SELECTED = "#9be3d1";
 const PIVOT_COLOR = "#e4bd7c";
+const HIDDEN_COLOR = "#7d8790";
 
 export function Scene(props: SceneProps) {
   const viewport = useRef<HTMLDivElement>(null);
@@ -52,6 +63,7 @@ export function Scene(props: SceneProps) {
   const interaction = useRef<Interaction>(null);
   const spaceDown = useRef(false);
   const initialized = useRef(false);
+  const marqueeRef = useRef<Marquee | null>(null);
   // Отрисовка живёт в одном rAF-цикле, поэтому берём актуальные props через ref:
   // иначе замыкание навсегда сохраняет значения первого рендера (из-за этого
   // раньше не переключалась сетка и залипало выделение).
@@ -63,72 +75,6 @@ export function Scene(props: SceneProps) {
     setZoomLabel(Math.round(next.zoom * 100));
     dirty.current = true;
   };
-
-  const fit = () => {
-    const element = viewport.current;
-    if (!element) return;
-    const width = element.clientWidth;
-    const height = element.clientHeight;
-    const { canvas: scene } = props.preset;
-    const zoom = Math.max(0.05, Math.min((width - 70) / scene.width, (height - 70) / scene.height, 2));
-    setCamera({ zoom, x: (width - scene.width * zoom) / 2, y: (height - scene.height * zoom) / 2 });
-  };
-
-  useEffect(() => {
-    const element = viewport.current;
-    if (!element) return;
-    const observer = new ResizeObserver(() => {
-      if (!initialized.current && element.clientWidth > 0) {
-        initialized.current = true;
-        fit();
-      }
-      dirty.current = true;
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const imageKey = props.preset.objects.map((object) => object.image).filter(Boolean).join("|");
-  useEffect(() => {
-    assets.current.sync(props.preset.objects);
-    dirty.current = true;
-  }, [imageKey, props.preset.objects]);
-
-  useEffect(() => assets.current.onChange(() => { dirty.current = true; }), []);
-
-  useEffect(() => {
-    dirty.current = true;
-  }, [props.preset, props.selectedId, props.showGrid, props.tool, props.bounds, props.pivots]);
-
-  useEffect(() => {
-    const keyDown = (event: KeyboardEvent) => {
-      if (event.code === "Space" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
-        spaceDown.current = true;
-      }
-    };
-    const keyUp = (event: KeyboardEvent) => { if (event.code === "Space") spaceDown.current = false; };
-    window.addEventListener("keydown", keyDown);
-    window.addEventListener("keyup", keyUp);
-    return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); };
-  }, []);
-
-  useEffect(() => {
-    let animation = 0;
-    let lastSequence = -1;
-    const render = () => {
-      const sequence = propsRef.current.frameRef.current?.seq ?? -1;
-      if (dirty.current || sequence !== lastSequence) {
-        dirty.current = false;
-        lastSequence = sequence;
-        draw();
-      }
-      animation = requestAnimationFrame(render);
-    };
-    animation = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animation);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const draw = () => {
     const element = canvas.current;
@@ -167,8 +113,9 @@ export function Scene(props: SceneProps) {
     if (current.showGrid) drawGrid(ctx, preset.canvas.width, preset.canvas.height, zoom);
 
     drawRig(ctx, preset, frame, assets.current, { placeholders: true, lineScale: zoom });
-    drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedId);
-    drawSelection(ctx, preset, frame, zoom, current.selectedId, current.tool === "pivot");
+    drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
+    drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
+    if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
 
     ctx.strokeStyle = "#454d57";
     ctx.lineWidth = 1 / zoom;
@@ -178,7 +125,82 @@ export function Scene(props: SceneProps) {
     ctx.fillStyle = "#77818c";
     ctx.font = "10px Inter, system-ui, sans-serif";
     ctx.fillText(`${preset.canvas.width} × ${preset.canvas.height}`, Math.max(8, x + 2), Math.max(14, y - 10));
+    drawMarquee(ctx, marqueeRef.current);
   };
+
+  const fit = () => {
+    const element = viewport.current;
+    if (!element) return;
+    const width = element.clientWidth;
+    const height = element.clientHeight;
+    const { canvas: scene } = props.preset;
+    const zoom = Math.max(0.05, Math.min((width - 70) / scene.width, (height - 70) / scene.height, 2));
+    setCamera({ zoom, x: (width - scene.width * zoom) / 2, y: (height - scene.height * zoom) / 2 });
+  };
+
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => {
+      if (!initialized.current && element.clientWidth > 0) {
+        initialized.current = true;
+        fit();
+      }
+      dirty.current = true;
+      // Рисуем сразу в колбэке: ResizeObserver вызывается до paint, поэтому
+      // браузер не успевает растянуть старый битмап под новую ширину.
+      draw();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const imageKey = props.preset.objects.map((object) => object.image).filter(Boolean).join("|");
+  useEffect(() => {
+    assets.current.sync(props.preset.objects);
+    dirty.current = true;
+  }, [imageKey, props.preset.objects]);
+
+  useEffect(() => assets.current.onChange(() => { dirty.current = true; }), []);
+
+  useEffect(() => {
+    dirty.current = true;
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots]);
+
+  useEffect(() => {
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.code === "Space" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
+        spaceDown.current = true;
+      }
+      if (event.key === "Escape" && interaction.current?.type === "marquee") {
+        interaction.current = null;
+        marqueeRef.current = null;
+        dirty.current = true;
+      }
+    };
+    const keyUp = (event: KeyboardEvent) => { if (event.code === "Space") spaceDown.current = false; };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); };
+  }, []);
+
+  useEffect(() => {
+    let animation = 0;
+    let lastSequence = -1;
+    const render = () => {
+      const sequence = propsRef.current.frameRef.current?.seq ?? -1;
+      if (dirty.current || sequence !== lastSequence) {
+        dirty.current = false;
+        lastSequence = sequence;
+        draw();
+      }
+      animation = requestAnimationFrame(render);
+    };
+    animation = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const screenPoint = (event: { clientX: number; clientY: number }) => {
     const rect = canvas.current!.getBoundingClientRect();
@@ -208,12 +230,53 @@ export function Scene(props: SceneProps) {
     return null;
   };
 
+  /**
+   * Экранные рамки всех объектов по базовой позе (без анимационного кадра,
+   * иначе выделение прыгало бы от кадра к кадру). Видимость намеренно не
+   * учитывается: рамка и лассо выделяют и скрытые объекты.
+   */
+  const screenBoxes = (): { id: string; box: Box; corners: Point[] }[] => {
+    const current = propsRef.current;
+    const { zoom, x, y } = camera.current;
+    const result: { id: string; box: Box; corners: Point[] }[] = [];
+    for (const object of current.preset.objects) {
+      const corners = object.kind === "sprite"
+        ? spriteBounds(object, objectMatrix(object, staticValues(object)))
+        : groupBounds(current.preset, object.id);
+      if (!corners) continue;
+      const screen = corners.map((point) => ({ x: x + point.x * zoom, y: y + point.y * zoom }));
+      result.push({ id: object.id, corners: screen, box: boxFromCorners(screen) });
+    }
+    return result;
+  };
+
+  const finishMarquee = (current: Extract<Interaction, { type: "marquee" }>) => {
+    const rect = boxFromPoints(current.start, current.points.at(-1) ?? current.start);
+    const tiny = Math.abs(rect.maxX - rect.minX) < 3 && Math.abs(rect.maxY - rect.minY) < 3;
+    if (tiny) {
+      if (!current.additive) propsRef.current.onSelect(null, "replace");
+      return;
+    }
+    const hits = screenBoxes()
+      .filter((entry) => current.shape === "rect"
+        ? boxIntersects(entry.box, rect)
+        : polygonIntersectsBox(current.points, entry.box))
+      .map((entry) => entry.id);
+    if (!hits.length) {
+      if (!current.additive) propsRef.current.onSelect(null, "replace");
+      return;
+    }
+    propsRef.current.onSelectMany(hits, current.additive ? "add" : "replace");
+  };
+
   return (
     <section className="scene-panel panel-surface">
       <div className="scene-toolbar">
         <div className="scene-title"><span className="eyebrow">ПРЕВЬЮ</span><h2>Сцена</h2></div>
         <div className="scene-tools">
-          <button className={props.tool === "move" ? "active" : ""} title="Выделение и перемещение (V)" onClick={() => props.onTool("move")}><MousePointer2 size={15} /></button>
+          <button className={props.tool === "move" ? "active" : ""} title="Выделение и перемещение (V) · Ctrl+клик — добавить, Shift+клик — тоже добавить" onClick={() => props.onTool("move")}><MousePointer2 size={15} /></button>
+          <button className={props.tool === "marquee" ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => props.onTool("marquee")}><BoxSelect size={15} /></button>
+          <button className={props.tool === "lasso" ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => props.onTool("lasso")}><LassoSelect size={15} /></button>
           <button className={props.tool === "pivot" ? "active" : ""} title="Пивот (P)" onClick={() => props.onTool("pivot")}><Crosshair size={15} /></button>
           <button className={props.tool === "pan" ? "active" : ""} title="Панорамирование (Space)" onClick={() => props.onTool("pan")}><Hand size={15} /></button>
           <span className="tool-separator" />
@@ -244,31 +307,53 @@ export function Scene(props: SceneProps) {
           onPointerDown={(event) => {
             if (event.button !== 0 && event.button !== 1) return;
             event.currentTarget.setPointerCapture(event.pointerId);
-            const pan = propsRef.current.tool === "pan" || event.button === 1 || spaceDown.current;
+            const current = propsRef.current;
+            const pan = current.tool === "pan" || event.button === 1 || spaceDown.current;
             if (pan) {
               const point = screenPoint(event);
               interaction.current = { type: "pan", startX: point.x, startY: point.y, camera: { ...camera.current } };
               return;
             }
             const point = scenePoint(event);
-            if (propsRef.current.tool === "pivot" && propsRef.current.selectedId) {
-              const object = propsRef.current.preset.objects.find((item) => item.id === propsRef.current.selectedId && item.kind === "sprite");
+            if (current.tool === "pivot" && current.primaryId) {
+              const object = current.preset.objects.find((item) => item.id === current.primaryId && item.kind === "sprite");
               if (object) {
-                const values = propsRef.current.frameRef.current?.objects[object.id] || staticValues(object);
+                const values = current.frameRef.current?.objects[object.id] || staticValues(object);
                 const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
-                propsRef.current.onPivot(object.id, {
+                current.onPivot(object.id, {
                   x: (local.x + object.pivot.x * object.width) / object.width,
                   y: (local.y + object.pivot.y * object.height) / object.height,
                 });
                 return;
               }
             }
+            if (current.tool === "marquee" || current.tool === "lasso") {
+              const screen = screenPoint(event);
+              const shape = current.tool === "lasso" ? "lasso" : "rect";
+              interaction.current = {
+                type: "marquee",
+                shape,
+                start: screen,
+                points: [screen],
+                additive: event.shiftKey || event.ctrlKey || event.metaKey,
+              };
+              marqueeRef.current = { shape, start: screen, current: screen, points: [screen] };
+              dirty.current = true;
+              return;
+            }
             const hit = hitTest(point);
-            if (!hit) { propsRef.current.onSelect(null); return; }
-            propsRef.current.onSelect(hit.id);
-            propsRef.current.onDragStart();
-            const initial = Object.fromEntries(propsRef.current.preset.objects.map((object) => [object.id, { ...object.base }]));
-            interaction.current = { type: "drag", id: hit.id, start: point, initial };
+            if (!hit) {
+              if (!event.shiftKey && !event.ctrlKey && !event.metaKey) current.onSelect(null, "replace");
+              return;
+            }
+            if (event.ctrlKey || event.metaKey) { current.onSelect(hit.id, "toggle"); return; }
+            if (event.shiftKey) { current.onSelect(hit.id, "add"); return; }
+            const already = current.selectedIds.includes(hit.id);
+            if (!already) current.onSelect(hit.id, "replace");
+            const ids = already ? selectionRoots(current.preset.objects, current.selectedIds) : [hit.id];
+            current.onDragStart();
+            const initial = Object.fromEntries(current.preset.objects.map((object) => [object.id, { ...object.base }]));
+            interaction.current = { type: "drag", ids, start: point, initial };
           }}
           onPointerMove={(event) => {
             const current = interaction.current;
@@ -278,19 +363,45 @@ export function Scene(props: SceneProps) {
               setCamera({ ...current.camera, x: current.camera.x + point.x - current.startX, y: current.camera.y + point.y - current.startY });
               return;
             }
+            if (current.type === "marquee") {
+              const point = screenPoint(event);
+              const last = current.points.at(-1)!;
+              if (Math.hypot(point.x - last.x, point.y - last.y) >= 2 || current.points.length === 1) {
+                current.points.push(point);
+              }
+              marqueeRef.current = {
+                shape: current.shape,
+                start: current.start,
+                current: point,
+                points: current.shape === "lasso" ? [...current.points] : current.points,
+              };
+              dirty.current = true;
+              return;
+            }
             const point = scenePoint(event);
             let delta = { x: point.x - current.start.x, y: point.y - current.start.y };
             if (event.shiftKey) {
               if (Math.abs(delta.x) >= Math.abs(delta.y)) delta = { x: delta.x, y: 0 };
               else delta = { x: 0, y: delta.y };
             }
-            propsRef.current.onDragObjects(current.id, current.initial, delta);
+            propsRef.current.onDragObjects(current.ids, current.initial, delta);
           }}
           onPointerUp={(event) => {
+            const current = interaction.current;
             interaction.current = null;
+            if (current?.type === "marquee") {
+              current.points.push(screenPoint(event));
+              finishMarquee(current);
+              marqueeRef.current = null;
+              dirty.current = true;
+            }
             if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           }}
-          onPointerCancel={() => { interaction.current = null; }}
+          onPointerCancel={() => {
+            interaction.current = null;
+            marqueeRef.current = null;
+            dirty.current = true;
+          }}
           onWheel={(event) => {
             event.preventDefault();
             const point = screenPoint(event);
@@ -303,8 +414,8 @@ export function Scene(props: SceneProps) {
       <div className="scene-statusbar">
         <span>
           <LocateFixed size={12} />
-          {props.tool === "move" ? "Перемещение меняет базовую позу" : props.tool === "pivot" ? "Клик по спрайту задаёт пивот" : "Панорамирование"}
-          {" · "}границы: {GUIDE_LABEL[props.bounds]} · пивоты: {GUIDE_LABEL[props.pivots]}
+          {TOOL_HINT[props.tool]}
+          {" · "}выделено: {props.selectedIds.length} · границы: {GUIDE_LABEL[props.bounds]} · пивоты: {GUIDE_LABEL[props.pivots]}
         </span>
         <div className="zoom-control">
           <button onClick={() => setCamera({ ...camera.current, zoom: Math.max(0.08, camera.current.zoom / 1.2) })}><ZoomOut size={13} /></button>
@@ -316,8 +427,16 @@ export function Scene(props: SceneProps) {
   );
 }
 
+const TOOL_HINT: Record<SceneTool, string> = {
+  move: "Перемещение меняет базовую позу",
+  marquee: "Тяните рамку; Shift — добавить к выборке",
+  lasso: "Обведите объекты; Shift — добавить к выборке",
+  pivot: "Клик по спрайту задаёт пивот",
+  pan: "Панорамирование",
+};
+
 /** Квадрат границ объекта в координатах сцены по его текущей матрице. */
-function spriteBounds(object: RigObject, matrix: Affine): { x: number; y: number }[] {
+function spriteBounds(object: RigObject, matrix: Affine): Point[] {
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
   return [
@@ -329,7 +448,7 @@ function spriteBounds(object: RigObject, matrix: Affine): { x: number; y: number
 }
 
 /** Базовые границы группы: объединение базовых рамок всех её потомков-спрайтов. */
-function groupBounds(preset: RigPreset, groupId: string): { x: number; y: number }[] | null {
+function groupBounds(preset: RigPreset, groupId: string): Point[] | null {
   const ids = new Set<string>([groupId]);
   let changed = true;
   while (changed) {
@@ -341,7 +460,7 @@ function groupBounds(preset: RigPreset, groupId: string): { x: number; y: number
       }
     }
   }
-  const points: { x: number; y: number }[] = [];
+  const points: Point[] = [];
   for (const object of preset.objects) {
     if (object.kind !== "sprite" || !ids.has(object.id)) continue;
     points.push(...spriteBounds(object, objectMatrix(object, staticValues(object))));
@@ -367,17 +486,67 @@ function groupBounds(preset: RigPreset, groupId: string): { x: number; y: number
   ];
 }
 
-function isSelectedTree(preset: RigPreset, objectId: string, selectedId: string | null): boolean {
-  if (!selectedId) return false;
-  if (objectId === selectedId) return true;
+/** Объект считается выделенным, если выделен он сам или любой его предок. */
+function isSelectedTree(preset: RigPreset, objectId: string, selectedIds: string[]): boolean {
+  if (!selectedIds.length) return false;
+  const selected = new Set(selectedIds);
+  if (selected.has(objectId)) return true;
   let current = preset.objects.find((object) => object.id === objectId)?.parentId ?? null;
   const visited = new Set<string>();
   while (current && !visited.has(current)) {
-    if (current === selectedId) return true;
+    if (selected.has(current)) return true;
     visited.add(current);
     current = preset.objects.find((object) => object.id === current)?.parentId ?? null;
   }
   return false;
+}
+
+/** Скрытые объекты по базовой позе с учётом скрытых родителей. */
+function hiddenIds(preset: RigPreset): Set<string> {
+  const byId = new Map(preset.objects.map((object) => [object.id, object]));
+  const cache = new Map<string, boolean>();
+  const isHidden = (id: string): boolean => {
+    if (cache.has(id)) return cache.get(id)!;
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    let pointer: string | null = id;
+    while (pointer && !seen.has(pointer) && !cache.has(pointer)) {
+      seen.add(pointer);
+      chain.push(pointer);
+      pointer = byId.get(pointer)?.parentId ?? null;
+    }
+    let value = pointer ? cache.get(pointer) ?? false : false;
+    for (const item of chain.reverse()) {
+      value = (byId.get(item)?.base.visible === 0) || value;
+      cache.set(item, value);
+    }
+    return cache.get(id) ?? true;
+  };
+  return new Set(preset.objects.filter((object) => isHidden(object.id)).map((object) => object.id));
+}
+
+/** Пунктирные рамки скрытых объектов, пока активен инструмент выделения. */
+function drawHiddenOutlines(ctx: CanvasRenderingContext2D, preset: RigPreset, zoom: number) {
+  const hidden = hiddenIds(preset);
+  if (!hidden.size) return;
+  ctx.save();
+  ctx.strokeStyle = HIDDEN_COLOR;
+  ctx.globalAlpha = 0.6;
+  ctx.lineWidth = 1 / zoom;
+  ctx.setLineDash([3 / zoom, 3 / zoom]);
+  for (const id of hidden) {
+    const object = preset.objects.find((item) => item.id === id);
+    if (!object) continue;
+    const corners = object.kind === "sprite"
+      ? spriteBounds(object, objectMatrix(object, staticValues(object)))
+      : groupBounds(preset, object.id);
+    if (!corners) continue;
+    ctx.beginPath();
+    corners.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawGuides(
@@ -387,7 +556,7 @@ function drawGuides(
   zoom: number,
   bounds: GuideMode,
   pivots: GuideMode,
-  selectedId: string | null,
+  selectedIds: string[],
 ) {
   if (bounds === "off" && pivots === "off") return;
   const objects = preset.objects;
@@ -397,7 +566,7 @@ function drawGuides(
     ctx.save();
     ctx.lineWidth = 1 / zoom;
     for (const object of objects) {
-      const selected = isSelectedTree(preset, object.id, selectedId);
+      const selected = isSelectedTree(preset, object.id, selectedIds);
       if (bounds === "selected" && !selected) continue;
       if (bounds === "all" && !visible(object.id)) continue;
       const values = frame?.objects[object.id] || staticValues(object);
@@ -419,7 +588,7 @@ function drawGuides(
   if (pivots !== "off") {
     ctx.save();
     for (const object of objects) {
-      const selected = isSelectedTree(preset, object.id, selectedId);
+      const selected = isSelectedTree(preset, object.id, selectedIds);
       if (pivots === "selected" && !selected) continue;
       if (pivots === "all" && !visible(object.id)) continue;
       const values = frame?.objects[object.id] || staticValues(object);
@@ -444,40 +613,69 @@ function drawGuides(
   }
 }
 
+/** Подсветка всей выборки; у основного объекта дополнительно пивот и маркеры. */
 function drawSelection(
   ctx: CanvasRenderingContext2D,
   preset: RigPreset,
   frame: RigFrame | null,
   zoom: number,
-  selectedId: string | null,
+  selectedIds: string[],
+  primaryId: string | null,
   pivotMode: boolean,
 ) {
-  const object = preset.objects.find((item) => item.id === selectedId);
-  if (!object) return;
-  const values = frame?.objects[object.id] || staticValues(object);
-  const matrix = objectMatrix(object, values);
+  if (!selectedIds.length) return;
+  const selected = new Set(selectedIds);
   ctx.save();
   ctx.strokeStyle = pivotMode ? "#e4bd7c" : "#81dbc5";
   ctx.fillStyle = pivotMode ? "#e4bd7c" : "#81dbc5";
-  ctx.lineWidth = 1.5 / zoom;
-  ctx.setLineDash([5 / zoom, 4 / zoom]);
-  if (object.kind === "sprite") {
-    const corners = spriteBounds(object, matrix);
+  for (const id of selected) {
+    const object = preset.objects.find((item) => item.id === id);
+    if (!object) continue;
+    const values = frame?.objects[object.id] || staticValues(object);
+    const corners = object.kind === "sprite"
+      ? spriteBounds(object, objectMatrix(object, values))
+      : groupBounds(preset, object.id);
+    if (!corners) continue;
+    const primary = object.id === primaryId;
+    ctx.globalAlpha = primary ? 1 : 0.7;
+    ctx.lineWidth = (primary ? 1.5 : 1) / zoom;
+    ctx.setLineDash([5 / zoom, 4 / zoom]);
     ctx.beginPath();
     corners.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
     ctx.closePath();
     ctx.stroke();
+    if (!primary) continue;
+    ctx.setLineDash([]);
+    const pivot = transformPoint(objectMatrix(object, values), 0, 0);
+    const size = 7 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(pivot.x - size, pivot.y); ctx.lineTo(pivot.x + size, pivot.y);
+    ctx.moveTo(pivot.x, pivot.y - size); ctx.lineTo(pivot.x, pivot.y + size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, 2.4 / zoom, 0, Math.PI * 2);
+    ctx.fill();
   }
-  ctx.setLineDash([]);
-  const pivot = transformPoint(matrix, 0, 0);
-  const size = 7 / zoom;
-  ctx.beginPath();
-  ctx.moveTo(pivot.x - size, pivot.y); ctx.lineTo(pivot.x + size, pivot.y);
-  ctx.moveTo(pivot.x, pivot.y - size); ctx.lineTo(pivot.x, pivot.y + size);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(pivot.x, pivot.y, 2.4 / zoom, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.restore();
+}
+
+/** Рамка или лассо поверх сцены — рисуется в экранных координатах. */
+function drawMarquee(ctx: CanvasRenderingContext2D, marquee: Marquee | null) {
+  if (!marquee) return;
+  ctx.save();
+  ctx.strokeStyle = "#9be3d1";
+  ctx.fillStyle = "#82d5c12e";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  if (marquee.shape === "rect") {
+    const rect = boxFromPoints(marquee.start, marquee.current);
+    ctx.fillRect(rect.minX, rect.minY, rect.maxX - rect.minX, rect.maxY - rect.minY);
+    ctx.strokeRect(rect.minX, rect.minY, rect.maxX - rect.minX, rect.maxY - rect.minY);
+  } else if (marquee.points.length >= 2) {
+    ctx.beginPath();
+    marquee.points.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

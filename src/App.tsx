@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen,
   Gauge, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
@@ -12,13 +12,13 @@ import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
 import { createDemoPreset, createEmptyPreset, withDemoMouth } from "./data/demoPreset";
 import {
-  baseUpdates, descendantIds, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
+  baseUpdates, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
   scriptValue, setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
+import { History, type HistorySnapshot } from "./engine/history";
+import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
 import { useRigEngine } from "./engine/useRigEngine";
-import {
-  downloadPreset, fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs,
-} from "./engine/presetFile";
+import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import {
   DEFAULT_INPUTS, DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
@@ -27,6 +27,9 @@ import {
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
 const LAYOUT_KEY = "yappytuberplus.layout.v1";
+
+/** Как записывать изменение в историю: метка для подсказки и ключ склейки быстрых правок. */
+interface CommitOptions { record?: boolean; label?: string; coalesce?: string }
 
 function loadPreset(): RigPreset {
   try {
@@ -48,7 +51,9 @@ function loadLayout(): EditorLayout {
 
 export default function App() {
   const [preset, setPreset] = useState<RigPreset>(loadPreset);
-  const [selectedId, setSelectedId] = useState<string | null>(() => preset.objects[0]?.id || null);
+  const [selection, setSelection] = useState<string[]>(() => (preset.objects[0] ? [preset.objects[0].id] : []));
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [inputs, setInputs] = useState<InputValues>(DEFAULT_INPUTS);
   const [layout, setLayout] = useState<EditorLayout>(loadLayout);
   const [paused, setPaused] = useState(false);
@@ -61,18 +66,30 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const presetRef = useRef(preset);
   const inputsRef = useRef(inputs);
-  const undoStack = useRef<RigPreset[]>([]);
-  const redoStack = useRef<RigPreset[]>([]);
+  const history = useRef(new History());
+  const selectionRef = useRef(selection);
   const imageInput = useRef<HTMLInputElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
   presetRef.current = preset;
   inputsRef.current = inputs;
+  selectionRef.current = selection;
 
   const overlay = useOverlayHost(preset);
   const engine = useRigEngine(preset, inputsRef, paused || stopped, overlay.sinkRef);
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
-  const selected = preset.objects.find((object) => object.id === selectedId) || null;
+  const primaryId = selection.at(-1) ?? null;
+  const selected = preset.objects.find((object) => object.id === primaryId) || null;
+  // Порядок важен: последний элемент — основной объект, его и показывает инспектор.
+  const selectedObjects = selection
+    .map((id) => preset.objects.find((object) => object.id === id))
+    .filter((object): object is RigObject => !!object);
+  const historyState = useMemo(() => ({
+    canUndo: history.current.canUndo,
+    canRedo: history.current.canRedo,
+    undoLabel: history.current.undoLabel,
+    redoLabel: history.current.redoLabel,
+  }), [historyVersion]);
   const globalNames = preset.globals.split("\n").map((line) => line.match(/^\s*([A-Za-z0-9_]+)\s*=/)?.[1]).filter((name): name is string => !!name);
 
   const notify = useCallback((message: string) => {
@@ -81,30 +98,52 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2600);
   }, []);
 
-  const pushUndo = useCallback(() => {
-    undoStack.current.push(presetRef.current);
-    if (undoStack.current.length > 60) undoStack.current.shift();
-    redoStack.current = [];
-  }, []);
+  const snapshot = useCallback((): HistorySnapshot => ({
+    preset: presetRef.current,
+    selection: selectionRef.current,
+  }), []);
 
-  const commit = useCallback((next: RigPreset | ((current: RigPreset) => RigPreset), record = true) => {
-    if (record) pushUndo();
+  const bumpHistory = useCallback(() => setHistoryVersion((value) => value + 1), []);
+
+  /** Запомнить состояние перед изменением. */
+  const pushUndo = useCallback((label = "Изменение", coalesce?: string) => {
+    history.current.record(snapshot(), label, coalesce);
+    bumpHistory();
+  }, [snapshot, bumpHistory]);
+
+  const commit = useCallback((
+    next: RigPreset | ((current: RigPreset) => RigPreset),
+    options: boolean | CommitOptions = true,
+  ) => {
+    const settings: CommitOptions = typeof options === "boolean" ? { record: options } : options;
+    if (settings.record !== false) pushUndo(settings.label || "Изменение", settings.coalesce);
     setPreset(next);
   }, [pushUndo]);
 
+  const applySnapshot = useCallback((value: HistorySnapshot) => {
+    setPreset(value.preset);
+    setSelection(value.selection.filter((id) => value.preset.objects.some((object) => object.id === id)));
+    setRenameId(null);
+    bumpHistory();
+  }, [bumpHistory]);
+
   const undo = useCallback(() => {
-    const previous = undoStack.current.pop();
-    if (!previous) return;
-    redoStack.current.push(presetRef.current);
-    setPreset(previous);
-    if (!previous.objects.some((object) => object.id === selectedId)) setSelectedId(previous.objects[0]?.id || null);
-  }, [selectedId]);
+    const previous = history.current.undo(snapshot());
+    if (previous) applySnapshot(previous);
+  }, [applySnapshot, snapshot]);
 
   const redo = useCallback(() => {
-    const next = redoStack.current.pop();
-    if (!next) return;
-    undoStack.current.push(presetRef.current);
-    setPreset(next);
+    const next = history.current.redo(snapshot());
+    if (next) applySnapshot(next);
+  }, [applySnapshot, snapshot]);
+
+  const selectOnly = useCallback((id: string | null) => setSelection(id ? [id] : []), []);
+  const toggleSelection = useCallback((id: string) => setSelection((current) => toggleId(current, id)), []);
+  const selectRange = useCallback((ids: string[]) => setSelection(ids), []);
+  const selectMany = useCallback((ids: string[], mode: "replace" | "add") => {
+    setSelection((current) => (mode === "add"
+      ? [...current.filter((id) => !ids.includes(id)), ...ids]
+      : ids));
   }, []);
 
   const saveCurrent = useCallback(async () => {
@@ -122,13 +161,14 @@ export default function App() {
     }
   }, [notify, presetPath]);
 
+  /** «Сохранить как…» всегда спрашивает папку и имя; в браузере такого диалога нет. */
   const saveCurrentAs = useCallback(async () => {
+    if (!isTauri()) {
+      notify("Выбор папки доступен в приложении. В браузере файл сохраняется кнопкой «Сохранить»");
+      return;
+    }
     try {
       const result = await savePresetAs(presetRef.current);
-      if (result.downloaded) {
-        notify("Браузерный режим: файл скачан. В приложении доступен выбор директории");
-        return;
-      }
       setPresetPath(result.path);
       setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       notify(`Сохранено как: ${fileNameOf(result.path) || "пресет"}`);
@@ -141,10 +181,10 @@ export default function App() {
     if (!isTauri()) { presetInput.current?.click(); return; }
     try {
       const result = await openPresetFile();
-      commit(result.preset);
+      commit(result.preset, { label: "Открытие файла" });
       setPresetPath(result.path);
       setSavedAt(null);
-      setSelectedId(result.preset.objects[0]?.id || null);
+      setSelection(result.preset.objects[0] ? [result.preset.objects[0].id] : []);
       notify(`Открыт ${fileNameOf(result.path) || "пресет"}`);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -166,10 +206,10 @@ export default function App() {
 
   const newPreset = useCallback(() => {
     const empty = createEmptyPreset();
-    commit(empty);
+    commit(empty, { label: "Новый пресет" });
     setPresetPath(null);
     setSavedAt(null);
-    setSelectedId(null);
+    setSelection([]);
     notify("Создан пустой пресет");
   }, [commit, notify]);
 
@@ -192,34 +232,117 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [layout]);
 
+  /** F2: переименование на месте в дереве, а если оно свёрнуто — в инспекторе. */
+  const requestRename = useCallback((id: string | null) => {
+    if (!id) return;
+    if (layout.leftCollapsed) {
+      const input = document.querySelector<HTMLInputElement>(".inspector-title input");
+      if (input) { input.focus(); input.select(); return; }
+    }
+    setRenameId(id);
+  }, [layout.leftCollapsed]);
+
+  const renameObject = useCallback((id: string, name: string) => {
+    const current = presetRef.current;
+    const object = current.objects.find((item) => item.id === id);
+    setRenameId(null);
+    const trimmed = name.trim();
+    if (!object || !trimmed || trimmed === object.name) return;
+    commit({
+      ...current,
+      objects: current.objects.map((item) => (item.id === id ? { ...item, name: trimmed } : item)),
+    }, { label: `Переименование «${object.name}»` });
+  }, [commit]);
+
+  /**
+   * Горячие клавиши. Сравниваем `event.code`, а не `event.key`: при русской
+   * раскладке Ctrl+Z приходит как «я», и на `key` сочетания просто не срабатывают.
+   */
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      const editing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.closest(".cm-editor");
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      const editing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || !!target.closest(".cm-editor");
+      const command = event.ctrlKey || event.metaKey;
+      if (command && event.code === "KeyS") {
         event.preventDefault();
         if (event.shiftKey) void saveCurrentAs(); else void saveCurrent();
         return;
       }
       if (editing) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      if (command && event.code === "KeyZ") {
         event.preventDefault();
         if (event.shiftKey) redo(); else undo();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+      } else if (command && event.code === "KeyY") {
         event.preventDefault(); redo();
-      } else if (event.key.toLowerCase() === "v") setTool("move");
-      else if (event.key.toLowerCase() === "p") setTool("pivot");
-      else if (event.key.toLowerCase() === "k") {
+      } else if (event.key === "F2") {
+        event.preventDefault();
+        requestRename(selectionRef.current.at(-1) ?? null);
+      } else if (!command && event.code === "KeyV") setTool("move");
+      else if (!command && event.code === "KeyM") setTool("marquee");
+      else if (!command && event.code === "KeyL") setTool("lasso");
+      else if (!command && event.code === "KeyP") setTool("pivot");
+      else if (!command && event.code === "KeyK") {
         event.preventDefault();
         if (event.shiftKey) stopTimeline(); else togglePause();
       }
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [notify, redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause]);
+  }, [redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause, requestRename]);
 
-  const updateObject = useCallback((next: RigObject, record = true) => {
-    commit((current) => ({ ...current, objects: current.objects.map((object) => object.id === next.id ? next : object) }), record);
+
+  const updateObject = useCallback((next: RigObject, options: boolean | CommitOptions = true) => {
+    commit((current) => ({ ...current, objects: current.objects.map((object) => object.id === next.id ? next : object) }), options);
+  }, [commit]);
+
+  /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
+  const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
+    const current = presetRef.current;
+    const ids = new Set(selectionRef.current);
+    commit({
+      ...current,
+      objects: current.objects.map((object) => (ids.has(object.id)
+        ? { ...object, base: { ...object.base, ...patch } }
+        : object)),
+    }, { label: "Правка выделения", coalesce });
+  }, [commit]);
+
+  /** Относительный сдвиг всей выборки. */
+  const offsetSelected = useCallback((delta: { x?: number; y?: number }) => {
+    const current = presetRef.current;
+    const ids = new Set(selectionRef.current);
+    commit({
+      ...current,
+      objects: current.objects.map((object) => (ids.has(object.id)
+        ? { ...object, base: { ...object.base, x: object.base.x + (delta.x || 0), y: object.base.y + (delta.y || 0) } }
+        : object)),
+    }, { label: "Смещение выделения", coalesce: "multi-offset" });
+  }, [commit]);
+
+  const setSelectedLayer = useCallback((layer: number) => {
+    const current = presetRef.current;
+    const ids = new Set(selectionRef.current);
+    commit({
+      ...current,
+      objects: current.objects.map((object) => (ids.has(object.id)
+        ? { ...object, base: { ...object.base, layer }, script: setScriptValue(object.script, "layer", String(layer)) }
+        : object)),
+    }, { label: "Слой выделения", coalesce: "multi-layer" });
+  }, [commit]);
+
+  const setSelectedVisible = useCallback((visible: number) => {
+    const current = presetRef.current;
+    const ids = new Set(selectionRef.current);
+    commit({
+      ...current,
+      objects: current.objects.map((object) => (ids.has(object.id)
+        ? {
+            ...object,
+            base: { ...object.base, visible },
+            script: setScriptValue(object.script, "visible", visible ? (object.parentId ? "inherit" : "1") : "0"),
+          }
+        : object)),
+    }, { label: "Видимость выделения" });
   }, [commit]);
 
   const updateInputs = useCallback((patch: Partial<InputValues>) => {
@@ -230,7 +353,7 @@ export default function App() {
 
   const importSprites = async (files: FileList | null) => {
     if (!files?.length) return;
-    pushUndo();
+    pushUndo("Импорт спрайтов");
     const current = presetRef.current;
     const added: RigObject[] = [];
     try {
@@ -243,38 +366,83 @@ export default function App() {
         bitmap.close();
       }
       setPreset({ ...current, objects: [...current.objects, ...added] });
-      setSelectedId(added.at(-1)?.id || null);
+      const last = added.at(-1);
+      setSelection(last ? [last.id] : []);
       notify(`Добавлено спрайтов: ${added.length}`);
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Не удалось импортировать изображение");
     }
   };
 
+  /** Удаление всей выборки: дети удалённых переезжают к ближайшему живому предку. */
   const deleteSelected = () => {
-    if (!selected) return;
-    pushUndo();
-    const replacement = selected.parentId;
-    const objects = preset.objects.filter((object) => object.id !== selected.id).map((object) => {
-      let updated = object.parentId === selected.id ? setParent(object, replacement) : object;
-      if (replacement && updated.script.includes(selected.id)) {
-        updated = { ...updated, script: updated.script.replace(new RegExp(`\\b${selected.id}\\b`, "g"), replacement) };
+    const current = presetRef.current;
+    const ids = selectionRef.current.filter((id) => current.objects.some((object) => object.id === id));
+    if (!ids.length) return;
+    const doomed = new Set(ids);
+    const byId = new Map(current.objects.map((object) => [object.id, object]));
+    const replacementOf = new Map<string, string | null>();
+    for (const id of ids) {
+      let parent = byId.get(id)?.parentId ?? null;
+      const seen = new Set<string>();
+      while (parent && doomed.has(parent) && !seen.has(parent)) {
+        seen.add(parent);
+        parent = byId.get(parent)?.parentId ?? null;
       }
-      return updated;
+      replacementOf.set(id, parent);
+    }
+    const objects = current.objects.filter((object) => !doomed.has(object.id)).map((object) => {
+      let updated = object.parentId && doomed.has(object.parentId)
+        ? setParent(object, replacementOf.get(object.parentId) ?? null)
+        : object;
+      let script = updated.script;
+      for (const [removed, replacement] of replacementOf) {
+        if (!replacement || !script.includes(removed)) continue;
+        script = script.replace(new RegExp(`\\b${removed}\\b`, "g"), replacement);
+      }
+      return script === updated.script ? updated : { ...updated, script };
     });
-    commit({ ...preset, objects }, false);
-    setSelectedId(replacement || objects[0]?.id || null);
+    pushUndo(ids.length > 1 ? `Удаление ${ids.length} объектов` : "Удаление");
+    commit({ ...current, objects }, { record: false });
+    const fallback = replacementOf.get(primaryId || "") ?? null;
+    setSelection(fallback ? [fallback] : objects[0] ? [objects[0].id] : []);
   };
 
+  /** Дублирование: копируется поддерево каждого корня выборки, копии встают рядом. */
   const duplicateSelected = () => {
-    if (!selected) return;
-    const id = uniqueId(preset.objects, selected.id);
-    const copy: RigObject = {
-      ...selected, id, name: `${selected.name} · копия`,
-      base: { ...selected.base, x: selected.base.x + 24, y: selected.base.y + 24 },
-      pivot: { ...selected.pivot },
-    };
-    commit({ ...preset, objects: [...preset.objects, copy] });
-    setSelectedId(id);
+    const current = presetRef.current;
+    const roots = selectionRoots(current.objects, selectionRef.current);
+    if (!roots.length) return;
+    const moving = new Set<string>();
+    for (const root of roots) for (const id of subtreeIds(current.objects, [root])) moving.add(id);
+    let pool = [...current.objects];
+    const created: { source: RigObject; copy: RigObject }[] = [];
+    for (const object of current.objects) {
+      if (!moving.has(object.id)) continue;
+      const id = uniqueId(pool, object.id);
+      const copy: RigObject = {
+        ...object,
+        id,
+        name: `${object.name} · копия`,
+        base: { ...object.base },
+        pivot: { ...object.pivot },
+      };
+      pool = [...pool, copy];
+      created.push({ source: object, copy });
+    }
+    const bySource = new Map(created.map((entry) => [entry.source.id, entry.copy]));
+    for (const entry of created) {
+      if (entry.source.parentId && bySource.has(entry.source.parentId)) {
+        entry.copy.parentId = bySource.get(entry.source.parentId)!.id;
+      }
+    }
+    for (const root of roots) {
+      const copy = bySource.get(root);
+      if (copy) copy.base = { ...copy.base, x: copy.base.x + 24, y: copy.base.y + 24 };
+    }
+    const objects = [...current.objects, ...created.map((entry) => entry.copy)];
+    commit({ ...current, objects }, { label: roots.length > 1 ? "Дублирование выделения" : "Дублирование" });
+    setSelection(roots.map((root) => bySource.get(root)!.id));
   };
 
   const reparent = (id: string, parentId: string | null) => {
@@ -299,7 +467,7 @@ export default function App() {
       commit(withDemoMouth(parsed));
       setPresetPath(null);
       setSavedAt(null);
-      setSelectedId(parsed.objects[0]?.id || null);
+      setSelection(parsed.objects[0] ? [parsed.objects[0].id] : []);
       notify("Пресет загружен из файла");
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Ошибка загрузки пресета");
@@ -322,12 +490,25 @@ export default function App() {
         <div className="brand"><div className="brand-mark"><Box size={19} /></div><div><b>YappyTuber<span>Plus</span></b><small>RIG STUDIO · MVP</small></div></div>
         <div className="topbar-divider" />
         <div className="preset-identity">
-          <input value={preset.name} onChange={(event) => setPreset({ ...preset, name: event.target.value })} />
+          <input
+            value={preset.name}
+            onChange={(event) => commit({ ...presetRef.current, name: event.target.value }, { label: "Имя пресета", coalesce: "preset-name" })}
+          />
           <span>{preset.objects.length} объектов · v2</span>
         </div>
         <div className="history-actions">
-          <button className="icon-button" title="Undo · Ctrl+Z" disabled={!undoStack.current.length} onClick={undo}><Undo2 size={16} /></button>
-          <button className="icon-button" title="Redo · Ctrl+Shift+Z" disabled={!redoStack.current.length} onClick={redo}><Redo2 size={16} /></button>
+          <button
+            className="icon-button"
+            title={historyState.undoLabel ? `Отменить: ${historyState.undoLabel} · Ctrl+Z` : "Отменить · Ctrl+Z"}
+            disabled={!historyState.canUndo}
+            onClick={undo}
+          ><Undo2 size={16} /></button>
+          <button
+            className="icon-button"
+            title={historyState.redoLabel ? `Вернуть: ${historyState.redoLabel} · Ctrl+Y` : "Вернуть · Ctrl+Y"}
+            disabled={!historyState.canRedo}
+            onClick={redo}
+          ><Redo2 size={16} /></button>
         </div>
         <div className="topbar-spacer" />
 
@@ -351,7 +532,7 @@ export default function App() {
           mode={preset.runtime.fpsMode}
           limit={preset.runtime.fpsLimit}
           actual={engine.actualFps}
-          onChange={(runtime) => setPreset({ ...preset, runtime })}
+          onChange={(runtime) => commit({ ...presetRef.current, runtime }, { label: "Лимит FPS", coalesce: "fps" })}
         />
         <div className={`engine-status ${engine.status}`} title={engine.error || engine.backendLabel}>
           <span /> <div><b>{engine.actualFps} FPS</b><small>{engine.backendLabel}</small></div>
@@ -382,13 +563,20 @@ export default function App() {
       >
         <div className="workspace-panel left-workspace"><TreePanel
           objects={preset.objects}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedIds={selection}
+          primaryId={primaryId}
+          renamingId={renameId}
+          onSelect={selectOnly}
+          onToggleSelect={toggleSelection}
+          onSelectRange={selectRange}
+          onRename={renameObject}
+          onRequestRename={requestRename}
+          onRenameCancel={() => setRenameId(null)}
           onImport={() => imageInput.current?.click()}
           onAddGroup={() => {
             const id = uniqueId(preset.objects, "group");
-            commit({ ...preset, objects: [...preset.objects, makeGroup(id, "Новая группа")] });
-            setSelectedId(id);
+            commit({ ...preset, objects: [...preset.objects, makeGroup(id, "Новая группа")] }, { label: "Новая группа" });
+            setSelection([id]);
           }}
           onDelete={deleteSelected}
           onDuplicate={duplicateSelected}
@@ -410,7 +598,8 @@ export default function App() {
           <Scene
             preset={preset}
             frameRef={engine.frameRef}
-            selectedId={selectedId}
+            selectedIds={selection}
+            primaryId={primaryId}
             tool={tool}
             showGrid={showGrid}
             bounds={layout.showBounds}
@@ -419,19 +608,22 @@ export default function App() {
             onToggleGrid={() => setShowGrid(!showGrid)}
             onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}
             onCyclePivots={() => setLayout((current) => ({ ...current, showPivots: nextGuideMode(current.showPivots) }))}
-            onSelect={setSelectedId}
-            onDragStart={pushUndo}
-            onDragObjects={(id, initial: Record<string, BasePose>, delta) => {
-              setPreset((current) => {
-                const subtree = descendantIds(current.objects, id);
-                return {
-                  ...current,
-                  objects: current.objects.map((object) => subtree.has(object.id) && initial[object.id] ? {
-                    ...object,
-                    base: { ...object.base, x: initial[object.id].x + delta.x, y: initial[object.id].y + delta.y },
-                  } : object),
-                };
-              });
+            onSelect={(id, mode) => {
+              if (mode === "toggle") toggleSelection(id!);
+              else if (mode === "add") { if (id) selectMany([id], "add"); }
+              else selectOnly(id);
+            }}
+            onSelectMany={selectMany}
+            onDragStart={() => pushUndo("Перемещение")}
+            onDragObjects={(ids, initial: Record<string, BasePose>, delta) => {
+              const moving = new Set(subtreeIds(presetRef.current.objects, ids));
+              setPreset((current) => ({
+                ...current,
+                objects: current.objects.map((object) => (moving.has(object.id) && initial[object.id] ? {
+                  ...object,
+                  base: { ...object.base, x: initial[object.id].x + delta.x, y: initial[object.id].y + delta.y },
+                } : object)),
+              }));
             }}
             onPivot={(id, pivot) => {
               const object = preset.objects.find((item) => item.id === id);
@@ -439,12 +631,27 @@ export default function App() {
             }}
           />
           <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
-          <Inspector object={selected} objects={preset.objects} frame={engine.snapshot} onChange={updateObject} />
+          <Inspector
+            object={selected}
+            selection={selectedObjects}
+            objects={preset.objects}
+            frame={engine.snapshot}
+            onChange={updateObject}
+            onSelect={selectOnly}
+            onToggleSelect={toggleSelection}
+            onBases={updateSelectedBases}
+            onOffset={offsetSelected}
+            onLayer={setSelectedLayer}
+            onVisible={setSelectedVisible}
+            onDelete={deleteSelected}
+            onDuplicate={duplicateSelected}
+          />
         </main>
 
         <Splitter className="splitter-right" orientation="vertical" onDelta={(delta) => resize("rightWidth", -delta)} onReset={() => setLayout((current) => ({ ...current, rightWidth: DEFAULT_LAYOUT.rightWidth }))} label="Ширина панели скрипта" />
         <div className="workspace-panel right-workspace"><RightPanel
           selected={selected}
+          selectedCount={selection.length}
           objects={preset.objects}
           globals={globalNames}
           globalScript={preset.globals}
@@ -476,8 +683,8 @@ export default function App() {
         </div>
         <div className="status-right">
           <button onClick={() => setOverlayOpen(true)} className={overlay.viewers.length ? "overlay-live" : undefined}><MonitorPlay size={12} /> Оверлей{overlay.viewers.length ? ` · ${overlay.viewers.length}` : ""}</button>
-          <button onClick={() => { commit(createDemoPreset()); setSelectedId("head"); notify("Демо-риг восстановлен · Ctrl+Z для отмены"); }}><RotateCcw size={12} /> Демо</button>
-          <span>{selectedId || "—"}</span><span>Windows · Tauri 2</span><b>MVP 0.1</b>
+          <button onClick={() => { commit(createDemoPreset(), { label: "Демо-риг" }); setSelection(["head"]); notify("Демо-риг восстановлен · Ctrl+Z для отмены"); }}><RotateCcw size={12} /> Демо</button>
+          <span>{primaryId ? `${primaryId}${selection.length > 1 ? ` +${selection.length - 1}` : ""}` : "—"}</span><span>Windows · Tauri 2</span><b>MVP 0.1</b>
         </div>
       </footer>
 
