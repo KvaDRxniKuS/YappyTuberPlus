@@ -12,6 +12,8 @@
 #                                         нативное окно Tauri, а если Rust нет —
 #                                         окно браузера без вкладок
 #   ./start-yappytuber.sh --tauri         запустить нативное окно Tauri
+#   ./start-yappytuber.sh --safe-mode     без аппаратного ускорения WebView2:
+#                                         помогает, если окно почти чёрное
 #   ./start-yappytuber.sh --port 5199     другой порт редактора
 #   ./start-yappytuber.sh --branch NAME   другая ветка
 #   ./start-yappytuber.sh --dir PATH      папка проекта, если скрипт не в нём
@@ -26,6 +28,7 @@ OPEN=1
 BRIDGE=1
 SERVE=1
 MODE="dev"
+SAFE=0
 PORT=5173
 APP_DIR=""
 
@@ -60,6 +63,7 @@ while [ $# -gt 0 ]; do
     --no-serve) SERVE=0 ;;
     --tauri) MODE="tauri" ;;
     --app) MODE="app" ;;
+    --safe-mode|--safe) SAFE=1 ;;
     --branch=*) BRANCH="${1#*=}" ;;
     --branch) shift; BRANCH="${1:-}" ;;
     --port=*) PORT="${1#*=}" ;;
@@ -238,6 +242,13 @@ fi
 # откатывается на окно-приложение браузера, а потом на обычный браузер.
 TAURI_READY=0
 if command -v cargo >/dev/null 2>&1 && [ -d src-tauri ]; then TAURI_READY=1; fi
+
+# Безопасный режим: WebView2 на некоторых видеодрайверах рисует только часть
+# окна (панели и сцена остаются пустыми). Отключаем аппаратную композицию.
+if [ "$SAFE" = "1" ]; then
+  export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--disable-gpu-compositing --disable-gpu"
+  warn "Безопасный режим: аппаратное ускорение WebView2 отключено."
+fi
 
 if [ "$MODE" = "app" ] && [ "$TAURI_READY" = "1" ]; then
   step "Режим приложения: нативное окно"

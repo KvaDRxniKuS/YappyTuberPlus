@@ -11,6 +11,8 @@ rem    --no-serve     только обновить и собрать
 rem    --app          открыть редактор как приложение: нативное окно Tauri,
 rem                   а без Rust - окно браузера без вкладок
 rem    --tauri        запустить нативное окно Tauri
+rem    --safe-mode    без аппаратного ускорения WebView2: помогает, если
+rem                   окно почти чёрное, а панели и сцена пустые
 rem    --port 5199    другой порт редактора
 rem    --branch NAME  другая ветка
 rem    --dir PATH     папка проекта, если bat лежит не в нём
@@ -27,6 +29,7 @@ set "OPEN=1"
 set "BRIDGE=1"
 set "SERVE=1"
 set "MODE=dev"
+set "SAFE=0"
 set "PORT=5173"
 set "APP_DIR="
 
@@ -39,6 +42,8 @@ if /i "%ARG%"=="--bridge" ( set "BRIDGE=1" & goto next )
 if /i "%ARG%"=="--no-serve" ( set "SERVE=0" & goto next )
 if /i "%ARG%"=="--tauri" ( set "MODE=tauri" & goto next )
 if /i "%ARG%"=="--app" ( set "MODE=app" & goto next )
+if /i "%ARG%"=="--safe-mode" ( set "SAFE=1" & goto next )
+if /i "%ARG%"=="--safe" ( set "SAFE=1" & goto next )
 if /i "%ARG%"=="--help" goto usage
 if /i "%ARG:~0,9%"=="--branch=" ( set "BRANCH=%ARG:~9%" & goto next )
 if /i "%ARG%"=="--branch" ( shift & set "BRANCH=%~1" & goto next )
@@ -320,11 +325,20 @@ if /i "%MODE%"=="tauri" goto run_tauri
 call npm run dev -- --port %PORT%
 goto finish
 
+:safe_mode
+rem WebView2 на части видеодрайверов рисует только кусок окна: панели и сцена
+rem остаются пустыми. Отключаем аппаратную композицию через переменную WebView2.
+if "%SAFE%"=="1" set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu-compositing --disable-gpu"
+if "%SAFE%"=="1" echo Безопасный режим: аппаратное ускорение WebView2 отключено.
+goto safe_mode_done
+
 :run_app_tauri
+call :safe_mode
 echo Режим приложения: нативное окно Tauri.
 echo Первый запуск собирает окно несколько минут, дальше запуск быстрый.
 
 :run_tauri
+call :safe_mode
 call npm run tauri dev
 goto finish
 
@@ -333,6 +347,9 @@ rem --- завершение ---------------------------------------------------
 echo.
 echo == Готово: проект обновлён и собран.
 goto finish
+
+:safe_mode_done
+exit /b 0
 
 :finish
 if errorlevel 1 pause
