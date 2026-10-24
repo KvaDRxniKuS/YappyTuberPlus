@@ -9,6 +9,7 @@ export function useRigEngine(
   preset: RigPreset,
   inputsRef: RefObject<InputValues>,
   paused: boolean,
+  frameSinkRef?: RefObject<((frame: RigFrame) => void) | null>,
 ) {
   const [backend, setBackend] = useState<EngineBackend | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
@@ -132,6 +133,7 @@ export function useRigEngine(
             return;
           }
           frameRef.current = response.frame;
+          frameSinkRef?.current?.(response.frame);
           frames += 1;
           if (nowMs - lastSnapshot > 120 || response.frame.diagnostics.length > 0) {
             lastSnapshot = nowMs;
@@ -169,6 +171,7 @@ export function useRigEngine(
     });
     if (response.ok && response.frame) {
       frameRef.current = response.frame;
+      frameSinkRef?.current?.(response.frame);
       setSnapshot(response.frame);
     }
   }, [backend, inputsRef]);

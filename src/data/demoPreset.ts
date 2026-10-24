@@ -1,4 +1,4 @@
-import { DEFAULT_BASE, type BasePose, type RigObject, type RigPreset } from "../types";
+import { DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type RigObject, type RigPreset } from "../types";
 
 export const rootScript = (overrides: Partial<Record<string, string>> = {}) => `
 x = 0
@@ -59,6 +59,7 @@ blink_max = 6500
 blink = max(autoblink(blink_min, blink_max), signal.blink)
 breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
     runtime: { fpsMode: "limited", fpsLimit: 60 },
+    overlay: { ...DEFAULT_OVERLAY },
     objects: [
       object("character", "Персонаж", "group", null, null, 500, 520, base(500, 330), rootScript({
         x: "sin(time * 0.8) * 5",

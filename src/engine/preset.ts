@@ -1,5 +1,7 @@
 import { childScript, rootScript } from "../data/demoPreset";
-import { DEFAULT_BASE, type BasePose, type RigObject, type RigPreset } from "../types";
+import {
+  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type OverlayConfig, type RigObject, type RigPreset,
+} from "../types";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -134,6 +136,25 @@ export function normalizePreset(value: unknown): RigPreset | null {
       fpsMode: preset.runtime?.fpsMode === "display" ? "display" : "limited",
       fpsLimit: Math.min(240, Math.max(1, Math.round(preset.runtime?.fpsLimit || 60))),
     },
+    overlay: normalizeOverlay(preset.overlay),
+  };
+}
+
+const SCALE_MODES = new Set(["contain", "cover", "stretch", "pixel"]);
+const BACKGROUNDS = new Set(["transparent", "color", "chroma"]);
+
+export function normalizeOverlay(value: Partial<OverlayConfig> | undefined): OverlayConfig {
+  const overlay = value || {};
+  return {
+    width: Math.min(7680, Math.max(120, Math.round(Number(overlay.width) || DEFAULT_OVERLAY.width))),
+    height: Math.min(4320, Math.max(120, Math.round(Number(overlay.height) || DEFAULT_OVERLAY.height))),
+    scaleMode: overlay.scaleMode && SCALE_MODES.has(overlay.scaleMode) ? overlay.scaleMode : DEFAULT_OVERLAY.scaleMode,
+    background: overlay.background && BACKGROUNDS.has(overlay.background) ? overlay.background : DEFAULT_OVERLAY.background,
+    color: typeof overlay.color === "string" ? overlay.color : DEFAULT_OVERLAY.color,
+    chromaColor: typeof overlay.chromaColor === "string" ? overlay.chromaColor : DEFAULT_OVERLAY.chromaColor,
+    clickThrough: overlay.clickThrough ?? DEFAULT_OVERLAY.clickThrough,
+    alwaysOnTop: overlay.alwaysOnTop ?? DEFAULT_OVERLAY.alwaysOnTop,
+    showGuide: overlay.showGuide ?? DEFAULT_OVERLAY.showGuide,
   };
 }
 

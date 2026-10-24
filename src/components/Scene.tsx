@@ -3,7 +3,10 @@ import {
   Crosshair, Focus, Grid3X3, Hand, LocateFixed, MousePointer2,
   ZoomIn, ZoomOut,
 } from "lucide-react";
-import type { BasePose, ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
+import type { BasePose, RigFrame, RigObject, RigPreset } from "../types";
+import {
+  drawRig, invertAffine, objectMatrix, orderedSprites, SpriteAssets, staticValues, transformPoint,
+} from "../render/rigCanvas";
 
 export type SceneTool = "move" | "pivot" | "pan";
 
@@ -27,17 +30,12 @@ type Interaction =
   | { type: "pan"; startX: number; startY: number; camera: Camera }
   | null;
 
-const NEUTRAL: ObjectFrame = {
-  x: 0, y: 0, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0,
-  opacity: 1, visible: 1, layer: 0,
-};
-
 export function Scene(props: SceneProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const camera = useRef<Camera>({ zoom: 0.8, x: 80, y: 40 });
   const [zoomLabel, setZoomLabel] = useState(80);
-  const images = useRef(new Map<string, HTMLImageElement>());
+  const assets = useRef(new SpriteAssets());
   const dirty = useRef(true);
   const interaction = useRef<Interaction>(null);
   const spaceDown = useRef(false);
@@ -78,16 +76,11 @@ export function Scene(props: SceneProps) {
 
   const imageKey = props.preset.objects.map((object) => object.image).filter(Boolean).join("|");
   useEffect(() => {
-    for (const object of props.preset.objects) {
-      if (!object.image || images.current.has(object.image)) continue;
-      const image = new Image();
-      image.onload = () => { dirty.current = true; };
-      image.onerror = () => { dirty.current = true; };
-      image.src = object.image;
-      images.current.set(object.image, image);
-    }
+    assets.current.sync(props.preset.objects);
     dirty.current = true;
   }, [imageKey, props.preset.objects]);
+
+  useEffect(() => assets.current.onChange(() => { dirty.current = true; }), []);
 
   useEffect(() => { dirty.current = true; }, [props.preset, props.selectedId, props.showGrid, props.tool]);
 
@@ -155,8 +148,7 @@ export function Scene(props: SceneProps) {
     drawTransparency(ctx, preset.canvas.width, preset.canvas.height);
     if (props.showGrid) drawGrid(ctx, preset.canvas.width, preset.canvas.height, zoom);
 
-    const ordered = orderedSprites(preset, frame);
-    for (const object of ordered) drawSprite(ctx, object, frame, zoom);
+    drawRig(ctx, preset, frame, assets.current, { placeholders: true, lineScale: zoom });
     ctx.strokeStyle = "#454d57";
     ctx.lineWidth = 1 / zoom;
     ctx.strokeRect(0, 0, preset.canvas.width, preset.canvas.height);
@@ -168,28 +160,6 @@ export function Scene(props: SceneProps) {
     ctx.fillStyle = "#77818c";
     ctx.font = "10px Inter, system-ui, sans-serif";
     ctx.fillText(`${preset.canvas.width} × ${preset.canvas.height}`, Math.max(8, x + 2), Math.max(14, y - 10));
-  };
-
-  const drawSprite = (ctx: CanvasRenderingContext2D, object: RigObject, frame: RigFrame | null, zoom: number) => {
-    const values = frame?.objects[object.id] || staticValues(object);
-    if (values.visible === 0) return;
-    const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
-    if (opacity === 0 || values.sizeX === 0 || values.sizeY === 0) return;
-    const matrix = objectMatrix(object, values);
-    const image = object.image ? images.current.get(object.image) : null;
-    ctx.save();
-    ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
-    ctx.globalAlpha = opacity;
-    if (image?.complete && image.naturalWidth > 0) {
-      ctx.drawImage(image, -object.pivot.x * object.width, -object.pivot.y * object.height, object.width, object.height);
-    } else {
-      ctx.fillStyle = "#505965";
-      ctx.fillRect(-object.pivot.x * object.width, -object.pivot.y * object.height, object.width, object.height);
-      ctx.strokeStyle = "#8994a1";
-      ctx.lineWidth = 1 / zoom;
-      ctx.strokeRect(-object.pivot.x * object.width, -object.pivot.y * object.height, object.width, object.height);
-    }
-    ctx.restore();
   };
 
   const drawSelection = (ctx: CanvasRenderingContext2D, object: RigObject, frame: RigFrame | null, zoom: number, pivotMode: boolean) => {
@@ -204,10 +174,10 @@ export function Scene(props: SceneProps) {
       const px = object.pivot.x * object.width;
       const py = object.pivot.y * object.height;
       const points = [
-        new DOMPoint(-px, -py).matrixTransform(matrix),
-        new DOMPoint(object.width - px, -py).matrixTransform(matrix),
-        new DOMPoint(object.width - px, object.height - py).matrixTransform(matrix),
-        new DOMPoint(-px, object.height - py).matrixTransform(matrix),
+        transformPoint(matrix, -px, -py),
+        transformPoint(matrix, object.width - px, -py),
+        transformPoint(matrix, object.width - px, object.height - py),
+        transformPoint(matrix, -px, object.height - py),
       ];
       ctx.beginPath();
       points.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
@@ -215,7 +185,7 @@ export function Scene(props: SceneProps) {
       ctx.stroke();
     }
     ctx.setLineDash([]);
-    const pivot = new DOMPoint(0, 0).matrixTransform(matrix);
+    const pivot = transformPoint(matrix, 0, 0);
     const size = 7 / zoom;
     ctx.beginPath();
     ctx.moveTo(pivot.x - size, pivot.y); ctx.lineTo(pivot.x + size, pivot.y);
@@ -246,7 +216,7 @@ export function Scene(props: SceneProps) {
       const object = ordered[index];
       const values = frame?.objects[object.id] || staticValues(object);
       if (values.visible === 0) continue;
-      const local = new DOMPoint(point.x, point.y).matrixTransform(objectMatrix(object, values).inverse());
+      const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;
       if (local.x >= left && local.x <= left + object.width && local.y >= top && local.y <= top + object.height) return object;
@@ -284,7 +254,7 @@ export function Scene(props: SceneProps) {
               const object = presetRef.current.objects.find((item) => item.id === props.selectedId && item.kind === "sprite");
               if (object) {
                 const values = props.frameRef.current?.objects[object.id] || staticValues(object);
-                const local = new DOMPoint(point.x, point.y).matrixTransform(objectMatrix(object, values).inverse());
+                const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
                 props.onPivot(object.id, {
                   x: (local.x + object.pivot.x * object.width) / object.width,
                   y: (local.y + object.pivot.y * object.height) / object.height,
@@ -339,29 +309,6 @@ export function Scene(props: SceneProps) {
       </div>
     </section>
   );
-}
-
-function staticValues(object: RigObject): ObjectFrame {
-  return { ...NEUTRAL, visible: object.base.visible, layer: object.base.layer };
-}
-
-function objectMatrix(object: RigObject, values: ObjectFrame): DOMMatrix {
-  const rotation = object.base.rotation + values.rotation;
-  const skewX = (object.base.skewX + values.skewX) * Math.PI / 180;
-  const skewY = (object.base.skewY + values.skewY) * Math.PI / 180;
-  const skew = new DOMMatrix([1, Math.tan(skewY), Math.tan(skewX), 1, 0, 0]);
-  return new DOMMatrix()
-    .translate(object.base.x + values.x, object.base.y + values.y)
-    .rotate(rotation)
-    .multiply(skew)
-    .scale(object.base.sizeX * values.sizeX, object.base.sizeY * values.sizeY);
-}
-
-function orderedSprites(preset: RigPreset, frame: RigFrame | null): RigObject[] {
-  const sprites = preset.objects.filter((object) => object.kind === "sprite");
-  if (!frame) return [...sprites].sort((a, b) => a.base.layer - b.base.layer);
-  const positions = new Map(frame.order.map((id, index) => [id, index]));
-  return [...sprites].sort((a, b) => (positions.get(a.id) ?? 9999) - (positions.get(b.id) ?? 9999));
 }
 
 function drawTransparency(ctx: CanvasRenderingContext2D, width: number, height: number) {

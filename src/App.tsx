@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box, Check, ChevronLeft, ChevronRight, Download, FileUp, FolderOpen,
-  Gauge, ImagePlus, Pause, Play, Redo2, RotateCcw, Save, StepForward,
+  Gauge, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, StepForward,
   Undo2, X,
 } from "lucide-react";
 import { TreePanel } from "./components/TreePanel";
@@ -9,12 +9,14 @@ import { Scene, type SceneTool } from "./components/Scene";
 import { Inspector } from "./components/Inspector";
 import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
+import { OverlayDialog } from "./components/OverlayDialog";
 import { createDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, descendantIds, isDescendant, makeGroup, makeSprite, normalizePreset,
+  baseUpdates, descendantIds, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
   scriptValue, setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
 import { useRigEngine } from "./engine/useRigEngine";
+import { useOverlayHost } from "./hooks/useOverlayHost";
 import {
   DEFAULT_INPUTS, DEFAULT_LAYOUT, type BasePose, type EditorLayout,
   type InputValues, type RigObject, type RigPreset,
@@ -45,6 +47,7 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [tool, setTool] = useState<SceneTool>("move");
   const [showGrid, setShowGrid] = useState(true);
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const presetRef = useRef(preset);
   const inputsRef = useRef(inputs);
@@ -56,7 +59,9 @@ export default function App() {
   presetRef.current = preset;
   inputsRef.current = inputs;
 
-  const engine = useRigEngine(preset, inputsRef, paused);
+  const overlay = useOverlayHost(preset);
+  const engine = useRigEngine(preset, inputsRef, paused, overlay.sinkRef);
+  const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const selected = preset.objects.find((object) => object.id === selectedId) || null;
   const globalNames = preset.globals.split("\n").map((line) => line.match(/^\s*([A-Za-z0-9_]+)\s*=/)?.[1]).filter((name): name is string => !!name);
 
@@ -264,6 +269,14 @@ export default function App() {
           <span /> <div><b>{engine.actualFps} FPS</b><small>{engine.backendLabel}</small></div>
         </div>
         <div className="topbar-actions">
+          <button
+            className={`icon-button overlay-button ${overlay.viewers.length ? "live" : ""}`}
+            title={overlay.viewers.length ? `Оверлей подключён: ${overlay.viewers.length}` : "OBS-оверлей"}
+            onClick={() => setOverlayOpen(true)}
+          >
+            <MonitorPlay size={16} />
+            {overlay.viewers.length > 0 && <span className="overlay-badge">{overlay.viewers.length}</span>}
+          </button>
           <button className="button secondary" onClick={() => presetInput.current?.click()}><FolderOpen size={14} /> Открыть</button>
           <button className="button secondary compact" title="Экспорт JSON" onClick={exportPreset}><Download size={15} /></button>
           <button className="button primary" onClick={() => { localStorage.setItem(PRESET_KEY, JSON.stringify(preset)); notify("Пресет сохранён"); }}><Save size={14} /> Сохранить</button>
@@ -362,6 +375,7 @@ export default function App() {
           </span>
         </div>
         <div className="status-right">
+          <button onClick={() => setOverlayOpen(true)} className={overlay.viewers.length ? "overlay-live" : undefined}><MonitorPlay size={12} /> Оверлей{overlay.viewers.length ? ` · ${overlay.viewers.length}` : ""}</button>
           <button onClick={() => { commit(createDemoPreset()); setSelectedId("head"); notify("Демо-риг восстановлен · Ctrl+Z для отмены"); }}><RotateCcw size={12} /> Демо</button>
           <span>{selectedId || "—"}</span><span>Windows · Tauri 2</span><b>MVP 0.1</b>
         </div>
@@ -369,6 +383,17 @@ export default function App() {
 
       <input ref={imageInput} type="file" accept="image/png,image/webp" multiple hidden onChange={(event) => { void importSprites(event.target.files); event.target.value = ""; }} />
       <input ref={presetInput} type="file" accept=".json,.yappy.json,application/json" hidden onChange={(event) => { void importPreset(event.target.files?.[0]); event.target.value = ""; }} />
+      {overlayOpen && <OverlayDialog
+        config={overlayConfig}
+        viewers={overlay.viewers}
+        transport={overlay.transport}
+        bridgeReady={overlay.bridgeReady}
+        bridgeUrl={overlay.bridgeUrl}
+        transportParam={new URLSearchParams(window.location.search).get("transport") || undefined}
+        onChange={(patch) => commit({ ...presetRef.current, overlay: { ...(presetRef.current.overlay || overlayConfig), ...patch } }, false)}
+        onClose={() => setOverlayOpen(false)}
+        onNotify={notify}
+      />}
       {toast && <div className="toast"><ImagePlus size={15} />{toast}</div>}
       <div className="mobile-warning">Для работы с ригом откройте редактор на широком экране.</div>
     </div>

@@ -35,6 +35,21 @@ export interface RuntimeConfig {
   fpsLimit: number;
 }
 
+export type OverlayScaleMode = "contain" | "cover" | "stretch" | "pixel";
+export type OverlayBackground = "transparent" | "color" | "chroma";
+
+export interface OverlayConfig {
+  width: number;
+  height: number;
+  scaleMode: OverlayScaleMode;
+  background: OverlayBackground;
+  color: string;
+  chromaColor: string;
+  clickThrough: boolean;
+  alwaysOnTop: boolean;
+  showGuide: boolean;
+}
+
 export interface RigPreset {
   version: 2;
   name: string;
@@ -42,6 +57,7 @@ export interface RigPreset {
   objects: RigObject[];
   globals: string;
   runtime: RuntimeConfig;
+  overlay: OverlayConfig;
 }
 
 export type ObjectFrame = Record<ParamName, number>;
@@ -91,6 +107,18 @@ export const DEFAULT_LAYOUT: EditorLayout = {
   rightEditorHeight: 370,
   leftCollapsed: false,
   rightCollapsed: false,
+};
+
+export const DEFAULT_OVERLAY: OverlayConfig = {
+  width: 900,
+  height: 620,
+  scaleMode: "contain",
+  background: "transparent",
+  color: "#17191d",
+  chromaColor: "#00ff00",
+  clickThrough: false,
+  alwaysOnTop: true,
+  showGuide: false,
 };
 
 export const DEFAULT_BASE: BasePose = {
