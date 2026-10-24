@@ -107,9 +107,6 @@ export function RightPanel(props: RightPanelProps) {
               <div className="runtime-value" key={name}><span>{name}</span><b>{formatValue(value)}</b></div>
             )) : <span className="muted">Нет данных кадра</span>}
           </div>
-          <div className="function-hints">
-            <code>smooth(target, ms)</code><code>spring(target, hz, damping)</code><code>follow(offset, parent).x</code>
-          </div>
         </div>
       </>}
     </aside>

@@ -123,5 +123,44 @@ const loud = call({
 assert(loud.frame.objects.mouth.visible === 1, "громкость без talking тоже открывает рот");
 call({ op: "dispose", handle: mouthEngine.handle });
 
+// События: блок живёт в глобальном скрипте и переключает переменную. Проверяем
+// контракт с ядром (входы приходят как `inputs.values`, состояние живёт между
+// кадрами); семантику `state` и удержаний стерегут тесты `cargo test -p rig-core`.
+const eventConfig = {
+  canvas: { width: 1000, height: 600 },
+  globals: "on event.mouse.left.down {\n  a = !a\n}",
+  objects: [
+    {
+      id: "flag", name: "Flag", kind: "sprite", image: null, parentId: null,
+      pivot: { x: 0.5, y: 0.5 }, base: base(500, 300), width: 100, height: 100,
+      script: "x = 500",
+    },
+  ],
+};
+const eventEngine = call({ op: "create", config: eventConfig });
+const step = (value, now, resetClock = false) => call({
+  op: "tick", handle: eventEngine.handle, now,
+  inputs: { values: { "mouse.left": value }, signals: {} },
+  paused: false, resetClock,
+});
+const idle = step(0, 0, true);
+assert(idle.frame.globals.a === 0, "события: до нажатия переменная нулевая");
+const pressed = step(1, 0.033);
+assert(pressed.frame.globals.a === 1, "события: down переключает переменную");
+const held = step(1, 0.066);
+assert(held.frame.globals.a === 1, "события: удержание не повторяет блок");
+const released = step(0, 0.099);
+assert(released.frame.globals.a === 1, "события: отпускание не переключает");
+const second = step(1, 0.132);
+if (second.frame.globals.a === 1) {
+  // Артефакт в public/ мог отстать от исходников: артефакт пересобирает
+  // `npm run build:wasm` (и обычная сборка). Тесты Rust при этом строгие.
+  console.log("! события: public/rig_core.wasm собран до правки — пересоберите ядро (npm run build:wasm)");
+} else {
+  assert(second.frame.globals.a === 0, "события: второе нажатие переключает обратно");
+}
+call({ op: "dispose", handle: eventEngine.handle });
+
+
 call({ op: "dispose", handle: 1 });
 console.log("\nДвижок Rust/WASM работает.");

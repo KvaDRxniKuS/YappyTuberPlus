@@ -32,6 +32,11 @@ struct EventState {
     last: f64,
     since: f64,
     fired: bool,
+    /// Условие `hold`/`relax` уже выполняется (нужно, чтобы поймать начало).
+    active: bool,
+    /// Кадр, на котором условие выполнилось: `hold(0)` ждёт следующий кадр,
+    /// поэтому он и не совпадает по поведению с `down`.
+    armed: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -358,6 +363,7 @@ impl Rig {
     /// значение переменной.
     fn fire_events(&mut self) {
         let now = self.time;
+        let seq = self.seq;
         for index in 0..self.events.len() {
             let (source, kind, owner, body) = {
                 let event = &self.events[index];
@@ -370,39 +376,42 @@ impl Rig {
             };
             let value = self.inputs.values.get(&source).copied().unwrap_or(0.0);
             let high = value > 0.5;
+            // `relax` — то же удержание, только условие обратное.
+            let active = if matches!(kind, EventKind::Relax(_)) { !high } else { high };
             // Первое наблюдение запоминает текущее значение: иначе `change`
             // срабатывал бы на старте сцены, а `down` — на уже зажатой клавише.
             let state = self.event_state.entry(index).or_insert(EventState {
                 last: value,
                 since: 0.0,
                 fired: false,
+                active: false,
+                armed: 0,
             });
             let fired = match kind {
                 EventKind::Down => state.last <= 0.5 && high,
                 EventKind::Up => state.last > 0.5 && !high,
                 EventKind::Change => (value - state.last).abs() > 1e-9,
-                EventKind::Hold(seconds) => {
-                    if !high {
-                        state.since = now;
+                // Удержание срабатывает не в кадре, когда условие выполнилось, а
+                // следующим: так даже `hold(0)` и `relax(0)` отличаются от
+                // `down`/`up` и дают «на кадр позже».
+                EventKind::Hold(seconds) | EventKind::Relax(seconds) => {
+                    if !active {
                         state.fired = false;
+                        state.active = false;
                         false
-                    } else if !state.fired && now - state.since >= seconds {
-                        state.fired = true;
-                        true
                     } else {
-                        false
-                    }
-                }
-                EventKind::Relax(seconds) => {
-                    if high {
-                        state.since = now;
-                        state.fired = false;
-                        false
-                    } else if !state.fired && now - state.since >= seconds {
-                        state.fired = true;
-                        true
-                    } else {
-                        false
+                        if !state.active {
+                            state.active = true;
+                            state.since = now;
+                            state.armed = seq;
+                            state.fired = false;
+                        }
+                        if !state.fired && seq > state.armed && now - state.since >= seconds {
+                            state.fired = true;
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
             };
@@ -644,10 +653,27 @@ impl Rig {
                     if let Some(value) = self.inputs.values.get(&key) {
                         return Value::Number(*value);
                     }
-                    // Состояние событий и снимки прошлого кадра (state.*, event.*)
-                    // приходят из редактора; до первого кадра их может не быть.
-                    if matches!(base.as_str(), "state" | "event") {
-                        return Value::Number(0.0);
+                    // `state.имя` — значение прошлого кадра. Считает его ядро, а не
+                    // редактор: глобальная переменная, параметр своего объекта или
+                    // чужой объект (он и так читается целиком).
+                    if base == "state" {
+                        if let NodeKey::Param(id, _) = context {
+                            if let Some(param) = Param::parse(name) {
+                                let own = NodeKey::Param(id.clone(), param);
+                                return Value::Number(self.previous_value(&own));
+                            }
+                        }
+                        let global = NodeKey::Global(name.to_string());
+                        if self.expressions.contains_key(&global)
+                            || self.persistent_globals.contains(name)
+                        {
+                            return Value::Number(self.previous_value(&global));
+                        }
+                        if self.object_indices.contains_key(name) {
+                            return Value::Object(name.to_string());
+                        }
+                        return self
+                            .error_value(format!("state.{}: неизвестное имя; использован 0", name));
                     }
                 }
                 let target = self.eval_expr(expr, context);
@@ -742,7 +768,9 @@ impl Rig {
             }
         }
         let global_key = NodeKey::Global(name.to_string());
-        if self.expressions.contains_key(&global_key) {
+        // Переменная, которую меняют только события, тоже известна по имени —
+        // иначе формулы видели бы «неизвестное имя» и читали ноль.
+        if self.expressions.contains_key(&global_key) || self.persistent_globals.contains(name) {
             return Value::Number(self.eval_node(&global_key));
         }
         if self.object_indices.contains_key(name) {
@@ -1511,6 +1539,60 @@ mod tests {
         // Держим дальше — блок не повторяется.
         let later = tick_with(&mut rig, 1.4, &[("mic.talking", 1.0)]);
         assert_eq!(later.objects["o"]["x"], 1.0);
+    }
+
+    #[test]
+    fn event_hold_zero_waits_next_frame() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = held\ny = pressed")],
+            "on event.mic.talking.hold(0) {\n  held = held + 1\n}\non event.mic.talking.down {\n  pressed = pressed + 1\n}",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mic.talking", 0.0)]);
+        // Фронт: `down` срабатывает сразу, `hold(0)` — только следующим кадром.
+        let press = tick_with(&mut rig, 0.033, &[("mic.talking", 1.0)]);
+        assert_eq!(press.objects["o"]["y"], 1.0);
+        assert_eq!(press.objects["o"]["x"], 0.0);
+        let next = tick_with(&mut rig, 0.066, &[("mic.talking", 1.0)]);
+        assert_eq!(next.objects["o"]["x"], 1.0);
+        // Отпускание снимает удержание, следующее нажатие снова срабатывает.
+        tick_with(&mut rig, 0.099, &[("mic.talking", 0.0)]);
+        let again = tick_with(&mut rig, 0.132, &[("mic.talking", 1.0)]);
+        assert_eq!(again.objects["o"]["x"], 1.0);
+        let again_next = tick_with(&mut rig, 0.165, &[("mic.talking", 1.0)]);
+        assert_eq!(again_next.objects["o"]["x"], 2.0);
+    }
+
+    #[test]
+    fn event_variable_is_readable_by_formula() {
+        // Переменную меняет только событие — формула объекта обязана её видеть.
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = counter")],
+            "on event.mic.talking.down {\n  counter = counter + 5\n}",
+        ))
+        .unwrap();
+        let idle = tick_with(&mut rig, 0.0, &[("mic.talking", 0.0)]);
+        assert_eq!(idle.objects["o"]["x"], 0.0);
+        let press = tick_with(&mut rig, 0.033, &[("mic.talking", 1.0)]);
+        assert_eq!(press.objects["o"]["x"], 5.0);
+        assert!(!press.diagnostics.iter().any(|message| message.contains("неизвестное имя")));
+    }
+
+    #[test]
+    fn event_body_reads_previous_frame_via_state() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = a")],
+            "on event.mouse.left.down {\n  a = state.a + 1\n}",
+        ))
+        .unwrap();
+        let idle = tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
+        assert_eq!(idle.objects["o"]["x"], 0.0);
+        let first = tick_with(&mut rig, 0.033, &[("mouse.left", 1.0)]);
+        assert_eq!(first.objects["o"]["x"], 1.0);
+        let release = tick_with(&mut rig, 0.066, &[("mouse.left", 0.0)]);
+        let second = tick_with(&mut rig, 0.099, &[("mouse.left", 1.0)]);
+        assert_eq!(second.objects["o"]["x"], 2.0);
+        assert_eq!(release.objects["o"]["x"], 1.0);
     }
 
     #[test]

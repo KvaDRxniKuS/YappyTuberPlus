@@ -244,8 +244,13 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .diagnostic { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 5px; padding: 6px 7px; border-radius: 4px; background: #ddb77d0a; color: var(--warning); font-size: 8px; line-height: 1.4; }
 .diagnostic.error { background: #df8d910c; color: var(--danger); }
 .diagnostic svg { flex: none; margin-top: 1px; }
-.function-hints { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
-.function-hints code { padding: 3px 5px; border-radius: 3px; background: #252a30; color: #65717b; font-size: 7px; }
+.signature-hint { padding: 4px 10px; border-top: 1px solid #262b32; background: #1d2127; color: #9fd3c6; font-family: monospace; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.signature-hint[data-empty="true"] { color: #5c6771; }
+.function-chips { max-height: 92px; overflow: auto; padding: 6px 10px 8px; border-top: 1px solid #262b32; background: #1b1e23; }
+.function-chip-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 4px; }
+.function-chip-title { width: 100%; color: #5d6873; font-size: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
+.function-chips code { padding: 2px 5px; border-radius: 3px; background: #252a30; color: #7f9aa6; font-size: 8px; cursor: pointer; }
+.function-chips code:hover { background: #2f3941; color: #a8d3c8; }
 
 .inputs-panel { flex: 1; min-height: 0; overflow: auto; padding: 11px; }
 .input-actions { display: flex; gap: 6px; }
