@@ -27,13 +27,14 @@ test("событие разворачивается в условие с сос�
   const compiled = compileScripts(presetWith("on event.mouse.left.down {\n  a = !a\n}"));
   expect(compiled.events).toHaveLength(1);
   expect(compiled.events[0]).toMatchObject({ key: "event.e1", source: "mouse.left", kind: "down" });
-  expect(compiled.globals.trim()).toBe("a = event.e1 ? (!a) : (state.g_a)");
+  // Ядро понимает `not`, а не `!`: редактор приводит запись к его синтаксису.
+  expect(compiled.globals.trim()).toBe("a = event.e1 ? (not state.g_a) : (state.g_a)");
   expect(compiled.states).toEqual([{ key: "state.g_a", name: "a" }]);
   // Строки блока остаются на местах (номера строк совпадают с редактором),
   // присваивание дописывается следом.
   const lines = compiled.globals.split("\n");
   expect(lines.slice(0, 3)).toEqual(["", "", ""]);
-  expect(lines[3]).toBe("a = event.e1 ? (!a) : (state.g_a)");
+  expect(lines[3]).toBe("a = event.e1 ? (not state.g_a) : (state.g_a)");
 });
 
 test("импульс срабатывает один раз на фронт, состояние берётся из кадра", () => {
@@ -94,7 +95,8 @@ test("событие перекрывает обычное присваиван�
   const compiled = compileScripts(presetWith("a = 1\non event.mouse.left.down {\n  a = a + 5\n}"));
   const lines = compiled.globals.trim().split("\n");
   expect(lines).toHaveLength(1);
-  expect(lines[0]).toBe("a = event.e1 ? (a + 5) : (1)");
+  // В теле своя переменная — прошлый кадр, а не сам себя: иначе это цикл.
+  expect(lines[0]).toBe("a = event.e1 ? (state.g_a + 5) : (1)");
 });
 
 test("ссылка на чужой объект превращается в снимок прошлого кадра", () => {

@@ -205,9 +205,19 @@ export function compileScripts(preset: RigPreset): CompiledScripts {
 
   const stateValue = (ref: StateRef): string => ref.key;
 
+  /** Ссылки на саму переменную заменяются снимком прошлого кадра. */
+  const ownReference = (expression: string, name: string, key: string): string =>
+    expression.replace(new RegExp(`(?<![\\w.])${name}(?![\\w])`, "g"), key);
+
+  /**
+   * Приведение выражений к тому, что понимает ядро: `!a` пишется как `not a`
+   * (лексер ядра знает `not`, а одиночный `!` — только как часть `!=`).
+   */
+  const normalizeOperators = (expression: string): string => expression.replace(/!(?!=)/g, "not ");
+
   /** `объект.параметр` и `объект.parent.параметр` → `state.o_…_…`. */
   const lowerExpression = (expression: string): string => {
-    return expression.replace(
+    return normalizeOperators(expression).replace(
       /\b([a-z_][a-z0-9_]*)\.(?:(parent)\.)?([a-z_][a-z0-9_]*)\b/gi,
       (whole, base: string, parent: string | undefined, member: string) => {
         const name = base.toLowerCase();
@@ -237,7 +247,12 @@ export function compileScripts(preset: RigPreset): CompiledScripts {
       impulseIndex += 1;
       events.push(rule);
       for (const assignment of event.body) {
-        const expression = lowerExpression(assignment.expression);
+        // Своя переменная внутри блока читается как прошлый кадр: `a = !a`
+        // превращается в `not state.g_a`, иначе ядро видит цикл зависимости.
+        const key = ownerId !== null && PARAMS.has(assignment.name)
+          ? paramKey(ownerId, assignment.name)
+          : globalKey(assignment.name);
+        const expression = ownReference(lowerExpression(assignment.expression), assignment.name, key);
         const list = targets.get(assignment.name) ?? [];
         list.push({ impulse: rule.key, expression });
         targets.set(assignment.name, list);
