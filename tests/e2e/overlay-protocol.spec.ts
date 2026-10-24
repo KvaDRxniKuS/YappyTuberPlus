@@ -2,11 +2,11 @@ import { test, expect } from "@playwright/test";
 import { BroadcastChannelBus, CompositeBus } from "../../src/overlay/bus";
 import { OverlayClient } from "../../src/overlay/client";
 import { OverlayHost } from "../../src/overlay/host";
-import { scenePreset } from "../../src/overlay/protocol";
+import { overlayBackground, scenePreset } from "../../src/overlay/protocol";
 import { normalizeOverlay } from "../../src/engine/preset";
 import { viewTransform } from "../../src/render/rigCanvas";
 import { createDemoPreset } from "../../src/data/demoPreset";
-import type { ObjectFrame, RigFrame } from "../../src/types";
+import { DEFAULT_OVERLAY, type ObjectFrame, type RigFrame } from "../../src/types";
 
 const NEUTRAL: ObjectFrame = {
   x: 0, y: 0, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0,
@@ -172,4 +172,26 @@ test("overlay view transform and preset normalisation are predictable", () => {
   const merged = scenePreset(scene, { [preset.objects[0].id]: { ...preset.objects[0].base, x: 777 } }, preset.overlay);
   expect(merged.objects[0].base.x).toBe(777);
   expect(merged.canvas.width).toBe(1000);
+});
+
+test("capture window shares the overlay background and keeps transparency", () => {
+  const base = { ...DEFAULT_OVERLAY };
+
+  // В нативном окне прозрачность сохраняется: альфа уходит в запись.
+  expect(overlayBackground({ ...base, background: "transparent" }, { capture: true, native: true }))
+    .toEqual({ mode: "transparent", color: null });
+
+  // Браузер прозрачных окон не даёт — в превью подставляем тёмный фон.
+  expect(overlayBackground({ ...base, background: "transparent" }, { capture: true, native: false }))
+    .toEqual({ mode: "color", color: "#0f1215" });
+
+  // Обычный оверлей ничего не подменяет.
+  expect(overlayBackground({ ...base, background: "transparent" }, { native: false }))
+    .toEqual({ mode: "transparent", color: null });
+
+  // Цвет и хромакей общие с оверлеем.
+  expect(overlayBackground({ ...base, background: "color", color: "#123456" }, { capture: true }))
+    .toEqual({ mode: "color", color: "#123456" });
+  expect(overlayBackground({ ...base, background: "chroma", chromaColor: "#00b140" }, { capture: true, native: true }))
+    .toEqual({ mode: "chroma", color: "#00b140" });
 });

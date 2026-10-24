@@ -8,6 +8,8 @@ rem
 rem    --no-open      не открывать браузер
 rem    --no-bridge    не запускать мост для OBS
 rem    --no-serve     только обновить и собрать
+rem    --app          открыть редактор как приложение: нативное окно Tauri,
+rem                   а без Rust - окно браузера без вкладок
 rem    --tauri        запустить нативное окно Tauri
 rem    --port 5199    другой порт редактора
 rem    --branch NAME  другая ветка
@@ -36,6 +38,7 @@ if /i "%ARG%"=="--no-bridge" ( set "BRIDGE=0" & goto next )
 if /i "%ARG%"=="--bridge" ( set "BRIDGE=1" & goto next )
 if /i "%ARG%"=="--no-serve" ( set "SERVE=0" & goto next )
 if /i "%ARG%"=="--tauri" ( set "MODE=tauri" & goto next )
+if /i "%ARG%"=="--app" ( set "MODE=app" & goto next )
 if /i "%ARG%"=="--help" goto usage
 if /i "%ARG:~0,9%"=="--branch=" ( set "BRANCH=%ARG:~9%" & goto next )
 if /i "%ARG%"=="--branch" ( shift & set "BRANCH=%~1" & goto next )
@@ -274,15 +277,52 @@ rem --- запуск -----------------------------------------------------------
 :serve
 if "%SERVE%"=="0" goto done
 if "%BRIDGE%"=="1" start "YappyTuberPlus OBS bridge" /min cmd /c "npm run overlay:bridge"
+rem Нативное окно возможно только при установленном Rust: без него --app
+rem откатывается на окно-приложение браузера, а потом на обычный браузер.
+set "TAURI_READY=0"
+where cargo >nul 2>&1
+if not errorlevel 1 if exist "src-tauri" set "TAURI_READY=1"
+if /i "%MODE%"=="app" if "%TAURI_READY%"=="1" goto run_app_tauri
+if /i "%MODE%"=="app" set "MODE=app-browser"
+if /i "%MODE%"=="tauri" if "%TAURI_READY%"=="0" set "MODE=dev"
+if /i "%MODE%"=="app-browser" echo Rust/Tauri не найден - открою окно-приложение в браузере.
+if /i "%MODE%"=="app-browser" goto open_app
 if "%OPEN%"=="1" start "" /min cmd /c "timeout /t 4 >nul & start http://localhost:%PORT%/"
+goto opened
+
+rem Окно-приложение: тот же редактор без вкладок, адресной строки и меню.
+rem Так «Захват окна» не затягивает в кадр интерфейс браузера.
+:open_app
+echo Окно-приложение: без вкладок и адресной строки.
+if "%OPEN%"=="0" goto opened
+set "CHROME="
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+if not defined CHROME if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME=%LocalAppData%\Google\Chrome\Application\chrome.exe"
+if not defined CHROME if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+if not defined CHROME if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set "CHROME=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
+if not defined CHROME if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set "CHROME=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+if not defined CHROME goto open_app_fallback
+start "YappyTuberPlus app" /min powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 4; Start-Process -FilePath '%CHROME%' -ArgumentList '--app=http://localhost:%PORT%/','--window-size=1280,860'"
+goto opened
+
+:open_app_fallback
+echo Chrome/Edge не найден - открою редактор в обычном браузере.
+start "" /min cmd /c "timeout /t 4 >nul & start http://localhost:%PORT%/"
+
+:opened
 echo.
 echo Редактор:  http://localhost:%PORT%/
 echo Оверлей:   http://localhost:%PORT%/overlay.html?overlay=1^&guide=1
+echo Захват:    http://localhost:%PORT%/overlay.html?capture=1
 echo Остановка: Ctrl+C в этом окне
 echo.
 if /i "%MODE%"=="tauri" goto run_tauri
 call npm run dev -- --port %PORT%
 goto finish
+
+:run_app_tauri
+echo Режим приложения: нативное окно Tauri.
+echo Первый запуск собирает окно несколько минут, дальше запуск быстрый.
 
 :run_tauri
 call npm run tauri dev
@@ -308,6 +348,8 @@ echo.
 echo   --no-open      не открывать браузер
 echo   --no-bridge    не запускать мост для OBS
 echo   --no-serve     только обновить и собрать
+echo   --app          открыть редактор как приложение (нативное окно Tauri,
+echo                  а без Rust - окно браузера без вкладок)
 echo   --tauri        запустить нативное окно Tauri
 echo   --port 5199    другой порт редактора
 echo   --branch NAME  другая ветка

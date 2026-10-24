@@ -37,6 +37,7 @@
 start-yappytuber.bat --no-open      :: не открывать браузер
 start-yappytuber.bat --no-bridge    :: без моста для OBS
 start-yappytuber.bat --no-serve     :: только обновить и собрать
+start-yappytuber.bat --app          :: приложение: окно Tauri, без Rust — окно браузера
 start-yappytuber.bat --tauri        :: нативное окно Tauri вместо браузера
 start-yappytuber.bat --port 5199    :: другой порт
 start-yappytuber.bat --dir D:\Rig   :: папка проекта
@@ -45,6 +46,11 @@ start-yappytuber.bat --branch main  :: другая ветка
 
 При `--tauri` Vite поднимает сам Tauri, поэтому `--port` в этом режиме игнорируется.
 
+`--app` — то же приложение, но с откатом: если Rust (`cargo`) установлен, запускается
+нативное окно Tauri; если нет — редактор открывается окном-приложением Chrome/Edge
+(`--app=...`, без вкладок, адресной строки и меню); если и их нет — в обычном браузере.
+Окно-приложение удобно для «Захвата окна»: в кадр не попадает интерфейс браузера.
+
 ## Linux / macOS
 
 ```bash
@@ -52,8 +58,10 @@ chmod +x start-yappytuber.sh
 ./start-yappytuber.sh
 ```
 
-Параметры те же (`--no-open`, `--no-bridge`, `--no-serve`, `--tauri`, `--port`,
-`--branch`, `--dir`). Браузер открывается через `xdg-open`, `open` или `cmd.exe`.
+Параметры те же (`--no-open`, `--no-bridge`, `--no-serve`, `--app`, `--tauri`, `--port`,
+`--branch`, `--dir`). Для `--app` ищутся `google-chrome`, `chromium`, `microsoft-edge`,
+`brave-browser` и Chrome в `/Applications`; иначе открывается обычный браузер через
+`xdg-open`, `open` или `cmd.exe`.
 
 ## Что делает автообновление
 

@@ -8,6 +8,9 @@
 #   ./start-yappytuber.sh --no-open       не открывать браузер
 #   ./start-yappytuber.sh --no-bridge     не запускать мост для OBS
 #   ./start-yappytuber.sh --no-serve      только обновить и собрать
+#   ./start-yappytuber.sh --app           открыть редактор как приложение:
+#                                         нативное окно Tauri, а если Rust нет —
+#                                         окно браузера без вкладок
 #   ./start-yappytuber.sh --tauri         запустить нативное окно Tauri
 #   ./start-yappytuber.sh --port 5199     другой порт редактора
 #   ./start-yappytuber.sh --branch NAME   другая ветка
@@ -56,6 +59,7 @@ while [ $# -gt 0 ]; do
     --bridge) BRIDGE=1 ;;
     --no-serve) SERVE=0 ;;
     --tauri) MODE="tauri" ;;
+    --app) MODE="app" ;;
     --branch=*) BRANCH="${1#*=}" ;;
     --branch) shift; BRANCH="${1:-}" ;;
     --port=*) PORT="${1#*=}" ;;
@@ -201,6 +205,23 @@ fi
 # --- запуск -----------------------------------------------------------------
 URL="http://localhost:${PORT}/"
 
+# Окно-приложение: тот же редактор, но без вкладок, адресной строки и меню.
+# Так проще делать «Захват окна» — в кадр не попадает интерфейс браузера.
+open_app_window() {
+  local name
+  for name in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge brave-browser; do
+    if command -v "$name" >/dev/null 2>&1; then
+      "$name" --app="$URL" --window-size=1280,860 >/dev/null 2>&1 &
+      return 0
+    fi
+  done
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && [ -d "/Applications/Google Chrome.app" ]; then
+    open -na "Google Chrome" --args --app="$URL" --window-size=1280,860 >/dev/null 2>&1 &
+    return 0
+  fi
+  return 1
+}
+
 open_browser() {
   if command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 &
   elif command -v open >/dev/null 2>&1; then open "$URL" >/dev/null 2>&1 &
@@ -213,13 +234,42 @@ if [ "$BRIDGE" = "1" ]; then
   ( npm run overlay:bridge >/dev/null 2>&1 & ) || warn "мост не запустился — источник браузера в OBS будет недоступен."
 fi
 
+# Нативное окно возможно только при установленном Rust: без него --app
+# откатывается на окно-приложение браузера, а потом на обычный браузер.
+TAURI_READY=0
+if command -v cargo >/dev/null 2>&1 && [ -d src-tauri ]; then TAURI_READY=1; fi
+
+if [ "$MODE" = "app" ] && [ "$TAURI_READY" = "1" ]; then
+  step "Режим приложения: нативное окно"
+  say "Первый запуск собирает окно несколько минут, дальше запуск быстрый."
+  say "Остановка: Ctrl+C"
+  npm run tauri dev
+  exit $?
+fi
+
+if [ "$MODE" = "app" ]; then
+  warn "Rust/Tauri не найден — открою окно-приложение в браузере."
+  MODE="app-browser"
+fi
+if [ "$MODE" = "tauri" ] && [ "$TAURI_READY" = "0" ]; then
+  warn "Rust/Tauri не найден — запускаю редактор в браузере."
+  MODE="dev"
+fi
+
 say ""
 say "Редактор:  $URL"
 say "Оверлей:   ${URL}overlay.html?overlay=1&guide=1"
+say "Захват:    ${URL}overlay.html?capture=1"
 say "Остановка: Ctrl+C"
 say ""
 
-if [ "$OPEN" = "1" ] && [ "$MODE" = "dev" ]; then
+if [ "$OPEN" = "1" ] && [ "$MODE" = "app-browser" ]; then
+  say "Окно-приложение: без вкладок и адресной строки."
+  if ! open_app_window; then
+    warn "Chrome/Edge/Chromium не найден — открою редактор в обычном браузере."
+    ( sleep 4; open_browser ) &
+  fi
+elif [ "$OPEN" = "1" ] && [ "$MODE" = "dev" ]; then
   ( sleep 4; open_browser ) &
 fi
 

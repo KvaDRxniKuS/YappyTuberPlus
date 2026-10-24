@@ -3,7 +3,8 @@ import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
 import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
-import { bridgeUrlFromLocation, scenePreset } from "./protocol";
+import { bridgeUrlFromLocation, overlayBackground, scenePreset } from "./protocol";
+import { isTauri } from "./window";
 
 function transportOptions(params: URLSearchParams) {
   const transport = params.get("transport");
@@ -29,6 +30,8 @@ const STATUS_LABEL: Record<OverlayClientSnapshot["status"], string> = {
 export function OverlayApp() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const guide = params.get("guide") === "1";
+  // Окно захвата — та же отрисовка, но непрозрачная и без служебных подсказок.
+  const capture = params.get("capture") === "1";
   const canvas = useRef<HTMLCanvasElement>(null);
   const clientRef = useRef<OverlayClient | null>(null);
   const presetRef = useRef<RigPreset | null>(null);
@@ -66,8 +69,8 @@ export function OverlayApp() {
   presetRef.current = preset;
 
   const config = snapshot?.config ?? null;
-  const background = config?.background ?? "transparent";
-  const backgroundColor = config?.background === "chroma" ? config.chromaColor : config?.color;
+  // Фон общий с оверлеем: прозрачность сохраняется, альфа уходит в запись.
+  const { mode: background, color: backgroundColor } = overlayBackground(config, { capture, native: isTauri() });
 
   useEffect(() => {
     assets.current.sync(preset?.objects ?? []);
@@ -77,9 +80,12 @@ export function OverlayApp() {
   useEffect(() => assets.current.onChange(() => { dirty.current = true; }), []);
 
   useEffect(() => {
-    document.title = snapshot?.scene ? `${snapshot.scene.name} — оверлей` : "YappyTuberPlus — оверлей";
+    document.title = capture
+      ? `YappyTuberPlus — окно захвата${snapshot?.scene ? ` · ${snapshot.scene.name}` : ""}`
+      : snapshot?.scene ? `${snapshot.scene.name} — оверлей` : "YappyTuberPlus — оверлей";
     document.body.classList.toggle("overlay-guide", guide);
-  }, [guide, snapshot?.scene, background]);
+    document.body.classList.toggle("overlay-capture", capture);
+  }, [capture, guide, snapshot?.scene, background]);
 
   useEffect(() => {
     let animation = 0;
@@ -150,8 +156,24 @@ export function OverlayApp() {
   }, [guide, background, backgroundColor]);
 
   return (
-    <div className={`overlay-root ${guide ? "guide" : ""}`}>
+    <div className={`overlay-root ${guide ? "guide" : ""} ${capture ? "capture" : ""}`}>
       <canvas ref={canvas} className="overlay-canvas" />
+      {capture && isTauri() && (
+        <div className="capture-bar" data-tauri-drag-region>
+          <span data-tauri-drag-region>YappyTuberPlus · окно захвата</span>
+          <button
+            type="button"
+            title="Закрыть окно захвата"
+            onClick={() => { void import("@tauri-apps/api/window").then((api) => api.getCurrentWindow().close()); }}
+          >×</button>
+        </div>
+      )}
+      {capture && snapshot?.status !== "live" && (
+        <div className="capture-waiting">
+          <b>Ожидание кадров</b>
+          <span>Откройте её в Rig Studio: окно захвата получает кадры от редактора.</span>
+        </div>
+      )}
       {guide && (
         <div className="overlay-hud">
           <div className={`overlay-pill ${snapshot?.status || "connecting"}`}>

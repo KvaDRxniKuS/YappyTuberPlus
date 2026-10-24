@@ -166,6 +166,25 @@ export function scenePreset(
   };
 }
 
+/**
+ * Какой фон рисовать в окне оверлея или захвата.
+ *
+ * Прозрачность — основной режим для программ записи (как Spout2 в VTube Studio
+ * или PNGTuber): нативное окно отдаёт альфу, и в запись попадает только риг.
+ * Браузер прозрачных окон не умеет, поэтому в превью окна захвата подставляется
+ * тёмный цвет — иначе на белом фоне ничего не видно.
+ */
+export function overlayBackground(
+  config: OverlayConfig | null,
+  options: { capture?: boolean; native?: boolean } = {},
+): { mode: "transparent" | "color" | "chroma"; color: string | null } {
+  const mode = config?.background ?? "transparent";
+  if (mode === "chroma") return { mode, color: config?.chromaColor ?? "#00b140" };
+  if (mode === "color") return { mode, color: config?.color ?? "#0f1215" };
+  if (options.capture && !options.native) return { mode: "color", color: "#0f1215" };
+  return { mode, color: null };
+}
+
 export function bridgeUrlFromLocation(search: string, location: Location | URL | null): string | null {
   const params = new URLSearchParams(search);
   const explicit = params.get("bridge");

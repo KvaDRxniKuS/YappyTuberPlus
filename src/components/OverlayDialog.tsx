@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, MonitorPlay, Radio, Settings2, X } from "lucide-react";
+import { AppWindow, Check, Copy, MonitorPlay, Radio, Settings2, X } from "lucide-react";
 import type { OverlayConfig } from "../types";
-import { applyOverlayWindow, closeOverlayWindow, isTauri, openOverlayWindow, overlayUrl } from "../overlay/window";
+import {
+  applyCaptureWindow, applyOverlayWindow, captureWindowOpen,
+  closeCaptureWindow, closeOverlayWindow, isTauri, openCaptureWindow,
+  openOverlayWindow, overlayUrl,
+} from "../overlay/window";
 
 interface OverlayDialogProps {
   config: OverlayConfig;
@@ -32,6 +36,7 @@ const BACKGROUNDS: Array<{ value: OverlayConfig["background"]; label: string }> 
 export function OverlayDialog(props: OverlayDialogProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [captureOpen, setCaptureOpen] = useState(false);
   const url = overlayUrl(props.config, { transport: props.transportParam, bridge: props.bridgeUrl || undefined });
 
   useEffect(() => {
@@ -39,6 +44,24 @@ export function OverlayDialog(props: OverlayDialogProps) {
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   }, [props]);
+
+  useEffect(() => {
+    void captureWindowOpen().then(setCaptureOpen);
+  }, []);
+
+  const openCapture = async () => {
+    setBusy(true);
+    const result = await openCaptureWindow(props.config);
+    setBusy(false);
+    setCaptureOpen(result.ok || (await captureWindowOpen()));
+    if (!result.ok) {
+      props.onNotify(result.error || "Не удалось открыть окно захвата");
+      return;
+    }
+    props.onNotify(result.mode === "tauri"
+      ? "Окно захвата открыто — выберите его в OBS как «Захват окна»"
+      : "Окно захвата открыто в отдельном окне браузера");
+  };
 
   const copy = async (text: string, label: string) => {
     try {
@@ -65,6 +88,7 @@ export function OverlayDialog(props: OverlayDialogProps) {
   const change = (patch: Partial<OverlayConfig>) => {
     props.onChange(patch);
     void applyOverlayWindow({ ...props.config, ...patch });
+    void applyCaptureWindow({ ...props.config, ...patch });
   };
 
   return (
@@ -143,9 +167,30 @@ export function OverlayDialog(props: OverlayDialogProps) {
           </section>
 
           <section className="dialog-section">
+            <div className="section-title"><span><AppWindow size={12} /> Окно захвата</span><small>ДЛЯ ПРОГРАММ ЗАПИСИ</small></div>
+            <p className="dialog-note">
+              Отдельное окно без рамки, его видно в списке окон OBS, Discord и «Записи экрана».
+              Размер и фон берутся из полей выше. Прозрачный фон сохраняется — в окне приложения
+              записывается альфа, как у PNGTuber и Spout2; в браузере прозрачных окон не бывает,
+              поэтому там подставляется тёмный фон.
+            </p>
+            <div className="dialog-actions">
+              <button className={`button ${captureOpen ? "secondary" : "primary"}`} disabled={busy} onClick={() => void openCapture()}>
+                <AppWindow size={14} /> {captureOpen ? "Показать окно захвата" : "Открыть окно захвата"}
+              </button>
+              {isTauri() && captureOpen && (
+                <button className="button secondary" onClick={() => { void closeCaptureWindow(); setCaptureOpen(false); }}>
+                  Закрыть окно захвата
+                </button>
+              )}
+            </div>
+          </section>
+
+          <section className="dialog-section">
             <div className="section-title"><span>Как захватить в OBS</span></div>
             <ol className="overlay-steps">
               <li><b>Прозрачное окно.</b> Нажмите «Открыть оверлей» и добавьте в OBS источник «Захват окна» → YappyTuberPlus Overlay. Окно без рамки, с прозрачным фоном и без тени.</li>
+              <li><b>Окно захвата.</b> Если «Захват окна» с прозрачного оверлея не работает, нажмите «Открыть окно захвата» и выберите в OBS окно «YappyTuberPlus — окно захвата».</li>
               <li><b>Источник браузера.</b> Запустите <code>npm run overlay:bridge</code>, откройте в OBS «Источник браузера» и вставьте ссылку выше. Мост передаёт кадры в другой процесс.</li>
               <li><b>Проверка.</b> Включите «Служебную рамку», чтобы видеть статус, FPS и границы холста; перед эфиром выключите её.</li>
             </ol>
