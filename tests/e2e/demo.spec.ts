@@ -89,7 +89,8 @@ test("the whole demo preset compiles and ticks in the Rust core", async () => {
 
   const created = call({ op: "create", config });
   const inputs = {
-    values: { "mic.speak": 0, "mic.loudness": 0, "mic.db": -60, "mic.talking": 0 },
+    // Редактор присылает полный словарь включённых модулей: mic и manual.
+    values: { "mic.speak": 0, "mic.loudness": 0, "mic.db": -60, "mic.talking": 0, "manual.blink": 0 },
     signals: {},
   };
   const silent = call({ op: "tick", handle: created.handle, now: 0.016, inputs, paused: false, resetClock: true });
