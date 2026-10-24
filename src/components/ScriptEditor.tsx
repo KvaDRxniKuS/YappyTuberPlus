@@ -9,6 +9,7 @@ import { tags } from "@lezer/highlight";
 import type { ScriptErrorInfo } from "../types";
 import type { ScriptCheck } from "../engine/scripts";
 import { FUNCTION_NAMES, SIGNATURES, signatureAt, signatureLine, signatureOf } from "../engine/signatures";
+import { useFavorites } from "../hooks/useFavorites";
 
 const EVENT_KINDS = ["down", "up", "change", "hold", "relax"];
 
@@ -133,6 +134,9 @@ export function ScriptEditor({
   const [errorText, setErrorText] = useState("");
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
+  const { favorites, toggle: toggleFavorite } = useFavorites();
+  // Старые закладки могли указывать на удалённую функцию — показываем только живые.
+  const pinned = favorites.filter((name) => SIGNATURES[name] !== undefined);
   applyRef.current = onApply;
   checkRef.current = onCheck;
   completionData.current = { objectIds, globals, moduleInputs, triggers };
@@ -344,6 +348,16 @@ export function ScriptEditor({
         : <div className="signature-hint" data-empty={hint ? "false" : "true"}>
           {hint || "Поставьте курсор внутрь вызова функции — покажу ожидаемые аргументы."}
         </div>}
+      {pinned.length > 0 && (
+        <div className="favorite-commands">
+          <span className="favorite-title" title="Избранные команды: клик вставляет вызов">★ Избранные</span>
+          {pinned.map((name) => (
+            <code key={name} title={SIGNATURES[name].summary} onClick={() => insert(name)}>
+              {signatureOf(name)}
+            </code>
+          ))}
+        </div>
+      )}
       <div className={`editor-help ${helpOpen ? "open" : ""}`}>
         <button
           className="editor-help-toggle"
@@ -367,11 +381,24 @@ export function ScriptEditor({
                 <span className="function-chip-title">{group.title}</span>
                 {Object.entries(SIGNATURES)
                   .filter(([, entry]) => entry.group === group.id)
-                  .map(([name]) => (
-                    <code key={name} title={SIGNATURES[name].summary} onClick={() => insert(name)}>
-                      {signatureOf(name)}
-                    </code>
-                  ))}
+                  .map(([name]) => {
+                    const fav = favorites.includes(name);
+                    return (
+                      <span className={`function-chip ${fav ? "fav" : ""}`} key={name}>
+                        <button
+                          className="chip-star"
+                          title={fav ? "Убрать из избранных" : "В избранные: команда всегда будет под рукой"}
+                          aria-pressed={fav}
+                          onClick={() => toggleFavorite(name)}
+                        >
+                          ★
+                        </button>
+                        <button className="chip-insert" title={SIGNATURES[name].summary} onClick={() => insert(name)}>
+                          {signatureOf(name)}
+                        </button>
+                      </span>
+                    );
+                  })}
               </div>
             ))}
           </div>

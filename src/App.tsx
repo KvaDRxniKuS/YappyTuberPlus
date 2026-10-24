@@ -11,6 +11,7 @@ import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
 import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
+import { ChainDialog } from "./components/ChainDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, isDescendant, makeGroup, makeSprite, normalizeModules, normalizeOverlay, normalizePreset,
@@ -21,6 +22,7 @@ import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selecti
 import { propagateBase, reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { appendSnippet } from "./engine/scripts";
+import { buildChain, type ChainSettings } from "./engine/chain";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { useModuleInputs } from "./hooks/useModuleInputs";
@@ -66,6 +68,7 @@ export default function App() {
   const [overlayOpen, setOverlayOpen] = useState(false);
   /** Пресет, ждущий решения по модулям при открытии. */
   const [pending, setPending] = useState<{ preset: RigPreset; path: string | null } | null>(null);
+  const [chainOpen, setChainOpen] = useState(false);
   const [stopped, setStopped] = useState(false);
   const [presetPath, setPresetPath] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -702,6 +705,7 @@ export default function App() {
             commit({ ...preset, objects: [...preset.objects, makeGroup(id, "Новая группа")] }, { label: "Новая группа" });
             setSelection([id]);
           }}
+          onChain={() => setChainOpen(true)}
           onDelete={deleteSelected}
           onDuplicate={duplicateSelected}
           onToggleVisibility={(id) => {
@@ -833,6 +837,22 @@ export default function App() {
         onApply={() => resolvePending("apply")}
         onKeep={() => resolvePending("keep")}
         onDisable={() => resolvePending("disable")}
+      />}
+      {chainOpen && <ChainDialog
+        objects={preset.objects}
+        ids={selection}
+        onClose={() => setChainOpen(false)}
+        onApply={(settings: ChainSettings) => {
+          const current = presetRef.current;
+          try {
+            const result = buildChain(current.objects, selection, settings);
+            commit({ ...current, objects: result.objects }, { label: "Пружинная цепочка" });
+            notify(`Пружинная цепочка: ${result.links} ${result.links === 1 ? "сегмент" : "сегментов"} на пружине`);
+            setChainOpen(false);
+          } catch (error) {
+            notify(error instanceof Error ? error.message : "Не удалось построить цепочку");
+          }
+        }}
       />}
       {overlayOpen && <OverlayDialog
         config={overlayConfig}

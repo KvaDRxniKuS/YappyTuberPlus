@@ -104,6 +104,9 @@ input, select { color: var(--text); }
 .tree-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 0 9px 9px; }
 .tree-toolbar button { height: 28px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--border); background: #23272d; border-radius: 5px; color: #aab3bd; font-size: 10px; }
 .tree-toolbar button:hover { background: #2a3037; color: var(--text); }
+.tree-toolbar button.wide { grid-column: 1 / -1; }
+.tree-toolbar button:disabled { opacity: .4; cursor: default; }
+.tree-toolbar button:disabled:hover { background: #23272d; color: #aab3bd; }
 .object-tree { flex: 1; min-height: 0; overflow: auto; padding: 2px 5px 8px; }
 .tree-row { --depth: 0; height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 5px 0 calc(3px + var(--depth) * 13px); border-radius: 5px; color: #aeb6c0; cursor: default; border: 1px solid transparent; }
 .tree-row:hover { background: #ffffff05; }
@@ -271,7 +274,17 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 }
 .signature-hint { flex: none; padding: 4px 10px; border-top: 1px solid #262b32; background: #1d2127; color: #9fd3c6; font-family: monospace; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signature-hint[data-empty="true"] { color: #5c6771; }
+.favorite-commands { flex: none; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-top: 1px solid #262b32; background: #1e2328; overflow-x: auto; }
+.favorite-title { flex: none; color: #d9b26a; font-size: 8px; letter-spacing: .4px; text-transform: uppercase; }
+.favorite-commands code { flex: none; padding: 2px 5px; border-radius: 3px; background: #2b3239; color: #b9d4e3; font-size: 8px; white-space: nowrap; cursor: pointer; }
+.favorite-commands code:hover { background: #35414a; color: #eaf4f8; }
 .function-chips { max-height: 124px; overflow: auto; padding: 6px 10px 8px; border-top: 1px solid #262b32; background: #1b1e23; }
+.function-chip { display: inline-flex; align-items: center; gap: 1px; }
+.chip-star { width: 12px; padding: 0; color: #454e57; font-size: 9px; line-height: 1; }
+.chip-star:hover { color: #d9b26a; }
+.function-chip.fav .chip-star { color: #e0b86a; }
+.chip-insert { padding: 2px 5px; border-radius: 3px; background: #252a30; color: #7f9aa6; font-family: monospace; font-size: 8px; }
+.chip-insert:hover { background: #2f3941; color: #a8d3c8; }
 .function-chip-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 4px; }
 .function-chip-title { width: 100%; color: #5d6873; font-size: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
 .function-chips code { padding: 2px 5px; border-radius: 3px; background: #252a30; color: #7f9aa6; font-size: 8px; cursor: pointer; }
@@ -369,6 +382,17 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .color-field input[type="color"] { width: 20px; height: 18px; padding: 0; border: 0; border-radius: 3px; background: transparent; }
 .color-field code { color: #9aa5af; font-family: "Cascadia Code", monospace; font-size: 9px; }
 .overlay-toggles { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; }
+.chain-list { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; padding: 0; list-style: none; }
+.chain-list li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; background: #20242a; color: #b6c0c9; font-size: 10px; }
+.chain-list li b { width: 16px; flex: none; color: #6f7a85; font-family: monospace; font-size: 9px; }
+.chain-list li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chain-list li small { color: #5f6a74; font-size: 8.5px; }
+.chain-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+.chain-field { display: flex; flex-direction: column; gap: 4px; color: #7f8a94; font-size: 9px; }
+.chain-field > div { display: flex; align-items: center; gap: 6px; }
+.chain-field input { width: 100%; height: 26px; padding: 0 7px; border: 1px solid #363d46; border-radius: 5px; background: #20242a; color: #c6ced6; font-size: 10px; }
+.chain-field small { flex: none; color: #5f6a74; font-size: 8.5px; }
+.chain-hinge-note { flex: 1; color: #7f8a94; font-size: 9.5px; line-height: 1.45; }
 .toggle { display: inline-flex; align-items: center; gap: 7px; color: #89949e; font-size: 9.5px; cursor: pointer; }
 .toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .toggle-track { width: 26px; height: 14px; flex: none; display: flex; align-items: center; padding: 2px; border-radius: 9px; background: #2c323a; border: 1px solid #383f48; transition: background .15s, border-color .15s; }
