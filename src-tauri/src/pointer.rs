@@ -17,7 +17,7 @@ const MOVE_INTERVAL: Duration = Duration::from_millis(20);
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PointerEvent {
     Key { code: String, down: bool },
-    Button { button: &'static str, down: bool },
+    Button { button: String, down: bool },
     Move { x: f64, y: f64 },
     Wheel { dx: f64, dy: f64 },
 }
@@ -59,11 +59,18 @@ fn convert(event: &rdev::Event) -> Option<PointerEvent> {
     }
 }
 
-fn button_name(button: &rdev::Button) -> &'static str {
+/// Имя кнопки в терминах редактора. Боковые кнопки Windows приходят как
+/// `Unknown(XBUTTON1)` / `Unknown(XBUTTON2)`, то есть Mouse 4 и Mouse 5.
+fn button_name(button: &rdev::Button) -> String {
     match button {
-        rdev::Button::Left => "left",
-        rdev::Button::Right => "right",
-        _ => "other",
+        rdev::Button::Left => "left".into(),
+        rdev::Button::Right => "right".into(),
+        rdev::Button::Middle => "middle".into(),
+        rdev::Button::Unknown(code) => match code {
+            1 => "back".into(),
+            2 => "forward".into(),
+            other => format!("button{other}"),
+        },
     }
 }
 

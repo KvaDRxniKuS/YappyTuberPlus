@@ -115,6 +115,14 @@ export interface KeyboardKey {
   name: string;
 }
 
+/** Дополнительная кнопка мыши: `back`, `forward`, `button7` и имя входа. */
+export interface MouseButton {
+  /** Кнопка мыши: `back` (Mouse 4), `forward` (Mouse 5), `button7`… */
+  button: string;
+  /** Имя входа: `cursor.back`. */
+  name: string;
+}
+
 /** Одна визема экземпляра: имя в скрипте, подпись и эталонный спектр. */
 export interface VisemeEntry {
   /** Имя входа: `viseme.a`, `viseme.o_umlaut`. Только латиница. */
@@ -138,13 +146,15 @@ export interface ModuleConfig {
   visemes?: VisemeEntry[];
   /** Клавиши клавиатурного модуля: тоже список экземпляра. */
   keys?: KeyboardKey[];
-  /** Код клавиши у модуля «одна клавиша»: `Space`, `KeyA`. */
+  /** Код клавиши у модуля «одна клавиша»: `Space`, `KeyA`. Пусто — бинда нет. */
   code?: string;
+  /** Дополнительные кнопки мыши: список экземпляра. */
+  buttons?: MouseButton[];
   /** Нормализовать сумму визем к 1. */
   normalize?: boolean;
   /** Порог слышимости для визем, дБ. */
   gate?: number;
-  [key: string]: number | string | boolean | VisemeEntry[] | KeyboardKey[] | undefined;
+  [key: string]: number | string | boolean | VisemeEntry[] | KeyboardKey[] | MouseButton[] | undefined;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */

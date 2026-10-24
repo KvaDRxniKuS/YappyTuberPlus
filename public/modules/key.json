@@ -5,10 +5,59 @@
   "kind": "key",
   "audio": false,
   "inputs": [
-    { "name": "down", "label": "Нажата", "kind": "flag", "min": 0, "max": 1, "step": 1, "hint": "1, пока клавиша нажата" },
-    { "name": "hold", "label": "Держится", "kind": "level", "min": 0, "max": 10, "step": 0.01, "hint": "Секунды удержания, сбрасывается при отпускании" },
-    { "name": "hits", "label": "Нажатий", "kind": "level", "min": 0, "max": 9999, "step": 1, "hint": "Счётчик нажатий с запуска" }
+    {
+      "name": "down",
+      "label": "Нажата",
+      "kind": "flag",
+      "min": 0,
+      "max": 1,
+      "step": 1,
+      "hint": "1, пока клавиша нажата"
+    },
+    {
+      "name": "hold",
+      "label": "Держится",
+      "kind": "level",
+      "min": 0,
+      "max": 10,
+      "step": 0.01,
+      "hint": "Секунды удержания, сбрасывается при отпускании"
+    },
+    {
+      "name": "hits",
+      "label": "Нажатий",
+      "kind": "level",
+      "min": 0,
+      "max": 9999,
+      "step": 1,
+      "hint": "Счётчик нажатий с запуска"
+    }
   ],
-  "fields": [],
-  "defaults": { "code": "" }
+  "fields": [
+    {
+      "key": "meterFrom",
+      "label": "Полоска hold: от",
+      "type": "number",
+      "min": 0,
+      "max": 60,
+      "step": 0.1,
+      "default": 0,
+      "hint": "Нижняя граница полоски удержания в «Входах». Значение входа остаётся в секундах"
+    },
+    {
+      "key": "meterTo",
+      "label": "Полоска hold: до",
+      "type": "number",
+      "min": 0.1,
+      "max": 60,
+      "step": 0.1,
+      "default": 2,
+      "hint": "Верхняя граница полоски: 2 — короткие удержания видно, 10 — длинные"
+    }
+  ],
+  "defaults": {
+    "code": "",
+    "meterFrom": 0,
+    "meterTo": 2
+  }
 }

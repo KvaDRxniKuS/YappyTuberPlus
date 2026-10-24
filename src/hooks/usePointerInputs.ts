@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EMPTY_POINTER, PointerState, type PointerFrame } from "../modules/pointer";
+import { EMPTY_POINTER, PointerState, mouseButtonFromIndex, type PointerFrame } from "../modules/pointer";
 import { isTauri } from "../engine/presetFile";
 
 /** Кадр значений: 30 раз в секунду хватает, а React не перегружаем. */
@@ -64,9 +64,7 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
       if (isTyping()) return;
       state.key(code, down);
     };
-    const onButton = (button: string, down: boolean) => {
-      if (button === "left" || button === "right") state.button(button, down);
-    };
+    const onButton = (button: string, down: boolean) => state.button(button, down);
     const onMove = (x: number, y: number) => {
       const point = scenePoint(x, y);
       state.move(point.x, point.y);
@@ -78,8 +76,8 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
       const keyDown = (event: KeyboardEvent) => onKey(event.code, true);
       const keyUp = (event: KeyboardEvent) => onKey(event.code, false);
       const mouseMove = (event: MouseEvent) => onMove(event.clientX, event.clientY);
-      const mouseDown = (event: MouseEvent) => onButton(event.button === 2 ? "right" : event.button === 0 ? "left" : "other", true);
-      const mouseUp = (event: MouseEvent) => onButton(event.button === 2 ? "right" : event.button === 0 ? "left" : "other", false);
+      const mouseDown = (event: MouseEvent) => onButton(mouseButtonFromIndex(event.button), true);
+      const mouseUp = (event: MouseEvent) => onButton(mouseButtonFromIndex(event.button), false);
       const wheel = (event: WheelEvent) => onWheel(event.deltaY);
       window.addEventListener("keydown", keyDown);
       window.addEventListener("keyup", keyUp);
@@ -155,6 +153,55 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
   }, []);
 
   return { frame, resetHits };
+}
+
+/**
+ * Ждём следующее нажатие кнопки мыши, пока `active`.
+ *
+ * В браузере это обычный `mousedown` (окно должно быть в фокусе), в нативном —
+ * событие глобального хука, поэтому боковые кнопки видно даже когда окно
+ * свёрнуто. Пустая строка — отмена (Esc).
+ */
+export function useMouseButtonCapture(active: boolean, onCapture: (button: string) => void): void {
+  const handler = useRef(onCapture);
+  handler.current = onCapture;
+  useEffect(() => {
+    if (!active) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const onDown = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handler.current(mouseButtonFromIndex(event.button));
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      handler.current("");
+    };
+    window.addEventListener("mousedown", onDown, { capture: true });
+    window.addEventListener("keydown", onKey, { capture: true });
+    if (isTauri()) {
+      void (async () => {
+        const { listen } = await import("@tauri-apps/api/event");
+        const stop = await listen<PointerPayload>(POINTER_EVENT, (event) => {
+          const payload = event.payload;
+          if (payload?.kind === "button" && payload.down === true && typeof payload.button === "string") {
+            handler.current(payload.button);
+          }
+        });
+        if (disposed) stop();
+        else unlisten = stop;
+      })();
+    }
+    return () => {
+      disposed = true;
+      unlisten?.();
+      window.removeEventListener("mousedown", onDown, { capture: true });
+      window.removeEventListener("keydown", onKey, { capture: true });
+    };
+  }, [active]);
 }
 
 /** Курсор в долях сцены: 0…1 по видимой области сцены. */

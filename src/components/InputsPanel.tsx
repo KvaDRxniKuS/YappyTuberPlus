@@ -91,6 +91,11 @@ export function InputsPanel(props: InputsPanelProps) {
               const key = inputKey(module, spec.name);
               const on = inputEnabled(module, spec.name);
               const range = inputRange(module, spec);
+              // Полоска удержания в модуле Key: диапазон задаётся в настройках,
+              // само значение остаётся секундами.
+              const meter = definition.kind === "key" && spec.name === "hold"
+                ? holdMeter(module)
+                : { min: range.min, max: range.max };
               const viseme = definition.kind === "viseme";
               const value = !module.enabled || !on
                 ? undefined
@@ -111,8 +116,8 @@ export function InputsPanel(props: InputsPanelProps) {
                     spec={spec}
                     name={key}
                     value={value}
-                    min={range.min}
-                    max={range.max}
+                    min={meter.min}
+                    max={meter.max}
                     step={range.step}
                     mode={live || auto || pointer ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
                     reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}
@@ -161,6 +166,15 @@ export function InputsPanel(props: InputsPanelProps) {
       </div>
     </div>
   );
+}
+
+/** Визуальный диапазон полоски `hold`: настройки модуля, но не вырожденный. */
+function holdMeter(module: ModuleInstance): { min: number; max: number } {
+  const from = Number(module.config.meterFrom ?? 0);
+  const to = Number(module.config.meterTo ?? 2);
+  const min = Number.isFinite(from) ? Math.max(0, from) : 0;
+  const max = Number.isFinite(to) && to > min ? to : min + 0.1;
+  return { min, max };
 }
 
 function InputRow(props: {

@@ -210,6 +210,8 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .code-editor { flex: 1; min-height: 0; overflow: hidden; background: #1b1e23; }
 .code-editor .cm-editor { height: 100%; }
 .code-editor .cm-scroller { overflow: auto; }
+.editor-hint { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 5px 10px 6px; border-top: 1px solid #262b32; background: #1b1e23; color: #6f7a85; font-size: 9px; }
+.editor-hint b { color: #93b0c8; font-weight: 500; font-family: monospace; }
 .runtime-panel { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; background: #1b1e23; }
 .runtime-heading { display: flex; align-items: center; gap: 6px; color: #7c8791; font-size: 9px; margin-bottom: 8px; }
 .runtime-heading small { margin-left: auto; color: #4f5963; font-family: monospace; font-size: 8px; }
@@ -974,5 +976,24 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .key-bind:hover { border-color: #609c8c; color: #e7f4f0; }
 .key-bind.empty { color: #6c7780; }
 .key-binding .button.small { align-self: center; }
+.key-capture { color: #e0b06f; font-size: 9px; }
+.key-picker { display: flex; align-items: center; gap: 6px; }
+
+/* ---------- Клавиатура и одна клавиша в карточке модуля ---------- */
+.key-editor { display: flex; flex-direction: column; gap: 4px; padding: 6px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418; }
+.key-editor-head, .key-row { display: grid; grid-template-columns: minmax(58px, 84px) minmax(62px, 96px) auto; gap: 5px; align-items: center; }
+.key-editor-head { color: #5d6872; font-size: 8.5px; text-transform: uppercase; letter-spacing: .04em; }
+.key-row { padding: 2px 0; border-top: 1px solid #171c21; }
+.key-cap {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 20px; padding: 2px 6px;
+  border: 1px solid #2c353d; border-bottom-width: 2px; border-radius: 4px; background: #171c21;
+  color: #cfd9e0; font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.key-name {
+  min-width: 0; width: 100%; padding: 3px 5px; border: 1px solid #242c34; border-radius: 4px;
+  background: #0f1215; color: #cfd9e0; font: 9px "Cascadia Code", ui-monospace, monospace;
+}
+.key-name:focus { outline: none; border-color: #609c8c; }
+.key-add { align-self: flex-start; }
 .key-capture { color: #e0b06f; font-size: 9px; }
 .key-picker { display: flex; align-items: center; gap: 6px; }

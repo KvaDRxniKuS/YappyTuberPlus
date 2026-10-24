@@ -13,6 +13,7 @@ import { inputEnabled, instanceInputs, moduleInputs, sanitizeModuleName, uniqueM
 import { Switch } from "./Switch";
 import { VisemeEditor } from "./VisemeEditor";
 import { KeyBindingRow, KeyboardKeysEditor } from "./KeyboardEditor";
+import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
 interface ModulesPanelProps extends CalibrationApi {
@@ -233,6 +234,13 @@ export function ModulesPanel(props: ModulesPanelProps) {
                           disabledInputs: disabled.map((name) => (name === from ? to : name)),
                         }, "Переименование виземы");
                       }}
+                    />
+                  )}
+
+                  {definition.kind === "mouse" && (
+                    <MouseButtonsEditor
+                      module={module}
+                      onButtons={(buttons, label) => patchConfig(module, "buttons", buttons, label)}
                     />
                   )}
 

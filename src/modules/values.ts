@@ -6,7 +6,9 @@ import {
 } from "./registry";
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { frameValue, type AudioFrame } from "./audio";
-import { keyboardKeys, keyLabel, type PointerFrame, type MouseSample } from "./pointer";
+import {
+  keyboardKeys, keyLabel, mouseButtonLabel, mouseButtons, mouseValue, type PointerFrame,
+} from "./pointer";
 
 /** Полное имя входа: `mic.talking`. Именно так оно пишется в скрипте. */
 export function inputKey(module: ModuleInstance, input: string): string {
@@ -30,6 +32,21 @@ export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
       kind: "flag" as const,
       hint: `${keyLabel(key.code)} (${key.code}): 1, пока клавиша нажата`,
     }));
+  }
+  if (definition.kind === "mouse") {
+    // К обычным полям мыши добавляются кнопки, которые выбрал пользователь.
+    return [
+      ...definition.inputs,
+      ...mouseButtons(module).map((item) => ({
+        name: item.name,
+        label: mouseButtonLabel(item.button),
+        min: 0,
+        max: 1,
+        step: 1,
+        kind: "flag" as const,
+        hint: `${mouseButtonLabel(item.button)}: 1, пока кнопка нажата`,
+      })),
+    ];
   }
   return definition.inputs;
 }
@@ -139,7 +156,7 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
       const invertY = module.config.invertY === true;
       for (const spec of specs) {
         if (!inputEnabled(module, spec.name)) continue;
-        let value = mouse ? mouse[spec.name as keyof MouseSample] : 0;
+        let value = mouseValue(mouse, spec.name);
         if (invertY && spec.name === "y") value = 1 - value;
         else if (invertY && spec.name === "dy") value = -value;
         values[inputKey(module, spec.name)] = Number.isFinite(value) ? value : 0;

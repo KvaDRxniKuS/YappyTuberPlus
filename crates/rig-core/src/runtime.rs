@@ -494,6 +494,11 @@ impl Rig {
                     if let Some(value) = self.inputs.values.get(&key) {
                         return Value::Number(*value);
                     }
+                    // Состояние событий и снимки прошлого кадра (state.*, event.*)
+                    // приходят из редактора; до первого кадра их может не быть.
+                    if matches!(base.as_str(), "state" | "event") {
+                        return Value::Number(0.0);
+                    }
                 }
                 let target = self.eval_expr(expr, context);
                 match target {

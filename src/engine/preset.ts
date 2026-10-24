@@ -2,11 +2,11 @@ import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules } from "../modules/values";
 import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type KeyboardKey, type ModuleConfig, type ModuleInstance,
-  type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
+  type MouseButton, type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
 } from "../types";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { VISEME_BANDS, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
-import { keyInputName, uniqueKeyName } from "../modules/pointer";
+import { keyInputName, mouseButtons, uniqueButtonName, uniqueKeyName } from "../modules/pointer";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -217,6 +217,22 @@ function normalizeKeyboardKeys(raw: unknown): KeyboardKey[] {
   return keys;
 }
 
+/** Дополнительные кнопки мыши: имена латиницей, без повторов по кнопке и имени. */
+function normalizeMouseButtons(raw: unknown): MouseButton[] {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const list = Array.isArray(source.buttons) ? source.buttons : [];
+  const buttons: MouseButton[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const button = typeof entry.button === "string" ? entry.button.trim() : "";
+    if (!button || buttons.some((other) => other.button === button)) continue;
+    const rawName = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : button;
+    buttons.push({ button, name: uniqueButtonName(buttons, rawName) });
+  }
+  return buttons;
+}
+
 /** Приводит список модулей к известным шаблонам; неизвестные остаются как есть. */
 export function normalizeModules(value: unknown): ModuleInstance[] {
   if (!Array.isArray(value)) return [];
@@ -245,11 +261,16 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const keys = definition.kind === "keyboard" || Array.isArray(rawConfig.keys)
       ? normalizeKeyboardKeys(item.config)
       : null;
+    const buttons = definition.kind === "mouse" || Array.isArray(rawConfig.buttons)
+      ? normalizeMouseButtons(item.config)
+      : null;
     const knownInputs = visemes
       ? visemes.map((entry) => entry.name)
       : keys
         ? keys.map((key) => key.name)
-        : definition.inputs.map((spec) => spec.name);
+        : buttons
+          ? [...definition.inputs.map((spec) => spec.name), ...buttons.map((item) => item.name)]
+          : definition.inputs.map((spec) => spec.name);
     const disabled = Array.isArray(item.disabledInputs)
       ? item.disabledInputs.filter((input): input is string => typeof input === "string" && knownInputs.includes(input))
       : [];
@@ -267,6 +288,7 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
         ...(unknown ? rawConfig : normalizeConfig(definition.fields, item.config)),
         ...(visemes ? { visemes } : {}),
         ...(keys ? { keys } : {}),
+        ...(buttons ? { buttons } : {}),
         // Код клавиши — не поле шаблона, но он обязан пережить любую загрузку.
         // Пустая строка — это осознанный «бинда нет», её тоже сохраняем.
         ...(typeof rawConfig.code === "string" ? { code: rawConfig.code.trim() } : {}),
