@@ -58,6 +58,14 @@
       "step": 1
     },
     {
+      "name": "middle",
+      "label": "Средняя кнопка",
+      "kind": "flag",
+      "min": 0,
+      "max": 1,
+      "step": 1
+    },
+    {
       "name": "wheel",
       "label": "Колесо",
       "kind": "level",

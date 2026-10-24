@@ -220,7 +220,8 @@ export function mouseValue(mouse: MouseSample | undefined, name: string): number
   if (name === "left") return mouse.left;
   if (name === "right") return mouse.right;
   if (name === "wheel") return mouse.wheel;
-  return mouse.buttons[name] ?? 0;
+  // Дополнительные кнопки живут в карте: СКМ тоже приходит туда.
+  return mouse.buttons?.[name] ?? 0;
 }
 
 /** Имя кнопки мыши из `MouseEvent.button`: 3 и 4 — боковые кнопки. */

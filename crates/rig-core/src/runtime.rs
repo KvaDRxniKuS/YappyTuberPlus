@@ -508,6 +508,17 @@ impl Rig {
                         _ => self.error_value(format!("у вектора нет поля '{}'", name)),
                     },
                     Value::Object(id) => {
+                        // `объект.parent` — ступень вверх по иерархии: так читается
+                        // параметр родителя названного объекта, например
+                        // `рот.parent.size_x` (рот и его родитель — любые в сцене).
+                        if name == "parent" {
+                            return match self.object_parent(&id) {
+                                Some(parent) => Value::Object(parent),
+                                None => {
+                                    self.error_value(format!("у объекта '{}' нет родителя", id))
+                                }
+                            };
+                        }
                         if let Some(param) = Param::parse(name) {
                             Value::Number(self.eval_node(&NodeKey::Param(id, param)))
                         } else {
