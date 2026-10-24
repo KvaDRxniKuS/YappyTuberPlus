@@ -175,7 +175,8 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     i += 2;
                     TokenKind::NotEq
                 } else {
-                    return Err(format!("ожидалось '!=' на позиции {}", i + 1));
+                    i += 1;
+                    TokenKind::Not
                 }
             }
             '.' if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
@@ -498,44 +499,235 @@ pub fn parse_expression(source: &str) -> Result<Expr, String> {
     ExpressionParser::new(source)?.parse()
 }
 
-pub fn parse_script(source: &str) -> Result<Vec<(String, Arc<Expr>)>, String> {
-    let mut result = Vec::new();
+/// Условие, по которому срабатывает блок `on event.… { … }`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventKind {
+    /// Значение перешло из нуля в единицу: нажатие, начало речи.
+    Down,
+    /// Значение вернулось в ноль: отпускание.
+    Up,
+    /// Значение изменилось с прошлого кадра (аналоговые входы).
+    Change,
+    /// Вход держится дольше `сек` — один раз за удержание.
+    Hold(f64),
+    /// Вход отпущен дольше `сек` — один раз за отпускание.
+    Relax(f64),
+}
+
+/// Блок `on event.<модуль>.<вход>.<тип> { имя = выражение … }`.
+#[derive(Debug, Clone)]
+pub struct EventBlock {
+    /// Вход-источник без префикса `event`: `mouse.left`, `mic.talking`.
+    pub source: String,
+    pub kind: EventKind,
+    pub body: Vec<(String, Arc<Expr>)>,
+}
+
+/// Разобранный скрипт: обычные присваивания и блоки событий.
+#[derive(Debug, Default)]
+pub struct Script {
+    pub assignments: Vec<(String, Arc<Expr>)>,
+    pub events: Vec<EventBlock>,
+}
+
+fn valid_identifier(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Разбор заголовка `on event.mouse.left.down(…)`: вход и тип условия.
+fn parse_event_header(header: &str, line: usize) -> Result<(String, EventKind), String> {
+    let text = header.trim();
+    let rest = text
+        .strip_prefix("on")
+        .ok_or_else(|| format!("строка {}: ожидалось 'on event.модуль.вход.тип'", line))?
+        .trim_start();
+    let path = rest.strip_prefix("event.").ok_or_else(|| {
+        format!(
+            "строка {}: после 'on' ожидалось 'event.модуль.вход.тип'",
+            line
+        )
+    })?;
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "строка {}: нужно 'event.модуль.вход.тип', а не '{}'",
+            line, text
+        ));
+    }
+    let module = parts[0].trim();
+    let input = parts[1].trim();
+    if !valid_identifier(module) || !valid_identifier(input) {
+        return Err(format!(
+            "строка {}: имя модуля и входа — латиница, цифры и '_'",
+            line
+        ));
+    }
+    let raw = parts[2].trim();
+    let (name, argument) = match raw.split_once('(') {
+        Some((name, tail)) => {
+            let inner = tail.strip_suffix(')').ok_or_else(|| {
+                format!("строка {}: у '{}' не закрыта скобка", line, raw)
+            })?;
+            (name.trim(), Some(inner.trim()))
+        }
+        None => (raw, None),
+    };
+    let mut seconds = 0.0;
+    if matches!(name, "hold" | "relax") {
+        if let Some(value) = argument {
+            if !value.is_empty() {
+                seconds = value.parse::<f64>().map_err(|_| {
+                    format!("строка {}: время в '{}' должно быть числом", line, raw)
+                })?;
+                if !seconds.is_finite() || seconds < 0.0 {
+                    return Err(format!(
+                        "строка {}: время в '{}' не может быть отрицательным",
+                        line, raw
+                    ));
+                }
+            }
+        }
+    }
+    let kind = match name {
+        "down" => EventKind::Down,
+        "up" => EventKind::Up,
+        "change" => EventKind::Change,
+        "hold" => EventKind::Hold(seconds),
+        "relax" => EventKind::Relax(seconds),
+        other => {
+            return Err(format!(
+                "строка {}: неизвестный тип события '{}'; ожидалось down, up, change, hold(сек) или relax(сек)",
+                line, other
+            ))
+        }
+    };
+    Ok((format!("{}.{}", module, input), kind))
+}
+
+pub fn parse_script(source: &str) -> Result<Script, String> {
+    let mut script = Script::default();
     let mut next_call_id = 0u32;
-    for (index, raw_line) in source.lines().enumerate() {
-        let line = raw_line.split("//").next().unwrap_or("").trim();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut index = 0usize;
+    while index < lines.len() {
+        let line_number = index + 1;
+        let line = lines[index]
+            .split("//")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if line.is_empty() {
+            index += 1;
+            continue;
+        }
+        // Блок события: `on event.<модуль>.<вход>.<тип> { … }`.
+        if line.starts_with("on") && line[2..].trim_start().starts_with("event") {
+            let open = line.find('{').ok_or_else(|| {
+                format!("строка {}: у блока события нет '{{'", line_number)
+            })?;
+            let (event_source, kind) = parse_event_header(&line[..open], line_number)?;
+            let mut raw_body: Vec<String> = Vec::new();
+            let rest = &line[open + 1..];
+            let mut closed = match rest.find('}') {
+                Some(close) => {
+                    raw_body.push(rest[..close].to_string());
+                    true
+                }
+                None => {
+                    raw_body.push(rest.to_string());
+                    false
+                }
+            };
+            if !closed {
+                while index + 1 < lines.len() {
+                    index += 1;
+                    let trimmed = lines[index].split("//").next().unwrap_or("").trim();
+                    if trimmed == "}" {
+                        closed = true;
+                        break;
+                    }
+                    if let Some(text) = trimmed.strip_suffix('}') {
+                        raw_body.push(text.trim().to_string());
+                        closed = true;
+                        break;
+                    }
+                    raw_body.push(trimmed.to_string());
+                }
+                if !closed {
+                    return Err(format!(
+                        "строка {}: блок события не закрыт '}}'",
+                        line_number
+                    ));
+                }
+            }
+            let mut body = Vec::new();
+            for raw in raw_body {
+                let text = raw.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                let (name, expression) = text.split_once('=').ok_or_else(|| {
+                    format!(
+                        "строка {}: в блоке события ожидалось 'имя = выражение'",
+                        line_number
+                    )
+                })?;
+                let name = name.trim();
+                if !valid_identifier(name) {
+                    return Err(format!(
+                        "строка {}: некорректное имя '{}'",
+                        line_number, name
+                    ));
+                }
+                let expr = parse_expression(expression.trim())
+                    .map_err(|error| format!("строка {}: {}", line_number, error))?;
+                let mut counter = CountCalls(next_call_id);
+                counter.visit(&expr);
+                next_call_id = counter.0;
+                body.push((name.to_string(), Arc::new(expr)));
+            }
+            script.events.push(EventBlock {
+                source: event_source,
+                kind,
+                body,
+            });
+            index += 1;
             continue;
         }
         let (name, expression) = line.split_once('=').ok_or_else(|| {
             format!(
                 "строка {}: ожидалось присваивание 'имя = выражение'",
-                index + 1
+                line_number
             )
         })?;
         let name = name.trim();
-        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        if !valid_identifier(name) {
             return Err(format!(
                 "строка {}: некорректное имя '{}'; ожидался ASCII-идентификатор",
-                index + 1,
-                name
+                line_number, name
             ));
         }
-        if result.iter().any(|(existing, _)| existing == name) {
+        if script
+            .assignments
+            .iter()
+            .any(|(existing, _)| existing == name)
+        {
             return Err(format!(
                 "строка {}: параметр '{}' присваивается дважды",
-                index + 1,
-                name
+                line_number, name
             ));
         }
         let expr = parse_expression(expression.trim())
-            .map_err(|error| format!("строка {}: {}", index + 1, error))?;
+            .map_err(|error| format!("строка {}: {}", line_number, error))?;
         // IDs are unique within one script. They are scoped by node in the runtime.
         let mut counter = CountCalls(next_call_id);
         counter.visit(&expr);
         next_call_id = counter.0;
-        result.push((name.to_string(), Arc::new(expr)));
+        script.assignments.push((name.to_string(), Arc::new(expr)));
+        index += 1;
     }
-    Ok(result)
+    Ok(script)
 }
 
 struct CountCalls(u32);
@@ -593,7 +785,33 @@ mod tests {
     fn comments_and_vector_members_parse() {
         let script =
             parse_script("x = follow(offset, parent).x // movement\ny = vec(1, 2).y").unwrap();
-        assert_eq!(script.len(), 2);
+        assert_eq!(script.assignments.len(), 2);
+    }
+
+    #[test]
+    fn event_blocks_parse() {
+        let script = parse_script(
+            "a = 0\non event.mouse.left.down {\n  a = !a\n  b = 1\n}\n",
+        )
+        .unwrap();
+        assert_eq!(script.assignments.len(), 1);
+        assert_eq!(script.events.len(), 1);
+        assert_eq!(script.events[0].source, "mouse.left");
+        assert!(matches!(script.events[0].kind, EventKind::Down));
+        assert_eq!(script.events[0].body.len(), 2);
+    }
+
+    #[test]
+    fn event_hold_takes_seconds() {
+        let script = parse_script("on event.mic.talking.hold(0.5) { a = 1 }").unwrap();
+        assert_eq!(script.events[0].source, "mic.talking");
+        assert!(matches!(script.events[0].kind, EventKind::Hold(value) if (value - 0.5).abs() < 1e-9));
+    }
+
+    #[test]
+    fn event_unknown_type_is_rejected() {
+        assert!(parse_script("on event.mouse.left.tap { a = 1 }").is_err());
+        assert!(parse_script("on event.mouse.left.down { a = 1").is_err());
     }
 
     #[test]

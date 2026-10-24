@@ -1,5 +1,5 @@
 use crate::model::{BaseUpdate, Frame, InputValues, NodeKey, ObjectKind, Param, RigPreset, Vec2};
-use crate::parser::{parse_script, BinaryOp, Expr, UnaryOp};
+use crate::parser::{parse_script, BinaryOp, EventKind, Expr, UnaryOp};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -12,6 +12,26 @@ enum Value {
     Vector(Vec2),
     Object(String),
     Signals,
+}
+
+/// Блок события, готовый к исполнению: источник, тип и цели тела.
+#[derive(Debug, Clone)]
+struct CompiledEvent {
+    /// Вход-источник: `mouse.left`, `mic.talking`.
+    source: String,
+    kind: EventKind,
+    /// Объект, в скрипте которого записан блок; `None` — глобальные переменные.
+    owner: Option<String>,
+    /// Что присвоить при срабатывании: узел и выражение.
+    body: Vec<(NodeKey, Arc<Expr>)>,
+}
+
+/// Состояние одного блока: прошлое значение, начало удержания и защёлка.
+#[derive(Debug, Clone)]
+struct EventState {
+    last: f64,
+    since: f64,
+    fired: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -46,6 +66,12 @@ pub struct Rig {
     cycle_nodes: BTreeSet<NodeKey>,
     diagnostics: BTreeSet<String>,
     states: HashMap<StateKey, RuntimeState>,
+    /// Блоки `on event.…` из глобального скрипта и скриптов объектов.
+    events: Vec<CompiledEvent>,
+    event_state: HashMap<usize, EventState>,
+    /// Переменные, которые существуют только потому, что их меняют события:
+    /// между срабатываниями они держат значение прошлого кадра.
+    persistent_globals: HashSet<String>,
     inputs: InputValues,
     now: f64,
     time: f64,
@@ -106,26 +132,63 @@ impl Rig {
 
         let mut expressions = HashMap::new();
         let mut global_names = Vec::new();
-        for (name, expr) in
-            parse_script(&preset.globals).map_err(|e| format!("глобальные: {}", e))?
-        {
-            let key = NodeKey::Global(name.clone());
-            global_names.push(name);
-            expressions.insert(key, expr);
+        let mut events: Vec<CompiledEvent> = Vec::new();
+        let mut persistent_globals: HashSet<String> = HashSet::new();
+        let globals_script =
+            parse_script(&preset.globals).map_err(|e| format!("глобальные: {}", e))?;
+        for (name, expr) in &globals_script.assignments {
+            global_names.push(name.clone());
+            expressions.insert(NodeKey::Global(name.clone()), expr.clone());
+        }
+        for block in &globals_script.events {
+            let mut body = Vec::new();
+            for (name, expr) in &block.body {
+                if !global_names.iter().any(|existing| existing == name) {
+                    global_names.push(name.clone());
+                }
+                if !expressions.contains_key(&NodeKey::Global(name.clone())) {
+                    persistent_globals.insert(name.clone());
+                }
+                body.push((NodeKey::Global(name.clone()), expr.clone()));
+            }
+            events.push(CompiledEvent {
+                source: block.source.clone(),
+                kind: block.kind.clone(),
+                owner: None,
+                body,
+            });
         }
         global_names.sort();
 
         for object in &preset.objects {
-            for (name, expr) in
-                parse_script(&object.script).map_err(|e| format!("{}: {}", object.id, e))?
-            {
-                let param = Param::parse(&name).ok_or_else(|| {
+            let script =
+                parse_script(&object.script).map_err(|e| format!("{}: {}", object.id, e))?;
+            for (name, expr) in &script.assignments {
+                let param = Param::parse(name).ok_or_else(|| {
                     format!(
                         "{}: нельзя присвоить неизвестный параметр '{}'",
                         object.id, name
                     )
                 })?;
-                expressions.insert(NodeKey::Param(object.id.clone(), param), expr);
+                expressions.insert(NodeKey::Param(object.id.clone(), param), expr.clone());
+            }
+            for block in &script.events {
+                let mut body = Vec::new();
+                for (name, expr) in &block.body {
+                    let param = Param::parse(name).ok_or_else(|| {
+                        format!(
+                            "{}: в блоке события нельзя присвоить '{}'",
+                            object.id, name
+                        )
+                    })?;
+                    body.push((NodeKey::Param(object.id.clone(), param), expr.clone()));
+                }
+                events.push(CompiledEvent {
+                    source: block.source.clone(),
+                    kind: block.kind.clone(),
+                    owner: Some(object.id.clone()),
+                    body,
+                });
             }
         }
 
@@ -155,6 +218,9 @@ impl Rig {
             cycle_nodes: BTreeSet::new(),
             diagnostics: BTreeSet::new(),
             states: HashMap::new(),
+            events,
+            event_state: HashMap::new(),
+            persistent_globals,
             inputs: InputValues::default(),
             now: 0.0,
             time: 0.0,
@@ -211,6 +277,11 @@ impl Rig {
         self.visiting.clear();
         self.cycle_nodes.clear();
         self.diagnostics.clear();
+        // Стоп и перезапуск обнуляют события: следующее нажатие снова первое.
+        if reset_clock {
+            self.event_state.clear();
+        }
+        self.fire_events();
 
         let global_names = self.global_names.clone();
         for name in &global_names {
@@ -280,6 +351,74 @@ impl Rig {
         frame
     }
 
+    /// Считает условия событий и применяет тела сработавших блоков.
+    ///
+    /// Значения попадают в кэш кадра до обычного вычисления, поэтому на этом
+    /// кадре побеждает событие, а на следующем — обычные формулы или прошлое
+    /// значение переменной.
+    fn fire_events(&mut self) {
+        let now = self.time;
+        for index in 0..self.events.len() {
+            let (source, kind, owner, body) = {
+                let event = &self.events[index];
+                (
+                    event.source.clone(),
+                    event.kind.clone(),
+                    event.owner.clone(),
+                    event.body.clone(),
+                )
+            };
+            let value = self.inputs.values.get(&source).copied().unwrap_or(0.0);
+            let high = value > 0.5;
+            let state = self.event_state.entry(index).or_insert(EventState {
+                last: 0.0,
+                since: 0.0,
+                fired: false,
+            });
+            let fired = match kind {
+                EventKind::Down => state.last <= 0.5 && high,
+                EventKind::Up => state.last > 0.5 && !high,
+                EventKind::Change => (value - state.last).abs() > 1e-9,
+                EventKind::Hold(seconds) => {
+                    if !high {
+                        state.since = now;
+                        state.fired = false;
+                        false
+                    } else if !state.fired && now - state.since >= seconds {
+                        state.fired = true;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                EventKind::Relax(seconds) => {
+                    if high {
+                        state.since = now;
+                        state.fired = false;
+                        false
+                    } else if !state.fired && now - state.since >= seconds {
+                        state.fired = true;
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+            state.last = value;
+            if !fired {
+                continue;
+            }
+            let context = match &owner {
+                Some(id) => NodeKey::Param(id.clone(), Param::X),
+                None => NodeKey::Global(String::new()),
+            };
+            for (key, expression) in body {
+                let result = self.numeric(&expression, &context);
+                self.cache.insert(key, result);
+            }
+        }
+    }
+
     fn eval_node(&mut self, key: &NodeKey) -> f64 {
         if let Some(value) = self.cache.get(key) {
             return *value;
@@ -295,6 +434,15 @@ impl Rig {
                 key_name(key)
             ));
             return self.previous_value(key);
+        }
+
+        // Переменная, которую меняют только события, живёт между кадрами.
+        if let NodeKey::Global(name) = key {
+            if !self.expressions.contains_key(key) && self.persistent_globals.contains(name) {
+                let value = self.previous_value(key);
+                self.cache.insert(key.clone(), value);
+                return value;
+            }
         }
 
         self.visiting.push(key.clone());
@@ -1313,6 +1461,87 @@ mod tests {
             .diagnostics
             .iter()
             .any(|message| message.contains("неизвестное имя")));
+    }
+
+    fn tick_with(rig: &mut Rig, time: f64, values: &[(&str, f64)]) -> Frame {
+        let mut inputs = InputValues::default();
+        for (key, value) in values {
+            inputs.values.insert((*key).to_string(), *value);
+        }
+        rig.tick(time, inputs, false, false, None)
+    }
+
+    #[test]
+    fn event_block_toggles_variable() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "visible = a")],
+            "on event.mouse.left.down {\n  a = !a\n}",
+        ))
+        .unwrap();
+        let idle = tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
+        assert_eq!(idle.globals["a"], 0.0);
+        // Нажатие переключает переменную, объект читает её в том же кадре.
+        let press = tick_with(&mut rig, 0.033, &[("mouse.left", 1.0)]);
+        assert_eq!(press.globals["a"], 1.0);
+        assert_eq!(press.objects["o"]["visible"], 1.0);
+        // Удержание не повторяет событие, отпускание — тоже.
+        let hold = tick_with(&mut rig, 0.066, &[("mouse.left", 1.0)]);
+        assert_eq!(hold.globals["a"], 1.0);
+        let release = tick_with(&mut rig, 0.099, &[("mouse.left", 0.0)]);
+        assert_eq!(release.globals["a"], 1.0);
+        // Второе нажатие переключает обратно.
+        let again = tick_with(&mut rig, 0.132, &[("mouse.left", 1.0)]);
+        assert_eq!(again.globals["a"], 0.0);
+    }
+
+    #[test]
+    fn event_hold_fires_once_after_delay() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = a")],
+            "on event.mic.talking.hold(0.5) {\n  a = a + 1\n}",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mic.talking", 1.0)]);
+        let early = tick_with(&mut rig, 0.2, &[("mic.talking", 1.0)]);
+        assert_eq!(early.objects["o"]["x"], 0.0);
+        let fired = tick_with(&mut rig, 0.6, &[("mic.talking", 1.0)]);
+        assert_eq!(fired.objects["o"]["x"], 1.0);
+        // Держим дальше — блок не повторяется.
+        let later = tick_with(&mut rig, 1.4, &[("mic.talking", 1.0)]);
+        assert_eq!(later.objects["o"]["x"], 1.0);
+    }
+
+    #[test]
+    fn event_in_object_script_changes_param() {
+        let mut rig = Rig::new(preset(
+            vec![object(
+                "o",
+                None,
+                "x = 0\non event.mouse.right.up {\n  x = x + 10\n}",
+            )],
+            "",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mouse.right", 1.0)]);
+        let release = tick_with(&mut rig, 0.033, &[("mouse.right", 0.0)]);
+        assert_eq!(release.objects["o"]["x"], 10.0);
+        // Обычная формула побеждает на следующем кадре: событие живёт кадр.
+        let next = tick_with(&mut rig, 0.066, &[("mouse.right", 0.0)]);
+        assert_eq!(next.objects["o"]["x"], 0.0);
+    }
+
+    #[test]
+    fn event_change_fires_on_any_delta() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = a")],
+            "on event.mouse.x.change {\n  a = a + 1\n}",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mouse.x", 0.1)]);
+        let first = tick_with(&mut rig, 0.033, &[("mouse.x", 0.4)]);
+        assert_eq!(first.objects["o"]["x"], 1.0);
+        let same = tick_with(&mut rig, 0.066, &[("mouse.x", 0.4)]);
+        assert_eq!(same.objects["o"]["x"], 1.0);
     }
 
     #[test]

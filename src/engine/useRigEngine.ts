@@ -3,7 +3,6 @@ import type { InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend } from "./backend";
 import { neutralFrame, prepareFrame } from "./frame";
-import { compileScripts, createEventState, runtimeValues, type CompiledScripts, type EventRuntimeState } from "./scriptRuntime";
 
 export type EngineStatus = "loading" | "ready" | "error";
 
@@ -23,9 +22,6 @@ export function useRigEngine(
   const frameRef = useRef<RigFrame | null>(null);
   const handleRef = useRef<number | null>(null);
   const presetRef = useRef(preset);
-  // Развёрнутые скрипты (события и ссылки на объекты) и состояние импульсов.
-  const compiledRef = useRef<CompiledScripts | null>(null);
-  const eventStateRef = useRef<EventRuntimeState>(createEventState());
   const pausedRef = useRef(paused);
   const resetClockRef = useRef(true);
   const structureKey = engineStructure(preset);
@@ -52,19 +48,12 @@ export function useRigEngine(
     setStatus("loading");
     setError(null);
     const current = presetRef.current;
-    // Блоки `on event… { … }` и `объект.параметр` не понимает ядро, поэтому
-    // перед созданием движка скрипты разворачиваются в обычные выражения.
-    const compiled = compileScripts(current);
-    compiledRef.current = compiled;
-    eventStateRef.current = createEventState();
+    // Скрипты уходят в ядро как есть: блоки `on event… { … }` и ссылки на
+    // чужие объекты разбирает и исполняет сам движок.
     const config = {
       canvas: current.canvas,
-      globals: compiled.globals,
-      objects: current.objects.map((object) => ({
-        ...object,
-        image: null,
-        script: compiled.objects.get(object.id) ?? object.script,
-      })),
+      globals: current.globals,
+      objects: current.objects.map((object) => ({ ...object, image: null })),
     };
     backend.call({ op: "create", config }).then(async (response) => {
       if (!response.ok || response.handle === undefined) {
@@ -135,16 +124,11 @@ export function useRigEngine(
         const resetClock = resetClockRef.current;
         resetClockRef.current = false;
         const inputs = inputsRef.current;
-        const compiled = compiledRef.current;
-        // Импульсы событий и снимки прошлого кадра живут рядом с входами модулей.
-        const runtime = compiled
-          ? runtimeValues(compiled, frameRef.current, inputs.values, nowMs, eventStateRef.current)
-          : {};
         backend.call({
           op: "tick",
           handle,
           now: nowMs / 1000,
-          inputs: { values: { ...inputs.values, ...runtime }, signals: inputs.signals ?? {} },
+          inputs: { values: inputs.values, signals: inputs.signals ?? {} },
           paused: false,
           resetClock,
         }).then((response) => {
@@ -187,8 +171,6 @@ export function useRigEngine(
    * иерархию видимости и выключенные группы снова показывались бы.
    */
   const resetTimeline = useCallback(() => {
-    // Стоп обнуляет и события: следующее нажатие снова считается первым.
-    eventStateRef.current = createEventState();
     const neutral = neutralFrame(presetRef.current);
     frameRef.current = neutral;
     setSnapshot(neutral);
