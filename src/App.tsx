@@ -13,7 +13,7 @@ import { OverlayDialog } from "./components/OverlayDialog";
 import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
+  baseUpdates, isDescendant, makeGroup, makeSprite, normalizeModules, normalizeOverlay, normalizePreset,
   setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
 import { History, type HistorySnapshot } from "./engine/history";
@@ -72,6 +72,17 @@ export default function App() {
   const presetRef = useRef(preset);
   const library = useModuleLibrary();
   const moduleInputs = useModuleInputs(preset.modules, library.version);
+  // Пресет нормализуется до того, как прочитана папка modules, поэтому поля
+  // настроек (режим, границы) дозаполняются один раз, когда шаблоны появились.
+  const modulesNormalized = useRef(false);
+  useEffect(() => {
+    if (!library.ready || modulesNormalized.current) return;
+    modulesNormalized.current = true;
+    setPreset((current) => {
+      const modules = normalizeModules(current.modules);
+      return JSON.stringify(modules) === JSON.stringify(current.modules) ? current : { ...current, modules };
+    });
+  }, [library.ready]);
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
   const selectionRef = useRef(selection);

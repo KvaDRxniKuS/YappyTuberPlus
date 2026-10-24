@@ -46,6 +46,9 @@ type Interaction =
   | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
   | null;
 
+/** Поля вокруг артборда под размытую тень. */
+const ARTBOARD_PAD = 40;
+
 const GRID_COLOR = "#8fa3ad2e";
 const GRID_MAJOR = "#8fa3ad59";
 const BOUNDS_COLOR = "#6fb4a3";
@@ -64,6 +67,10 @@ export function Scene(props: SceneProps) {
   const spaceDown = useRef(false);
   const initialized = useRef(false);
   const marqueeRef = useRef<Marquee | null>(null);
+  // Тень артборда — тяжёлый blur. Рисуем её один раз в отдельный холст и потом
+  // просто растягиваем: размытие на каждом кадре заметно грузило процессор.
+  const shadowRef = useRef<HTMLCanvasElement | null>(null);
+  const shadowKey = useRef("");
   // Отрисовка живёт в одном rAF-цикле, поэтому берём актуальные props через ref:
   // иначе замыкание навсегда сохраняет значения первого рендера (из-за этого
   // раньше не переключалась сетка и залипало выделение).
@@ -104,11 +111,8 @@ export function Scene(props: SceneProps) {
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(zoom, zoom);
-    ctx.shadowColor = "#00000055";
-    ctx.shadowBlur = 24 / zoom;
-    ctx.fillStyle = "#24292f";
-    ctx.fillRect(0, 0, preset.canvas.width, preset.canvas.height);
-    ctx.shadowColor = "transparent";
+    const board = artboard();
+    ctx.drawImage(board.image, -ARTBOARD_PAD, -ARTBOARD_PAD);
     drawTransparency(ctx, preset.canvas.width, preset.canvas.height);
     if (current.showGrid) drawGrid(ctx, preset.canvas.width, preset.canvas.height, zoom);
 
@@ -126,6 +130,27 @@ export function Scene(props: SceneProps) {
     ctx.font = "10px Inter, system-ui, sans-serif";
     ctx.fillText(`${preset.canvas.width} × ${preset.canvas.height}`, Math.max(8, x + 2), Math.max(14, y - 10));
     drawMarquee(ctx, marqueeRef.current);
+  };
+
+  /** Артборд с тенью, нарисованный один раз на изменение размера сцены. */
+  const artboard = (): { image: HTMLCanvasElement } => {
+    const { width, height } = propsRef.current.preset.canvas;
+    const key = `${width}x${height}`;
+    if (shadowRef.current && shadowKey.current === key) return { image: shadowRef.current };
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width + ARTBOARD_PAD * 2));
+    canvas.height = Math.max(1, Math.round(height + ARTBOARD_PAD * 2));
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.shadowColor = "#00000055";
+      context.shadowBlur = 26;
+      context.shadowOffsetY = 8;
+      context.fillStyle = "#24292f";
+      context.fillRect(ARTBOARD_PAD, ARTBOARD_PAD, width, height);
+    }
+    shadowRef.current = canvas;
+    shadowKey.current = key;
+    return { image: canvas };
   };
 
   const fit = () => {

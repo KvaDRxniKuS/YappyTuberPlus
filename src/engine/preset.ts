@@ -4,7 +4,7 @@ import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type ModuleInstance, type OverlayConfig,
   type RigObject, type RigPreset,
 } from "../types";
-import { hasModule, moduleDefinition, type ModuleField } from "../modules/registry";
+import { hasModule, libraryEmpty, moduleDefinition, type ModuleField } from "../modules/registry";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
   const result = new Set<string>([id]);
@@ -186,7 +186,10 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const name = typeof item.name === "string" ? item.name.trim() : "";
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    const type = typeof item.type === "string" && hasModule(item.type) ? item.type : "manual";
+    // Пока папка modules не прочитана, список шаблонов пуст: подменять тип
+    // «manual» нельзя, иначе все модули пресета станут ручными при первом рендере.
+    const rawType = typeof item.type === "string" ? item.type : "";
+    const type = !rawType ? "manual" : libraryEmpty() || hasModule(rawType) ? rawType : "manual";
     const definition = moduleDefinition(type);
     const disabled = Array.isArray(item.disabledInputs)
       ? item.disabledInputs.filter((input): input is string => typeof input === "string" && definition.inputs.some((spec) => spec.name === input))

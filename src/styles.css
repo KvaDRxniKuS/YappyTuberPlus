@@ -666,3 +666,112 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .app-loading > span { font-size: 15px; font-weight: 650; letter-spacing: -.3px; }
 .app-loading > span span { color: var(--accent); }
 .app-loading > small { color: var(--faint); font-size: 9px; letter-spacing: .4px; }
+
+/* ---------- Тумблеры ---------- */
+.switch {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid #383f48;
+  border-radius: 9px;
+  background: #2c323a;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+/* Хитбокс больше самого тумблера: попасть мышкой проще. */
+.switch::after { content: ""; position: absolute; inset: -7px; }
+
+.switch > span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #78838d;
+  transition: transform .15s, background .15s;
+}
+
+.switch.on { background: #36695d; border-color: #4d8b7c; }
+.switch.on > span { background: #b8ecdf; transform: translateX(13px); }
+.switch:disabled { opacity: .38; cursor: default; }
+
+.switch.tiny { width: 24px; height: 14px; border-radius: 8px; }
+.switch.tiny > span { top: 2px; left: 2px; width: 8px; height: 8px; }
+.switch.tiny.on > span { transform: translateX(10px); }
+
+/* ---------- Сетка настроек модуля ---------- */
+.module-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 6px 12px;
+}
+
+.module-field {
+  display: grid;
+  grid-template-columns: minmax(60px, 1fr) minmax(72px, auto);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.module-field-label {
+  color: #8b959e;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.module-field-value { display: flex; align-items: center; gap: 4px; min-width: 0; }
+
+.module-field-value select,
+.module-field-number {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 3px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #0f1215;
+  color: #cfd9e0;
+  font: 10px "Cascadia Code", ui-monospace, monospace;
+}
+
+.module-field-value select:focus, .module-field-number:focus { outline: none; border-color: #609c8c; }
+.module-field-flag { display: flex; align-items: center; gap: 6px; color: #6c7780; font-size: 9px; }
+.module-device { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; }
+
+/* ---------- Сворачивание карточек ---------- */
+.module-card header { flex-wrap: wrap; }
+.module-collapse svg { transition: transform .15s; transform: rotate(-90deg); }
+.module-collapse.open svg { transform: none; }
+.module-summary {
+  flex: 1 1 100%;
+  color: #5d6872;
+  font: 8.5px "Cascadia Code", ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.module-card.collapsed { gap: 0; }
+
+.module-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.module-group-head > svg { color: #5d6872; flex: none; transition: transform .15s; }
+.module-group-head.collapsed > svg { transform: rotate(-90deg); }
+.module-group-summary { color: #5d6872; font: 8.5px "Cascadia Code", ui-monospace, monospace; }

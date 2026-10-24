@@ -1,4 +1,5 @@
-import { AudioLines } from "lucide-react";
+import { useState } from "react";
+import { AudioLines, ChevronDown } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame } from "../types";
 import type { AudioFrame } from "../modules/audio";
 import { inputDefault, inputRange, moduleDefinition, type ModuleInputSpec } from "../modules/registry";
@@ -23,6 +24,12 @@ interface InputsPanelProps {
  * модели есть включённый микрофонный модуль.
  */
 export function InputsPanel(props: InputsPanelProps) {
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const isCollapsed = (name: string) => collapsed.includes(name);
+  const toggle = (name: string) => {
+    setCollapsed((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
+  };
+
   const liveModules = props.modules.filter((module) => module.enabled && module.source === "live" && moduleDefinition(module.type).audio === true);
   const loudest = liveModules
     .map((module) => props.audio[module.name]?.speak ?? 0)
@@ -51,15 +58,29 @@ export function InputsPanel(props: InputsPanelProps) {
         const auto = definition.kind === "autoblink";
         return (
           <section className={`module-group ${module.enabled ? "" : "disabled"}`} key={module.name}>
-            <div className="module-group-head">
+            <button
+              type="button"
+              className={`module-group-head ${isCollapsed(module.name) ? "collapsed" : ""}`}
+              title={isCollapsed(module.name) ? "Развернуть входы" : "Свернуть входы"}
+              onClick={() => toggle(module.name)}
+            >
+              <ChevronDown size={12} />
               <code>{module.name}</code>
               <span>{definition.title}</span>
               <small>
                 {!module.enabled ? "выключен" : live ? "микрофон" : auto ? "авто" : "ручной"}
               </small>
-            </div>
-            {live && props.error && <div className="inline-error">{props.error}</div>}
-            {definition.inputs.map((spec) => {
+            </button>
+            {isCollapsed(module.name) && (
+              <span className="module-group-summary">
+                {definition.inputs
+                  .filter((spec) => inputEnabled(module, spec.name))
+                  .map((spec) => inputKey(module, spec.name))
+                  .join(" · ") || "входы выключены"}
+              </span>
+            )}
+            {!isCollapsed(module.name) && live && props.error && <div className="inline-error">{props.error}</div>}
+            {!isCollapsed(module.name) && definition.inputs.map((spec) => {
               const key = inputKey(module, spec.name);
               const on = inputEnabled(module, spec.name);
               const range = inputRange(module, spec);

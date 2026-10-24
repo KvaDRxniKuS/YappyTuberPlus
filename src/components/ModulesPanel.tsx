@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { AudioLines, Copy, Mic, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
+import {
+  AudioLines, ChevronDown, Copy, Mic, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X,
+} from "lucide-react";
 import type { ModuleInstance } from "../types";
 import type { DeviceOption } from "../modules/audio";
 import {
@@ -8,6 +10,7 @@ import {
 } from "../modules/registry";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import { inputEnabled, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
+import { Switch } from "./Switch";
 
 interface ModulesPanelProps {
   modules: ModuleInstance[];
@@ -21,15 +24,29 @@ interface ModulesPanelProps {
  * Панель модулей: сверху поиск по уже включённым, снизу — библиотека шаблонов.
  *
  * Входы модуля можно выключать по одному: выключенный вход не считается и не
- * уходит в кадр, поэтому ошибку «неизвестное имя» видно сразу.
+ * уходит в кадр, поэтому ошибку «неизвестное имя» видно сразу. Карточки
+ * сворачиваются, настройки идут сеткой «поле — значение».
  */
 export function ModulesPanel(props: ModulesPanelProps) {
   const [query, setQuery] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [collapsed, setCollapsed] = useState<string[]>([]);
   const library = useModuleLibrary();
 
+  useEffect(() => {
+    // Свёрнутость живёт в компоненте: после перезапуска карточки снова раскрыты.
+    setCollapsed((current) => {
+      const next = current.filter((name) => props.modules.some((module) => module.name === name));
+      return next.length === current.length ? current : next;
+    });
+  }, [props.modules]);
+
   const problems = validateModules(props.modules);
+  const isCollapsed = (name: string) => collapsed.includes(name);
+  const toggleCollapsed = (name: string) => {
+    setCollapsed((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
+  };
 
   const patch = (name: string, change: Partial<ModuleInstance>, label?: string) => {
     props.onChange(props.modules.map((module) => (module.name === name ? { ...module, ...change } : module)), label);
@@ -124,15 +141,15 @@ export function ModulesPanel(props: ModulesPanelProps) {
         {visibleModules.map((module) => {
           const definition = moduleDefinition(module.type);
           const live = module.enabled && definition.audio === true && module.source === "live";
+          const open = !isCollapsed(module.name);
+          const fields = definition.fields.filter((field) => fieldVisible(field, module.config));
           return (
-            <section className={`module-card ${module.enabled ? "" : "disabled"}`} key={module.name}>
+            <section className={`module-card ${module.enabled ? "" : "disabled"} ${open ? "" : "collapsed"}`} key={module.name}>
               <header>
-                <input
-                  className="module-enabled"
-                  type="checkbox"
+                <Switch
                   checked={module.enabled}
                   title={module.enabled ? "Выключить модуль" : "Включить модуль"}
-                  onChange={(event) => patch(module.name, { enabled: event.target.checked }, "Модуль вкл/выкл")}
+                  onChange={(checked) => patch(module.name, { enabled: checked }, "Модуль вкл/выкл")}
                 />
                 <input
                   className="module-name"
@@ -144,6 +161,16 @@ export function ModulesPanel(props: ModulesPanelProps) {
                   onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
                 />
                 <span className="module-type">{definition.title}</span>
+                {!open && (
+                  <span className="module-summary">
+                    {moduleInputs(module).filter((item) => inputEnabled(module, item.spec.name)).map((item) => item.key).join(" · ")}
+                  </span>
+                )}
+                <button
+                  className={`icon-button module-collapse ${open ? "open" : ""}`}
+                  title={open ? "Свернуть модуль" : "Развернуть модуль"}
+                  onClick={() => toggleCollapsed(module.name)}
+                ><ChevronDown size={13} /></button>
                 <button className="icon-button" title="Дублировать модуль" onClick={() => duplicate(module)}><Copy size={13} /></button>
                 <button
                   className="icon-button"
@@ -152,52 +179,65 @@ export function ModulesPanel(props: ModulesPanelProps) {
                 ><Trash2 size={13} /></button>
               </header>
 
-              {definition.description && <p className="module-description">{definition.description}</p>}
+              {open && (
+                <>
+                  {definition.description && <p className="module-description">{definition.description}</p>}
 
-              {definition.audio && (
-                <div className="module-source">
-                  <div className="segmented small">
-                    <button className={module.source === "live" ? "active" : ""} onClick={() => patch(module.name, { source: "live" }, "Источник модуля")}>Микрофон</button>
-                    <button className={module.source === "manual" ? "active" : ""} onClick={() => patch(module.name, { source: "manual" }, "Источник модуля")}>Ползунок</button>
-                  </div>
-                  <span className="module-hint">
-                    {module.source === "live" ? "рабочий режим: значения со звука" : "отладка: значения ставятся вручную"}
-                  </span>
-                </div>
+                  {definition.audio && (
+                    <div className="module-source">
+                      <div className="segmented small">
+                        <button className={module.source === "live" ? "active" : ""} onClick={() => patch(module.name, { source: "live" }, "Источник модуля")}>Микрофон</button>
+                        <button className={module.source === "manual" ? "active" : ""} onClick={() => patch(module.name, { source: "manual" }, "Источник модуля")}>Ползунок</button>
+                      </div>
+                      <span className="module-hint">
+                        {module.source === "live" ? "рабочий режим: значения со звука" : "отладка: значения ставятся вручную"}
+                      </span>
+                    </div>
+                  )}
+
+                  {fields.length > 0 && (
+                    <div className="module-fields">
+                      {fields.map((field) => (
+                        <div className="module-field" key={field.key} title={field.hint}>
+                          <span className="module-field-label">
+                            {field.label}{field.suffix ? `, ${field.suffix}` : ""}
+                          </span>
+                          <div className="module-field-value">
+                            <FieldControl
+                              field={field}
+                              module={module}
+                              devices={props.devices}
+                              onValue={(value, label) => patchConfig(module, field.key, value, label)}
+                              onRefreshDevices={props.onRefreshDevices}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <footer className="module-inputs">
+                    <span className="module-inputs-title">Входы</span>
+                    {definition.inputs.map((spec) => {
+                      const on = inputEnabled(module, spec.name);
+                      const range = inputRange(module, spec);
+                      return (
+                        <button
+                          type="button"
+                          className={`module-input-chip ${on ? "" : "off"}`}
+                          key={spec.name}
+                          title={spec.hint || `${range.min}…${range.max}`}
+                          onClick={() => toggleInput(module, spec.name, !on)}
+                        >
+                          <Switch size="tiny" checked={on} onChange={(next) => toggleInput(module, spec.name, next)} title={on ? "Выключить вход" : "Включить вход"} />
+                          <code>{module.name}.{spec.name}</code>
+                        </button>
+                      );
+                    })}
+                    {definition.inputs.length === 0 && <span className="muted">шаблон без входов</span>}
+                  </footer>
+                </>
               )}
-
-              <div className="module-fields">
-                {definition.fields.filter((field) => fieldVisible(field, module.config)).map((field) => (
-                  <FieldControl
-                    key={field.key}
-                    field={field}
-                    module={module}
-                    devices={props.devices}
-                    live={live}
-                    onValue={(value, label) => patchConfig(module, field.key, value, label)}
-                    onRefreshDevices={props.onRefreshDevices}
-                  />
-                ))}
-              </div>
-
-              <footer className="module-inputs">
-                <span className="module-inputs-title">Входы</span>
-                {definition.inputs.map((spec) => {
-                  const on = inputEnabled(module, spec.name);
-                  const range = inputRange(module, spec);
-                  return (
-                    <label className={`module-input-chip ${on ? "" : "off"}`} key={spec.name} title={spec.hint || `${range.min}…${range.max}`}>
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={(event) => toggleInput(module, spec.name, event.target.checked)}
-                      />
-                      <code>{module.name}.{spec.name}</code>
-                    </label>
-                  );
-                })}
-                {definition.inputs.length === 0 && <span className="muted">шаблон без входов</span>}
-              </footer>
             </section>
           );
         })}
@@ -252,11 +292,11 @@ export function ModulesPanel(props: ModulesPanelProps) {
   );
 }
 
+/** Контрол поля без подписи: подпись рисует сетка карточки. */
 function FieldControl(props: {
   field: ModuleField;
   module: ModuleInstance;
   devices: DeviceOption[];
-  live: boolean;
   onValue: (value: number | string | boolean, label?: string) => void;
   onRefreshDevices: () => void;
 }) {
@@ -265,61 +305,53 @@ function FieldControl(props: {
 
   if (field.type === "flag") {
     return (
-      <label className="module-check" title={field.hint}>
-        <input type="checkbox" checked={value === true} onChange={(event) => props.onValue(event.target.checked, field.label)} />
-        <span>{field.label}</span>
-      </label>
+      <div className="module-field-flag">
+        <Switch checked={value === true} onChange={(next) => props.onValue(next, field.label)} title={field.label} />
+        <span>{value === true ? "да" : "нет"}</span>
+      </div>
     );
   }
 
   if (field.type === "device") {
     return (
-      <label className="select-field module-device">
-        <span>{field.label}</span>
-        <div>
-          <select
-            value={typeof value === "string" && value ? value : "default"}
-            onChange={(event) => props.onValue(event.target.value === "default" ? "" : event.target.value, "Микрофон модуля")}
-          >
-            <option value="default">Системный по умолчанию</option>
-            {props.devices.map((device) => (
-              <option key={device.id} value={device.id}>{device.label}</option>
-            ))}
-          </select>
-          <button className="icon-button" title="Обновить список микрофонов" onClick={props.onRefreshDevices}><RefreshCw size={12} /></button>
-        </div>
-      </label>
+      <div className="module-device">
+        <select
+          value={typeof value === "string" && value ? value : "default"}
+          onChange={(event) => props.onValue(event.target.value === "default" ? "" : event.target.value, "Микрофон модуля")}
+        >
+          <option value="default">Системный по умолчанию</option>
+          {props.devices.map((device) => (
+            <option key={device.id} value={device.id}>{device.label}</option>
+          ))}
+        </select>
+        <button className="icon-button" title="Обновить список микрофонов" onClick={props.onRefreshDevices}><RefreshCw size={12} /></button>
+      </div>
     );
   }
 
   if (field.type === "select") {
     const options = field.options || [];
     return (
-      <label className="select-field" title={field.hint}>
-        <span>{field.label}</span>
-        <select
-          value={String(value ?? options[0]?.value ?? "")}
-          onChange={(event) => props.onValue(event.target.value, field.label)}
-        >
-          {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-      </label>
+      <select
+        value={String(value ?? options[0]?.value ?? "")}
+        onChange={(event) => props.onValue(event.target.value, field.label)}
+      >
+        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
     );
   }
 
   const numeric = typeof value === "number" ? value : Number(value ?? field.default ?? 0);
   return (
-    <label className="module-number" title={field.hint}>
-      <span>{field.label}{field.suffix ? `, ${field.suffix}` : ""}</span>
-      <input
-        type="number"
-        min={field.min}
-        max={field.max}
-        step={field.step ?? 1}
-        value={Number.isFinite(numeric) ? numeric : 0}
-        onChange={(event) => props.onValue(clampNumber(Number(event.target.value), field), field.label)}
-      />
-    </label>
+    <input
+      className="module-field-number"
+      type="number"
+      min={field.min}
+      max={field.max}
+      step={field.step ?? 1}
+      value={Number.isFinite(numeric) ? numeric : 0}
+      onChange={(event) => props.onValue(clampNumber(Number(event.target.value), field), field.label)}
+    />
   );
 }
 

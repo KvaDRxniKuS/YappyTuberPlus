@@ -16,6 +16,8 @@ interface StreamEntry {
 interface Analyser {
   analyser: AnalyserNode;
   samples: Float32Array<ArrayBuffer>;
+  /** Прошлое сглаженное значение `speak`: без него сглаживание не работает. */
+  lastSpeak: number;
   /** Ключ потока: `default` или конкретный `deviceId`. */
   streamKey: string;
   settings: ModuleConfig;
@@ -36,6 +38,8 @@ export class AudioInputEngine {
   private analysers = new Map<string, Analyser>();
   private timer: number | null = null;
   private onValues: ((values: Record<string, AudioFrame>) => void) | null = null;
+  /** Прошлый кадр: в тишине значения не меняются и React не перерисовывается. */
+  private lastFrame: Record<string, AudioFrame> | null = null;
 
   get state(): AudioContextState | "closed" {
     return this.context?.state ?? "closed";
@@ -89,6 +93,7 @@ export class AudioInputEngine {
     this.analysers.set(name, {
       analyser,
       samples: new Float32Array(analyser.fftSize),
+      lastSpeak: 0,
       streamKey,
       settings,
     });
@@ -169,6 +174,7 @@ export class AudioInputEngine {
   }
 
   private stopTimer(): void {
+    this.lastFrame = null;
     if (this.timer === null) return;
     window.clearInterval(this.timer);
     this.timer = null;
@@ -190,8 +196,8 @@ export class AudioInputEngine {
       const rms = Math.sqrt(sum / samples.length) * gain;
       const db = rms > 0.000001 ? Math.max(-80, 20 * Math.log10(rms)) : -80;
       const speakTarget = clamp((db + 52) / 34, 0, 1);
-      const previous = frame[name]?.speak ?? speakTarget;
-      const speak = previous + (speakTarget - previous) * (speakTarget > previous ? 0.45 : 0.16);
+      const speak = item.lastSpeak + (speakTarget - item.lastSpeak) * (speakTarget > item.lastSpeak ? 0.45 : 0.16);
+      item.lastSpeak = speak;
       frame[name] = {
         speak,
         loudness: clamp(peak * gain, 0, 1),
@@ -199,8 +205,30 @@ export class AudioInputEngine {
         talking: db > (settings.threshold ?? -43) ? 1 : 0,
       };
     }
+    if (sameFrame(this.lastFrame, frame)) return;
+    this.lastFrame = frame;
     this.onValues(frame);
   }
+}
+
+/**
+ * Сравнение кадров звука с допусками: пока микрофон молчит, значения стоят на
+ * месте, и незачем 25 раз в секунду перерисовывать весь редактор.
+ */
+function sameFrame(previous: Record<string, AudioFrame> | null, next: Record<string, AudioFrame>): boolean {
+  if (!previous) return false;
+  const names = Object.keys(next);
+  if (names.length !== Object.keys(previous).length) return false;
+  for (const name of names) {
+    const left = previous[name];
+    const right = next[name];
+    if (!left) return false;
+    if (left.talking !== right.talking) return false;
+    if (Math.abs(left.speak - right.speak) > 0.004) return false;
+    if (Math.abs(left.loudness - right.loudness) > 0.004) return false;
+    if (Math.abs(left.db - right.db) > 0.25) return false;
+  }
+  return true;
 }
 
 function clamp(value: number, min: number, max: number): number {
