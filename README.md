@@ -206,7 +206,6 @@ YappyTuberPlus/
 ├── install-build-tools.bat   # установка Node.js, Rust, Build Tools, WebView2
 ├── build-yappytuber.bat      # сборка .exe и установщика (Windows)
 ├── build-yappytuber.sh       # сборка для Linux/macOS
-├── .github/workflows/        # сборка Windows-версии в Actions
 ├── scripts/
 │   ├── build-wasm.mjs
 │   ├── generate-demo-sprites.mjs
