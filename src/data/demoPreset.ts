@@ -57,6 +57,19 @@ const object = (
   pivot = { x: 0.5, y: 0.5 },
 ): RigObject => ({ id, name, kind, parentId, image, width, height, base: objectBase, script, pivot });
 
+/** Пустой пресет для кнопки «Создать»: без демо-персонажа и модулей. */
+export function createEmptyPreset(name = "Без названия"): RigPreset {
+  return {
+    version: 2,
+    name,
+    canvas: { width: 1000, height: 600 },
+    globals: "",
+    runtime: { fpsMode: "limited", fpsLimit: 60 },
+    overlay: { ...DEFAULT_OVERLAY },
+    objects: [],
+  };
+}
+
 export function createDemoPreset(): RigPreset {
   return {
     version: 2,

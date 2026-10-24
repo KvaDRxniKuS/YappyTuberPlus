@@ -111,16 +111,22 @@ test("inspector formula edits the actual object script", async ({ page }) => {
   await expect(page.locator(".engine-status")).toHaveClass(/ready/);
 });
 
-test("pause and single-step keep the runtime responsive", async ({ page }) => {
+test("pause freezes the runtime and stop returns it to the neutral pose", async ({ page }) => {
   await openStudio(page);
   await page.getByTitle("Пауза · K").click();
-  await expect(page.getByTitle("Один кадр")).toBeEnabled();
+  await expect(page.getByTitle("Продолжить · K")).toBeVisible();
   await page.waitForTimeout(250);
   const before = await page.locator(".status-message").textContent();
   await page.waitForTimeout(350);
   expect(await page.locator(".status-message").textContent()).toEqual(before);
-  await page.getByTitle("Один кадр").click();
-  await page.waitForTimeout(150);
+
+  await page.getByTitle(/^Стоп/).click();
+  await page.waitForTimeout(200);
+  await expect(page.locator(".status-stopped")).toBeVisible();
+
+  await page.getByTitle("Продолжить · K").click();
+  await page.waitForTimeout(300);
+  await expect(page.locator(".status-stopped")).toHaveCount(0);
   expect(await page.locator(".status-message").textContent()).not.toEqual(before);
 });
 

@@ -1,4 +1,5 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
+import { NEUTRAL_PARAMS } from "../engine/frame";
 
 /**
  * Shared Canvas 2D renderer. The editor scene and the OBS overlay use the same
@@ -6,10 +7,7 @@ import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
  * reads prepared frames: it never advances simulation state.
  */
 
-export const NEUTRAL_VALUES: ObjectFrame = {
-  x: 0, y: 0, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0,
-  opacity: 1, visible: 1, layer: 0,
-};
+export const NEUTRAL_VALUES: ObjectFrame = NEUTRAL_PARAMS;
 
 /** Decoded sprite images, shared between redraws and keyed by image source. */
 export class SpriteAssets {

@@ -2,18 +2,20 @@ import { useRef } from "react";
 
 interface SplitterProps {
   orientation: "vertical" | "horizontal";
+  /** Доп. класс для явного размещения в grid (splitter-left / splitter-right). */
+  className?: string;
   onDelta: (delta: number) => void;
   onReset: () => void;
   label: string;
 }
 
-export function Splitter({ orientation, onDelta, onReset, label }: SplitterProps) {
+export function Splitter({ orientation, className = "", onDelta, onReset, label }: SplitterProps) {
   const last = useRef(0);
   const dragging = useRef(false);
 
   return (
     <div
-      className={`splitter splitter-${orientation}`}
+      className={`splitter splitter-${orientation} ${className}`.trim()}
       role="separator"
       aria-label={label}
       aria-orientation={orientation}

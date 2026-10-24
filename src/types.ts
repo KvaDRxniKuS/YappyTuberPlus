@@ -85,6 +85,21 @@ export interface InputValues {
   signals: Record<string, number>;
 }
 
+/** Геометрические подсказки в сцене: выключены, только выделенное или всё. */
+export type GuideMode = "off" | "selected" | "all";
+
+export const GUIDE_MODES: GuideMode[] = ["off", "selected", "all"];
+
+export const GUIDE_LABEL: Record<GuideMode, string> = {
+  off: "выкл",
+  selected: "только выделенные",
+  all: "все",
+};
+
+export function nextGuideMode(mode: GuideMode): GuideMode {
+  return GUIDE_MODES[(GUIDE_MODES.indexOf(mode) + 1) % GUIDE_MODES.length];
+}
+
 export interface EditorLayout {
   leftWidth: number;
   rightWidth: number;
@@ -92,6 +107,8 @@ export interface EditorLayout {
   rightEditorHeight: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+  showBounds: GuideMode;
+  showPivots: GuideMode;
 }
 
 export const DEFAULT_INPUTS: InputValues = {
@@ -107,6 +124,8 @@ export const DEFAULT_LAYOUT: EditorLayout = {
   rightEditorHeight: 370,
   leftCollapsed: false,
   rightCollapsed: false,
+  showBounds: "selected",
+  showPivots: "selected",
 };
 
 export const DEFAULT_OVERLAY: OverlayConfig = {

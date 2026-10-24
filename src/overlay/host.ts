@@ -1,4 +1,5 @@
 import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
+import { neutralFrame } from "../engine/frame";
 import type { CompositeBus } from "./bus";
 import {
   basesOf, configSignature, OVERLAY_PROTOCOL, poseSignature, structureSignature,
@@ -25,7 +26,10 @@ export class OverlayHost {
   private scene: OverlayScene | null = null;
   private sceneVersion = 0;
   private config: OverlayConfig | null = null;
+  private presetRef: RigPreset | null = null;
   private bases: Record<string, BasePose> | null = null;
+  private frozen = false;
+  private neutralSeq = 0;
   private structures = "";
   private poses = "";
   private configs = "";
@@ -59,6 +63,7 @@ export class OverlayHost {
   /** Publishes only the parts of the preset that actually changed. */
   setPreset(preset: RigPreset): void {
     if (this.disposed) return;
+    this.presetRef = preset;
     const structure = structureSignature(preset);
     const pose = poseSignature(preset);
     const config = configSignature(preset);
@@ -85,11 +90,37 @@ export class OverlayHost {
     if (sceneChanged) this.bus.post({ t: "scene", sender: this.id, scene: this.scene });
     if (configChanged) this.bus.post({ t: "config", sender: this.id, config: this.config });
     if (poseChanged) this.bus.post({ t: "pose", sender: this.id, bases: this.bases });
+    // В режиме «Стоп» оверлей показывает ту же нейтральную позу, что и сцена.
+    if (this.frozen) this.publishNeutral(this.presetRef);
+  }
+
+  /**
+   * «Стоп» в редакторе: симуляция не идёт, оверлей получает статичную базовую
+   * позу вместо последнего живого кадра.
+   */
+  setFrozen(frozen: boolean, preset?: RigPreset): void {
+    if (this.frozen === frozen) {
+      if (frozen && preset) this.publishNeutral(preset);
+      return;
+    }
+    this.frozen = frozen;
+    this.presetRef = preset ?? this.presetRef;
+    if (frozen) this.publishNeutral(preset ?? this.presetRef);
+    else this.neutralSeq = 0;
+  }
+
+  private publishNeutral(preset: RigPreset | null): void {
+    if (!preset) return;
+    this.neutralSeq += 1;
+    this.bus.post({
+      t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
+      frame: neutralFrame(preset, this.neutralSeq),
+    });
   }
 
   /** Called by the engine loop after every produced frame. */
   pushFrame(frame: RigFrame): void {
-    if (this.disposed || this.viewers.size === 0 || !this.scene) return;
+    if (this.disposed || this.frozen || this.viewers.size === 0 || !this.scene) return;
     this.bus.post({ t: "frame", sender: this.id, frame, sceneVersion: this.sceneVersion });
   }
 
@@ -114,6 +145,7 @@ export class OverlayHost {
       // Full payload only for new viewers or viewers that were rebuilt and lost
       // the scene; otherwise the periodic frame stream is enough.
       if (!known || hello.sceneVersion < this.sceneVersion) this.publishScene();
+      if (this.frozen) this.publishNeutral(this.presetRef);
       return;
     }
     if (message.t === "bye" && message.role === "viewer") {

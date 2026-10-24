@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { RigFrame, RigPreset } from "../types";
 import { createOverlayBus, type CompositeBus } from "../overlay/bus";
 import { OverlayHost } from "../overlay/host";
@@ -11,6 +11,8 @@ export interface OverlayHostState {
   transport: string;
   bridgeUrl: string | null;
   bridgeReady: boolean;
+  /** «Стоп»: оверлей показывает нейтральную позу вместо живых кадров. */
+  setFrozen: (frozen: boolean, preset?: RigPreset) => void;
 }
 
 function transportOptions() {
@@ -36,6 +38,7 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
   const [transport, setTransport] = useState("подключение…");
   const [bridgeReady, setBridgeReady] = useState(false);
   const sinkRef = useRef<((frame: RigFrame) => void) | null>(null);
+  const frozenRef = useRef(false);
   const hostRef = useRef<OverlayHost | null>(null);
   const busRef = useRef<CompositeBus | null>(null);
   const presetRef = useRef(preset);
@@ -60,6 +63,7 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
       });
       host.start();
       host.setPreset(presetRef.current);
+      host.setFrozen(frozenRef.current, presetRef.current);
       hostRef.current = host;
       sinkRef.current = (frame) => host.pushFrame(frame);
       setTransport(bus.label);
@@ -88,5 +92,10 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
     hostRef.current?.setPreset(preset);
   }, [preset]);
 
-  return { sinkRef, viewers, transport, bridgeUrl, bridgeReady };
+  const setFrozen = useCallback((frozen: boolean, preset?: RigPreset) => {
+    frozenRef.current = frozen;
+    hostRef.current?.setFrozen(frozen, preset ?? presetRef.current);
+  }, []);
+
+  return { sinkRef, viewers, transport, bridgeUrl, bridgeReady, setFrozen };
 }

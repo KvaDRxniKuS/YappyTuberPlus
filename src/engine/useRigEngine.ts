@@ -14,6 +14,8 @@ export function useRigEngine(
   const [backend, setBackend] = useState<EngineBackend | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  // Смена эпохи пересоздаёт движок: это сбрасывает состояние smooth/spring/autoblink.
+  const [epoch, setEpoch] = useState(0);
   const [actualFps, setActualFps] = useState(0);
   const [snapshot, setSnapshot] = useState<RigFrame | null>(null);
   const frameRef = useRef<RigFrame | null>(null);
@@ -79,7 +81,7 @@ export function useRigEngine(
     };
     // structureKey intentionally controls recompilation; base-only edits preserve state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, structureKey]);
+  }, [backend, structureKey, epoch]);
 
   useEffect(() => {
     if (!backend || handleRef.current === null) return;
@@ -158,23 +160,13 @@ export function useRigEngine(
     };
   }, [backend, inputsRef]);
 
-  const step = useCallback(async () => {
-    if (!backend || handleRef.current === null) return;
-    const response = await backend.call({
-      op: "tick",
-      handle: handleRef.current,
-      now: performance.now() / 1000,
-      inputs: inputsRef.current,
-      paused: pausedRef.current,
-      resetClock: true,
-      stepDt: 1 / presetRef.current.runtime.fpsLimit,
-    });
-    if (response.ok && response.frame) {
-      frameRef.current = response.frame;
-      frameSinkRef?.current?.(response.frame);
-      setSnapshot(response.frame);
-    }
-  }, [backend, inputsRef]);
+  /** Полный сброс таймлайна: новый движок, чистое состояние, время с нуля. */
+  const resetTimeline = useCallback(() => {
+    frameRef.current = null;
+    setSnapshot(null);
+    resetClockRef.current = true;
+    setEpoch((value) => value + 1);
+  }, []);
 
   return {
     frameRef,
@@ -183,6 +175,6 @@ export function useRigEngine(
     error,
     actualFps,
     backendLabel: backend?.label || "Rust · загрузка",
-    step,
+    resetTimeline,
   };
 }

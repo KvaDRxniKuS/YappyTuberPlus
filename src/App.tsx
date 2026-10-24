@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Box, Check, ChevronLeft, ChevronRight, Download, FileUp, FolderOpen,
-  Gauge, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, StepForward,
+  Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen,
+  Gauge, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
   Undo2, X,
 } from "lucide-react";
 import { TreePanel } from "./components/TreePanel";
@@ -10,15 +10,18 @@ import { Inspector } from "./components/Inspector";
 import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
-import { createDemoPreset, withDemoMouth } from "./data/demoPreset";
+import { createDemoPreset, createEmptyPreset, withDemoMouth } from "./data/demoPreset";
 import {
   baseUpdates, descendantIds, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
   scriptValue, setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
 import { useRigEngine } from "./engine/useRigEngine";
+import {
+  downloadPreset, fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs,
+} from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import {
-  DEFAULT_INPUTS, DEFAULT_LAYOUT, type BasePose, type EditorLayout,
+  DEFAULT_INPUTS, DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
   type InputValues, type RigObject, type RigPreset,
 } from "./types";
 
@@ -52,6 +55,9 @@ export default function App() {
   const [tool, setTool] = useState<SceneTool>("move");
   const [showGrid, setShowGrid] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const [presetPath, setPresetPath] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const presetRef = useRef(preset);
   const inputsRef = useRef(inputs);
@@ -64,7 +70,7 @@ export default function App() {
   inputsRef.current = inputs;
 
   const overlay = useOverlayHost(preset);
-  const engine = useRigEngine(preset, inputsRef, paused, overlay.sinkRef);
+  const engine = useRigEngine(preset, inputsRef, paused || stopped, overlay.sinkRef);
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const selected = preset.objects.find((object) => object.id === selectedId) || null;
   const globalNames = preset.globals.split("\n").map((line) => line.match(/^\s*([A-Za-z0-9_]+)\s*=/)?.[1]).filter((name): name is string => !!name);
@@ -101,6 +107,72 @@ export default function App() {
     setPreset(next);
   }, []);
 
+  const saveCurrent = useCallback(async () => {
+    try {
+      const result = await savePreset(presetRef.current, presetPath);
+      if (result.downloaded) {
+        notify("Браузерный режим: файл скачан. В приложении «Сохранить» перезаписывает файл на диске");
+        return;
+      }
+      setPresetPath(result.path);
+      setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
+      notify(`Сохранено: ${fileNameOf(result.path) || "пресет"}`);
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось сохранить пресет");
+    }
+  }, [notify, presetPath]);
+
+  const saveCurrentAs = useCallback(async () => {
+    try {
+      const result = await savePresetAs(presetRef.current);
+      if (result.downloaded) {
+        notify("Браузерный режим: файл скачан. В приложении доступен выбор директории");
+        return;
+      }
+      setPresetPath(result.path);
+      setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
+      notify(`Сохранено как: ${fileNameOf(result.path) || "пресет"}`);
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось сохранить пресет");
+    }
+  }, [notify]);
+
+  const openFile = useCallback(async () => {
+    if (!isTauri()) { presetInput.current?.click(); return; }
+    try {
+      const result = await openPresetFile();
+      commit(result.preset);
+      setPresetPath(result.path);
+      setSavedAt(null);
+      setSelectedId(result.preset.objects[0]?.id || null);
+      notify(`Открыт ${fileNameOf(result.path) || "пресет"}`);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (!/отмен/i.test(message)) notify(message);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commit, notify]);
+
+  const togglePause = useCallback(() => {
+    setStopped(false);
+    setPaused((value) => !value);
+  }, []);
+
+  /** Стоп: пауза + нейтральная поза + сброс состояния движка (smooth, spring, autoblink). */
+  const stopTimeline = useCallback(() => {
+    setStopped(true);
+    setPaused(true);
+  }, []);
+
+  const newPreset = useCallback(() => {
+    const empty = createEmptyPreset();
+    commit(empty);
+    setPresetPath(null);
+    setSavedAt(null);
+    setSelectedId(null);
+    notify("Создан пустой пресет");
+  }, [commit, notify]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try { localStorage.setItem(PRESET_KEY, JSON.stringify(preset)); }
@@ -108,6 +180,12 @@ export default function App() {
     }, 700);
     return () => window.clearTimeout(timer);
   }, [preset, notify]);
+
+  useEffect(() => {
+    overlay.setFrozen(stopped, presetRef.current);
+    if (stopped) engine.resetTimeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopped]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)), 250);
@@ -120,8 +198,7 @@ export default function App() {
       const editing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.closest(".cm-editor");
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        localStorage.setItem(PRESET_KEY, JSON.stringify(presetRef.current));
-        notify("Пресет сохранён");
+        if (event.shiftKey) void saveCurrentAs(); else void saveCurrent();
         return;
       }
       if (editing) return;
@@ -132,11 +209,14 @@ export default function App() {
         event.preventDefault(); redo();
       } else if (event.key.toLowerCase() === "v") setTool("move");
       else if (event.key.toLowerCase() === "p") setTool("pivot");
-      else if (event.key.toLowerCase() === "k") { event.preventDefault(); setPaused((value) => !value); }
+      else if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (event.shiftKey) stopTimeline(); else togglePause();
+      }
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [notify, redo, undo]);
+  }, [notify, redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause]);
 
   const updateObject = useCallback((next: RigObject, record = true) => {
     commit((current) => ({ ...current, objects: current.objects.map((object) => object.id === next.id ? next : object) }), record);
@@ -210,25 +290,17 @@ export default function App() {
     });
   };
 
-  const exportPreset = () => {
-    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${preset.name.replace(/[^a-zA-Zа-яА-Я0-9_-]+/g, "_") || "preset"}.yappy.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    notify("Пресет экспортирован");
-  };
-
+  /** Загрузка файла через input — путь для браузерного режима разработки. */
   const importPreset = async (file: File | undefined) => {
     if (!file) return;
     try {
       const parsed = normalizePreset(JSON.parse(await file.text()));
       if (!parsed) throw new Error("Это не пресет YappyTuberPlus версии 2");
-      commit(parsed);
+      commit(withDemoMouth(parsed));
+      setPresetPath(null);
+      setSavedAt(null);
       setSelectedId(parsed.objects[0]?.id || null);
-      notify("Пресет загружен");
+      notify("Пресет загружен из файла");
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Ошибка загрузки пресета");
     }
@@ -260,8 +332,20 @@ export default function App() {
         <div className="topbar-spacer" />
 
         <div className="playback-controls">
-          <button className="icon-button playback" title={paused ? "Продолжить · K" : "Пауза · K"} onClick={() => setPaused(!paused)}>{paused ? <Play size={16} /> : <Pause size={16} />}</button>
-          <button className="icon-button" title="Один кадр" disabled={!paused} onClick={() => void engine.step()}><StepForward size={16} /></button>
+          <button
+            className={`icon-button playback ${paused ? "paused" : ""}`}
+            title={paused ? "Продолжить · K" : "Пауза · K"}
+            onClick={togglePause}
+          >
+            {paused ? <Play size={16} /> : <Pause size={16} />}
+          </button>
+          <button
+            className={`icon-button stop ${stopped ? "active" : ""}`}
+            title="Стоп: нейтральная поза для расстановки, состояние анимации сбрасывается · Shift+K"
+            onClick={stopTimeline}
+          >
+            <Square size={13} fill={stopped ? "currentColor" : "none"} />
+          </button>
         </div>
         <FpsControl
           mode={preset.runtime.fpsMode}
@@ -281,16 +365,19 @@ export default function App() {
             <MonitorPlay size={16} />
             {overlay.viewers.length > 0 && <span className="overlay-badge">{overlay.viewers.length}</span>}
           </button>
-          <button className="button secondary" onClick={() => presetInput.current?.click()}><FolderOpen size={14} /> Открыть</button>
-          <button className="button secondary compact" title="Экспорт JSON" onClick={exportPreset}><Download size={15} /></button>
-          <button className="button primary" onClick={() => { localStorage.setItem(PRESET_KEY, JSON.stringify(preset)); notify("Пресет сохранён"); }}><Save size={14} /> Сохранить</button>
+          <button className="button secondary" title="Создать пустой пресет" onClick={newPreset}><FilePlus2 size={14} /> Создать</button>
+          <button className="button secondary" title="Открыть файл пресета" onClick={() => void openFile()}><FolderOpen size={14} /> Открыть</button>
+          <div className="split-button">
+            <button className="button primary" title="Сохранить файл · Ctrl+S" onClick={() => void saveCurrent()}><Save size={14} /> Сохранить</button>
+            <button className="button primary caret" title="Сохранить как… · Ctrl+Shift+S" onClick={() => void saveCurrentAs()}><ChevronDown size={13} /></button>
+          </div>
         </div>
       </header>
 
       <div
         className={`workspace ${layout.leftCollapsed ? "left-collapsed" : ""} ${layout.rightCollapsed ? "right-collapsed" : ""}`}
         style={{
-          gridTemplateColumns: `${layout.leftCollapsed ? 0 : layout.leftWidth}px 8px minmax(300px, 1fr) 8px ${layout.rightCollapsed ? 0 : layout.rightWidth}px`,
+          gridTemplateColumns: `${layout.leftCollapsed ? 0 : layout.leftWidth}px ${layout.leftCollapsed ? 0 : 8}px minmax(300px, 1fr) ${layout.rightCollapsed ? 0 : 8}px ${layout.rightCollapsed ? 0 : layout.rightWidth}px`,
         }}
       >
         <div className="workspace-panel left-workspace"><TreePanel
@@ -317,7 +404,7 @@ export default function App() {
           }}
           onReparent={reparent}
         /></div>
-        <Splitter orientation="vertical" onDelta={(delta) => resize("leftWidth", delta)} onReset={() => setLayout((current) => ({ ...current, leftWidth: DEFAULT_LAYOUT.leftWidth }))} label="Ширина дерева объектов" />
+        <Splitter className="splitter-left" orientation="vertical" onDelta={(delta) => resize("leftWidth", delta)} onReset={() => setLayout((current) => ({ ...current, leftWidth: DEFAULT_LAYOUT.leftWidth }))} label="Ширина дерева объектов" />
 
         <main className="center-workspace" style={{ gridTemplateRows: `minmax(190px, ${Math.min(layout.sceneHeight, window.innerHeight - 285)}px) 8px minmax(150px, 1fr)` }}>
           <Scene
@@ -326,8 +413,12 @@ export default function App() {
             selectedId={selectedId}
             tool={tool}
             showGrid={showGrid}
+            bounds={layout.showBounds}
+            pivots={layout.showPivots}
             onTool={setTool}
             onToggleGrid={() => setShowGrid(!showGrid)}
+            onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}
+            onCyclePivots={() => setLayout((current) => ({ ...current, showPivots: nextGuideMode(current.showPivots) }))}
             onSelect={setSelectedId}
             onDragStart={pushUndo}
             onDragObjects={(id, initial: Record<string, BasePose>, delta) => {
@@ -351,7 +442,7 @@ export default function App() {
           <Inspector object={selected} objects={preset.objects} frame={engine.snapshot} onChange={updateObject} />
         </main>
 
-        <Splitter orientation="vertical" onDelta={(delta) => resize("rightWidth", -delta)} onReset={() => setLayout((current) => ({ ...current, rightWidth: DEFAULT_LAYOUT.rightWidth }))} label="Ширина панели скрипта" />
+        <Splitter className="splitter-right" orientation="vertical" onDelta={(delta) => resize("rightWidth", -delta)} onReset={() => setLayout((current) => ({ ...current, rightWidth: DEFAULT_LAYOUT.rightWidth }))} label="Ширина панели скрипта" />
         <div className="workspace-panel right-workspace"><RightPanel
           selected={selected}
           objects={preset.objects}
@@ -373,6 +464,11 @@ export default function App() {
         <div className="status-left">
           <button className="status-collapse" onClick={() => setLayout((current) => ({ ...current, leftCollapsed: !current.leftCollapsed }))}>{layout.leftCollapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />} Объекты</button>
           <button className="status-collapse" onClick={() => setLayout((current) => ({ ...current, rightCollapsed: !current.rightCollapsed }))}>Скрипт {layout.rightCollapsed ? <ChevronLeft size={13} /> : <ChevronRight size={13} />}</button>
+          <span className="status-file" title={presetPath || "Файл ещё не сохранён"}>
+            <Save size={11} /> {fileNameOf(presetPath) || "файл не сохранён"}
+            {savedAt ? ` · ${savedAt}` : ""}
+          </span>
+          {stopped && <span className="status-stopped"><Square size={10} fill="currentColor" /> стоп · расстановка</span>}
           <span className={`status-message ${engine.status}`}>
             {engine.status === "error" ? <X size={12} /> : engine.status === "ready" ? <Check size={12} /> : <Gauge size={12} />}
             {engine.status === "error" ? engine.error : engine.status === "ready" ? `Кадр #${engine.snapshot?.seq || 0} · ${engine.snapshot?.time.toFixed(1) || "0.0"} c` : "Компиляция Rust-ядра…"}
@@ -425,13 +521,19 @@ function FpsControl({ mode, limit, actual, onChange }: {
         <button className={mode === "limited" ? "active" : ""} onClick={() => onChange({ fpsMode: "limited", fpsLimit: limit })}>Лимит</button>
         <button className={mode === "display" ? "active" : ""} onClick={() => onChange({ fpsMode: "display", fpsLimit: limit })}>Экран</button>
       </div>
-      <label className={mode === "display" ? "disabled" : ""}>
-        <input type="number" min="1" max="240" value={draft} disabled={mode === "display"} onChange={(event) => setDraft(event.target.value)} onBlur={apply} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+      <label className={mode === "display" ? "disabled" : ""} title="Лимит кадров в секунду: 1–240, применяется по Enter">
+        <input
+          type="number"
+          min="1"
+          max="240"
+          value={draft}
+          disabled={mode === "display"}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={apply}
+          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+        />
         <span>FPS</span>
       </label>
-      <select value={limit} disabled={mode === "display"} onChange={(event) => onChange({ fpsMode: mode, fpsLimit: Number(event.target.value) })} title="Быстрый выбор FPS">
-        {[15, 24, 30, 60, 120, 144, 240].map((value) => <option value={value} key={value}>{value}</option>)}
-      </select>
     </div>
   );
 }

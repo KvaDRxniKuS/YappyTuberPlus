@@ -82,7 +82,6 @@ input, select { color: var(--text); }
 
 .workspace { flex: 1; min-height: 0; display: grid; padding: 7px 7px 5px; }
 .workspace-panel { min-width: 0; min-height: 0; height: 100%; }
-.left-collapsed .left-workspace, .right-collapsed .right-workspace { display: none; }
 .panel-surface { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; box-shadow: 0 2px 5px #00000012; }
 .center-workspace { min-width: 0; min-height: 0; display: grid; }
 .splitter { flex: none; position: relative; z-index: 3; display: grid; place-items: center; touch-action: none; }
@@ -319,3 +318,34 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .overlay-steps li::marker { color: #5a6b66; }
 @keyframes dialog-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(.995); } to { opacity: 1; transform: none; } }
+
+/* ---------- Явное размещение панелей (скрытие не ломает раскладку) ---------- */
+.workspace { grid-template-rows: minmax(0, 1fr); }
+.workspace > .left-workspace { grid-column: 1; }
+.workspace > .splitter-left { grid-column: 2; }
+.workspace > .center-workspace { grid-column: 3; grid-template-columns: minmax(0, 1fr); }
+.workspace > .splitter-right { grid-column: 4; }
+.workspace > .right-workspace { grid-column: 5; }
+.left-collapsed .left-workspace,
+.right-collapsed .right-workspace { overflow: hidden; border: 0; box-shadow: none; background: transparent; }
+.left-collapsed .left-workspace > *,
+.right-collapsed .right-workspace > * { display: none; }
+.left-collapsed .splitter-left,
+.right-collapsed .splitter-right { visibility: hidden; }
+
+/* ---------- Кнопки воспроизведения и статус файла ---------- */
+.playback-controls .icon-button.paused { color: var(--warning); background: #ddb77d0f; }
+.icon-button.stop { color: var(--muted); }
+.icon-button.stop:hover { color: var(--danger); background: #df8d910d; }
+.icon-button.stop.active { color: var(--danger); background: #df8d9114; }
+.status-file { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 260px; padding-left: 9px; border-left: 1px solid #30363d; color: #6f7f88; font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-stopped { display: flex; align-items: center; gap: 4px; color: var(--danger); font-size: 8px; }
+
+/* ---------- Сохранить + стрелка ---------- */
+.split-button { display: inline-flex; }
+.split-button .button.primary:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split-button .button.caret { width: 26px; padding: 0; border-left: 1px solid #14241f40; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+
+/* ---------- Подписи режимов на кнопках сцены ---------- */
+.scene-tools button { position: relative; width: auto; min-width: 27px; padding: 0 5px; gap: 4px; display: inline-flex; align-items: center; justify-content: center; }
+.tool-state { font-size: 7px; letter-spacing: .2px; opacity: .85; }
