@@ -24,7 +24,7 @@ import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from ".
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { useModuleInputs } from "./hooks/useModuleInputs";
 import {
-  DEFAULT_LAYOUT, clampLayout, nextGuideMode, type BasePose, type EditorLayout,
+  DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
   type ModuleInstance, type RigObject, type RigPreset,
 } from "./types";
 
@@ -48,9 +48,7 @@ function loadPreset(): RigPreset {
 
 function loadLayout(): EditorLayout {
   try {
-    // clampLayout обязателен: сохранённая раскладка переживает пересборку и могла
-    // остаться от версии с другими пределами или с NaN в ширине колонки.
-    return clampLayout({ ...DEFAULT_LAYOUT, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") });
+    return { ...DEFAULT_LAYOUT, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") };
   } catch { return DEFAULT_LAYOUT; }
 }
 
@@ -739,14 +737,6 @@ export default function App() {
         <div className="status-left">
           <button className="status-collapse" onClick={() => setLayout((current) => ({ ...current, leftCollapsed: !current.leftCollapsed }))}>{layout.leftCollapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />} Объекты</button>
           <button className="status-collapse" onClick={() => setLayout((current) => ({ ...current, rightCollapsed: !current.rightCollapsed }))}>Скрипт {layout.rightCollapsed ? <ChevronLeft size={13} /> : <ChevronRight size={13} />}</button>
-          <button
-            className="status-collapse"
-            title="Вернуть раскладку по умолчанию, если панели пропали или схлопнулись"
-            onClick={() => {
-              setLayout(DEFAULT_LAYOUT);
-              notify("Раскладка сброшена к значениям по умолчанию");
-            }}
-          ><RotateCcw size={11} /> Раскладка</button>
           <span className="status-file" title={presetPath || "Файл ещё не сохранён"}>
             <Save size={11} /> {fileNameOf(presetPath) || "файл не сохранён"}
             {savedAt ? ` · ${savedAt}` : ""}

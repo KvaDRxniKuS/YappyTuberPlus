@@ -174,44 +174,6 @@ export const DEFAULT_LAYOUT: EditorLayout = {
   showPivots: "selected",
 };
 
-/** Пределы раскладки: те же числа, что использует перетаскивание разделителей. */
-export const LAYOUT_LIMITS = {
-  leftWidth: [170, 460],
-  rightWidth: [300, 760],
-  sceneHeight: [200, 2400],
-  rightEditorHeight: [180, 2400],
-} as const;
-
-/**
- * Приводит сохранённую раскладку к допустимой.
- *
- * Раскладка лежит в localStorage и переживает пересборку приложения, поэтому
- * любое мусорное значение (NaN, строка, ширина больше окна) раньше попадало в
- * grid-template-columns и превращало рабочую область в пустоту. Здесь всё
- * нечисловое и выходящее за пределы заменяется значением по умолчанию.
- */
-export function clampLayout(raw: Partial<EditorLayout> | null | undefined): EditorLayout {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const number = (value: unknown, key: keyof typeof LAYOUT_LIMITS) => {
-    const [min, max] = LAYOUT_LIMITS[key];
-    const parsed = typeof value === "number" ? value : Number(value);
-    if (!Number.isFinite(parsed)) return DEFAULT_LAYOUT[key];
-    return Math.min(max, Math.max(min, Math.round(parsed)));
-  };
-  const guide = (value: unknown, fallback: GuideMode): GuideMode =>
-    (GUIDE_MODES as readonly string[]).includes(String(value)) ? (value as GuideMode) : fallback;
-  return {
-    leftWidth: number(source.leftWidth, "leftWidth"),
-    rightWidth: number(source.rightWidth, "rightWidth"),
-    sceneHeight: number(source.sceneHeight, "sceneHeight"),
-    rightEditorHeight: number(source.rightEditorHeight, "rightEditorHeight"),
-    leftCollapsed: source.leftCollapsed === true,
-    rightCollapsed: source.rightCollapsed === true,
-    showBounds: guide(source.showBounds, DEFAULT_LAYOUT.showBounds),
-    showPivots: guide(source.showPivots, DEFAULT_LAYOUT.showPivots),
-  };
-}
-
 export const DEFAULT_OVERLAY: OverlayConfig = {
   width: 900,
   height: 620,
