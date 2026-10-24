@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
-import { rangeIds, selectionRoots } from "../engine/selection";
+import { rangeIds, selectionRoots, treeRows } from "../engine/selection";
 
 interface TreePanelProps {
   objects: RigObject[];
@@ -26,8 +26,6 @@ interface TreePanelProps {
   onReparent: (id: string, parentId: string | null) => void;
 }
 
-interface Row { object: RigObject; depth: number }
-
 export function TreePanel(props: TreePanelProps) {
   const { objects, selectedIds, primaryId } = props;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -35,21 +33,7 @@ export function TreePanel(props: TreePanelProps) {
   const [dropId, setDropId] = useState<string | null>(null);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-  const rows = useMemo(() => {
-    const result: Row[] = [];
-    const visited = new Set<string>();
-    const walk = (parentId: string | null, depth: number) => {
-      for (const object of objects.filter((item) => item.parentId === parentId)) {
-        if (visited.has(object.id)) continue;
-        visited.add(object.id);
-        result.push({ object, depth });
-        if (!collapsed.has(object.id)) walk(object.id, depth + 1);
-      }
-    };
-    walk(null, 0);
-    for (const object of objects) if (!visited.has(object.id)) result.push({ object, depth: 0 });
-    return result;
-  }, [objects, collapsed]);
+  const rows = useMemo(() => treeRows(objects, collapsed), [objects, collapsed]);
 
   const order = useMemo(() => rows.map((row) => row.object.id), [rows]);
   const primary = objects.find((object) => object.id === primaryId) || null;
@@ -76,7 +60,8 @@ export function TreePanel(props: TreePanelProps) {
       >
         {rows.map(({ object, depth }) => {
           const hasChildren = objects.some((item) => item.parentId === object.id);
-          const hidden = scriptValue(object.script, "visible") === "0" || object.base.visible === 0;
+          const disabled = object.enabled === false;
+          const hiddenByScript = scriptValue(object.script, "visible") === "0" || object.base.visible === 0;
           const dragging = dragIds.includes(object.id);
           const invalidDrop = dragging || (!!dragIds.length && dragIds.some((id) => isDescendant(objects, object.id, id)));
           return (
@@ -86,6 +71,8 @@ export function TreePanel(props: TreePanelProps) {
                 "tree-row",
                 selectedSet.has(object.id) ? "selected" : "",
                 primaryId === object.id ? "primary" : "",
+                disabled ? "is-disabled" : "",
+                hiddenByScript && !disabled ? "hidden-by-script" : "",
                 dropId === object.id ? "drop-target" : "",
               ].filter(Boolean).join(" ")}
               style={{ "--depth": depth } as React.CSSProperties}
@@ -144,11 +131,15 @@ export function TreePanel(props: TreePanelProps) {
                 : <span className="tree-name" title="F2 — переименовать">{object.name}</span>}
               <button
                 className="tree-eye"
-                title={hidden ? "Показать" : "Скрыть"}
+                title={disabled
+                  ? "Включить показ (видимость из скрипта не меняется)"
+                  : hiddenByScript
+                    ? "Объект скрыт скриптом — глаз только временно скроет его поверх формулы"
+                    : "Временно скрыть, не меняя формулы"}
                 onDoubleClick={(event) => event.stopPropagation()}
                 onClick={(event) => { event.stopPropagation(); props.onToggleVisibility(object.id); }}
               >
-                {hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                {disabled ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
           );

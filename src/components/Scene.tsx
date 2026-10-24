@@ -348,9 +348,10 @@ export function Scene(props: SceneProps) {
             }
             if (event.ctrlKey || event.metaKey) { current.onSelect(hit.id, "toggle"); return; }
             if (event.shiftKey) { current.onSelect(hit.id, "add"); return; }
-            const already = current.selectedIds.includes(hit.id);
-            if (!already) current.onSelect(hit.id, "replace");
-            const ids = already ? selectionRoots(current.preset.objects, current.selectedIds) : [hit.id];
+            // Клик по части выделенной группы не сбрасывает выборку: тащим группу целиком.
+            const inside = isSelectedTree(current.preset, hit.id, current.selectedIds);
+            if (!inside) current.onSelect(hit.id, "replace");
+            const ids = inside ? selectionRoots(current.preset.objects, current.selectedIds) : [hit.id];
             current.onDragStart();
             const initial = Object.fromEntries(current.preset.objects.map((object) => [object.id, { ...object.base }]));
             interaction.current = { type: "drag", ids, start: point, initial };
@@ -517,7 +518,8 @@ function hiddenIds(preset: RigPreset): Set<string> {
     }
     let value = pointer ? cache.get(pointer) ?? false : false;
     for (const item of chain.reverse()) {
-      value = (byId.get(item)?.base.visible === 0) || value;
+      const object = byId.get(item);
+      value = object?.enabled === false || object?.base.visible === 0 || value;
       cache.set(item, value);
     }
     return cache.get(id) ?? true;

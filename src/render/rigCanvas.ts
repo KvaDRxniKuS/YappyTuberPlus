@@ -44,7 +44,11 @@ export class SpriteAssets {
 }
 
 export function staticValues(object: RigObject): ObjectFrame {
-  return { ...NEUTRAL_VALUES, visible: object.base.visible, layer: object.base.layer };
+  return {
+    ...NEUTRAL_VALUES,
+    visible: object.enabled === false ? 0 : object.base.visible,
+    layer: object.base.layer,
+  };
 }
 
 /** 2D affine matrix in canvas order: x' = a·x + c·y + e, y' = b·x + d·y + f. */

@@ -52,14 +52,14 @@ export function setScriptValue(script: string, parameter: string, expression: st
 
 export function makeSprite(id: string, name: string, image: string, width: number, height: number, x: number, y: number): RigObject {
   return {
-    id, name, kind: "sprite", image, parentId: null, pivot: { x: 0.5, y: 0.5 },
+    id, name, kind: "sprite", enabled: true, image, parentId: null, pivot: { x: 0.5, y: 0.5 },
     base: { ...DEFAULT_BASE, x, y }, width, height, script: rootScript(),
   };
 }
 
 export function makeGroup(id: string, name: string, x = 500, y = 300): RigObject {
   return {
-    id, name, kind: "group", image: null, parentId: null, pivot: { x: 0.5, y: 0.5 },
+    id, name, kind: "group", enabled: true, image: null, parentId: null, pivot: { x: 0.5, y: 0.5 },
     base: { ...DEFAULT_BASE, x, y }, width: 0, height: 0, script: rootScript(),
   };
 }
@@ -125,6 +125,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
     objects: preset.objects.map((object) => ({
       ...object,
+      enabled: object.enabled !== false,
       base: { ...DEFAULT_BASE, ...object.base },
       pivot: object.pivot || { x: 0.5, y: 0.5 },
       width: object.width || 1,

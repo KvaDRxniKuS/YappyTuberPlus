@@ -375,3 +375,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 
 .scene-viewport.tool-marquee canvas,
 .scene-viewport.tool-lasso canvas { cursor: crosshair; }
+
+/* ---------- Глаз: временное скрытие через enabled ---------- */
+.tree-row.is-disabled .tree-thumbnail,
+.tree-row.is-disabled .tree-name { opacity: .42; }
+.tree-row.is-disabled .tree-eye { opacity: 1; color: #c98b8f; }
+.tree-row.hidden-by-script .tree-name { opacity: .6; }
+.tree-row.hidden-by-script .tree-name::after { content: " · скрипт"; color: #4f5d59; font-size: 8px; }

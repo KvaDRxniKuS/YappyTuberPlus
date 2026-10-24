@@ -55,7 +55,7 @@ const object = (
   objectBase: BasePose,
   script: string,
   pivot = { x: 0.5, y: 0.5 },
-): RigObject => ({ id, name, kind, parentId, image, width, height, base: objectBase, script, pivot });
+): RigObject => ({ id, name, kind, enabled: true, parentId, image, width, height, base: objectBase, script, pivot });
 
 /** Пустой пресет для кнопки «Создать»: без демо-персонажа и модулей. */
 export function createEmptyPreset(name = "Без названия"): RigPreset {

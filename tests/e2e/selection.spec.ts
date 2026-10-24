@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import {
   boxFromPoints, boxIntersects, pointInPolygon, polygonIntersectsBox, rangeIds,
-  selectionRoots, subtreeIds, toggleId,
+  selectionRoots, subtreeIds, toggleId, treeRows,
 } from "../../src/engine/selection";
 import { History } from "../../src/engine/history";
+import { applyEnabled, neutralFrame } from "../../src/engine/frame";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { RigPreset } from "../../src/types";
 
@@ -103,4 +104,59 @@ test("история: после отмены новая правка обнул
   expect(history.canRedo).toBe(true);
   history.record(snap({ ...preset, name: "y" }, []), "Третье", undefined, 20);
   expect(history.canRedo).toBe(false);
+});
+
+test("глаз гасит объект через enabled, не трогая формулы", () => {
+  const preset = createDemoPreset();
+  const eyes = preset.objects.find((object) => object.id === "eye_left")!;
+  const disabledPreset: RigPreset = {
+    ...preset,
+    objects: preset.objects.map((object) => (object.id === "eye_left" ? { ...object, enabled: false } : object)),
+  };
+  const after = disabledPreset.objects.find((object) => object.id === "eye_left")!;
+  expect(after.script).toBe(eyes.script);
+  expect(after.base.visible).toBe(eyes.base.visible);
+
+  // Кадр фильтруется: сам объект гаснет, соседи и родители — нет.
+  const frame = neutralFrame(disabledPreset);
+  expect(frame.objects.eye_left.visible).toBe(0);
+  expect(frame.objects.eye_right.visible).toBe(1);
+  expect(frame.objects.head.visible).toBe(1);
+});
+
+test("нейтральный кадр и фильтр enabled учитывают вложенность", () => {
+  const preset = createDemoPreset();
+  const frame = neutralFrame(preset);
+  expect(frame.objects.mouth.visible).toBe(1);
+
+  // Выключаем группу головы — гаснут только её потомки.
+  const disabledGroup: RigPreset = {
+    ...preset,
+    objects: preset.objects.map((object) => (object.id === "head_group" ? { ...object, enabled: false } : object)),
+  };
+  const gated = applyEnabled(disabledGroup, frame);
+  expect(gated.objects.head.visible).toBe(0);
+  expect(gated.objects.mouth.visible).toBe(0);
+  expect(gated.objects.body.visible).toBe(1);
+  // Исходный кадр не мутируется.
+  expect(frame.objects.head.visible).toBe(1);
+});
+
+test("свёрнутая группа скрывает потомков, а не переносит их в конец списка", () => {
+  const preset = createDemoPreset();
+  const all = treeRows(preset.objects, new Set());
+  expect(all.find((row) => row.object.id === "head_group")?.depth).toBe(2);
+  expect(all.find((row) => row.object.id === "mouth")?.depth).toBe(3);
+
+  const collapsed = treeRows(preset.objects, new Set(["head_group"]));
+  const ids = collapsed.map((row) => row.object.id);
+  expect(ids).toContain("head_group");
+  for (const hidden of ["head", "eye_left", "eye_right", "mouth", "mouth_closed"]) {
+    expect(ids).not.toContain(hidden);
+  }
+  // Ни один потомок не всплыл в корень.
+  expect(collapsed.filter((row) => row.depth === 0).map((row) => row.object.id)).toEqual(["character"]);
+
+  const rootsCollapsed = treeRows(preset.objects, new Set(["character"]));
+  expect(rootsCollapsed.map((row) => row.object.id)).toEqual(["character"]);
 });

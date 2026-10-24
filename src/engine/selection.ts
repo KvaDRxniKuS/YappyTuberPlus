@@ -143,3 +143,39 @@ export function polygonIntersectsBox(polygon: Point[], box: Box): boolean {
   }
   return false;
 }
+
+export interface TreeRow { object: RigObject; depth: number }
+
+/**
+ * Строки дерева для отрисовки. Потомки свёрнутой группы не показываются и не
+ * попадают в конец списка: они помечаются посещёнными вместе с ветвью.
+ * В конец попадают только настоящие сироты — объекты с потерянным родителем.
+ */
+export function treeRows(objects: RigObject[], collapsed: Set<string>): TreeRow[] {
+  const rows: TreeRow[] = [];
+  const visited = new Set<string>();
+  const hideBranch = (parentId: string) => {
+    for (const child of objects.filter((item) => item.parentId === parentId)) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      hideBranch(child.id);
+    }
+  };
+  const walk = (parentId: string | null, depth: number) => {
+    for (const object of objects.filter((item) => item.parentId === parentId)) {
+      if (visited.has(object.id)) continue;
+      visited.add(object.id);
+      rows.push({ object, depth });
+      if (collapsed.has(object.id)) hideBranch(object.id);
+      else walk(object.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  for (const object of objects) {
+    if (!visited.has(object.id)) {
+      visited.add(object.id);
+      rows.push({ object, depth: 0 });
+    }
+  }
+  return rows;
+}

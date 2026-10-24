@@ -13,7 +13,7 @@ import { OverlayDialog } from "./components/OverlayDialog";
 import { createDemoPreset, createEmptyPreset, withDemoMouth } from "./data/demoPreset";
 import {
   baseUpdates, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
-  scriptValue, setParent, setScriptValue, uniqueId,
+  setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
@@ -330,19 +330,16 @@ export default function App() {
     }, { label: "Слой выделения", coalesce: "multi-layer" });
   }, [commit]);
 
+  /** «Показать/скрыть все» в мультивыделении — тоже только флаг enabled. */
   const setSelectedVisible = useCallback((visible: number) => {
     const current = presetRef.current;
     const ids = new Set(selectionRef.current);
     commit({
       ...current,
       objects: current.objects.map((object) => (ids.has(object.id)
-        ? {
-            ...object,
-            base: { ...object.base, visible },
-            script: setScriptValue(object.script, "visible", visible ? (object.parentId ? "inherit" : "1") : "0"),
-          }
+        ? { ...object, enabled: visible !== 0 }
         : object)),
-    }, { label: "Видимость выделения" });
+    }, { label: visible ? "Показать выделение" : "Скрыть выделение" });
   }, [commit]);
 
   const updateInputs = useCallback((patch: Partial<InputValues>) => {
@@ -581,14 +578,13 @@ export default function App() {
           onDelete={deleteSelected}
           onDuplicate={duplicateSelected}
           onToggleVisibility={(id) => {
-            const object = preset.objects.find((item) => item.id === id);
+            const object = presetRef.current.objects.find((item) => item.id === id);
             if (!object) return;
-            const hidden = scriptValue(object.script, "visible") === "0" || object.base.visible === 0;
-            updateObject({
-              ...object,
-              base: { ...object.base, visible: hidden ? 1 : 0 },
-              script: setScriptValue(object.script, "visible", hidden ? (object.parentId ? "inherit" : "1") : "0"),
-            });
+            // Глаз гасит только собственный флаг enabled: видимость из скрипта не переписывается.
+            updateObject(
+              { ...object, enabled: object.enabled === false },
+              { label: (object.enabled === false ? "Показать" : "Скрыть") + ` «${object.name}»` },
+            );
           }}
           onReparent={reparent}
         /></div>

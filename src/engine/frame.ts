@@ -1,4 +1,4 @@
-import type { ObjectFrame, RigFrame, RigPreset } from "../types";
+import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 
 /**
  * Нейтральная поза: динамические параметры выключены, видны только базовые.
@@ -11,15 +11,65 @@ export const NEUTRAL_PARAMS: ObjectFrame = {
 };
 
 /**
+ * Объекты, недоступные для показа: у которых выключен `enabled` или выключен
+ * кто-то из родителей. Глаз в структуре меняет только этот флаг, формулы и
+ * `visible` в скрипте остаются нетронутыми.
+ */
+export function disabledIds(objects: RigObject[]): Set<string> {
+  const byId = new Map(objects.map((object) => [object.id, object]));
+  const cache = new Map<string, boolean>();
+  const isDisabled = (id: string): boolean => {
+    if (cache.has(id)) return cache.get(id)!;
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    let pointer: string | null = id;
+    while (pointer && !seen.has(pointer) && !cache.has(pointer)) {
+      seen.add(pointer);
+      chain.push(pointer);
+      pointer = byId.get(pointer)?.parentId ?? null;
+    }
+    let value = pointer ? cache.get(pointer) ?? false : false;
+    for (const item of chain.reverse()) {
+      value = byId.get(item)?.enabled === false || value;
+      cache.set(item, value);
+    }
+    return cache.get(id) ?? false;
+  };
+  return new Set(objects.filter((object) => isDisabled(object.id)).map((object) => object.id));
+}
+
+/**
+ * Применяет флаг `enabled` к готовому кадру движка: у выключенных объектов и их
+ * потомков `visible` становится нулём. Движок про этот флаг не знает — он живёт
+ * только в редакторе и в оверлее, поэтому кадр правится один раз на выходе.
+ */
+export function applyEnabled(preset: RigPreset, frame: RigFrame): RigFrame {
+  const disabled = disabledIds(preset.objects);
+  if (!disabled.size) return frame;
+  let changed = false;
+  const objects: Record<string, ObjectFrame> = {};
+  for (const [id, values] of Object.entries(frame.objects)) {
+    if (disabled.has(id) && values.visible !== 0) {
+      objects[id] = { ...values, visible: 0 };
+      changed = true;
+    } else {
+      objects[id] = values;
+    }
+  }
+  return changed ? { ...frame, objects } : frame;
+}
+
+/**
  * Кадр без анимации для всего пресета. Порядок отрисовки — по базовому слою,
  * затем по порядку объектов, как у движка до первого кадра.
  */
 export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
+  const disabled = disabledIds(preset.objects);
   const objects: Record<string, ObjectFrame> = {};
   for (const object of preset.objects) {
     objects[object.id] = {
       ...NEUTRAL_PARAMS,
-      visible: object.base.visible,
+      visible: disabled.has(object.id) ? 0 : object.base.visible,
       layer: object.base.layer,
     };
   }

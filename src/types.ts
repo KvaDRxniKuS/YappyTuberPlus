@@ -21,6 +21,11 @@ export interface RigObject {
   id: string;
   name: string;
   kind: "sprite" | "group";
+  /**
+   * Доступность объекта для показа. Умножается на `visible` из скрипта:
+   * глаз в структуре гасит объект, не трогая его формулы.
+   */
+  enabled: boolean;
   image: string | null;
   parentId: string | null;
   pivot: Vec2;

@@ -202,3 +202,52 @@ test("скрытие панели не растягивает канвас сц�
   });
   expect(mismatch).toBeLessThanOrEqual(2);
 });
+
+test("глаз временно скрывает объект, не переписывая его скрипт", async ({ page }) => {
+  await openStudio(page);
+  const before = await readPreset(page);
+  const row = page.locator(".tree-row").filter({ hasText: "Глаз · левый" });
+  await row.hover();
+  await row.locator(".tree-eye").click();
+  await page.waitForTimeout(200);
+
+  const after = await readPreset(page);
+  const was = before.objects.find((object: any) => object.id === "eye_left");
+  const now = after.objects.find((object: any) => object.id === "eye_left");
+  expect(now.enabled).toBe(false);
+  expect(now.script).toBe(was.script);
+  expect(now.base.visible).toBe(was.base.visible);
+
+  // Повторный клик возвращает объект в кадр.
+  await row.locator(".tree-eye").click();
+  await page.waitForTimeout(200);
+  const again = await readPreset(page);
+  expect(again.objects.find((object: any) => object.id === "eye_left").enabled).toBe(true);
+});
+
+test("перетаскивание выделенной в структуре группы двигает всю группу", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".tree-row").filter({ hasText: "Персонаж" }).click();
+  await expect(page.locator(".tree-row.selected")).toHaveCount(1);
+
+  const before = await readPreset(page);
+  const box = (await page.locator(".scene-viewport canvas").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 60, y + 30, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+
+  const after = await readPreset(page);
+  const moved = after.objects.filter((object: any, index: number) => {
+    const was = before.objects[index];
+    return was && object.base.x !== was.base.x;
+  });
+  // Группа тянет всех потомков: двигаются персонаж, тело, голова, руки и т. д.
+  expect(moved.length).toBeGreaterThan(3);
+  // Выделение осталось на группе, а не перескочило на спрайт под курсором.
+  await expect(page.locator(".tree-row.selected")).toHaveCount(1);
+  await expect(page.locator(".tree-row.primary")).toContainText("Персонаж");
+});

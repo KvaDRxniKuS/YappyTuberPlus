@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend } from "./backend";
+import { applyEnabled, neutralFrame } from "./frame";
 
 export type EngineStatus = "loading" | "ready" | "error";
 
@@ -134,12 +135,13 @@ export function useRigEngine(
             setError(response.error || "Ошибка кадра");
             return;
           }
-          frameRef.current = response.frame;
-          frameSinkRef?.current?.(response.frame);
+          const gated = applyEnabled(presetRef.current, response.frame);
+          frameRef.current = gated;
+          frameSinkRef?.current?.(gated);
           frames += 1;
-          if (nowMs - lastSnapshot > 120 || response.frame.diagnostics.length > 0) {
+          if (nowMs - lastSnapshot > 120 || gated.diagnostics.length > 0) {
             lastSnapshot = nowMs;
-            setSnapshot(response.frame);
+            setSnapshot(gated);
           }
           if (nowMs - fpsWindowStart >= 1000) {
             setActualFps(Math.round(frames * 1000 / (nowMs - fpsWindowStart)));
@@ -160,10 +162,15 @@ export function useRigEngine(
     };
   }, [backend, inputsRef]);
 
-  /** Полный сброс таймлайна: новый движок, чистое состояние, время с нуля. */
+  /**
+   * Полный сброс таймлайна: новый движок, чистое состояние, время с нуля.
+   * Кадр при этом не обнуляется, а становится нейтральным — иначе сцена теряет
+   * иерархию видимости и выключенные группы снова показывались бы.
+   */
   const resetTimeline = useCallback(() => {
-    frameRef.current = null;
-    setSnapshot(null);
+    const neutral = neutralFrame(presetRef.current);
+    frameRef.current = neutral;
+    setSnapshot(neutral);
     resetClockRef.current = true;
     setEpoch((value) => value + 1);
   }, []);
