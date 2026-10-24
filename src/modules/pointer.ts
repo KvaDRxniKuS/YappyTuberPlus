@@ -84,6 +84,13 @@ export class PointerState {
     if (Number.isFinite(delta)) this.pending.wheel += delta;
   }
 
+  /** Стоп анимации: счётчики нажатий начинаются заново. */
+  resetHits(): void {
+    for (const [code, state] of this.keys) {
+      if (state.hits !== 0) this.keys.set(code, { ...state, hits: 0 });
+    }
+  }
+
   /** Отпускает всё: потеря фокуса окна не должна оставлять клавишу зажатой. */
   releaseAll(): void {
     for (const [code, state] of this.keys) {

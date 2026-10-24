@@ -142,6 +142,38 @@ test("мышь: позиция, смещение, кнопки и колесо �
   expect(values["cursor.wheel"]).toBe(0.5);
 });
 
+test("мышь: инверсия Y — свойство экземпляра", () => {
+  const frame: PointerFrame = {
+    keys: {},
+    mouse: { x: 0.25, y: 0.1, dx: -0.1, dy: 0.2, left: 0, right: 0, wheel: 0 },
+  };
+  const plain = module("plain", "mouse");
+  const flipped = module("flipped", "mouse", { invertY: true });
+  const values = composeValues([plain, flipped], { audio: {}, manual: {}, auto: {}, pointer: frame });
+  expect(values["plain.y"]).toBe(0.1);
+  expect(values["plain.dy"]).toBe(0.2);
+  expect(values["flipped.y"]).toBeCloseTo(0.9, 6);
+  expect(values["flipped.dy"]).toBeCloseTo(-0.2, 6);
+  // Инверсия не трогает X.
+  expect(values["flipped.x"]).toBe(0.25);
+});
+
+test("бинда нет: модуль key отдаёт нули, пустая строка переживает загрузку", () => {
+  const jump = module("jump", "key", { code: "" });
+  const values = composeValues([jump], {
+    audio: {}, manual: {}, auto: {},
+    pointer: { keys: { Space: { down: 1, hold: 0.5, hits: 4 } }, mouse: emptyMouse() },
+  });
+  expect(values["jump.down"]).toBe(0);
+  expect(values["jump.hold"]).toBe(0);
+  expect(values["jump.hits"]).toBe(0);
+  // Пустой code — осознанное «бинда нет», а не повод подставить Space.
+  const stored = normalizeModules([jump])[0];
+  expect(stored.config.code).toBe("");
+  const fresh = normalizeModules([{ name: "empty", type: "key", enabled: true, source: "manual", config: {} }])[0];
+  expect(fresh.config.code).toBe("");
+});
+
 test("пресет сохраняет клавиши и код клавиши", () => {
   const modules = normalizeModules([
     { name: "board", type: "keyboard", enabled: true, source: "manual", config: {
@@ -165,3 +197,20 @@ test("пресет сохраняет клавиши и код клавиши", 
 function emptyMouse() {
   return { x: 0.5, y: 0.5, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 };
 }
+
+test("стоп обнуляет счётчики hits, но не состояние клавиши", () => {
+  const state = new PointerState();
+  state.key("Space", true, 0);
+  state.key("Space", false, 100);
+  state.key("Space", true, 200);
+  expect(state.snapshot(300).keys.Space).toMatchObject({ down: 1, hits: 2 });
+
+  state.resetHits();
+  const after = state.snapshot(300).keys.Space;
+  expect(after.hits).toBe(0);
+  expect(after.down).toBe(1);
+  // Нажатие после стопа считается заново.
+  state.key("Space", false, 400);
+  state.key("Space", true, 500);
+  expect(state.snapshot(600).keys.Space.hits).toBe(1);
+});

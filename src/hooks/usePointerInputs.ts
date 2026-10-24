@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EMPTY_POINTER, PointerState, type PointerFrame } from "../modules/pointer";
 import { isTauri } from "../engine/presetFile";
 
@@ -29,7 +29,7 @@ interface PointerPayload {
  * Пока фокус в поле ввода, клавиши игнорируются: иначе набор текста в скрипте
  * дёргал бы риг.
  */
-export function usePointerInputs(active: boolean): PointerFrame {
+export function usePointerInputs(active: boolean): { frame: PointerFrame; resetHits: () => void } {
   const [frame, setFrame] = useState<PointerFrame>(EMPTY_POINTER);
   const stateRef = useRef<PointerState>(new PointerState());
   const originRef = useRef({ x: 0, y: 0, scale: 1 });
@@ -145,7 +145,16 @@ export function usePointerInputs(active: boolean): PointerFrame {
     };
   }, [active]);
 
-  return frame;
+  /** Стоп анимации: счётчики нажатий обнуляются, состояние клавиш остаётся. */
+  const resetHits = useCallback(() => {
+    stateRef.current.resetHits();
+    setFrame((current) => ({
+      ...current,
+      keys: Object.fromEntries(Object.entries(current.keys).map(([code, sample]) => [code, { ...sample, hits: 0 }])),
+    }));
+  }, []);
+
+  return { frame, resetHits };
 }
 
 /** Курсор в долях сцены: 0…1 по видимой области сцены. */

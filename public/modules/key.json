@@ -10,5 +10,5 @@
     { "name": "hits", "label": "Нажатий", "kind": "level", "min": 0, "max": 9999, "step": 1, "hint": "Счётчик нажатий с запуска" }
   ],
   "fields": [],
-  "defaults": { "code": "Space" }
+  "defaults": { "code": "" }
 }

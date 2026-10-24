@@ -24,6 +24,8 @@ export interface ModuleInputsApi {
   /** Записать эталон виземы: 3 секунды, средний спектр. */
   calibrate: (settings: ModuleConfig, onFrame?: (frame: CalibrationFrame) => void) => Promise<number[] | null>;
   cancelCalibration: () => void;
+  /** Стоп анимации: счётчики нажатий клавиш начинаются заново. */
+  resetPointerHits: () => void;
 }
 
 const BLINK_TICK = 33;
@@ -240,7 +242,8 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [modules, libraryVersion],
   );
-  const pointer = usePointerInputs(pointerActive);
+  const pointerInputs = usePointerInputs(pointerActive);
+  const pointer = pointerInputs.frame;
 
   const inputs = useMemo<InputValues>(() => ({
     values: composeValues(modules, { audio, manual, auto, pointer }),
@@ -251,6 +254,8 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   return {
     inputs, audio, manual, auto, devices, active, error, contextState,
     start, stop, setManual, refreshDevices, calibrate, cancelCalibration,
+    // Стоп анимации: счётчики нажатий клавиш начинаются заново.
+    resetPointerHits: pointerInputs.resetHits,
   };
 }
 

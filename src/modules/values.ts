@@ -134,9 +134,14 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
 
     if (definition.kind === "mouse") {
       const mouse = sources.pointer?.mouse;
+      // Инверсия Y — свойство экземпляра: у одного модуля курсор «как в 2D»,
+      // у другого «как в 3D», и оба живут в одном пресете.
+      const invertY = module.config.invertY === true;
       for (const spec of specs) {
         if (!inputEnabled(module, spec.name)) continue;
-        const value = mouse ? mouse[spec.name as keyof MouseSample] : 0;
+        let value = mouse ? mouse[spec.name as keyof MouseSample] : 0;
+        if (invertY && spec.name === "y") value = 1 - value;
+        else if (invertY && spec.name === "dy") value = -value;
         values[inputKey(module, spec.name)] = Number.isFinite(value) ? value : 0;
       }
       continue;
@@ -233,9 +238,14 @@ export function migrateLegacyScript(script: string): LegacyMigration {
   return { script: result, used: [...new Set(used)], changed };
 }
 
-/** Нужен ли пресету модуль Viseme: ищем старые или новые виземы в текстах. */
+/**
+ * Нужен ли пресету модуль Viseme: ищем обращения к виземам в текстах.
+ *
+ * Имена визем задаёт пользователь (`o_umlaut`, `v_2`), поэтому смотрим на любое
+ * имя после `viseme.`, а не только на пятёрку базовых звуков.
+ */
 export function usesVisemeInputs(scripts: string[]): boolean {
-  return scripts.some((script) => /\bviseme\.[aeiou]\b|\bviseme_[aeiou]\b/.test(script));
+  return scripts.some((script) => /\bviseme\.[a-z0-9_]+\b|\bviseme_[a-z0-9_]+\b/i.test(script));
 }
 
 /** Копия модулей по умолчанию с независимыми настройками. */

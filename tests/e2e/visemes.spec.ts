@@ -5,8 +5,8 @@ import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefiniti
 import { composeValues, instanceInputs } from "../../src/modules/values";
 import { normalizeModules } from "../../src/engine/preset";
 import {
-  averageSpectrum, bandFrequency, bestSimilarity, computeVisemes, normalizeVisemes, sanitizeVisemeName,
-  spectrumShape, uniqueVisemeName, unitVector, visemeNameAllowed, VISEME_BANDS,
+  averageSpectrum, bandFrequency, bestSimilarity, computeVisemes, discriminativeWeights, normalizeVisemes,
+  sanitizeVisemeName, spectrumShape, uniqueVisemeName, unitVector, visemeNameAllowed, weightSpectrum, VISEME_BANDS,
 } from "../../src/modules/viseme";
 import type { ModuleInstance, VisemeEntry } from "../../src/types";
 
@@ -189,4 +189,49 @@ test("пресет сохраняет калибровки и чистит би�
   expect(stored[0].templates[0]).toHaveLength(VISEME_BANDS);
   // Выключенным остаётся только существующий вход.
   expect(modules[0].disabledInputs).toEqual(["a"]);
+});
+
+test("веса полос по калибровкам повышают разрыв между гласными", () => {
+  const entries: VisemeEntry[] = Object.keys(FORMANTS).map((name) => ({
+    name,
+    label: name,
+    templates: [vowel(name, 105), vowel(name, 165), vowel(name, 230)],
+  }));
+  const weights = discriminativeWeights(entries.flatMap((entry) => entry.templates));
+  expect(weights).not.toBeNull();
+  expect(weights).toHaveLength(VISEME_BANDS);
+
+  /** Средний разрыв «свой звук минус лучший чужой» по всем гласным и тонам. */
+  const margin = (useWeights: number[] | null): number => {
+    let total = 0;
+    let count = 0;
+    for (const name of Object.keys(FORMANTS)) {
+      for (const pitch of [95, 140, 200]) {
+        const bands = vowel(name, pitch);
+        const scores = entries.map((entry) => [entry.name, bestSimilarity(bands, entry.templates, useWeights)] as const);
+        const own = scores.find(([key]) => key === name)![1];
+        const other = Math.max(...scores.filter(([key]) => key !== name).map(([, value]) => value));
+        total += own - other;
+        count += 1;
+      }
+    }
+    return total / count;
+  };
+  expect(margin(weights)).toBeGreaterThan(margin(null));
+
+  // Сравнивать не с чем: одна запись — обычный косинус.
+  expect(discriminativeWeights([])).toBeNull();
+  expect(discriminativeWeights([entries[0].templates[0]])).toBeNull();
+  // Веса не меняют длину вектора: сравниваются формы, а не масштаб.
+  const weighted = weightSpectrum(entries[0].templates[0], weights);
+  expect(weighted.reduce((sum, value) => sum + value * value, 0)).toBeCloseTo(1, 6);
+});
+
+test("новый модуль визем: свои звуки, латиница в имени, варианты записи", () => {
+  // Калибровки хранятся в конфиге экземпляра, а не в шаблоне.
+  const module = visemeModule(entries(), { config: { visemes: entries(), normalize: true, gate: -50, contrast: 3 } });
+  const stored = normalizeModules([module])[0].config.visemes as VisemeEntry[];
+  expect(stored.map((entry) => entry.name)).toEqual(["a", "o"]);
+  expect(stored[0].templates[0]).toHaveLength(VISEME_BANDS);
+  expect(stored[0].templates[0][8]).not.toBe(0);
 });

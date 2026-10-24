@@ -109,10 +109,58 @@ export function similarity(bands: number[], template: number[] | null | undefine
   return Math.pow(Math.min(1, dot), 2);
 }
 
-/** Лучшая похожесть по всем вариантам записи: у звука бывает несколько произношений. */
-export function bestSimilarity(bands: number[], templates: number[][]): number {
+/** Полоса ниже этой доли от самого «разбросанного» канала считается общей. */
+const WHITEN_THRESHOLD = 0.3;
+/** Сглаживание весов: полосы не должны различаться в десятки раз. */
+const WHITEN_SOFT = 0.2;
+
+/**
+ * Веса полос по калибровкам модуля (whitening).
+ *
+ * Считаем разброс каждой полосы по всем записанным вариантам всех визем: где
+ * звуки отличаются — полоса весит много, где у всех одинаково (наклон АЧХ,
+ * низкочастотный гул, шум) — ноль. Это данные из собственных калибровок, а не
+ * догадка про «правильные» форманты, поэтому метод подстраивается под микрофон
+ * и дикцию.
+ *
+ * `null`, когда сравнивать не с чем (меньше двух записей): тогда работает
+ * обычный косинус.
+ */
+export function discriminativeWeights(templates: number[][]): number[] | null {
+  const usable = templates.filter((template) => template.length === VISEME_BANDS);
+  if (usable.length < 2) return null;
+  const mean = new Array(VISEME_BANDS).fill(0);
+  for (const template of usable) {
+    for (let index = 0; index < VISEME_BANDS; index += 1) mean[index] += template[index] / usable.length;
+  }
+  const deviation = new Array(VISEME_BANDS).fill(0);
+  for (const template of usable) {
+    for (let index = 0; index < VISEME_BANDS; index += 1) {
+      const delta = template[index] - mean[index];
+      deviation[index] += (delta * delta) / usable.length;
+    }
+  }
+  const std = deviation.map((value) => Math.sqrt(value));
+  const max = Math.max(...std);
+  if (!(max > 1e-6)) return null;
+  return std.map((value) => (value >= max * WHITEN_THRESHOLD ? 1 / (WHITEN_SOFT + value / max) : 0));
+}
+
+/** Взвешенный вектор единичной длины: веса не меняют масштаб сравнения. */
+export function weightSpectrum(vector: number[], weights: number[] | null): number[] {
+  if (!weights) return vector;
+  return unitVector(vector.map((value, index) => value * (weights[index] ?? 0)));
+}
+
+/** Лучшая похожесть по вариантам записи: у звука бывает несколько произношений. */
+export function bestSimilarity(bands: number[], templates: number[][], weights: number[] | null = null): number {
+  const live = weightSpectrum(bands, weights);
   let best = 0;
-  for (const template of templates) best = Math.max(best, similarity(bands, template));
+  for (const template of templates) {
+    const reference = weights ? weightSpectrum(template, weights) : template;
+    // Повторная нормировка не нужна: weightSpectrum уже привёл вектор к единице.
+    best = Math.max(best, similarity(live, reference));
+  }
   return best;
 }
 
@@ -133,10 +181,14 @@ export function computeVisemes(
   // между нулём и полным значением.
   const openness = clamp((db - gate) / 12 + 0.5, 0, 1);
   const contrast = clamp(Number(module.config.contrast ?? 3), 1, 8);
+  const entries = visemeEntries(module);
+  // Веса считаются по всем калибровкам модуля сразу: так видно, какие полосы
+  // действительно различают записанные звуки.
+  const weights = discriminativeWeights(entries.flatMap((entry) => entry.templates));
   const values: Record<string, number> = {};
   const audible = openness > 0 && Array.isArray(bands) && bands.length === VISEME_BANDS;
-  for (const entry of visemeEntries(module)) {
-    const raw = audible ? bestSimilarity(bands as number[], entry.templates) : 0;
+  for (const entry of entries) {
+    const raw = audible ? bestSimilarity(bands as number[], entry.templates, weights) : 0;
     values[entry.name] = raw > 0 ? Math.pow(raw, contrast) * openness : 0;
   }
   return values;

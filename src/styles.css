@@ -760,6 +760,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 
 /* ---------- Сворачивание карточек ---------- */
 .module-card header { flex-wrap: wrap; }
+/* Блок кнопок карточки не переезжает при сворачивании: он всегда справа,
+   а сводка входов идёт отдельной строкой ниже. */
+.module-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: 0 0 auto; }
+.module-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .module-collapse svg { transition: transform .15s; transform: rotate(-90deg); }
 .module-collapse.open svg { transform: none; }
 .module-summary {
@@ -962,5 +966,13 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .key-name:focus { outline: none; border-color: #609c8c; }
 
 .key-add { align-self: flex-start; }
+.key-binding { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.key-bind {
+  min-width: 92px; justify-content: flex-start; cursor: pointer;
+  background: #0f1215; border-style: dashed;
+}
+.key-bind:hover { border-color: #609c8c; color: #e7f4f0; }
+.key-bind.empty { color: #6c7780; }
+.key-binding .button.small { align-self: center; }
 .key-capture { color: #e0b06f; font-size: 9px; }
 .key-picker { display: flex; align-items: center; gap: 6px; }

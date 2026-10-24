@@ -32,7 +32,6 @@ interface RightPanelProps {
   onGlobalScript: (script: string) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
-  onRefreshDevices: () => void;
   calibrate: CalibrationApi["calibrate"];
   cancelCalibration: CalibrationApi["cancelCalibration"];
 }
@@ -61,7 +60,6 @@ export function RightPanel(props: RightPanelProps) {
           devices={props.devices}
           error={props.audioError}
           onChange={props.onModules}
-          onRefreshDevices={props.onRefreshDevices}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

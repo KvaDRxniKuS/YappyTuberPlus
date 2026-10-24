@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Keyboard, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import type { KeyboardKey, ModuleInstance } from "../types";
 import { keyInputName, keyLabel, keyboardKeys, uniqueKeyName } from "../modules/pointer";
 
@@ -70,20 +70,39 @@ export function KeyboardKeysEditor(props: { module: ModuleInstance; onKeys: (key
   );
 }
 
-/** Один вход-клавиша: показываем подпись, по клику ждём нажатие. */
-export function KeyPicker(props: { code: string; onChange: (code: string) => void }) {
+/**
+ * Один бинд модуля `key`: поле с клавишей, кнопка смены и мусорка.
+ *
+ * Незаданный бинд — это пустая строка, а не «пробел по умолчанию»: пока клавиша
+ * не выбрана, входы модуля нулевые, и в поле видно подсказку.
+ */
+export function KeyBindingRow(props: { code: string; onChange: (code: string) => void }) {
   const [capturing, setCapturing] = useState(false);
+  useKeyCapture(capturing, (code) => {
+    setCapturing(false);
+    if (code) props.onChange(code);
+  });
   return (
-    <div className="key-picker">
-      <Keyboard size={13} />
-      <span className="key-cap" title={props.code}>{keyLabel(props.code)}</span>
-      <KeyCaptureButton
-        capturing={capturing}
-        label="Сменить"
-        onStart={() => setCapturing(true)}
-        onCancel={() => setCapturing(false)}
-        onCapture={(code) => { setCapturing(false); if (code) props.onChange(code); }}
-      />
+    <div className="key-binding">
+      <button
+        type="button"
+        className={`key-cap key-bind ${props.code ? "" : "empty"}`}
+        title={props.code ? `${keyLabel(props.code)} (${props.code})` : "Нажмите, чтобы назначить клавишу"}
+        onClick={() => setCapturing(true)}
+      >
+        {props.code ? keyLabel(props.code) : "не задана"}
+      </button>
+      <button type="button" className="button small key-add" disabled={capturing} onClick={() => setCapturing(true)}>
+        {props.code ? "Сменить" : "Назначить"}
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        title="Очистить бинд"
+        disabled={!props.code}
+        onClick={() => props.onChange("")}
+      ><Trash2 size={12} /></button>
+      {capturing && <span className="key-capture">Нажмите клавишу… (Esc — отмена)</span>}
     </div>
   );
 }
@@ -92,6 +111,25 @@ export function KeyPicker(props: { code: string; onChange: (code: string) => voi
  * Ждём следующее нажатие. Esc отменяет выбор, модификаторы сами по себе тоже
  * считаются клавишами (Shift, Ctrl) — иногда это и нужно.
  */
+/**
+ * Ждём следующее нажатие, пока `active`. Обработчик берётся из ref: иначе
+ * эффект переподписывался бы на каждое перерисовывание.
+ */
+function useKeyCapture(active: boolean, onCapture: (code: string | null) => void) {
+  const handler = useRef(onCapture);
+  handler.current = onCapture;
+  useEffect(() => {
+    if (!active) return;
+    const listener = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handler.current(event.repeat || event.code === "Escape" ? null : event.code);
+    };
+    window.addEventListener("keydown", listener, { capture: true });
+    return () => window.removeEventListener("keydown", listener, { capture: true });
+  }, [active]);
+}
+
 function KeyCaptureButton(props: {
   capturing: boolean;
   label: string;
@@ -99,17 +137,10 @@ function KeyCaptureButton(props: {
   onCancel: () => void;
   onCapture: (code: string | null) => void;
 }) {
-  useEffect(() => {
-    if (!props.capturing) return;
-    const handler = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.code === "Escape") props.onCancel();
-      else props.onCapture(event.repeat ? null : event.code);
-    };
-    window.addEventListener("keydown", handler, { capture: true });
-    return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [props]);
+  useKeyCapture(props.capturing, (code) => {
+    if (code) props.onCapture(code);
+    else props.onCancel();
+  });
 
   if (props.capturing) {
     return <span className="key-capture">Нажмите клавишу… (Esc — отмена)</span>;

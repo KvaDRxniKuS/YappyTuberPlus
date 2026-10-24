@@ -255,7 +255,10 @@ export default function App() {
   const stopTimeline = useCallback(() => {
     setStopped(true);
     setPaused(true);
-  }, []);
+    // Счётчики `hits` живут в состоянии ввода, а не в движке: их тоже обнуляем,
+    // иначе после стопа счёт продолжается с прежнего числа.
+    moduleInputs.resetPointerHits();
+  }, [moduleInputs]);
 
   const newPreset = useCallback(() => {
     const empty = createEmptyPreset();
@@ -767,7 +770,6 @@ export default function App() {
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
-          onRefreshDevices={() => void moduleInputs.refreshDevices()}
           calibrate={moduleInputs.calibrate}
           cancelCalibration={moduleInputs.cancelCalibration}
         /></div>

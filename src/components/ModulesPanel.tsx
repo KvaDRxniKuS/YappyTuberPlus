@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, RefreshCw, Search, SlidersHorizontal, Trash2, X,
+  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
 import type { DeviceOption } from "../modules/audio";
@@ -12,7 +12,7 @@ import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import { inputEnabled, instanceInputs, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
 import { Switch } from "./Switch";
 import { VisemeEditor } from "./VisemeEditor";
-import { KeyPicker, KeyboardKeysEditor } from "./KeyboardEditor";
+import { KeyBindingRow, KeyboardKeysEditor } from "./KeyboardEditor";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
 interface ModulesPanelProps extends CalibrationApi {
@@ -20,7 +20,6 @@ interface ModulesPanelProps extends CalibrationApi {
   devices: DeviceOption[];
   error: string | null;
   onChange: (modules: ModuleInstance[], label?: string) => void;
-  onRefreshDevices: () => void;
 }
 
 /**
@@ -165,22 +164,26 @@ export function ModulesPanel(props: ModulesPanelProps) {
                   onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
                 />
                 <span className="module-type">{definition.title}</span>
+                {/* Кнопки стоят до сводки: сводка уходит на свою строку и не
+                    сдвигает их при сворачивании карточки. */}
+                <div className="module-actions">
+                  <button
+                    className={`icon-button module-collapse ${open ? "open" : ""}`}
+                    title={open ? "Свернуть модуль" : "Развернуть модуль"}
+                    onClick={() => toggleCollapsed(module.name)}
+                  ><ChevronDown size={13} /></button>
+                  <button className="icon-button" title="Дублировать модуль" onClick={() => duplicate(module)}><Copy size={13} /></button>
+                  <button
+                    className="icon-button"
+                    title="Удалить модуль"
+                    onClick={() => props.onChange(props.modules.filter((item) => item.name !== module.name), "Удаление модуля")}
+                  ><Trash2 size={13} /></button>
+                </div>
                 {!open && (
                   <span className="module-summary">
                     {moduleInputs(module).filter((item) => inputEnabled(module, item.spec.name)).map((item) => item.key).join(" · ")}
                   </span>
                 )}
-                <button
-                  className={`icon-button module-collapse ${open ? "open" : ""}`}
-                  title={open ? "Свернуть модуль" : "Развернуть модуль"}
-                  onClick={() => toggleCollapsed(module.name)}
-                ><ChevronDown size={13} /></button>
-                <button className="icon-button" title="Дублировать модуль" onClick={() => duplicate(module)}><Copy size={13} /></button>
-                <button
-                  className="icon-button"
-                  title="Удалить модуль"
-                  onClick={() => props.onChange(props.modules.filter((item) => item.name !== module.name), "Удаление модуля")}
-                ><Trash2 size={13} /></button>
               </header>
 
               {open && (
@@ -207,16 +210,12 @@ export function ModulesPanel(props: ModulesPanelProps) {
                   )}
 
                   {definition.kind === "key" && (
-                    <div className="module-fields">
-                      <div className="module-field">
-                        <span className="module-field-label">Клавиша</span>
-                        <div className="module-field-value">
-                          <KeyPicker
-                            code={typeof module.config.code === "string" ? module.config.code : "Space"}
-                            onChange={(code) => patchConfig(module, "code", code, "Клавиша модуля")}
-                          />
-                        </div>
-                      </div>
+                    <div className="key-editor">
+                      <div className="key-editor-head"><span>Клавиша</span><span /><span /></div>
+                      <KeyBindingRow
+                        code={typeof module.config.code === "string" ? module.config.code : ""}
+                        onChange={(code) => patchConfig(module, "code", code, code ? "Клавиша модуля" : "Бинд очищен")}
+                      />
                     </div>
                   )}
 
@@ -250,7 +249,6 @@ export function ModulesPanel(props: ModulesPanelProps) {
                               module={module}
                               devices={props.devices}
                               onValue={(value, label) => patchConfig(module, field.key, value, label)}
-                              onRefreshDevices={props.onRefreshDevices}
                             />
                           </div>
                         </div>
@@ -353,7 +351,6 @@ function FieldControl(props: {
   module: ModuleInstance;
   devices: DeviceOption[];
   onValue: (value: number | string | boolean, label?: string) => void;
-  onRefreshDevices: () => void;
 }) {
   const { field, module } = props;
   const value = module.config[field.key] ?? field.default;
@@ -379,7 +376,6 @@ function FieldControl(props: {
             <option key={device.id} value={device.id}>{device.label}</option>
           ))}
         </select>
-        <button className="icon-button" title="Обновить список микрофонов" onClick={props.onRefreshDevices}><RefreshCw size={12} /></button>
       </div>
     );
   }

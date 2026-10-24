@@ -4,7 +4,7 @@ import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type KeyboardKey, type ModuleConfig, type ModuleInstance,
   type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
 } from "../types";
-import { hasModule, libraryEmpty, moduleDefinition, type ModuleField } from "../modules/registry";
+import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { VISEME_BANDS, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { keyInputName, uniqueKeyName } from "../modules/pointer";
 
@@ -261,11 +261,15 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
       // модуль после перезагрузки молча становится «Ползунком».
       source: item.source === "manual" || (!unknown && !definition.audio) ? "manual" : "live",
       config: {
+        // Значения шаблона — база: без них у загруженного модуля не было бы
+        // даже пустого `code`, и карточка показывала бы «undefined».
+        ...moduleDefaults(definition),
         ...(unknown ? rawConfig : normalizeConfig(definition.fields, item.config)),
         ...(visemes ? { visemes } : {}),
         ...(keys ? { keys } : {}),
         // Код клавиши — не поле шаблона, но он обязан пережить любую загрузку.
-        ...(typeof rawConfig.code === "string" && rawConfig.code.trim() ? { code: rawConfig.code.trim() } : {}),
+        // Пустая строка — это осознанный «бинда нет», её тоже сохраняем.
+        ...(typeof rawConfig.code === "string" ? { code: rawConfig.code.trim() } : {}),
       },
       ...(disabled.length > 0 ? { disabledInputs: disabled } : {}),
     });
