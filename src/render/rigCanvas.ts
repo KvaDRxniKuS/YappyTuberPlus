@@ -1,5 +1,6 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
+import { frontness, structurePaths } from "../engine/structure";
 
 /**
  * Shared Canvas 2D renderer. The editor scene and the OBS overlay use the same
@@ -109,7 +110,13 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
 /** Sprites in draw order: computed `layer` first, then preset order. */
 export function orderedSprites(preset: RigPreset, frame: RigFrame | null): RigObject[] {
   const sprites = preset.objects.filter((object) => object.kind === "sprite");
-  if (!frame) return [...sprites].sort((a, b) => a.base.layer - b.base.layer);
+  if (!frame) {
+    // Без кадра порядок считаем по базовой позе, но с тем же правилом:
+    // при равном слое выше в структуре — значит поверх.
+    const paths = structurePaths(preset.objects);
+    return [...sprites].sort((a, b) => (a.base.layer - b.base.layer)
+      || frontness(paths.get(a.id), paths.get(b.id)));
+  }
   const positions = new Map(frame.order.map((id, index) => [id, index]));
   return [...sprites].sort((a, b) => (positions.get(a.id) ?? 9999) - (positions.get(b.id) ?? 9999));
 }

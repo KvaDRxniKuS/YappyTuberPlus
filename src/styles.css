@@ -376,9 +376,23 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .scene-viewport.tool-marquee canvas,
 .scene-viewport.tool-lasso canvas { cursor: crosshair; }
 
-/* ---------- Глаз: временное скрытие через enabled ---------- */
+/* ---------- Глаз: временное скрытие (enabled) и скрытие формулой ---------- */
 .tree-row.is-disabled .tree-thumbnail,
 .tree-row.is-disabled .tree-name { opacity: .42; }
+/* Выключен глазами — красный закрытый глаз. */
 .tree-row.is-disabled .tree-eye { opacity: 1; color: #c98b8f; }
-.tree-row.hidden-by-script .tree-name { opacity: .6; }
-.tree-row.hidden-by-script .tree-name::after { content: " · скрипт"; color: #4f5d59; font-size: 8px; }
+/* Скрыт формулой visible — закрытый глаз в скобках, но не красный. */
+.tree-row.hidden-by-script .tree-eye { opacity: 1; color: #6f7984; }
+.tree-eye.script-driven { width: auto; display: inline-flex; align-items: center; gap: 1px; padding: 0 1px; }
+.tree-eye .eye-brace { font-style: normal; font-size: 9px; line-height: 1; color: #55606a; }
+.tree-row.hidden-by-script .tree-eye:hover { color: var(--text); }
+
+/* ---------- Перестановка строк в структуре ---------- */
+.tree-row { position: relative; }
+.tree-row.drop-before::before,
+.tree-row.drop-after::after {
+  content: ""; position: absolute; left: 4px; right: 4px; height: 2px;
+  border-radius: 2px; background: var(--accent); pointer-events: none;
+}
+.tree-row.drop-before::before { top: -1px; }
+.tree-row.drop-after::after { bottom: -1px; }

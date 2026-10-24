@@ -1,4 +1,5 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
+import { frontness, structurePaths } from "./structure";
 
 /**
  * Нейтральная поза: динамические параметры выключены, видны только базовые.
@@ -60,6 +61,29 @@ export function applyEnabled(preset: RigPreset, frame: RigFrame): RigFrame {
 }
 
 /**
+ * Порядок отрисовки движка: слой по возрастанию, а при равном слое поверх
+ * оказывается тот объект, который **выше в структуре**. Раньше при равном слое
+ * поверх был нижний, поэтому перестановка строк в дереве ни на что не влияла.
+ */
+export function applyTreeOrder(preset: RigPreset, frame: RigFrame): RigFrame {
+  const paths = structurePaths(preset.objects);
+  const order = [...frame.order].sort((a, b) => {
+    const layerA = frame.objects[a]?.layer ?? 0;
+    const layerB = frame.objects[b]?.layer ?? 0;
+    if (layerA !== layerB) return layerA - layerB;
+    // При равном слое поверх тот, кто выше в структуре (и потомок поверх предка).
+    return frontness(paths.get(a), paths.get(b));
+  });
+  const unchanged = order.length === frame.order.length && order.every((id, index) => id === frame.order[index]);
+  return unchanged ? frame : { ...frame, order };
+}
+
+/** Всё, что редактор доделывает поверх кадра движка: флаг enabled и порядок структуры. */
+export function prepareFrame(preset: RigPreset, frame: RigFrame): RigFrame {
+  return applyTreeOrder(preset, applyEnabled(preset, frame));
+}
+
+/**
  * Кадр без анимации для всего пресета. Порядок отрисовки — по базовому слою,
  * затем по порядку объектов, как у движка до первого кадра.
  */
@@ -73,8 +97,9 @@ export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
       layer: object.base.layer,
     };
   }
+  const paths = structurePaths(preset.objects);
   const order = [...preset.objects]
-    .sort((a, b) => (a.base.layer - b.base.layer) || (preset.objects.indexOf(a) - preset.objects.indexOf(b)))
+    .sort((a, b) => (a.base.layer - b.base.layer) || frontness(paths.get(a.id), paths.get(b.id)))
     .map((object) => object.id);
   return {
     seq,

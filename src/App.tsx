@@ -10,13 +10,14 @@ import { Inspector } from "./components/Inspector";
 import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
-import { createDemoPreset, createEmptyPreset, withDemoMouth } from "./data/demoPreset";
+import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, isDescendant, makeGroup, makeSprite, normalizeOverlay, normalizePreset,
   setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
+import { reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { useOverlayHost } from "./hooks/useOverlayHost";
@@ -37,7 +38,7 @@ function loadPreset(): RigPreset {
     if (stored) {
       const normalized = normalizePreset(JSON.parse(stored));
       // Presets saved before the closed mouth existed are migrated in place.
-      if (normalized) return withDemoMouth(normalized);
+      if (normalized) return migrateDemoPreset(normalized);
     }
   } catch { /* use demo */ }
   return createDemoPreset();
@@ -254,6 +255,21 @@ export default function App() {
     }, { label: `Переименование «${object.name}»` });
   }, [commit]);
 
+  /** Перестановка объектов в структуре: она же меняет порядок отрисовки при равном слое. */
+  const reorderSelected = useCallback((ids: string[], targetId: string, position: "before" | "after") => {
+    const current = presetRef.current;
+    const objects = reorderObjects(current.objects, ids, targetId, position);
+    if (objects === current.objects) return;
+    commit({ ...current, objects }, { label: "Перестановка объектов" });
+  }, [commit]);
+
+  /** Сдвиг выделения на строку вверх/вниз (Alt+↑ / Alt+↓). */
+  const moveSelected = useCallback((direction: -1 | 1) => {
+    const current = presetRef.current;
+    const neighbor = reorderNeighbor(current.objects, selectionRef.current, direction);
+    if (neighbor) reorderSelected(selectionRef.current, neighbor.targetId, neighbor.position);
+  }, [reorderSelected]);
+
   /**
    * Горячие клавиши. Сравниваем `event.code`, а не `event.key`: при русской
    * раскладке Ctrl+Z приходит как «я», и на `key` сочетания просто не срабатывают.
@@ -277,6 +293,12 @@ export default function App() {
       } else if (event.key === "F2") {
         event.preventDefault();
         requestRename(selectionRef.current.at(-1) ?? null);
+      } else if (event.altKey && event.code === "ArrowUp") {
+        event.preventDefault();
+        moveSelected(-1);
+      } else if (event.altKey && event.code === "ArrowDown") {
+        event.preventDefault();
+        moveSelected(1);
       } else if (!command && event.code === "KeyV") setTool("move");
       else if (!command && event.code === "KeyM") setTool("marquee");
       else if (!command && event.code === "KeyL") setTool("lasso");
@@ -288,7 +310,7 @@ export default function App() {
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause, requestRename]);
+  }, [redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause, requestRename, moveSelected]);
 
 
   const updateObject = useCallback((next: RigObject, options: boolean | CommitOptions = true) => {
@@ -461,7 +483,7 @@ export default function App() {
     try {
       const parsed = normalizePreset(JSON.parse(await file.text()));
       if (!parsed) throw new Error("Это не пресет YappyTuberPlus версии 2");
-      commit(withDemoMouth(parsed));
+      commit(migrateDemoPreset(parsed));
       setPresetPath(null);
       setSavedAt(null);
       setSelection(parsed.objects[0] ? [parsed.objects[0].id] : []);
@@ -587,6 +609,7 @@ export default function App() {
             );
           }}
           onReparent={reparent}
+          onReorder={reorderSelected}
         /></div>
         <Splitter className="splitter-left" orientation="vertical" onDelta={(delta) => resize("leftWidth", delta)} onReset={() => setLayout((current) => ({ ...current, leftWidth: DEFAULT_LAYOUT.leftWidth }))} label="Ширина дерева объектов" />
 

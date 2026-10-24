@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend } from "./backend";
-import { applyEnabled, neutralFrame } from "./frame";
+import { neutralFrame, prepareFrame } from "./frame";
 
 export type EngineStatus = "loading" | "ready" | "error";
 
@@ -135,7 +135,7 @@ export function useRigEngine(
             setError(response.error || "Ошибка кадра");
             return;
           }
-          const gated = applyEnabled(presetRef.current, response.frame);
+          const gated = prepareFrame(presetRef.current, response.frame);
           frameRef.current = gated;
           frameSinkRef?.current?.(gated);
           frames += 1;

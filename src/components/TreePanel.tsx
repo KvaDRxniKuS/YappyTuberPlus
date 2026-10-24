@@ -24,13 +24,17 @@ interface TreePanelProps {
   onDuplicate: () => void;
   onToggleVisibility: (id: string) => void;
   onReparent: (id: string, parentId: string | null) => void;
+  /** Перестановка строк: вставка перед/после цели, порядок = порядок отрисовки. */
+  onReorder: (ids: string[], targetId: string, position: "before" | "after") => void;
 }
+
+type DropTarget = { id: string; position: "before" | "after" | "inside" } | null;
 
 export function TreePanel(props: TreePanelProps) {
   const { objects, selectedIds, primaryId } = props;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dragIds, setDragIds] = useState<string[]>([]);
-  const [dropId, setDropId] = useState<string | null>(null);
+  const [drop, setDrop] = useState<DropTarget>(null);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const rows = useMemo(() => treeRows(objects, collapsed), [objects, collapsed]);
@@ -55,7 +59,7 @@ export function TreePanel(props: TreePanelProps) {
 
       <div
         className="object-tree"
-        onDragLeave={() => setDropId(null)}
+        onDragLeave={() => setDrop(null)}
         onClick={(event) => { if (event.target === event.currentTarget) props.onSelect(null); }}
       >
         {rows.map(({ object, depth }) => {
@@ -64,6 +68,7 @@ export function TreePanel(props: TreePanelProps) {
           const hiddenByScript = scriptValue(object.script, "visible") === "0" || object.base.visible === 0;
           const dragging = dragIds.includes(object.id);
           const invalidDrop = dragging || (!!dragIds.length && dragIds.some((id) => isDescendant(objects, object.id, id)));
+          const zone = drop?.id === object.id ? drop.position : null;
           return (
             <div
               key={object.id}
@@ -72,8 +77,10 @@ export function TreePanel(props: TreePanelProps) {
                 selectedSet.has(object.id) ? "selected" : "",
                 primaryId === object.id ? "primary" : "",
                 disabled ? "is-disabled" : "",
-                hiddenByScript && !disabled ? "hidden-by-script" : "",
-                dropId === object.id ? "drop-target" : "",
+                hiddenByScript ? "hidden-by-script" : "",
+                zone === "inside" ? "drop-target" : "",
+                zone === "before" ? "drop-before" : "",
+                zone === "after" ? "drop-after" : "",
               ].filter(Boolean).join(" ")}
               style={{ "--depth": depth } as React.CSSProperties}
               aria-selected={selectedSet.has(object.id)}
@@ -84,18 +91,26 @@ export function TreePanel(props: TreePanelProps) {
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/yappy-object", object.id);
               }}
-              onDragEnd={() => { setDragIds([]); setDropId(null); }}
+              onDragEnd={() => { setDragIds([]); setDrop(null); }}
               onDragOver={(event) => {
                 if (!dragIds.length || invalidDrop) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
-                setDropId(object.id);
+                const rect = event.currentTarget.getBoundingClientRect();
+                const ratio = rect.height ? (event.clientY - rect.top) / rect.height : 0.5;
+                // Верхняя и нижняя четверти строки — вставка рядом, середина — внутрь.
+                const position = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "inside";
+                if (drop?.id !== object.id || drop.position !== position) setDrop({ id: object.id, position });
               }}
               onDrop={(event) => {
                 event.preventDefault();
-                if (dragIds.length && !invalidDrop) for (const id of dragIds) props.onReparent(id, object.id);
+                const position = drop?.id === object.id ? drop.position : "inside";
+                if (dragIds.length && !invalidDrop) {
+                  if (position === "inside") for (const id of dragIds) props.onReparent(id, object.id);
+                  else props.onReorder(dragIds, object.id, position);
+                }
                 setDragIds([]);
-                setDropId(null);
+                setDrop(null);
               }}
               onClick={(event) => {
                 if (event.ctrlKey || event.metaKey) { props.onToggleSelect(object.id); return; }
@@ -130,27 +145,29 @@ export function TreePanel(props: TreePanelProps) {
                   />
                 : <span className="tree-name" title="F2 — переименовать">{object.name}</span>}
               <button
-                className="tree-eye"
+                className={`tree-eye ${hiddenByScript ? "script-driven" : ""}`}
                 title={disabled
                   ? "Включить показ (видимость из скрипта не меняется)"
                   : hiddenByScript
-                    ? "Объект скрыт скриптом — глаз только временно скроет его поверх формулы"
+                    ? "Скрыт формулой видимости: глаз спрячет объект поверх неё, скрипт не изменится"
                     : "Временно скрыть, не меняя формулы"}
                 onDoubleClick={(event) => event.stopPropagation()}
                 onClick={(event) => { event.stopPropagation(); props.onToggleVisibility(object.id); }}
               >
-                {disabled ? <EyeOff size={14} /> : <Eye size={14} />}
+                {hiddenByScript && <i className="eye-brace">{`{`}</i>}
+                {disabled || hiddenByScript ? <EyeOff size={13} /> : <Eye size={14} />}
+                {hiddenByScript && <i className="eye-brace">{`}`}</i>}
               </button>
             </div>
           );
         })}
         <div
-          className={`root-drop-zone ${dropId === "root" ? "drop-target" : ""}`}
-          onDragOver={(event) => { if (dragIds.length) { event.preventDefault(); setDropId("root"); } }}
+          className={`root-drop-zone ${drop?.id === "root" ? "drop-target" : ""}`}
+          onDragOver={(event) => { if (dragIds.length) { event.preventDefault(); setDrop({ id: "root", position: "inside" }); } }}
           onDrop={(event) => {
             event.preventDefault();
             for (const id of dragIds) props.onReparent(id, null);
-            setDragIds([]); setDropId(null);
+            setDragIds([]); setDrop(null);
           }}
         >
           Перетащите сюда, чтобы открепить

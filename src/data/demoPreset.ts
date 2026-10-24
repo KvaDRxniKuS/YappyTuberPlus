@@ -92,6 +92,9 @@ breath = sin(time * 2 * pi / 4) * 0.5 + 0.5`,
       })),
       object("head_group", "Голова · группа", "group", "body", null, 380, 300, base(500, 225), childScript({
         rotation: "inherit + sin(time * 1.6) * 2.2 + speak * 1.5",
+        // Голова выше тела по слою: тело стоит в структуре выше и при равном
+        // слое перекрывало бы подбородок (правило «верхняя строка — поверх»).
+        layer: "inherit + 0.5",
       })),
       object("head", "Голова", "sprite", "head_group", "/assets/demo/head.png", 360, 290, base(500, 225), childScript()),
       object("eye_left", "Глаз · левый", "sprite", "head_group", "/assets/demo/eye.png", 72, 96, base(435, 215, { layer: 2 }), childScript({
@@ -152,4 +155,20 @@ export function withDemoMouth(preset: RigPreset): RigPreset {
   const index = objects.findIndex((object) => object.id === "mouth");
   objects.splice(index + 1, 0, closed);
   return { ...preset, objects };
+}
+
+/**
+ * Миграция стартового рига: добавляет закрытый рот и поднимает группу головы по
+ * слою. Второе нужно после перехода на правило «верхняя строка структуры —
+ * поверх нижней»: в демо тело стоит выше головы и при равном слое перекрывало бы
+ * подбородок у ранее сохранённых пресетов.
+ */
+export function migrateDemoPreset(preset: RigPreset): RigPreset {
+  const migrated = withDemoMouth(preset);
+  const head = migrated.objects.find((object) => object.id === "head_group");
+  if (!head || /^\s*layer\s*=/m.test(head.script)) return migrated;
+  const objects = migrated.objects.map((object) => object.id === "head_group"
+    ? { ...object, script: `${object.script.replace(/\s+$/, "")}\nlayer = inherit + 0.5` }
+    : object);
+  return { ...migrated, objects };
 }

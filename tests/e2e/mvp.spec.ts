@@ -251,3 +251,17 @@ test("перетаскивание выделенной в структуре г
   await expect(page.locator(".tree-row.selected")).toHaveCount(1);
   await expect(page.locator(".tree-row.primary")).toContainText("Персонаж");
 });
+
+test("Alt+↓ переставляет объект в структуре", async ({ page }) => {
+  await openStudio(page);
+  const rows = page.locator(".tree-row");
+  await expect(rows.nth(4)).toContainText("Глаз · левый");
+  await rows.nth(4).click();
+  await page.keyboard.press("Alt+ArrowDown");
+  await page.waitForTimeout(150);
+  await expect(rows.nth(4)).toContainText("Глаз · правый");
+  await expect(rows.nth(5)).toContainText("Глаз · левый");
+
+  await page.keyboard.press("Control+z");
+  await expect(rows.nth(4)).toContainText("Глаз · левый");
+});

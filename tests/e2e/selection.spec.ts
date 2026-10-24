@@ -3,8 +3,9 @@ import {
   boxFromPoints, boxIntersects, pointInPolygon, polygonIntersectsBox, rangeIds,
   selectionRoots, subtreeIds, toggleId, treeRows,
 } from "../../src/engine/selection";
+import { reorderNeighbor, reorderObjects, structureOrder } from "../../src/engine/structure";
 import { History } from "../../src/engine/history";
-import { applyEnabled, neutralFrame } from "../../src/engine/frame";
+import { applyEnabled, applyTreeOrder, neutralFrame } from "../../src/engine/frame";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { RigPreset } from "../../src/types";
 
@@ -159,4 +160,42 @@ test("свёрнутая группа скрывает потомков, а не
 
   const rootsCollapsed = treeRows(preset.objects, new Set(["character"]));
   expect(rootsCollapsed.map((row) => row.object.id)).toEqual(["character"]);
+});
+
+test("порядок отрисовки: при равном слое верхняя строка структуры — поверх", () => {
+  const preset = createDemoPreset();
+  const frame = neutralFrame(preset);
+  const order = applyTreeOrder(preset, frame).order;
+  // Оба глаза имеют одинаковый слой; выше в структуре — левый, значит рисуется позже.
+  expect(frame.objects.eye_left.layer).toBe(frame.objects.eye_right.layer);
+  expect(order.indexOf("eye_right")).toBeLessThan(order.indexOf("eye_left"));
+  // Голова поднята по слою, поэтому она поверх тела, хотя тело выше в структуре.
+  expect(order.indexOf("body")).toBeLessThan(order.indexOf("head"));
+});
+
+test("перестановка в структуре меняет и список, и порядок отрисовки", () => {
+  const preset = createDemoPreset();
+  const moved = reorderObjects(preset.objects, ["eye_left"], "eye_right", "after");
+  expect(moved).not.toBe(preset.objects);
+  const rows = structureOrder(moved);
+  expect(rows.indexOf("eye_left")).toBeGreaterThan(rows.indexOf("eye_right"));
+
+  const after: RigPreset = { ...preset, objects: moved };
+  const order = applyTreeOrder(after, neutralFrame(after)).order;
+  expect(order.indexOf("eye_left")).toBeLessThan(order.indexOf("eye_right"));
+});
+
+test("перестановка к чужому родителю переносит объект, внутрь себя — игнорируется", () => {
+  const preset = createDemoPreset();
+  const moved = reorderObjects(preset.objects, ["arm_left"], "head", "before");
+  const arm = moved.find((object) => object.id === "arm_left")!;
+  expect(arm.parentId).toBe("head_group");
+  expect(arm.script).toContain("inherit");
+
+  // Нельзя вложить группу в собственного потомка.
+  expect(reorderObjects(preset.objects, ["body"], "head", "before")).toBe(preset.objects);
+
+  // Сосед для сдвига на строку: вниз от левого глаза — правый глаз.
+  expect(reorderNeighbor(preset.objects, ["eye_left"], 1)).toEqual({ targetId: "eye_right", position: "after" });
+  expect(reorderNeighbor(preset.objects, ["eye_left"], -1)).toEqual({ targetId: "head", position: "before" });
 });
