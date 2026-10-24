@@ -199,7 +199,6 @@ export interface EditorLayout {
   leftWidth: number;
   rightWidth: number;
   sceneHeight: number;
-  rightEditorHeight: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   showBounds: GuideMode;
@@ -238,7 +237,6 @@ export const DEFAULT_LAYOUT: EditorLayout = {
   leftWidth: 248,
   rightWidth: 440,
   sceneHeight: 420,
-  rightEditorHeight: 370,
   leftCollapsed: false,
   rightCollapsed: false,
   showBounds: "selected",

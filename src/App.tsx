@@ -587,10 +587,10 @@ export default function App() {
     }
   };
 
-  const resize = (key: "leftWidth" | "rightWidth" | "sceneHeight" | "rightEditorHeight", delta: number) => {
+  const resize = (key: "leftWidth" | "rightWidth" | "sceneHeight", delta: number) => {
     setLayout((current) => {
       const limits = {
-        leftWidth: [170, 460], rightWidth: [300, 760], sceneHeight: [200, Math.max(220, window.innerHeight - 285)], rightEditorHeight: [180, Math.max(200, window.innerHeight - 250)],
+        leftWidth: [170, 460], rightWidth: [300, 760], sceneHeight: [200, Math.max(220, window.innerHeight - 285)],
       } as const;
       const [min, max] = limits[key];
       return { ...current, [key]: Math.min(max, Math.max(min, current[key] + delta)) };
@@ -794,9 +794,6 @@ export default function App() {
           auto={moduleInputs.auto}
           devices={moduleInputs.devices}
           audioError={moduleInputs.error}
-          editorHeight={layout.rightEditorHeight}
-          onEditorHeight={(delta) => resize("rightEditorHeight", delta)}
-          onResetEditorHeight={() => setLayout((current) => ({ ...current, rightEditorHeight: DEFAULT_LAYOUT.rightEditorHeight }))}
           onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}

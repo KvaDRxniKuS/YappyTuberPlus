@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Blocks, Braces, CircleAlert, Gauge, Globe2, SlidersHorizontal } from "lucide-react";
+import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, SlidersHorizontal } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
@@ -7,7 +7,6 @@ import { InputsPanel } from "./InputsPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
-import { Splitter } from "./Splitter";
 import type { ScriptCheck } from "../engine/scripts";
 import { namedTriggers } from "../engine/scripts";
 
@@ -27,9 +26,6 @@ interface RightPanelProps {
   auto: Record<string, number>;
   devices: DeviceOption[];
   audioError: string | null;
-  editorHeight: number;
-  onEditorHeight: (delta: number) => void;
-  onResetEditorHeight: () => void;
   onObjectScript: (script: string) => void;
   onGlobalScript: (script: string) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
@@ -47,6 +43,9 @@ type Tab = "object" | "globals" | "inputs" | "modules";
 export function RightPanel(props: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("object");
   useEffect(() => { setTab("object"); }, [props.selected?.id]);
+  // Значения кадра — свёрнутая секция: скрипт забирает всю высоту колонки,
+  // а кадр открывается по клику и не висит пустой третью экрана.
+  const [valuesOpen, setValuesOpen] = useState(false);
   const editorValue = tab === "globals" ? props.globalScript : props.selected?.script || "";
   const editorKey = tab === "globals" ? "globals" : props.selected?.id || "empty";
   const dynamic = props.selected ? props.frame?.objects[props.selected.id] : null;
@@ -85,7 +84,7 @@ export function RightPanel(props: RightPanelProps) {
           cancelCalibration={props.cancelCalibration}
         />
       ) : <>
-        <div className="script-workspace" style={{ height: props.editorHeight }}>
+        <div className="script-workspace">
           <div className="script-caption">
             <span>
               {tab === "globals" ? "globals.rig" : `${props.selected?.id || "object"}.rig`}
@@ -104,18 +103,32 @@ export function RightPanel(props: RightPanelProps) {
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}
         </div>
-        <Splitter orientation="horizontal" onDelta={props.onEditorHeight} onReset={props.onResetEditorHeight} label="Высота редактора скрипта" />
-        <div className="runtime-panel">
-          <div className="runtime-heading"><Gauge size={14} /><span>Значения кадра</span>{props.frame && <small>#{props.frame.seq}</small>}</div>
-          {props.engineError && <div className="diagnostic error"><CircleAlert size={14} /><span>{props.engineError}</span></div>}
-          {props.frame?.diagnostics.map((message, index) => <div className="diagnostic" key={`${index}-${message}`}><CircleAlert size={13} /><span>{message}</span></div>)}
-          <div className="runtime-values">
-            {dynamic ? Object.entries(dynamic).map(([name, value]) => (
-              <div className="runtime-value" key={name}><span>{name}</span><b>{formatValue(value)}</b></div>
-            )) : tab === "globals" ? Object.entries(props.frame?.globals || {}).map(([name, value]) => (
-              <div className="runtime-value" key={name}><span>{name}</span><b>{formatValue(value)}</b></div>
-            )) : <span className="muted">Нет данных кадра</span>}
-          </div>
+        <div className={`runtime-panel ${valuesOpen ? "open" : ""}`}>
+          <button
+            className="runtime-heading"
+            onClick={() => setValuesOpen(!valuesOpen)}
+            aria-expanded={valuesOpen}
+            title={valuesOpen ? "Свернуть значения кадра" : "Показать значения кадра"}
+          >
+            <ChevronRight className="runtime-chevron" size={13} />
+            <Gauge size={13} /><span>Значения кадра</span>
+            {props.frame && <small>#{props.frame.seq}</small>}
+          </button>
+          {(props.engineError || props.frame?.diagnostics.length) ? (
+            <div className="runtime-diagnostics">
+              {props.engineError && <div className="diagnostic error"><CircleAlert size={14} /><span>{props.engineError}</span></div>}
+              {props.frame?.diagnostics.map((message, index) => <div className="diagnostic" key={`${index}-${message}`}><CircleAlert size={13} /><span>{message}</span></div>)}
+            </div>
+          ) : null}
+          {valuesOpen && (
+            <div className="runtime-values">
+              {dynamic ? Object.entries(dynamic).map(([name, value]) => (
+                <div className="runtime-value" key={name}><span>{name}</span><b>{formatValue(value)}</b></div>
+              )) : tab === "globals" ? Object.entries(props.frame?.globals || {}).map(([name, value]) => (
+                <div className="runtime-value" key={name}><span>{name}</span><b>{formatValue(value)}</b></div>
+              )) : <span className="muted">Нет данных кадра</span>}
+            </div>
+          )}
         </div>
       </>}
     </aside>

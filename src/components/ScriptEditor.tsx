@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { basicSetup } from "codemirror";
 import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
@@ -130,6 +131,8 @@ export function ScriptEditor({
   const completionData = useRef({ objectIds, globals, moduleInputs, triggers });
   const [hint, setHint] = useState("");
   const [errorText, setErrorText] = useState("");
+  // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
+  const [helpOpen, setHelpOpen] = useState(false);
   applyRef.current = onApply;
   checkRef.current = onCheck;
   completionData.current = { objectIds, globals, moduleInputs, triggers };
@@ -341,24 +344,38 @@ export function ScriptEditor({
         : <div className="signature-hint" data-empty={hint ? "false" : "true"}>
           {hint || "Поставьте курсор внутрь вызова функции — покажу ожидаемые аргументы."}
         </div>}
-      <div className="editor-hint">
-        <span><b>on mouse.left.down</b> {"{ x = 200 }"}</span>
-        <span><b>trigger kick = mouse.left.down</b>, потом <b>{"on kick { … }"}</b></span>
-        <span><b>on start</b> — первый кадр · <b>hold(0.5)</b> кадром позже фронта</span>
-      </div>
-      <div className="function-chips">
-        {GROUPS.map((group) => (
-          <div className="function-chip-group" key={group.id}>
-            <span className="function-chip-title">{group.title}</span>
-            {Object.entries(SIGNATURES)
-              .filter(([, entry]) => entry.group === group.id)
-              .map(([name]) => (
-                <code key={name} title={SIGNATURES[name].summary} onClick={() => insert(name)}>
-                  {signatureOf(name)}
-                </code>
-              ))}
+      <div className={`editor-help ${helpOpen ? "open" : ""}`}>
+        <button
+          className="editor-help-toggle"
+          onClick={() => setHelpOpen(!helpOpen)}
+          aria-expanded={helpOpen}
+          title={helpOpen ? "Скрыть шпаргалку и список функций" : "Показать шпаргалку и список функций"}
+        >
+          <ChevronRight size={12} />
+          <span>Шпаргалка и функции</span>
+          <small>{GROUPS.map((group) => group.title).join(" · ")}</small>
+        </button>
+        {helpOpen && <>
+          <div className="editor-hint">
+            <span><b>on mouse.left.down</b> {"{ x = 200 }"}</span>
+            <span><b>trigger kick = mouse.left.down</b>, потом <b>{"on kick { … }"}</b></span>
+            <span><b>on start</b> — первый кадр · <b>hold(0.5)</b> кадром позже фронта</span>
           </div>
-        ))}
+          <div className="function-chips">
+            {GROUPS.map((group) => (
+              <div className="function-chip-group" key={group.id}>
+                <span className="function-chip-title">{group.title}</span>
+                {Object.entries(SIGNATURES)
+                  .filter(([, entry]) => entry.group === group.id)
+                  .map(([name]) => (
+                    <code key={name} title={SIGNATURES[name].summary} onClick={() => insert(name)}>
+                      {signatureOf(name)}
+                    </code>
+                  ))}
+              </div>
+            ))}
+          </div>
+        </>}
       </div>
     </>
   );
