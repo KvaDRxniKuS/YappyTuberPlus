@@ -1,0 +1,134 @@
+import { test, expect, type Page } from "@playwright/test";
+
+async function openStudio(page: Page) {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/");
+  await expect(page.locator(".engine-status")).toHaveClass(/ready/, { timeout: 15_000 });
+  await expect(page.locator(".tree-row")).toHaveCount(9);
+  await expect(page.locator("canvas")).toBeVisible();
+  return errors;
+}
+
+async function readPreset(page: Page) {
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("yappytuberplus.preset.v2")), { timeout: 5_000 }).not.toBeNull();
+  // The preset is debounce-saved; allow the latest edit to reach storage as well.
+  await page.waitForTimeout(750);
+  return page.evaluate(() => JSON.parse(localStorage.getItem("yappytuberplus.preset.v2")!));
+}
+
+test("Rust WASM starts and renders animated frames without browser errors", async ({ page }) => {
+  const errors = await openStudio(page);
+  await expect(page.locator(".engine-status b")).toContainText("FPS");
+  await page.waitForTimeout(800);
+  const first = await page.locator(".status-message").textContent();
+  await page.waitForTimeout(500);
+  const second = await page.locator(".status-message").textContent();
+  expect(second).not.toEqual(first);
+  expect(errors).toEqual([]);
+});
+
+test("explicit FPS limiter changes the real processed frame rate", async ({ page }) => {
+  await openStudio(page);
+  const input = page.locator(".fps-control input");
+  await input.fill("30");
+  await input.press("Enter");
+  await expect(input).toHaveValue("30");
+  await page.waitForTimeout(2200);
+  const text = await page.locator(".engine-status b").textContent();
+  const fps = Number(text?.match(/\d+/)?.[0]);
+  expect(fps).toBeGreaterThanOrEqual(27);
+  expect(fps).toBeLessThanOrEqual(33);
+});
+
+test("right script panel is resizable and layout persists", async ({ page }) => {
+  await openStudio(page);
+  const panel = page.locator(".right-workspace");
+  const before = (await panel.boundingBox())!.width;
+  const splitter = page.locator(".splitter-vertical").nth(1);
+  const box = await splitter.boundingBox();
+  await page.mouse.move(box!.x + 4, box!.y + 250);
+  await page.mouse.down();
+  await page.mouse.move(box!.x - 85, box!.y + 250, { steps: 8 });
+  await page.mouse.up();
+  const after = (await panel.boundingBox())!.width;
+  expect(after).toBeGreaterThan(before + 60);
+  await page.waitForTimeout(400);
+  const width = await page.evaluate(() => JSON.parse(localStorage.getItem("yappytuberplus.layout.v1")!).rightWidth);
+  expect(width).toBeGreaterThan(440);
+});
+
+test("dragging a sprite on the scene changes base and moves its subtree", async ({ page }) => {
+  await openStudio(page);
+  const before = await readPreset(page);
+  const canvas = page.locator("canvas");
+  const box = await canvas.boundingBox();
+  const zoom = Math.min((box!.width - 70) / 1000, (box!.height - 70) / 600, 2);
+  const panX = (box!.width - 1000 * zoom) / 2;
+  const panY = (box!.height - 600 * zoom) / 2;
+  const toScreen = (x: number, y: number) => ({ x: box!.x + panX + x * zoom, y: box!.y + panY + y * zoom });
+  const start = toScreen(500, 450);
+  const end = toScreen(560, 485);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 12 });
+  await page.mouse.up();
+  await expect(page.locator(".inspector-title input")).toHaveValue("Тело");
+  const after = await readPreset(page);
+  const oldBody = before.objects.find((object: any) => object.id === "body");
+  const newBody = after.objects.find((object: any) => object.id === "body");
+  const oldHead = before.objects.find((object: any) => object.id === "head");
+  const newHead = after.objects.find((object: any) => object.id === "head");
+  const oldEye = before.objects.find((object: any) => object.id === "eye_left");
+  const newEye = after.objects.find((object: any) => object.id === "eye_left");
+  expect(newBody.base.x - oldBody.base.x).toBeCloseTo(60, 0);
+  expect(newBody.base.y - oldBody.base.y).toBeCloseTo(35, 0);
+  expect(newHead.base.x - oldHead.base.x).toBeCloseTo(60, 0);
+  expect(newHead.base.y - oldHead.base.y).toBeCloseTo(35, 0);
+  expect(newEye.base.x - oldEye.base.x).toBeCloseTo(60, 0);
+  expect(newEye.base.y - oldEye.base.y).toBeCloseTo(35, 0);
+});
+
+test("reparenting preserves custom formulas", async ({ page }) => {
+  await openStudio(page);
+  const eye = page.locator(".tree-row").filter({ hasText: "Глаз · левый" });
+  const body = page.locator(".tree-row").filter({ hasText: "Тело" });
+  await eye.dragTo(body);
+  const preset = await readPreset(page);
+  const moved = preset.objects.find((object: any) => object.id === "eye_left");
+  expect(moved.parentId).toBe("body");
+  expect(moved.script).toContain("sizeY = inherit * (1 - blink * 0.9)");
+  expect(moved.script).toContain("layer = inherit + 1");
+});
+
+test("inspector formula edits the actual object script", async ({ page }) => {
+  await openStudio(page);
+  const xFormula = page.locator(".formula-field").first().locator("input");
+  await xFormula.fill("sin(time) * 12");
+  await xFormula.press("Enter");
+  const preset = await readPreset(page);
+  expect(preset.objects.find((object: any) => object.id === "character").script).toContain("x = sin(time) * 12");
+  await expect(page.locator(".engine-status")).toHaveClass(/ready/);
+});
+
+test("pause and single-step keep the runtime responsive", async ({ page }) => {
+  await openStudio(page);
+  await page.getByTitle("Пауза · K").click();
+  await expect(page.getByTitle("Один кадр")).toBeEnabled();
+  await page.waitForTimeout(250);
+  const before = await page.locator(".status-message").textContent();
+  await page.waitForTimeout(350);
+  expect(await page.locator(".status-message").textContent()).toEqual(before);
+  await page.getByTitle("Один кадр").click();
+  await page.waitForTimeout(150);
+  expect(await page.locator(".status-message").textContent()).not.toEqual(before);
+});
+
+test("PNG import adds a usable sprite", async ({ page }) => {
+  await openStudio(page);
+  await page.locator('input[type="file"][accept="image/png,image/webp"]').setInputFiles("public/assets/demo/eye.png");
+  await expect(page.locator(".tree-row")).toHaveCount(10);
+  await expect(page.locator(".inspector-title input")).toHaveValue("eye");
+  const preset = await readPreset(page);
+  expect(preset.objects.at(-1).image).toMatch(/^data:image\/png;base64,/);
+});
