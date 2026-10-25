@@ -285,7 +285,8 @@ layer = inherit
   **применить / оставить как есть / отключить все**. Старые пресеты переносятся
   автоматически (`talking` → `mic.talking`, `signal.blink`/`manual.blink` → `auto.blink`).
 
-Подробности: [`docs/MODULES.md`](docs/MODULES.md).
+Подробности: [`docs/MODULES.md`](docs/MODULES.md). Для своих модулей и видов входов —
+[`docs/MODULES-DEV.md`](docs/MODULES-DEV.md).
 
 ### OBS-оверлей
 
@@ -525,6 +526,7 @@ YappyTuberPlus/
 │   └── smoke-engine.mjs
 ├── docs/DESIGN.md
 ├── docs/MODULES.md           # модули, библиотека шаблонов, микрофоны
+├── docs/MODULES-DEV.md       # разработка модулей: схема шаблона, конвейер, новый kind
 ├── docs/PLAN-0.4.md          # план: модули 2.0, клавиатура/мышь, события
 ├── docs/OVERLAY.md
 ├── docs/LAUNCHER.md
