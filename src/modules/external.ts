@@ -1,4 +1,4 @@
-import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
+import type { ExternalSourceConfig, ExternalSourceRule, ExternalTextConfig, ModuleInstance } from "../types";
 import type { ModuleInputSpec } from "./registry";
 
 /**
@@ -63,9 +63,51 @@ function readNumber(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/**
+ * Кириллица в латиницу: имена входов должны быть пригодны для скрипта.
+ * Без этого «Смена аватара» превращалась бы в пустое имя и две награды
+ * с русскими названиями слились бы в один вход.
+ */
+const TRANSLIT: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i",
+  й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t",
+  у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "",
+  э: "e", ю: "yu", я: "ya",
+};
+
+function transliterate(text: string): string {
+  return text
+    .split("")
+    .map((char) => {
+      const lower = char.toLowerCase();
+      const latin = TRANSLIT[lower];
+      if (latin === undefined) return char;
+      return char === lower ? latin : latin.toUpperCase();
+    })
+    .join("");
+}
+
+/** Настройки текста: путь обязателен, автор — по желанию. */
+function readTextConfig(raw: unknown): ExternalTextConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const item = raw as Record<string, unknown>;
+  const path = String(item.path ?? "").trim();
+  if (!path) return undefined;
+  const authorPath = String(item.authorPath ?? "").trim();
+  return { path, authorPath: authorPath || undefined };
+}
+
 /** Имя входа только латиницей: оно попадает в выражение скрипта. */
+export function externalInputName(raw: unknown): string {
+  return readInputName(raw);
+}
+
 function readInputName(raw: unknown): string {
-  const name = String(raw ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  const name = transliterate(String(raw ?? ""))
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return /^[a-z_]/.test(name) ? name.slice(0, 24) : name ? `v_${name}`.slice(0, 24) : "";
 }
 
@@ -94,6 +136,7 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
           path: whenPath,
           equals: typeof whenRaw?.equals === "string" && whenRaw.equals ? whenRaw.equals : undefined,
           contains: typeof whenRaw?.contains === "string" && whenRaw.contains ? whenRaw.contains : undefined,
+          ignoreCase: whenRaw?.ignoreCase === true ? true : undefined,
         }
         : undefined;
       return {
@@ -109,6 +152,7 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
         event: typeof rule.event === "string" && rule.event.trim() ? rule.event.trim() : undefined,
         when,
         fallback: rule.fallback === undefined ? undefined : readNumber(rule.fallback, 0),
+        count: rule.count === true ? true : undefined,
       };
     })
     .filter((rule): rule is ExternalRule => rule !== null)
@@ -122,6 +166,7 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
     reconnect: source.reconnect !== false,
     intervalMs: Math.min(600_000, Math.max(100, readNumber(source.intervalMs, 1000))),
     clientId: typeof source.clientId === "string" && source.clientId.trim() ? source.clientId.trim() : undefined,
+    text: readTextConfig(source.text),
     channel: typeof source.channel === "string" && source.channel.trim()
       ? source.channel.trim().toLowerCase().replace(/^@/, "")
       : undefined,
@@ -215,9 +260,12 @@ export function toNumber(value: unknown): number | null {
 export function ruleMatches(rule: ExternalRule, payload: unknown): boolean {
   if (!rule.when) return true;
   const raw = readPath(payload, rule.when.path);
-  const text = raw === undefined || raw === null ? "" : String(raw);
-  if (rule.when.equals !== undefined) return text === rule.when.equals;
-  if (rule.when.contains !== undefined) return text.includes(rule.when.contains);
+  const source = raw === undefined || raw === null ? "" : String(raw);
+  // Команды чата люди пишут как угодно: «!Dance» и «!dance» — одно и то же.
+  const fold = (text: string) => (rule.when?.ignoreCase ? text.toLowerCase() : text);
+  const text = fold(source);
+  if (rule.when.equals !== undefined) return text === fold(rule.when.equals);
+  if (rule.when.contains !== undefined) return text.includes(fold(rule.when.contains));
   return text !== "";
 }
 
@@ -241,6 +289,8 @@ export function applyRule(rule: ExternalRule, raw: unknown): number | null {
 export function applyMapping(payload: unknown, mapping: ExternalRule[]): Record<string, number> {
   const values: Record<string, number> = {};
   for (const rule of mapping) {
+    // Счётчик считает хост: тут значение из поля только мешало бы.
+    if (rule.count) continue;
     if (!ruleMatches(rule, payload)) continue;
     const value = applyRule(rule, readPath(payload, rule.path));
     if (value !== null) values[rule.input] = value;

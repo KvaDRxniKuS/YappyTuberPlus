@@ -1,5 +1,6 @@
 import type { ExternalSourceConfig, ExternalSourceRule } from "../types";
 import { formBody, httpRequest, parseJson, HttpError, type HttpResponse } from "./nativeHttp";
+import { externalInputName } from "./external";
 import { isTauri } from "../engine/presetFile";
 
 /**
@@ -41,6 +42,18 @@ export interface TwitchEventSpec {
  * bits, подписки, рейды. Чат сюда не входит: в ядро уходят только числа.
  */
 export const TWITCH_EVENTS: TwitchEventSpec[] = [
+  {
+    type: "channel.chat.message",
+    version: "1",
+    label: "Сообщение в чате",
+    scope: "user:read:chat",
+    // Счётчик: каждое сообщение прибавляет единицу. Сам текст в числа не идёт —
+    // он показывается в панели «Входы» и в журнале.
+    rule: {
+      input: "chat", path: "$.payload.event.message_id", label: "Сообщений", kind: "level",
+      min: 0, max: 1_000_000, scale: 1, offset: 0, holdMs: 0, count: true,
+    },
+  },
   {
     type: "channel.channel_points_custom_reward_redemption.add",
     version: "1",
@@ -127,6 +140,64 @@ export function eventRule(spec: TwitchEventSpec): ExternalSourceRule {
     event: spec.type,
     when: { path: "$.metadata.subscription_type", equals: spec.type },
   };
+}
+
+/**
+ * Правило команды чата: `!dance` → вход `cmd_dance`.
+ *
+ * Текст сообщения числом не бывает, поэтому путь — тот же текст, а `fallback`
+ * даёт единицу: сработало условие — значит, команда прозвучала. Удержание 3 с
+ * нужно, чтобы `down` успел поймать событие.
+ */
+export function commandRule(command: string): ExternalSourceRule {
+  const name = externalInputName(command).replace(/^cmd_/, "");
+  return {
+    input: `cmd_${name}`,
+    path: "$.payload.event.message.text",
+    label: `!${name}`,
+    kind: "flag",
+    min: 0,
+    max: 1,
+    scale: 1,
+    offset: 0,
+    holdMs: 3000,
+    fallback: 1,
+    event: "channel.chat.message",
+    when: { path: "$.payload.event.message.text", contains: `!${name}`, ignoreCase: true },
+  };
+}
+
+/** Правило награды по имени: искупили «Смена аватара» → вход `redeem_смена_аватара`. */
+export function rewardRule(title: string): ExternalSourceRule {
+  const clean = title.trim();
+  return {
+    input: `redeem_${externalInputName(clean)}`,
+    path: "$.payload.event.reward.title",
+    label: clean,
+    kind: "flag",
+    min: 0,
+    max: 1,
+    scale: 1,
+    offset: 0,
+    holdMs: 5000,
+    fallback: 1,
+    event: "channel.channel_points_custom_reward_redemption.add",
+    when: { path: "$.payload.event.reward.title", equals: clean },
+  };
+}
+
+/** Команды, уже заведённые в модуле: берём из условий строк. */
+export function twitchCommands(source: ExternalSourceConfig): string[] {
+  return source.mapping
+    .filter((rule) => rule.input.startsWith("cmd_") && rule.when?.contains)
+    .map((rule) => String(rule.when?.contains).replace(/^!/, ""));
+}
+
+/** Награды, уже заведённые в модуле: имя награды — это условие равенства. */
+export function twitchRewards(source: ExternalSourceConfig): string[] {
+  return source.mapping
+    .filter((rule) => rule.input.startsWith("redeem_") && rule.when?.equals !== undefined)
+    .map((rule) => String(rule.when?.equals));
 }
 
 /** События, включённые в модуле: они и только они дают подписки. */

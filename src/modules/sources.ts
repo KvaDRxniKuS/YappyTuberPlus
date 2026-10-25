@@ -1,5 +1,5 @@
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
-import { applyMapping, isNativeTransport, isTwitchTransport, readExternalSource } from "./external";
+import { applyMapping, isNativeTransport, isTwitchTransport, readExternalSource, readPath, ruleMatches } from "./external";
 import { isTauri } from "../engine/presetFile";
 import { TwitchChannel, type TwitchInfo, type TwitchState } from "./twitch";
 
@@ -60,6 +60,10 @@ interface Entry {
   twitch?: TwitchChannel;
   /** Последние события источника: пакеты, предупреждения, ошибки. */
   log: ExternalLogEntry[];
+  /** Счётчики: `chat` растёт с каждым сообщением, а не читается из поля. */
+  counters: Record<string, number>;
+  /** Последние тексты (чат): только для показа, в кадр не идут. */
+  texts: ExternalTextLine[];
 }
 
 /** Событие из Rust: состояние источника или сырой текст пакета. */
@@ -70,6 +74,15 @@ type NativePayload =
 const NATIVE_EVENT = "yappy://source";
 /** Сколько строк журнала держим на источник: больше в карточке не прочитать. */
 export const LOG_LIMIT = 20;
+/** Сколько сообщений чата помним для показа в панели «Входы». */
+export const TEXT_LIMIT = 12;
+
+/** Строка текста из источника: чат, текст награды. В формулы не попадает. */
+export interface ExternalTextLine {
+  at: number;
+  author?: string;
+  text: string;
+}
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
 
@@ -149,6 +162,13 @@ export class ExternalSourceHost {
   statuses(): Record<string, ExternalStatus> {
     const result: Record<string, ExternalStatus> = {};
     for (const [name, entry] of this.entries) result[name] = entry.status;
+    return result;
+  }
+
+  /** Последние тексты каждого источника: панель «Входы» показывает их как есть. */
+  texts(): Record<string, ExternalTextLine[]> {
+    const result: Record<string, ExternalTextLine[]> = {};
+    for (const [name, entry] of this.entries) result[name] = entry.texts;
     return result;
   }
 
@@ -233,7 +253,7 @@ export class ExternalSourceHost {
     const native = isNativeTransport(source.transport) && !twitch;
     const entry: Entry = {
       source, key, socket: null, status: emptyStatus(), values: {}, holds: {},
-      retry: null, attempts: 0, closed: false, native, log: [],
+      retry: null, attempts: 0, closed: false, native, log: [], counters: {}, texts: [],
     };
     this.entries.set(name, entry);
     if (twitch) {
@@ -352,6 +372,7 @@ export class ExternalSourceHost {
       if (state === "error" || state === "idle") {
         entry.values = {};
         entry.holds = {};
+        entry.counters = {};
       }
       if (state === "error" && payload.message) this.record(entry, "error", payload.message);
       return;
@@ -370,11 +391,34 @@ export class ExternalSourceHost {
       this.record(entry, "warn", `не JSON: ${text.slice(0, 80)}`);
       return;
     }
-    const mapped = applyMapping(parsed, entry.source.mapping);
+    const mapping = entry.source.mapping;
+    const mapped = applyMapping(parsed, mapping);
+    // Счётчики: пакет подошёл по условию — значит, событие произошло.
+    for (const rule of mapping) {
+      if (!rule.count || !ruleMatches(rule, parsed)) continue;
+      entry.counters[rule.input] = (entry.counters[rule.input] ?? 0) + 1;
+      mapped[rule.input] = entry.counters[rule.input];
+    }
+    // Текст (чат): в числа не превращается, поэтому живёт отдельным списком.
+    const textConfig = entry.source.text;
+    if (textConfig) {
+      const body = readPath(parsed, textConfig.path);
+      const line = typeof body === "string" ? body.trim() : "";
+      if (line) {
+        const author = textConfig.authorPath ? readPath(parsed, textConfig.authorPath) : undefined;
+        entry.texts.unshift({
+          at: Date.now(),
+          author: typeof author === "string" && author.trim() ? author.trim().slice(0, 40) : undefined,
+          text: line.slice(0, 200),
+        });
+        if (entry.texts.length > TEXT_LIMIT) entry.texts.length = TEXT_LIMIT;
+      }
+    }
     if (Object.keys(mapped).length === 0) {
       // Пакет разобрался, но ни одно правило не сработало: показываем, что искали.
       const paths = entry.source.mapping.map((rule) => rule.path).join(", ");
-      this.record(entry, "warn", `поля не найдены: ${paths || "таблица отображения пуста"}`);
+      const note = entry.source.text ? " (текст для показа собран)" : "";
+      this.record(entry, "warn", `поля не найдены: ${paths || "таблица отображения пуста"}${note}`);
       return;
     }
     const now = Date.now();
@@ -384,7 +428,7 @@ export class ExternalSourceHost {
       // Явный ноль снимает удержание сразу: так ведут себя и OSC-флаги, и
       // источники, которые присылают и начало, и конец события.
       if (rule?.holdMs && value !== 0) entry.holds[input] = { value, until: now + rule.holdMs };
-      else delete entry.holds[input];
+      else if (!rule?.count) delete entry.holds[input];
       entry.values[input] = value;
     }
     this.record(entry, "packet", describeValues(mapped));
@@ -428,9 +472,11 @@ export class ExternalSourceHost {
         entry.status = { state: "error", message: "соединение закрыто", packets: entry.status.packets };
       }
       this.record(entry, "error", entry.source.reconnect === false ? "соединение закрыто" : "соединение закрыто, переподключаюсь");
-      // Обрыв — нули, а не «залипшее» последнее значение.
+      // Обрыв — нули, а не «залипшее» последнее значение. Счётчики тоже
+      // начинаются заново: иначе после реконнекта число прыгнуло бы.
       entry.values = {};
       entry.holds = {};
+      entry.counters = {};
       if (entry.source.reconnect !== false) this.scheduleReconnect(entry);
     };
   }

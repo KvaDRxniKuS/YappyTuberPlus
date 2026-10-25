@@ -10,6 +10,7 @@ import { visemeEntries } from "../modules/viseme";
 import { enumStates, manualMode, stateIndex } from "../modules/manual";
 import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 import { eventSnippet } from "../engine/scripts";
+import type { ExternalTextLine } from "../modules/sources";
 
 interface InputsPanelProps extends CalibrationApi {
   modules: ModuleInstance[];
@@ -25,6 +26,8 @@ interface InputsPanelProps extends CalibrationApi {
   onOpenModule: (name: string) => void;
   /** Вставка готового блока события в текущий скрипт. */
   onInsertSnippet: (snippet: string) => void;
+  /** Последние тексты источников (чат): показываются как есть, в формулы не идут. */
+  texts?: Record<string, ExternalTextLine[]>;
 }
 
 /**
@@ -82,6 +85,9 @@ export function InputsPanel(props: InputsPanelProps) {
         const live = module.enabled && module.source === "live" && definition.audio === true;
         const auto = definition.kind === "autoblink";
         const pointer = isPointerKind(definition.kind);
+        // Внешний источник приходит готовыми числами: показывать их из ручных
+        // ползунков нельзя — получились бы нули при живом источнике.
+        const external = definition.kind === "external";
         const specs = instanceInputs(module);
         return (
           <section className={`module-group ${module.enabled ? "" : "disabled"}`} key={module.name}>
@@ -97,7 +103,7 @@ export function InputsPanel(props: InputsPanelProps) {
                 <span>{definition.title}</span>
               </button>
               <small>
-                {!module.enabled ? "выключен" : live ? "микрофон" : auto ? "авто" : pointer ? "ввод" : "ручной"}
+                {!module.enabled ? "выключен" : live ? "микрофон" : auto ? "авто" : pointer ? "ввод" : external ? "источник" : "ручной"}
               </small>
               <div className="module-group-tools">
                 <button
@@ -175,7 +181,7 @@ export function InputsPanel(props: InputsPanelProps) {
                 ? undefined
                 : enumMode
                   ? props.inputs.values[key] ?? 0
-                  : pointer
+                  : pointer || external
                     ? props.inputs.values[key] ?? 0
                     : live
                       ? viseme
@@ -197,7 +203,7 @@ export function InputsPanel(props: InputsPanelProps) {
                     step={range.step}
                     mode={enumMode
                       ? spec.name === "value" ? "enum" : "state"
-                      : live || auto || pointer ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
+                      : live || auto || pointer || external ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
                     states={enumMode ? enumStates(module) : undefined}
                     stateIndex={enumMode ? stateIndex(module, props.inputs.values[inputKey(module, "value")]) : undefined}
                     reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}
@@ -233,6 +239,18 @@ export function InputsPanel(props: InputsPanelProps) {
                 </div>
               );
             })}
+            {/* Текст из источника (чат): показываем как есть. В формулы он не
+                попадает — движок входов знает только числа. */}
+            {!isCollapsed(module.name) && (props.texts?.[module.name]?.length ?? 0) > 0 && (
+              <div className="input-texts">
+                <span className="input-texts-title">Последние сообщения</span>
+                {(props.texts?.[module.name] ?? []).slice(0, 4).map((line, index) => (
+                  <div className="input-text-line" key={`${line.at}-${index}`} title={line.text}>
+                    {line.author && <b>{line.author}:</b>} <span>{line.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         );
       })}

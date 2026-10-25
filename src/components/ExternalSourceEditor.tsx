@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { Activity, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
-import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, readExternalSource } from "../modules/external";
-import { TWITCH_EVENTS, TWITCH_VERIFY, eventRule, selectedEvents } from "../modules/twitch";
+import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, externalInputName, readExternalSource } from "../modules/external";
+import {
+  TWITCH_EVENTS, TWITCH_VERIFY, commandRule, eventRule, rewardRule, selectedEvents,
+  twitchCommands, twitchRewards,
+} from "../modules/twitch";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
 
@@ -44,6 +47,9 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   const [check, setCheck] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  // Поля ввода для новых команды и награды: до нажатия Enter они никуда не пишутся.
+  const [commandDraft, setCommandDraft] = useState("");
+  const [rewardDraft, setRewardDraft] = useState("");
   const runProbe = async () => {
     if (!props.onProbe) return;
     setChecking(true);
@@ -85,6 +91,31 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
       index += 1;
     }
     patch({ mapping: [...source.mapping, defaultRule(name, "$.value")] }, "Новый вход источника");
+  };
+
+  /** Команда чата: строка правила заводится сразу, вместе с условием «содержит !имя». */
+  const addCommand = () => {
+    const name = commandDraft.trim().replace(/^!/, "");
+    if (!name) return;
+    const rule = commandRule(name);
+    if (source.mapping.some((item) => item.input === rule.input)) {
+      setCommandDraft("");
+      return;
+    }
+    patch({ mapping: [...source.mapping, rule] }, "Добавлена команда чата");
+    setCommandDraft("");
+  };
+
+  const addReward = () => {
+    const title = rewardDraft.trim();
+    if (!title) return;
+    const rule = rewardRule(title);
+    if (source.mapping.some((item) => item.input === rule.input)) {
+      setRewardDraft("");
+      return;
+    }
+    patch({ mapping: [...source.mapping, rule] }, "Добавлена награда по имени");
+    setRewardDraft("");
   };
 
   return (
@@ -266,6 +297,59 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
                 </label>
               );
             })}
+          </div>
+
+          <div className="twitch-events">
+            <span className="twitch-events-title">Команды чата</span>
+            {twitchCommands(source).map((name) => (
+              <div className="twitch-line" key={`cmd-${name}`}>
+                <code>!{name}</code>
+                <span className="muted">→ {`cmd_${externalInputName(name)}`}</span>
+                <button
+                  className="icon-button"
+                  title="Убрать команду"
+                  onClick={() => patch({ mapping: source.mapping.filter((rule) => rule.input !== `cmd_${externalInputName(name)}`) }, "Команда удалена")}
+                ><Trash2 size={12} /></button>
+              </div>
+            ))}
+            <div className="twitch-add">
+              <input
+                value={commandDraft}
+                spellCheck={false}
+                placeholder="dance"
+                title="Имя команды без «!»: станет входом cmd_dance"
+                onChange={(event) => setCommandDraft(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") addCommand(); }}
+              />
+              <button className="button secondary" onClick={addCommand} disabled={!commandDraft.trim()}><Plus size={12} /></button>
+            </div>
+
+            <span className="twitch-events-title">Награды по именам</span>
+            {twitchRewards(source).map((title) => (
+              <div className="twitch-line" key={`reward-${title}`}>
+                <span>{title}</span>
+                <span className="muted">→ {`redeem_${externalInputName(title)}`}</span>
+                <button
+                  className="icon-button"
+                  title="Убрать награду"
+                  onClick={() => patch({ mapping: source.mapping.filter((rule) => !(rule.input === `redeem_${externalInputName(title)}` && rule.when?.equals === title)) }, "Награда удалена")}
+                ><Trash2 size={12} /></button>
+              </div>
+            ))}
+            <div className="twitch-add">
+              <input
+                value={rewardDraft}
+                spellCheck={false}
+                placeholder="Смена аватара"
+                title="Название награды ровно как в Twitch: станет входом redeem_…"
+                onChange={(event) => setRewardDraft(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") addReward(); }}
+              />
+              <button className="button secondary" onClick={addReward} disabled={!rewardDraft.trim()}><Plus size={12} /></button>
+            </div>
+            <p className="module-hint">
+              Команда даёт флаг на 3 с, награда — на 5 с. Текст сообщения виден во «Входах», в формулы он не идёт.
+            </p>
           </div>
         </div>
       )}

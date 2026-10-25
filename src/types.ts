@@ -140,9 +140,21 @@ export interface ExternalSourceRule {
   /** Событие Twitch, из которого пришла строка: по нему включаются подписки. */
   event?: string;
   /** Условие: правило срабатывает, только если поле в сообщении совпало. */
-  when?: { path: string; equals?: string; contains?: string };
+  when?: { path: string; equals?: string; contains?: string; ignoreCase?: boolean };
   /** Значение, если поля нет или оно не число: «событие пришло» = 1. */
   fallback?: number;
+  /** Счётчик: каждый подходящий пакет увеличивает значение на 1. */
+  count?: boolean;
+}
+
+/**
+ * Текст из источника (чат). В формулы он не попадает — там только числа, —
+ * поэтому отображается в панели «Входы» и в журнале.
+ */
+export interface ExternalTextConfig {
+  path: string;
+  /** Поле с именем автора: показывается рядом с текстом. */
+  authorPath?: string;
 }
 
 /** Внешний источник в настройках экземпляра (`config.source`). */
@@ -161,6 +173,8 @@ export interface ExternalSourceConfig {
   clientId?: string;
   /** Twitch: логин канала, за событиями которого следим. */
   channel?: string;
+  /** Откуда брать текст для показа в панели (чат, награды). */
+  text?: ExternalTextConfig;
 }
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */

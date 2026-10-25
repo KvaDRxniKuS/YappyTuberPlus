@@ -1305,3 +1305,25 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .external-log li.error { color: #e0a49f; }
 .external-log-time { color: #5d6872; }
 .external-log-text { overflow-wrap: anywhere; }
+
+/* ---------- Текст из источника в панели «Входы» ---------- */
+.input-texts {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 4px; padding: 5px 7px; border: 1px dashed var(--border-soft); border-radius: 5px;
+}
+.input-texts-title { color: #5d6872; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.input-text-line { font-size: 11.5px; color: #a7b1ba; overflow-wrap: anywhere; }
+.input-text-line b { color: #cfd9e0; font-weight: 600; }
+
+/* ---------- Команды и награды Twitch ---------- */
+.twitch-line {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center;
+  font-size: 11.5px;
+}
+.twitch-line code { color: #7fb8d8; font: 11px "Cascadia Code", ui-monospace, monospace; }
+.twitch-add { display: flex; gap: 4px; align-items: center; }
+.twitch-add input {
+  min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid #242c34; border-radius: 4px;
+  background: #0f1215; color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace;
+}
+.twitch-add input:focus { outline: none; border-color: #609c8c; }

@@ -9,7 +9,7 @@ import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
-import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
+import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
 import type { ScriptCheck } from "../engine/scripts";
 import { namedTriggers } from "../engine/scripts";
 
@@ -51,6 +51,8 @@ interface RightPanelProps {
   /** Журнал источников и проверка соединения. */
   externalLogs?: Record<string, ExternalLogEntry[]>;
   onProbeSource?: (name: string) => Promise<string>;
+  /** Последние тексты источников (чат): видны во «Входах». */
+  externalTexts?: Record<string, ExternalTextLine[]>;
 }
 
 type Tab = "behaviour" | "object" | "globals" | "inputs" | "modules";
@@ -130,6 +132,7 @@ export function RightPanel(props: RightPanelProps) {
           onModules={props.onModules}
           onInsertSnippet={props.onInsertSnippet}
           onOpenModule={openModule}
+          texts={props.externalTexts}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

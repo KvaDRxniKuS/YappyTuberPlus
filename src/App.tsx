@@ -863,6 +863,7 @@ export default function App() {
           onSignOutSource={moduleInputs.signOutSource}
           externalLogs={moduleInputs.externalLogs}
           onProbeSource={moduleInputs.probeSource}
+          externalTexts={moduleInputs.externalTexts}
         /></div>
       </div>
 

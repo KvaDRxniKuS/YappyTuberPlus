@@ -5,7 +5,7 @@ import { inputRange, moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey, isPointerKind } from "../modules/values";
 import { usePointerInputs } from "./usePointerInputs";
 import { useExternalSource } from "./useExternalSource";
-import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
+import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
 
 export interface ModuleInputsApi {
   /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
@@ -38,6 +38,8 @@ export interface ModuleInputsApi {
   externalLogs: Record<string, ExternalLogEntry[]>;
   /** Проверка источника по кнопке «Проверить». */
   probeSource: (name: string) => Promise<string>;
+  /** Последние тексты источников (чат): показываются во «Входах». */
+  externalTexts: Record<string, ExternalTextLine[]>;
 }
 
 const BLINK_TICK = 33;
@@ -275,6 +277,7 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
     signOutSource: externalInputs.signOut,
     externalLogs: externalInputs.logs,
     probeSource: externalInputs.probe,
+    externalTexts: externalInputs.texts,
   };
 }
 

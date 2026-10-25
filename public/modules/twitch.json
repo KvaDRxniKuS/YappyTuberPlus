@@ -1,10 +1,19 @@
 {
   "id": "twitch",
   "title": "Twitch",
-  "description": "События канала: награды за баллы, bits и фолловы. Вход по коду, токен хранится в профиле окна, а не в пресете.",
+  "description": "События канала: чат, награды за баллы, bits, фолловы. Вход по коду; текст сообщений виден во «Входах», в формулы идут только числа.",
   "kind": "external",
   "audio": false,
   "inputs": [
+    {
+      "name": "chat",
+      "label": "Сообщений",
+      "kind": "level",
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "hint": "Счётчик сообщений чата с запуска"
+    },
     {
       "name": "reward",
       "label": "Награда, баллы",
@@ -30,7 +39,7 @@
       "min": 0,
       "max": 1,
       "step": 1,
-      "hint": "1 на несколько секунд после нового фоллова"
+      "hint": "1 четыре секунды после нового фоллова"
     }
   ],
   "fields": [],
@@ -42,7 +51,28 @@
       "reconnect": true,
       "clientId": "",
       "channel": "",
+      "text": {
+        "path": "$.payload.event.message.text",
+        "authorPath": "$.payload.event.chatter_user_name"
+      },
       "mapping": [
+        {
+          "input": "chat",
+          "path": "$.payload.event.message_id",
+          "label": "Сообщений",
+          "kind": "level",
+          "min": 0,
+          "max": 1000000,
+          "scale": 1,
+          "offset": 0,
+          "holdMs": 0,
+          "count": true,
+          "event": "channel.chat.message",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.chat.message"
+          }
+        },
         {
           "input": "reward",
           "path": "$.payload.event.reward.cost",
