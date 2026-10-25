@@ -60,6 +60,35 @@ export function useRigEngine(
     return () => { active = false; };
   }, []);
 
+  /**
+   * Стоп-кадр считает базовый текст в ядре.
+   *
+   * В паузе кадры не идут, поэтому это единственный «пустой» тик: он снимает
+   * переопределения из событий (`reset_clock`) и пересчитывает формулы
+   * `text = …` по текущим входам. Остальные значения стоп-кадра остаются за
+   * редактором: нейтральную позу и видимость с последнего живого кадра собрал он.
+   */
+  const requestStopFrame = useCallback(async (handle: number, client: EngineBackend) => {
+    const inputs = inputsRef.current;
+    const response = await client.call({
+      op: "tick",
+      handle,
+      now: (typeof performance === "undefined" ? Date.now() : performance.now()) / 1000,
+      inputs: { values: inputs.values, signals: inputs.signals ?? {} },
+      paused: true,
+      resetClock: true,
+    }).catch(() => null);
+    if (!response?.ok || !response.frame) return;
+    const current = frameRef.current;
+    if (!current) return;
+    const stopped: RigFrame = { ...current, texts: response.frame.texts };
+    frameRef.current = stopped;
+    setSnapshot(stopped);
+    frameSinkRef?.current?.(stopped);
+    // Окна рисуют по сигналу: новый кадр — новая отрисовка.
+    frameProduced();
+  }, [frameSinkRef, inputsRef]);
+
   useEffect(() => {
     if (!backend) return;
     let active = true;
@@ -101,6 +130,9 @@ export function useRigEngine(
         void backend.call({ op: "dispose", handle: previous });
       }
       setStatus("ready");
+      // Движок пересоздали в паузе (например, сразу после «Стопа») — просим
+      // стоп-кадр, чтобы текст показал базу из скрипта, а не прошлое событие.
+      if (pausedRef.current) void requestStopFrame(response.handle, backend);
       // Нативное приложение: кадры считает Rust, поэтому поток не встаёт,
       // когда окно редактора свёрнуто. Браузер остаётся на requestAnimationFrame.
       if (backend.native && active) {

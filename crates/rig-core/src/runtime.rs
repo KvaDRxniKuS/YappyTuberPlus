@@ -765,13 +765,26 @@ impl Rig {
         step_dt: Option<f64>,
     ) -> Frame {
         self.now = if now.is_finite() { now } else { self.now };
+        // «Стоп» и перезапуск обнуляют события и переопределения текста ещё до
+        // стоп-кадра: следующее нажатие снова первое, а текст — базовый.
         if reset_clock {
             self.last_now = Some(self.now);
+            self.event_state.clear();
+            self.texts.clear();
+            self.started = false;
         }
         if paused && step_dt.is_none() {
             self.last_now = Some(self.now);
+            self.inputs = inputs;
+            self.cache.clear();
+            self.visiting.clear();
+            self.diagnostics.clear();
             let mut frame = self.previous.clone();
             frame.dt = 0.0;
+            // Стоп-кадр считает базу текста: `text = "привет"` видно сразу после
+            // «Стопа», а не только после «Продолжить». Переопределения из событий
+            // здесь уже сняты (reset_clock), поэтому в кадре именно база.
+            frame.texts = self.texts_now();
             return frame;
         }
 
@@ -795,13 +808,7 @@ impl Rig {
         self.visiting.clear();
         self.cycle_nodes.clear();
         self.diagnostics.clear();
-        // Стоп и перезапуск обнуляют события: следующее нажатие снова первое.
-        // Текст, заданный в событии, тоже возвращается к базовому значению.
-        if reset_clock {
-            self.event_state.clear();
-            self.texts.clear();
-            self.started = false;
-        }
+        // Переопределения и события уже обнулены выше, до стоп-кадра.
         self.fire_events();
 
         // Записи чужим объектам идут сразу после событий: для всех остальных
@@ -838,27 +845,9 @@ impl Rig {
 
         // База текста считается каждый кадр: `text = text(mic.db)` — обычная
         // формула, поэтому строка меняется вместе со звуком, без событий.
-        let text_base = self.text_base.clone();
-        let mut base_texts: BTreeMap<String, String> = BTreeMap::new();
-        for write in text_base {
-            let context = match &write.owner {
-                Some(id) => NodeKey::Param(id.clone(), Param::X),
-                None => NodeKey::Global(String::new()),
-            };
-            let value = self.text_value(&write.expr, &context);
-            if value.is_empty() {
-                base_texts.remove(&write.target);
-            } else {
-                base_texts.insert(write.target, value);
-            }
-        }
-        self.base_texts = base_texts;
         // Переопределение из события важнее базы: так `text = "пока"` в блоке
         // держится до остановки, а потом снова виден базовый текст.
-        let mut texts = self.base_texts.clone();
-        for (id, value) in &self.texts {
-            texts.insert(id.clone(), value.clone());
-        }
+        let texts = self.texts_now();
 
         let mut frame = Frame {
             seq: self.seq,
@@ -1593,6 +1582,38 @@ impl Rig {
             .or_else(|| self.base_texts.get(id))
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Пересчитывает базу текста из скриптов объектов (`text = …`).
+    ///
+    /// База — формула: считается и в обычном кадре, и в стоп-кадре, поэтому
+    /// после «Стопа» видно `text = "привет"`, а не текст из последнего события.
+    fn refresh_base_texts(&mut self) {
+        let writes = self.text_base.clone();
+        let mut base_texts: BTreeMap<String, String> = BTreeMap::new();
+        for write in writes {
+            let context = match &write.owner {
+                Some(id) => NodeKey::Param(id.clone(), Param::X),
+                None => NodeKey::Global(String::new()),
+            };
+            let value = self.text_value(&write.expr, &context);
+            if value.is_empty() {
+                base_texts.remove(&write.target);
+            } else {
+                base_texts.insert(write.target, value);
+            }
+        }
+        self.base_texts = base_texts;
+    }
+
+    /// Итоговый текст кадра: база из скрипта плюс переопределение из событий.
+    fn texts_now(&mut self) -> BTreeMap<String, String> {
+        self.refresh_base_texts();
+        let mut texts = self.base_texts.clone();
+        for (id, value) in &self.texts {
+            texts.insert(id.clone(), value.clone());
+        }
+        texts
     }
 
     /// Значение для `text`: строка как есть, число — в текст, остальное — диагностика.
@@ -2428,6 +2449,15 @@ mod tests {
         // reset_clock — это «Стоп»: переопределение снимается.
         let stopped = rig.tick(0.2, louder, false, true, None);
         assert_eq!(stopped.texts["label"], "привет");
+
+        // Стоп-кадр (пауза + reset_clock) тоже считает базу: после «Стопа»
+        // видно `text = "привет"`, а не текст из события и не шаблон.
+        let mut paused_inputs = InputValues::default();
+        paused_inputs.values.insert("mic.db".into(), 0.1);
+        rig.tick(0.3, paused_inputs.clone(), false, false, None);
+        let stop_frame = rig.tick(0.4, paused_inputs, true, true, None);
+        assert_eq!(stop_frame.texts["label"], "привет");
+        assert_eq!(stop_frame.dt, 0.0);
     }
 
     #[test]
