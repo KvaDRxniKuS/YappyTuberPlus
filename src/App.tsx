@@ -19,7 +19,7 @@ import {
 } from "./engine/preset";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
-import { propagateBase, reorderNeighbor, reorderObjects } from "./engine/structure";
+import { propagateBase, repivot, reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { appendSnippet } from "./engine/scripts";
 import { buildChain, type ChainSettings } from "./engine/chain";
@@ -409,18 +409,17 @@ export default function App() {
 
   /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
   /**
-   * Пивот группы — это точка вращения: база переезжает туда, дети остаются на
-   * месте (их offset считается от базы родителя). Поэтому здесь не нужен
-   * propagateBase — он бы утащил детей за базой.
+   * Пивот — это база объекта, поэтому здесь не `updateObject`: он тянет детей
+   * через `propagateBase`, а при перестановке пивота картинка и дети обязаны
+   * остаться на месте. `repivot` сам решает, кого сдвинуть.
    */
-  const pivotGroup = useCallback((id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => {
+  const pivotObject = useCallback((id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => {
+    const frame = engine.snapshot;
     commit((current) => ({
       ...current,
-      objects: current.objects.map((object) => (object.id === id
-        ? { ...object, base: { ...object.base, x: base.x, y: base.y }, pivot }
-        : object)),
-    }), { label: "Пивот группы" });
-  }, [commit]);
+      objects: repivot(current.objects, id, base, pivot, (objectId) => frame?.objects[objectId] ?? null),
+    }), { label: "Пивот" });
+  }, [commit, engine.snapshot]);
 
   const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
     const current = presetRef.current;
@@ -795,11 +794,7 @@ export default function App() {
                 } : object)),
               }));
             }}
-            onPivot={(id, pivot) => {
-              const object = preset.objects.find((item) => item.id === id);
-              if (object) updateObject({ ...object, pivot });
-            }}
-            onGroupPivot={pivotGroup}
+            onPivot={pivotObject}
           />
           <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
           <Inspector
@@ -811,7 +806,7 @@ export default function App() {
             onSelect={selectOnly}
             onToggleSelect={toggleSelection}
             onBases={updateSelectedBases}
-            onGroupPivot={pivotGroup}
+            onPivot={pivotObject}
             onOffset={offsetSelected}
             onLayer={setSelectedLayer}
             onVisible={setSelectedVisible}

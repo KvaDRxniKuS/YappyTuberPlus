@@ -1,4 +1,5 @@
 import type { RigObject, Vec2 } from "../types";
+import { pivotBaseShift } from "./structure";
 
 /**
  * Пружинная цепочка: готовый «хвост» из выделенных объектов.
@@ -66,16 +67,10 @@ export function chainScript(link: number, settings: ChainSettings): string {
  * базу сдвигаем ровно на столько, чтобы картинка осталась на месте.
  */
 export function hingeBase(object: RigObject, pivot: Vec2 = CHAIN_PIVOT): { base: RigObject["base"]; pivot: Vec2 } {
-  const scaleX = object.base.sizeX;
-  const scaleY = object.base.sizeY;
-  const localX = (pivot.x - object.pivot.x) * object.width * scaleX;
-  const localY = (pivot.y - object.pivot.y) * object.height * scaleY;
-  const radians = (object.base.rotation * Math.PI) / 180;
-  const dx = localX * Math.cos(radians) - localY * Math.sin(radians);
-  const dy = localX * Math.sin(radians) + localY * Math.cos(radians);
+  const shift = pivotBaseShift(object, null, pivot);
   return {
     pivot,
-    base: { ...object.base, x: object.base.x + dx, y: object.base.y + dy },
+    base: { ...object.base, x: object.base.x + shift.x, y: object.base.y + shift.y },
   };
 }
 

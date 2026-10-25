@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, Layers, Link2, Rotat
 import type { BasePose, RigFrame, RigObject } from "../types";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
+import { pivotBaseShift } from "../engine/structure";
 
 interface InspectorProps {
   object: RigObject | null;
@@ -13,8 +14,8 @@ interface InspectorProps {
   onSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
   onBases: (patch: Partial<BasePose>, coalesce?: string) => void;
-  /** Пивот группы — это точка вращения: база переезжает, дети остаются на месте. */
-  onGroupPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
+  /** Пивот — это база объекта: она переезжает, картинка и дети остаются на месте. */
+  onPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
   onOffset: (delta: { x?: number; y?: number }) => void;
   onLayer: (layer: number) => void;
   onVisible: (visible: number) => void;
@@ -159,10 +160,11 @@ export function Inspector(props: InspectorProps) {
   const dynamic = frame?.objects[object.id];
 
   /**
-   * Пивот группы — это точка вращения, а не UV картинки: у группы настоящий
-   * пивот — `base.x/base.y`, а доля 0..1 считается от её габаритов и показывается
-   * в полях. Ввод доли переводит её в точку внутри габаритов и переставляет базу;
-   * дети при этом стоят на месте, потому что их offset считается от базы родителя.
+   * Пивот — это `base.x/base.y` у любого объекта, поэтому ввод в поля двигает
+   * базу ровно настолько, чтобы картинка не дёрнулась: спрайт — на
+   * `M · Δpivot · размер` (M — его матрица поворота/скоса/масштаба), группа — в
+   * точку, которую задаёт доля 0..1 в её габаритах. Дети переставляются
+   * отдельно (`repivot`), поэтому их картинка тоже остаётся на месте.
    */
   const groupBox = object.kind === "group" ? groupBounds({ objects }, object.id) : null;
   const groupRect = ((): { left: number; top: number; width: number; height: number } | null => {
@@ -182,11 +184,18 @@ export function Inspector(props: InspectorProps) {
   const shownPivot = object.kind === "group" ? groupFraction : object.pivot;
 
   const commitPivot = (next: { x: number; y: number }) => {
-    if (object.kind !== "group" || !groupRect || groupRect.width <= 0 || groupRect.height <= 0) {
-      onChange({ ...object, pivot: next });
+    if (object.kind === "sprite") {
+      // Картинка спрайта рисуется со сдвигом −pivot × размер, поэтому база
+      // уезжает на M · Δpivot · размер: пивот переезжает, картинка стоит.
+      const shift = pivotBaseShift(object, dynamic, next);
+      props.onPivot(object.id, { x: object.base.x + shift.x, y: object.base.y + shift.y }, next);
       return;
     }
-    props.onGroupPivot(object.id, {
+    if (!groupRect || groupRect.width <= 0 || groupRect.height <= 0) {
+      props.onPivot(object.id, { x: object.base.x, y: object.base.y }, next);
+      return;
+    }
+    props.onPivot(object.id, {
       x: groupRect.left + next.x * groupRect.width,
       y: groupRect.top + next.y * groupRect.height,
     }, next);

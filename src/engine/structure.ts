@@ -184,6 +184,144 @@ export function reorderNeighbor(
   return null;
 }
 
+export interface PivotPose {
+  x: number;
+  y: number;
+}
+
+/** Скриптовые значения объекта из кадра: поворот и масштаб, которые видит `follow`. */
+export type MotionOf = (objectId: string) => { rotation: number; sizeX: number; sizeY: number } | null;
+
+/** Скрипт опирается на родителя: `follow(offset, parent)` — значит база родителя его двигает. */
+function followsParent(script: string): boolean {
+  return /\bfollow\s*\(|\boffset\b/.test(script);
+}
+
+/** Значения кадра, которые нужны для сдвига пивота. */
+export interface PivotValues {
+  rotation?: number;
+  sizeX?: number;
+  sizeY?: number;
+  skewX?: number;
+  skewY?: number;
+}
+
+/**
+ * Сдвиг базы, при котором картинка не дёргается от переезда пивота.
+ *
+ * Спрайт рисуется от `−pivot × размер`, то есть пивот — это и есть его
+ * `base.x/base.y`: чтобы картинка осталась на месте, база двигается на
+ * `M · Δpivot · размер`, где `M = R · Skew · S` — линейная часть матрицы
+ * отрисовки (то же самое, что строит `objectMatrix`).
+ */
+export function pivotBaseShift(object: RigObject, values: PivotValues | null | undefined, next: PivotPose): PivotPose {
+  const rotation = object.base.rotation + (values?.rotation ?? 0);
+  const skewX = Math.tan(((object.base.skewX + (values?.skewX ?? 0)) * Math.PI) / 180);
+  const skewY = Math.tan(((object.base.skewY + (values?.skewY ?? 0)) * Math.PI) / 180);
+  const scaleX = object.base.sizeX * (values?.sizeX ?? 1);
+  const scaleY = object.base.sizeY * (values?.sizeY ?? 1);
+  const radians = (rotation * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  // R · Skew, дальше умножение на масштаб по осям.
+  const a = cos - sin * skewY;
+  const b = sin + cos * skewY;
+  const c = cos * skewX - sin;
+  const d = sin * skewX + cos;
+  const dx = (next.x - object.pivot.x) * object.width;
+  const dy = (next.y - object.pivot.y) * object.height;
+  return {
+    x: (a * dx * scaleX + c * dy * scaleY),
+    y: (b * dx * scaleX + d * dy * scaleY),
+  };
+}
+
+/**
+ * Перестановка пивота без «дёрганья» картинки.
+ *
+ * Пивот объекта — это его `base.x/base.y`, поэтому новая точка пивота просто
+ * записывается в базу, а картинка при этом не едет: спрайт рисуется со сдвигом
+ * `−pivot × размер`, и переезд базы ровно компенсирует переезд пивота.
+ *
+ * Дети зависят от родителя через `follow(offset, parent)`: мир ребёнка —
+ * это `его base + его значение`, а значение складывается из значения родителя
+ * и повёрнутого смещения. Поэтому, сдвинув базу родителя на `d`, нужно
+ * компенсировать и сдвиг, и изменение значения: для ребёнка
+ * `S = M⁻¹·((M − I)·S_родителя − V_родителя)`, после чего `V = −S`. Так по всей
+ * цепочке, поэтому и внуки, и хвосты остаются на месте. Дети, которые родителя
+ * не читают (нет `follow`/`offset`), не трогаются: их мир от его базы не зависит.
+ */
+export function repivot(
+  objects: RigObject[],
+  id: string,
+  base: PivotPose,
+  pivot: PivotPose,
+  motion?: MotionOf,
+): RigObject[] {
+  const target = objects.find((object) => object.id === id);
+  if (!target) return objects;
+  const shift = { x: base.x - target.base.x, y: base.y - target.base.y };
+
+  const pose = (objectId: string) => motion?.(objectId) ?? { rotation: 0, sizeX: 1, sizeY: 1 };
+  // M — то же, что считает ядро в `follow`: сначала масштаб, потом поворот.
+  const apply = (objectId: string, vector: PivotPose): PivotPose => {
+    const { rotation, sizeX, sizeY } = pose(objectId);
+    const radians = (rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return {
+      x: cos * vector.x * sizeX - sin * vector.y * sizeY,
+      y: sin * vector.x * sizeX + cos * vector.y * sizeY,
+    };
+  };
+  const unapply = (objectId: string, vector: PivotPose): PivotPose => {
+    const { rotation, sizeX, sizeY } = pose(objectId);
+    const radians = (rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return {
+      x: (cos * vector.x + sin * vector.y) / (sizeX === 0 ? 1 : sizeX),
+      y: (-sin * vector.x + cos * vector.y) / (sizeY === 0 ? 1 : sizeY),
+    };
+  };
+
+  const shifts = new Map<string, PivotPose>();
+  // Само значение пивота тоже могло поехать — если он читает своего родителя.
+  const parent = target.parentId ? objects.find((object) => object.id === target.parentId) : null;
+  const firstValue = parent && followsParent(target.script)
+    ? (() => {
+      const moved = apply(parent.id, shift);
+      return { x: moved.x - shift.x, y: moved.y - shift.y };
+    })()
+    : { x: 0, y: 0 };
+
+  const queue: { objectId: string; shift: PivotPose; value: PivotPose }[] = [
+    { objectId: id, shift, value: firstValue },
+  ];
+  while (queue.length) {
+    const current = queue.shift() as { objectId: string; shift: PivotPose; value: PivotPose };
+    const moved = apply(current.objectId, current.shift);
+    const local = {
+      x: moved.x - current.shift.x - current.value.x,
+      y: moved.y - current.shift.y - current.value.y,
+    };
+    for (const child of objects) {
+      if (child.parentId !== current.objectId || !followsParent(child.script)) continue;
+      const childShift = unapply(current.objectId, local);
+      shifts.set(child.id, childShift);
+      queue.push({ objectId: child.id, shift: childShift, value: { x: -childShift.x, y: -childShift.y } });
+    }
+  }
+
+  return objects.map((object) => {
+    if (object.id === id) {
+      return { ...object, base: { ...object.base, x: base.x, y: base.y }, pivot };
+    }
+    const fix = shifts.get(object.id);
+    return fix ? { ...object, base: { ...object.base, x: object.base.x + fix.x, y: object.base.y + fix.y } } : object;
+  });
+}
+
 /**
  * Дочерние объекты едут за базовой позой родителя.
  *

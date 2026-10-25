@@ -41,9 +41,11 @@ interface SceneProps {
   onSelectMany: (ids: string[], mode: "replace" | "add") => void;
   onDragStart: () => void;
   onDragObjects: (ids: string[], initial: Record<string, BasePose>, delta: { x: number; y: number }) => void;
-  onPivot: (id: string, pivot: { x: number; y: number }) => void;
-  /** Пивот группы: точка вращения переезжает под курсор, дети остаются на месте. */
-  onGroupPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
+  /**
+   * Пивот ставится кликом в его новую точку: `base` — она же в мировых
+   * координатах (пивот объекта и есть его `base`), картинка при этом не едет.
+   */
+  onPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
@@ -379,38 +381,37 @@ export function Scene(props: SceneProps) {
             const point = scenePoint(event);
             if (current.tool === "pivot" && current.primaryId) {
               const object = current.preset.objects.find((item) => item.id === current.primaryId);
-              if (object?.kind === "sprite") {
+              // Пивот объекта — это его база: точка переезжает под курсор, а
+              // картинка остаётся на месте (смещение базы компенсирует сдвиг
+              // пивота), дети спрайта и группы тоже не дёргаются.
+              if (object) {
                 const values = current.frameRef.current?.objects[object.id] || staticValues(object);
-                const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
-                current.onPivot(object.id, {
-                  x: (local.x + object.pivot.x * object.width) / object.width,
-                  y: (local.y + object.pivot.y * object.height) / object.height,
-                });
-                return;
-              }
-              // У группы картинки нет: её «картинка» — дети. Пивот группы — это
-              // точка вращения, поэтому база переезжает под курсор, а дети
-              // остаются на месте (их offset пересчитывается сам). В pivot
-              // пишется UV этой точки в габаритах группы — по нему физика
-              // понимает «тяжёлую» сторону.
-              if (object?.kind === "group") {
-                const bounds = groupBounds(current.preset, object.id);
-                if (bounds) {
-                  const xs = bounds.map((corner) => corner.x);
-                  const ys = bounds.map((corner) => corner.y);
-                  const width = Math.max(...xs) - Math.min(...xs);
-                  const height = Math.max(...ys) - Math.min(...ys);
-                  const unit = (value: number) => Math.min(1, Math.max(0, value));
-                  current.onGroupPivot(
-                    object.id,
-                    { x: point.x, y: point.y },
-                    {
+                const pivot = object.kind === "sprite"
+                  ? (() => {
+                    const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
+                    return {
+                      x: (local.x + object.pivot.x * object.width) / object.width,
+                      y: (local.y + object.pivot.y * object.height) / object.height,
+                    };
+                  })()
+                  : (() => {
+                    // У группы картинки нет, её «картинка» — дети. В pivot
+                    // пишется UV точки в габаритах группы — по нему физика
+                    // понимает «тяжёлую» сторону.
+                    const bounds = groupBounds(current.preset, object.id);
+                    if (!bounds) return object.pivot;
+                    const xs = bounds.map((corner) => corner.x);
+                    const ys = bounds.map((corner) => corner.y);
+                    const width = Math.max(...xs) - Math.min(...xs);
+                    const height = Math.max(...ys) - Math.min(...ys);
+                    const unit = (value: number) => Math.min(1, Math.max(0, value));
+                    return {
                       x: width > 0 ? unit((point.x - Math.min(...xs)) / width) : object.pivot.x,
                       y: height > 0 ? unit((point.y - Math.min(...ys)) / height) : object.pivot.y,
-                    },
-                  );
-                  return;
-                }
+                    };
+                  })();
+                current.onPivot(object.id, { x: point.x, y: point.y }, pivot);
+                return;
               }
             }
             if (current.tool === "marquee" || current.tool === "lasso") {
