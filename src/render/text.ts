@@ -75,7 +75,7 @@ export function resolveTemplate(template: string, channel?: TextChannel): string
   });
 }
 
-/** Итоговый текст объекта: команда `text(…)` важнее шаблона. */
+/** Итоговый текст объекта: значение из скрипта (`text = …`) важнее шаблона. */
 export function textContent(
   object: RigObject,
   frame: RigFrame | null,

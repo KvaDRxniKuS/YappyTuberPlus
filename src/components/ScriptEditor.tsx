@@ -19,8 +19,10 @@ const language = StreamLanguage.define({
     if (stream.sol()) state.inEvent = false;
     if (stream.eatSpace()) return null;
     if (stream.match(/^\/\/.*/)) return "comment";
+    // Строка — значение: `text = "привет"`.
+    if (stream.match(/^"(?:[^"\\]|\\.)*"/)) return "string";
     if (stream.match(/^(?:and|or|not|inherit|parent|offset|on|trigger)\b/)) return "keyword";
-    if (stream.match(/^(?:time|dt|canvasWidth|canvasHeight|width|height|pi|e|signal|start)\b/)) return "variableName.special";
+    if (stream.match(/^(?:time|dt|canvasWidth|canvasHeight|width|height|pi|e|signal|start|text)\b/)) return "variableName.special";
     if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*/)) {
       const word = stream.current();
       // Внутри заголовка события модуль и вход — обычные свойства, а тип
@@ -50,6 +52,7 @@ const language = StreamLanguage.define({
 const highlight = HighlightStyle.define([
   { tag: tags.comment, color: "#737b86", fontStyle: "italic" },
   { tag: tags.number, color: "#d7b989" },
+  { tag: tags.string, color: "#b6cf9a" },
   { tag: tags.keyword, color: "#91b9d5" },
   { tag: tags.function(tags.variableName), color: "#91d4c3" },
   { tag: tags.special(tags.variableName), color: "#c2a9df" },
@@ -60,6 +63,10 @@ const highlight = HighlightStyle.define([
 ]);
 
 const PARAMETERS = ["x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer"];
+// `text` — строковый параметр текстового объекта: база в скрипте объекта
+// (`text = "привет"`), переопределение — в блоке события. Отдельно от чисел,
+// потому что кадр отдаёт его строкой, а не числом.
+const TEXT_PARAMETER = "text";
 // Входы приходят из модулей и подставляются в автодополнение динамически.
 const INPUTS = ["time", "dt", "signal", "parent", "inherit", "offset", "width", "height", "canvasWidth", "canvasHeight", "state"];
 // Типы событий: `on мышь.вход.down`. `hold`/`relax` ждут время в секундах.
@@ -72,13 +79,14 @@ const EVENT_CHOICES = [
 ];
 
 // Порядок групп в списке функций под редактором.
-const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" | "media"; title: string }> = [
+const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" | "media" | "text"; title: string }> = [
   { id: "math", title: "математика" },
   { id: "vector", title: "векторы" },
   { id: "physics", title: "физика" },
   { id: "random", title: "случайность" },
   { id: "compare", title: "сравнения" },
-  { id: "media", title: "медиа и текст" },
+  { id: "media", title: "медиа" },
+  { id: "text", title: "текст" },
 ];
 
 /** Подчёркивание места ошибки: диапазон приходит из ядра вместе с сообщением. */
@@ -246,12 +254,16 @@ export function ScriptEditor({
         return {
           from: start,
           validFor: /^\w*$/,
-          options: PARAMETERS.map((label) => ({ label, type: "property", detail: `параметр ${member[1]}` })),
+          options: [...PARAMETERS, TEXT_PARAMETER].map((label) => ({
+            label,
+            type: "property",
+            detail: label === TEXT_PARAMETER ? `текст объекта ${member[1]}` : `параметр ${member[1]}`,
+          })),
         };
       }
       const options = [...new Set([
-        ...ids, ...globalNames, ...PARAMETERS, ...INPUTS, ...inputNames, ...triggerNames, ...constantNames,
-        ...FUNCTION_NAMES,
+        ...ids, ...globalNames, ...PARAMETERS, TEXT_PARAMETER, ...INPUTS, ...inputNames,
+        ...triggerNames, ...constantNames, ...FUNCTION_NAMES,
       ])].map((label) => {
         if (SIGNATURES[label]) {
           return {
@@ -384,6 +396,7 @@ export function ScriptEditor({
             <span><b>trigger kick = mouse.left.down</b>, потом <b>{"on kick { … }"}</b></span>
             <span><b>on start</b> — первый кадр · <b>hold(0.5)</b> кадром позже фронта</span>
             <span>команды — строкой в блоке: <b>{"on start { play() }"}</b>, <b>{"seek(2.5)"}</b>, <b>{"play(\"дождь\")"}</b></span>
+            <span>текст — переменная объекта: <b>{'text = "привет"'}</b>, в событии переопределяет до стопа; число в текст — <b>{"text(mic.db)"}</b>, склейка — <b>{'text = "db " + text(mic.db)'}</b></span>
           </div>
           <div className="function-chips">
             {GROUPS.map((group) => (

@@ -15,7 +15,7 @@ export interface FunctionSignature {
   variadic?: boolean;
   /** Что функция делает — одной строкой. */
   summary: string;
-  group: "math" | "vector" | "physics" | "random" | "compare" | "media";
+  group: "math" | "vector" | "physics" | "random" | "compare" | "media" | "text";
 }
 
 export const SIGNATURES: Record<string, FunctionSignature> = {
@@ -90,7 +90,14 @@ export const SIGNATURES: Record<string, FunctionSignature> = {
   seek: { params: ["объект", "секунды"], optional: ["объект"], summary: "перемотать звук или видео на время", group: "media" },
   rate: { params: ["объект", "скорость"], optional: ["объект"], summary: "скорость воспроизведения, 0.1…4", group: "media" },
   volume: { params: ["объект", "громкость"], optional: ["объект"], summary: "громкость 0…1 на время", group: "media" },
-  text: { params: ["текст"], optional: ["объект"], summary: "показать текст в текстовом объекте", group: "media" },
+
+  // Текст: значение-строка. `text = …` — переменная объекта, а `text(x)` ещё и
+  // превращает число в строку: `text = "db " + text(mic.db)`.
+  text: { params: ["значение", "объект"], optional: ["объект"], summary: "значение в текст; как команда — задать текст объекта", group: "text" },
+  upper: { params: ["текст"], summary: "все буквы заглавные", group: "text" },
+  lower: { params: ["текст"], summary: "все буквы строчные", group: "text" },
+  len: { params: ["текст"], summary: "сколько символов в тексте", group: "text" },
+  fixed: { params: ["число", "знаки"], summary: "число текстом с нужным числом знаков после запятой", group: "text" },
 };
 
 export const FUNCTION_NAMES = Object.keys(SIGNATURES);

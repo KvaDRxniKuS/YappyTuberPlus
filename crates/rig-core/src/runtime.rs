@@ -13,6 +13,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 enum Value {
     Number(f64),
+    /// Строка: литерал, текст объекта или результат строковой функции.
+    /// Числовые параметры её не принимают — она живёт в `text`.
+    Text(String),
     Vector(Vec2),
     Object(String),
     Signals,
@@ -27,6 +30,19 @@ enum CompiledTrigger {
     Input { source: String, kind: EventKind },
 }
 
+/// Запись текста: `text = …` в своём скрипте или `label.text = …` в чужом.
+///
+/// Текст не число, поэтому он не попадает в общий кэш параметров: у него своя
+/// пара «база + переопределение» (`text_base` и `texts`).
+#[derive(Debug, Clone)]
+struct TextWrite {
+    /// Чей скрипт пишет: в этом контексте считаются имена внутри выражения.
+    owner: Option<String>,
+    /// Кому достаётся текст.
+    target: String,
+    expr: Arc<Expr>,
+}
+
 /// Блок события, готовый к исполнению: условие, владелец и цели тела.
 #[derive(Debug, Clone)]
 struct CompiledEvent {
@@ -35,6 +51,8 @@ struct CompiledEvent {
     owner: Option<String>,
     /// Что присвоить при срабатывании: узел и выражение.
     body: Vec<(NodeKey, Arc<Expr>)>,
+    /// Записи `text = …` из тела: переопределяют текст до остановки.
+    text_body: Vec<TextWrite>,
     /// Команды (`play()`, `seek(…)`, `text(…)`): выполняются после присваиваний.
     actions: Vec<Arc<Expr>>,
 }
@@ -99,37 +117,58 @@ fn check_action(
         ));
         return false;
     }
-    // Адресат команды. У медиа-команд объект задаётся строкой: `play("дождь")`.
-    // У `text(…)` строка — это содержимое, поэтому адресатом может быть только
-    // второй аргумент (`text("id", "привет")`), а без него — владелец блока.
+    // У `text(…)` строка — это не адресат, а содержимое. Поэтому адресатом
+    // служит владелец блока, а id объекта пишется первым аргументом:
+    // `text("label", "привет")`. Аргумент-содержимое — любое выражение:
+    // `text(mic.db)` покажет число, `text("x" + "y")` — склейку.
     if name == "text" {
         if args.is_empty() || args.len() > 2 {
             diagnostics.insert(format!(
-                "{}: text ждёт текст: text(\"привет\") или text(\"id\", \"привет\")",
+                "{}: text ждёт текст: text(\"привет\"), text(mic.db) или text(\"id\", \"привет\")",
                 label
             ));
             return false;
         }
-        if !matches!(args.first(), Some(Expr::Text(_))) {
+        let target = if args.len() == 2 {
+            match &args[0] {
+                Expr::Text(id) => id.clone(),
+                _ => {
+                    diagnostics.insert(format!(
+                        "{}: первым аргументом text(…) идёт id объекта строкой",
+                        label
+                    ));
+                    return false;
+                }
+            }
+        } else {
+            match owner {
+                Some(id) => id.to_string(),
+                None => {
+                    diagnostics.insert(
+                        "глобальные: команде 'text' нужен объект: text(\"id_объекта\", …)".into(),
+                    );
+                    return false;
+                }
+            }
+        };
+        let Some(index) = object_indices.get(&target).copied() else {
             diagnostics.insert(format!(
-                "{}: text(…) принимает строку в кавычках: text(\"привет\")",
-                label
+                "{}: команда 'text' ссылается на неизвестный объект '{}'",
+                label, target
             ));
             return false;
-        }
-        if args.len() == 2 && !matches!(args.get(1), Some(Expr::Text(_))) {
+        };
+        if preset.objects[index].kind != ObjectKind::Text {
             diagnostics.insert(format!(
-                "{}: второй аргумент text(…) — тоже строка: text(\"id\", \"привет\")",
+                "{}: text(…) пишет только в текстовый объект",
                 label
             ));
             return false;
         }
+        return true;
     }
-    let explicit = if name == "text" {
-        args.len() >= 2
-    } else {
-        action_object(call).is_some()
-    };
+    // Медиа-команды адресуют объект строкой: `play("дождь")`, `seek("дождь", 2)`.
+    let explicit = action_object(call).is_some();
     let target = if explicit {
         match &args[0] {
             Expr::Text(id) => {
@@ -159,16 +198,6 @@ fn check_action(
     let kind = object_indices
         .get(target)
         .map(|index| preset.objects[*index].kind);
-    if name == "text" {
-        if kind != Some(ObjectKind::Text) {
-            diagnostics.insert(format!(
-                "{}: text(…) пишет только в текстовый объект",
-                label
-            ));
-            return false;
-        }
-        return true;
-    }
     if kind != Some(ObjectKind::Media) {
         diagnostics.insert(format!(
             "{}: '{}' управляет только медиа-объектом",
@@ -249,7 +278,13 @@ pub struct Rig {
     media: BTreeMap<String, MediaCue>,
     /// Счётчик команд: по нему редактор понимает, что команда новая.
     media_seq: u64,
-    /// Текст, заданный командой `text("…")`: заменяет шаблон объекта.
+    /// Базовый текст из скрипта: `text = "привет"` на верхнем уровне объекта.
+    /// Считается каждый кадр, поэтому годится и формула: `text = text(mic.db)`.
+    text_base: Vec<TextWrite>,
+    /// Значение базового текста в этом кадре: его видят редактор и оверлей.
+    base_texts: BTreeMap<String, String>,
+    /// Переопределение из событий (`text = "пока"` в блоке): живёт до остановки,
+    /// после неё снова виден базовый текст.
     texts: BTreeMap<String, String>,
     /// Первый кадр после запуска/остановки: для `on start`.
     started: bool,
@@ -320,6 +355,8 @@ impl Rig {
         let mut global_names = Vec::new();
         let mut events: Vec<CompiledEvent> = Vec::new();
         let mut writes: Vec<(NodeKey, Arc<Expr>)> = Vec::new();
+        // Текстовые записи: база считается каждый кадр, тело события — при срабатывании.
+        let mut text_base: Vec<TextWrite> = Vec::new();
         let mut persistent_globals: HashSet<String> = HashSet::new();
         let mut compile_diagnostics: BTreeSet<String> = BTreeSet::new();
         // Именованные события объявляются только в глобальном скрипте: так у них
@@ -334,10 +371,32 @@ impl Rig {
                 for (target, expr) in &script.assignments {
                     match target {
                         AssignTarget::Local(name) => {
+                            // У глобального скрипта нет своего объекта, поэтому
+                            // `text = …` здесь — не текст, а переменная с таким именем.
+                            if name == "text" {
+                                compile_diagnostics.insert(
+                                    "глобальные: текст задаётся у объекта — label.text = \"…\""
+                                        .into(),
+                                );
+                                continue;
+                            }
                             global_names.push(name.clone());
                             expressions.insert(NodeKey::Global(name.clone()), expr.clone());
                         }
                         AssignTarget::Foreign { object, param } => {
+                            if param == "text" {
+                                match text_target(object, &object_indices, &preset) {
+                                    Ok(()) => text_base.push(TextWrite {
+                                        owner: None,
+                                        target: object.clone(),
+                                        expr: expr.clone(),
+                                    }),
+                                    Err(message) => {
+                                        compile_diagnostics.insert(format!("глобальные: {}", message));
+                                    }
+                                }
+                                continue;
+                            }
                             match foreign_key(object, param, &object_indices, &preset) {
                                 Ok(key) => writes.push((key, expr.clone())),
                                 Err(message) => {
@@ -357,6 +416,7 @@ impl Rig {
                     };
                     let mut body = Vec::new();
                     let mut actions = Vec::new();
+                    let mut text_body: Vec<TextWrite> = Vec::new();
                     for statement in &block.body {
                         let (target, expr) = match statement {
                             Statement::Assign(target, expr) => (target, expr),
@@ -373,6 +433,30 @@ impl Rig {
                                 continue;
                             }
                         };
+                        if let AssignTarget::Local(name) = target {
+                            if name == "text" {
+                                compile_diagnostics.insert(
+                                    "глобальные: текст задаётся у объекта — label.text = \"…\""
+                                        .into(),
+                                );
+                                continue;
+                            }
+                        }
+                        if let AssignTarget::Foreign { object, param } = target {
+                            if param == "text" {
+                                match text_target(object, &object_indices, &preset) {
+                                    Ok(()) => text_body.push(TextWrite {
+                                        owner: None,
+                                        target: object.clone(),
+                                        expr: expr.clone(),
+                                    }),
+                                    Err(message) => {
+                                        compile_diagnostics.insert(format!("глобальные: {}", message));
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                         let key = match target {
                             AssignTarget::Local(name) => {
                                 if !global_names.iter().any(|existing| existing == name) {
@@ -399,6 +483,7 @@ impl Rig {
                         trigger,
                         owner: None,
                         body,
+                        text_body,
                         actions,
                     });
                 }
@@ -425,26 +510,60 @@ impl Rig {
             }
             for (target, expr) in &script.assignments {
                 match target {
-                    AssignTarget::Local(name) => match Param::parse(name) {
-                        Some(param) => {
-                            if param.media_only() && object.kind != ObjectKind::Media {
+                    AssignTarget::Local(name) => {
+                        // `text` — строковый параметр: у него своя запись, а не
+                        // числовой кэш. База считается каждый кадр.
+                        if name == "text" {
+                            if object.kind != ObjectKind::Text {
                                 compile_diagnostics.insert(format!(
-                                    "{}: параметр '{}' есть только у медиа-объекта",
-                                    object.id, name
+                                    "{}: 'text' есть только у текстового объекта",
+                                    object.id
                                 ));
                             } else {
-                                expressions
-                                    .insert(NodeKey::Param(object.id.clone(), param), expr.clone());
+                                text_base.push(TextWrite {
+                                    owner: Some(object.id.clone()),
+                                    target: object.id.clone(),
+                                    expr: expr.clone(),
+                                });
+                            }
+                            continue;
+                        }
+                        match Param::parse(name) {
+                            Some(param) => {
+                                if param.media_only() && object.kind != ObjectKind::Media {
+                                    compile_diagnostics.insert(format!(
+                                        "{}: параметр '{}' есть только у медиа-объекта",
+                                        object.id, name
+                                    ));
+                                } else {
+                                    expressions.insert(
+                                        NodeKey::Param(object.id.clone(), param),
+                                        expr.clone(),
+                                    );
+                                }
+                            }
+                            None => {
+                                compile_diagnostics.insert(format!(
+                                    "{}: нельзя присвоить неизвестный параметр '{}'",
+                                    object.id, name
+                                ));
                             }
                         }
-                        None => {
-                            compile_diagnostics.insert(format!(
-                                "{}: нельзя присвоить неизвестный параметр '{}'",
-                                object.id, name
-                            ));
-                        }
-                    },
+                    }
                     AssignTarget::Foreign { object: other, param } => {
+                        if param == "text" {
+                            match text_target(other, &object_indices, &preset) {
+                                Ok(()) => text_base.push(TextWrite {
+                                    owner: Some(object.id.clone()),
+                                    target: other.clone(),
+                                    expr: expr.clone(),
+                                }),
+                                Err(message) => {
+                                    compile_diagnostics.insert(format!("{}: {}", object.id, message));
+                                }
+                            }
+                            continue;
+                        }
                         match foreign_key(other, param, &object_indices, &preset) {
                             Ok(key) => writes.push((key, expr.clone())),
                             Err(message) => {
@@ -464,6 +583,7 @@ impl Rig {
                 };
                 let mut body = Vec::new();
                 let mut actions = Vec::new();
+                let mut text_body: Vec<TextWrite> = Vec::new();
                 for statement in &block.body {
                     let (target, expr) = match statement {
                         Statement::Assign(target, expr) => (target, expr),
@@ -480,6 +600,38 @@ impl Rig {
                             continue;
                         }
                     };
+                    if let AssignTarget::Local(name) = target {
+                        if name == "text" {
+                            if object.kind != ObjectKind::Text {
+                                compile_diagnostics.insert(format!(
+                                    "{}: 'text' есть только у текстового объекта",
+                                    object.id
+                                ));
+                            } else {
+                                text_body.push(TextWrite {
+                                    owner: Some(object.id.clone()),
+                                    target: object.id.clone(),
+                                    expr: expr.clone(),
+                                });
+                            }
+                            continue;
+                        }
+                    }
+                    if let AssignTarget::Foreign { object: other, param } = target {
+                        if param == "text" {
+                            match text_target(other, &object_indices, &preset) {
+                                Ok(()) => text_body.push(TextWrite {
+                                    owner: Some(object.id.clone()),
+                                    target: other.clone(),
+                                    expr: expr.clone(),
+                                }),
+                                Err(message) => {
+                                    compile_diagnostics.insert(format!("{}: {}", object.id, message));
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     let key = match target {
                         AssignTarget::Local(name) => match Param::parse(name) {
                             Some(param) => {
@@ -516,6 +668,7 @@ impl Rig {
                     trigger,
                     owner: Some(object.id.clone()),
                     body,
+                    text_body,
                     actions,
                 });
             }
@@ -580,6 +733,8 @@ impl Rig {
             playback,
             media,
             media_seq: 0,
+            text_base,
+            base_texts: BTreeMap::new(),
             texts: BTreeMap::new(),
             started: false,
             compile_diagnostics,
@@ -641,8 +796,10 @@ impl Rig {
         self.cycle_nodes.clear();
         self.diagnostics.clear();
         // Стоп и перезапуск обнуляют события: следующее нажатие снова первое.
+        // Текст, заданный в событии, тоже возвращается к базовому значению.
         if reset_clock {
             self.event_state.clear();
+            self.texts.clear();
             self.started = false;
         }
         self.fire_events();
@@ -679,6 +836,30 @@ impl Rig {
             self.cache.insert(key, previous);
         }
 
+        // База текста считается каждый кадр: `text = text(mic.db)` — обычная
+        // формула, поэтому строка меняется вместе со звуком, без событий.
+        let text_base = self.text_base.clone();
+        let mut base_texts: BTreeMap<String, String> = BTreeMap::new();
+        for write in text_base {
+            let context = match &write.owner {
+                Some(id) => NodeKey::Param(id.clone(), Param::X),
+                None => NodeKey::Global(String::new()),
+            };
+            let value = self.text_value(&write.expr, &context);
+            if value.is_empty() {
+                base_texts.remove(&write.target);
+            } else {
+                base_texts.insert(write.target, value);
+            }
+        }
+        self.base_texts = base_texts;
+        // Переопределение из события важнее базы: так `text = "пока"` в блоке
+        // держится до остановки, а потом снова виден базовый текст.
+        let mut texts = self.base_texts.clone();
+        for (id, value) in &self.texts {
+            texts.insert(id.clone(), value.clone());
+        }
+
         let mut frame = Frame {
             seq: self.seq,
             time: self.time,
@@ -686,7 +867,7 @@ impl Rig {
             globals: BTreeMap::new(),
             objects: BTreeMap::new(),
             media: self.media.clone(),
-            texts: self.texts.clone(),
+            texts,
             order: Vec::new(),
             diagnostics: self
                 .compile_diagnostics
@@ -748,12 +929,13 @@ impl Rig {
         let seq = self.seq;
         let first_frame = !self.started;
         for index in 0..self.events.len() {
-            let (trigger, owner, body, actions) = {
+            let (trigger, owner, body, text_body, actions) = {
                 let event = &self.events[index];
                 (
                     event.trigger.clone(),
                     event.owner.clone(),
                     event.body.clone(),
+                    event.text_body.clone(),
                     event.actions.clone(),
                 )
             };
@@ -825,6 +1007,19 @@ impl Rig {
                 }
                 self.cache.insert(key, result);
             }
+            // Текст — не число: он не идёт в кэш, а живёт до остановки.
+            for write in text_body {
+                let write_context = match &write.owner {
+                    Some(id) => NodeKey::Param(id.clone(), Param::X),
+                    None => NodeKey::Global(String::new()),
+                };
+                let value = self.text_value(&write.expr, &write_context);
+                if value.is_empty() {
+                    self.texts.remove(&write.target);
+                } else {
+                    self.texts.insert(write.target, value);
+                }
+            }
             for action in actions {
                 self.run_action(&action, &owner, &context);
             }
@@ -843,7 +1038,8 @@ impl Rig {
             return;
         };
         // `text("привет")` — строка это содержимое, а адресат — владелец блока;
-        // `text("id", "привет")` — адресат задан первым аргументом.
+        // `text("id", "привет")` — адресат задан первым аргументом. Содержимое
+        // может быть любым выражением: `text(mic.db)` покажет число.
         let explicit = if name == "text" {
             args.len() >= 2 && matches!(args.first(), Some(Expr::Text(_)))
         } else {
@@ -862,12 +1058,13 @@ impl Rig {
                 }
             };
             let content = if explicit { args.get(1) } else { args.first() };
-            if let Some(Expr::Text(value)) = content {
-                // Пустая строка — «вернись к шаблону объекта».
+            if let Some(expression) = content {
+                let value = self.text_value(expression, context);
+                // Пустая строка — «вернись к базовому тексту или шаблону».
                 if value.is_empty() {
                     self.texts.remove(&target);
                 } else {
-                    self.texts.insert(target, value.to_string());
+                    self.texts.insert(target, value);
                 }
             }
             return;
@@ -1106,15 +1303,9 @@ impl Rig {
     fn eval_expr(&mut self, expr: &Expr, context: &NodeKey) -> Value {
         match expr {
             Expr::Number(value) => Value::Number(*value),
-            // Строка — аргумент команды. В числовой формуле она бессмысленна,
-            // поэтому не ломает кадр, а оставляет диагностику.
-            Expr::Text(_) => {
-                self.diagnostics.insert(
-                    "строка допустима только в аргументе команды: play(\"объект\"), text(\"…\")"
-                        .into(),
-                );
-                Value::Number(0.0)
-            }
+            // Строка — полноценное значение: текст объекта и аргументы команд.
+            // В числовой формуле она даёт диагностику уже на приведении к числу.
+            Expr::Text(value) => Value::Text(value.clone()),
             Expr::Name(name) => self.eval_name(name, context),
             Expr::Unary { op, expr } => {
                 let value = self.numeric(expr, context);
@@ -1156,8 +1347,32 @@ impl Rig {
                 })
             }
             Expr::Binary { op, left, right } => {
-                let a = self.numeric(left, context);
-                let b = self.numeric(right, context);
+                let left_value = self.eval_expr(left, context);
+                let right_value = self.eval_expr(right, context);
+                // `+` со строкой — склейка: `"db " + text(mic.db)`. Числа
+                // превращаются в текст, поэтому строка и число складываются.
+                if matches!(op, BinaryOp::Add)
+                    && (matches!(left_value, Value::Text(_))
+                        || matches!(right_value, Value::Text(_)))
+                {
+                    let left_text = self.as_text(left_value);
+                    let right_text = self.as_text(right_value);
+                    return Value::Text(left_text + right_text.as_str());
+                }
+                // Строки сравниваются как текст, а не как ноль.
+                if matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                    && (matches!(left_value, Value::Text(_))
+                        || matches!(right_value, Value::Text(_)))
+                {
+                    let equal = self.as_text(left_value) == self.as_text(right_value);
+                    return Value::Number(bool_number(if matches!(op, BinaryOp::Eq) {
+                        equal
+                    } else {
+                        !equal
+                    }));
+                }
+                let a = self.as_number(left_value);
+                let b = self.as_number(right_value);
                 Value::Number(match op {
                     BinaryOp::Add => a + b,
                     BinaryOp::Sub => a - b,
@@ -1239,6 +1454,9 @@ impl Rig {
                     Value::Number(_) => {
                         self.error_value("доступ '.x/.y' или '.параметр' применён к числу".into())
                     }
+                    Value::Text(_) => {
+                        self.error_value("доступ '.поле' применён к тексту".into())
+                    }
                 }
             }
             Expr::Call { id, name, args } => self.eval_call(*id, name, args, context),
@@ -1292,6 +1510,9 @@ impl Rig {
                     .unwrap_or(0.0);
                 return Value::Number(value);
             }
+            if name == "text" {
+                return Value::Text(self.text_of(id));
+            }
             if let Some(own) = Param::parse(name) {
                 return Value::Number(self.eval_node(&NodeKey::Param(id.clone(), own)));
             }
@@ -1326,14 +1547,58 @@ impl Rig {
     }
 
     fn numeric(&mut self, expr: &Expr, context: &NodeKey) -> f64 {
-        match self.eval_expr(expr, context) {
+        let value = self.eval_expr(expr, context);
+        self.as_number(value)
+    }
+
+    /// Приведение значения к числу: строка с числом годится, остальное — 0.
+    fn as_number(&mut self, value: Value) -> f64 {
+        match value {
             Value::Number(value) => value,
+            Value::Text(text) => match text.trim().parse::<f64>() {
+                Ok(parsed) if parsed.is_finite() => parsed,
+                _ => {
+                    self.diagnostics.insert(format!(
+                        "ожидалось число, получена строка \"{}\"; использован 0",
+                        text
+                    ));
+                    0.0
+                }
+            },
             _ => {
                 self.diagnostics
                     .insert("ожидалось число, получен вектор или объект; использован 0".into());
                 0.0
             }
         }
+    }
+
+    /// Приведение значения к тексту: число форматируется без хвостовых нулей.
+    fn as_text(&mut self, value: Value) -> String {
+        match value {
+            Value::Text(text) => text,
+            Value::Number(number) => number_to_text(number),
+            _ => {
+                self.diagnostics
+                    .insert("ожидался текст, получен вектор или объект; использована пустая строка".into());
+                String::new()
+            }
+        }
+    }
+
+    /// Текущий текст объекта: переопределение из события важнее базы.
+    fn text_of(&self, id: &str) -> String {
+        self.texts
+            .get(id)
+            .or_else(|| self.base_texts.get(id))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Значение для `text`: строка как есть, число — в текст, остальное — диагностика.
+    fn text_value(&mut self, expr: &Expr, context: &NodeKey) -> String {
+        let value = self.eval_expr(expr, context);
+        self.as_text(value)
     }
 
     fn vector(&mut self, expr: &Expr, context: &NodeKey) -> Vec2 {
@@ -1365,6 +1630,42 @@ impl Rig {
 
     fn eval_call(&mut self, call_id: u32, name: &str, args: &[Expr], context: &NodeKey) -> Value {
         match name {
+            // Строковые функции: текст — такое же значение, как число.
+            "text" | "str" => {
+                if !self.arity(name, args.len(), 1) {
+                    return Value::Text(String::new());
+                }
+                let value = self.eval_expr(&args[0], context);
+                Value::Text(self.as_text(value))
+            }
+            "upper" | "lower" => {
+                if !self.arity(name, args.len(), 1) {
+                    return Value::Text(String::new());
+                }
+                let value = self.eval_expr(&args[0], context);
+                let text = self.as_text(value);
+                Value::Text(if name == "upper" {
+                    text.to_uppercase()
+                } else {
+                    text.to_lowercase()
+                })
+            }
+            "len" => {
+                if !self.arity(name, args.len(), 1) {
+                    return Value::Number(0.0);
+                }
+                let value = self.eval_expr(&args[0], context);
+                Value::Number(self.as_text(value).chars().count() as f64)
+            }
+            "fixed" => {
+                if !self.arity(name, args.len(), 2) {
+                    return Value::Text(String::new());
+                }
+                let number = self.numeric(&args[0], context);
+                // Больше шести знаков после запятой тексту не нужно.
+                let digits = self.numeric(&args[1], context).clamp(0.0, 6.0) as usize;
+                Value::Text(format!("{:.1$}", number, digits))
+            }
             "vec" => {
                 if !self.arity(name, args.len(), 2) {
                     return Value::Vector(Vec2::default());
@@ -1762,6 +2063,24 @@ impl Rig {
     }
 }
 
+/// Проверяет, что у объекта есть текст: `text` — параметр только текстового объекта.
+fn text_target(
+    object: &str,
+    indices: &HashMap<String, usize>,
+    preset: &RigPreset,
+) -> Result<(), String> {
+    let Some(index) = indices.get(object).copied() else {
+        return Err(format!("объекта '{}' нет в сцене", object));
+    };
+    if preset.objects[index].kind != ObjectKind::Text {
+        return Err(format!(
+            "'{}' — не текстовый объект: параметр 'text' есть только у текста",
+            object
+        ));
+    }
+    Ok(())
+}
+
 /// Ключ узла для записи чужому объекту: `head.rotation` → `Param("head", Rotation)`.
 fn foreign_key(
     object: &str,
@@ -1829,6 +2148,19 @@ fn bool_number(value: bool) -> f64 {
     } else {
         0.0
     }
+}
+
+/// Число → текст для `text = …` и `text(…)`: целые без «.0», дробные — до двух
+/// знаков без хвостовых нулей. Так `text = mic.db` читается как «0.42».
+fn number_to_text(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".into();
+    }
+    if value.abs() < 1e15 && (value - value.round()).abs() < 1e-9 {
+        return format!("{}", value.round() as i64);
+    }
+    let text = format!("{:.2}", value);
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 fn safe_div(a: f64, b: f64) -> f64 {
     if b.abs() <= 1e-12 {
@@ -2070,6 +2402,94 @@ mod tests {
         let mut rig = Rig::new(preset(vec![label], "")).unwrap();
         let frame = tick(&mut rig, 0.0);
         assert_eq!(frame.texts["label"], "привет");
+    }
+
+    #[test]
+    fn text_variable_is_base_and_event_override_resets() {
+        // База в скрипте объекта видна без событий, а запись в блоке события
+        // держится до остановки: после неё снова база.
+        let mut label = object(
+            "label",
+            None,
+            "text = \"привет\"\non mic.db.change { text = \"пока\" }",
+        );
+        label.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![label], "")).unwrap();
+        let mut inputs = InputValues::default();
+        inputs.values.insert("mic.db".into(), 0.2);
+        let first = rig.tick(0.0, inputs.clone(), false, false, None);
+        assert_eq!(first.texts["label"], "привет");
+
+        let mut louder = inputs.clone();
+        louder.values.insert("mic.db".into(), 0.6);
+        let changed = rig.tick(0.1, louder.clone(), false, false, None);
+        assert_eq!(changed.texts["label"], "пока");
+
+        // reset_clock — это «Стоп»: переопределение снимается.
+        let stopped = rig.tick(0.2, louder, false, true, None);
+        assert_eq!(stopped.texts["label"], "привет");
+    }
+
+    #[test]
+    fn text_converts_numbers_and_joins_strings() {
+        let mut raw = object("raw", None, "text = text(mic.db)");
+        raw.kind = ObjectKind::Text;
+        let mut joined = object(
+            "joined",
+            None,
+            "text = \"db \" + fixed(mic.db, 1) + \" / \" + upper(\"ok\")",
+        );
+        joined.kind = ObjectKind::Text;
+        let mut choice = object(
+            "choice",
+            None,
+            "text = text(mic.db) == \"0.42\" ? \"точное\" : \"другое\"",
+        );
+        choice.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![raw, joined, choice], "")).unwrap();
+        let mut inputs = InputValues::default();
+        inputs.values.insert("mic.db".into(), 0.42);
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        assert_eq!(frame.texts["raw"], "0.42");
+        assert_eq!(frame.texts["joined"], "db 0.4 / OK");
+        assert_eq!(frame.texts["choice"], "точное");
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn text_command_accepts_expressions_and_foreign_writes() {
+        // Команда понимает любое выражение, а чужой текст пишется через точку.
+        let mut label = object("label", None, "on start { text(mic.db) }");
+        label.kind = ObjectKind::Text;
+        let mut marker = object("marker", None, "");
+        marker.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(
+            vec![label, marker],
+            "on mic.db.change { marker.text = \"глоб\" + text(mic.db) }",
+        ))
+        .unwrap();
+        let mut inputs = InputValues::default();
+        inputs.values.insert("mic.db".into(), 0.5);
+        let first = rig.tick(0.0, inputs.clone(), false, false, None);
+        assert_eq!(first.texts["label"], "0.5");
+        // Событие `change` на первом кадре не срабатывает: предыдущего значения нет.
+        assert_eq!(first.texts.get("marker").cloned().unwrap_or_default(), "");
+
+        let mut louder = inputs;
+        louder.values.insert("mic.db".into(), 0.75);
+        let changed = rig.tick(0.1, louder, false, false, None);
+        assert_eq!(changed.texts["marker"], "глоб0.75");
+        assert!(changed.diagnostics.is_empty(), "диагностика: {:?}", changed.diagnostics);
+    }
+
+    #[test]
+    fn text_is_only_for_text_objects() {
+        let mut rig = Rig::new(preset(vec![object("a", None, "text = \"x\"")], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert!(frame
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("только у текстового объекта")));
     }
 
     #[test]

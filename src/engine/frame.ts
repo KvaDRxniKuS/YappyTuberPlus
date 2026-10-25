@@ -117,8 +117,8 @@ export function applyTreeOrder(preset: RigPreset, frame: RigFrame): RigFrame {
 }
 
 /**
- * Текст объектов: команда `text(…)` важнее шаблона, иначе шаблон заполняется
- * из текстового канала модулей (чат).
+ * Текст объектов: значение из скрипта (`text = …`, база или переопределение)
+ * важнее шаблона, иначе шаблон заполняется из текстового канала модулей (чат).
  *
  * Готовый текст кладётся прямо в кадр: так одно и то же значение видят и
  * редактор, и оверлей — оверлею не нужен доступ к модулям.
@@ -126,9 +126,18 @@ export function applyTreeOrder(preset: RigPreset, frame: RigFrame): RigFrame {
 export function applyTexts(preset: RigPreset, frame: RigFrame, channel?: TextChannel): RigFrame {
   const source = frame.texts ?? {};
   let texts: Record<string, string> | null = null;
+  /** Подстановки чата работают и в тексте из скрипта: `text = "{twitch.chat.message}"`. */
+  const withChannel = (value: string) => (value.includes("{") ? resolveTemplate(value, channel) : value);
   for (const object of preset.objects) {
     if (object.kind !== "text") continue;
-    if (typeof source[object.id] === "string") continue;
+    const scripted = source[object.id];
+    if (typeof scripted === "string") {
+      const resolved = withChannel(scripted);
+      if (resolved === scripted) continue;
+      if (!texts) texts = { ...source };
+      texts[object.id] = resolved;
+      continue;
+    }
     if (!texts) texts = { ...source };
     texts[object.id] = resolveTemplate((object.text ?? DEFAULT_TEXT).template, channel);
   }

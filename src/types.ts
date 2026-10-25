@@ -177,7 +177,10 @@ export interface RigFrame {
    * тогда медиа просто живёт по параметрам `play`, `speed`, `volume`.
    */
   media?: Record<string, MediaCue>;
-  /** Текст, заданный командой `text("…")`: заменяет шаблон объекта. */
+  /**
+   * Текст объекта: база из скрипта (`text = "…"`) и переопределение из
+   * событий. Если ключа нет, редактор подставляет шаблон из инспектора.
+   */
   texts?: Record<string, string>;
   order: string[];
   diagnostics: string[];
