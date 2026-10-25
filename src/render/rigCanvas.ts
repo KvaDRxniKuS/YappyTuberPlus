@@ -1,5 +1,6 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
+import { resolveLayer } from "../engine/layers";
 import { frontness, structurePaths } from "../engine/structure";
 
 /**
@@ -119,7 +120,7 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
 export function orderedSprites(preset: RigPreset, frame: RigFrame | null): RigObject[] {
   const sprites = preset.objects.filter((object) => object.kind === "sprite");
   const paths = structurePaths(preset.objects);
-  const layerOf = (object: RigObject) => frame?.objects[object.id]?.layer ?? object.base.layer;
+  const layerOf = (object: RigObject) => resolveLayer(preset.objects, frame, object);
   return [...sprites].sort((a, b) => (layerOf(a) - layerOf(b))
     || frontness(paths.get(a.id), paths.get(b.id)));
 }

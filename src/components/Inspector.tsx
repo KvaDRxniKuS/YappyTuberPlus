@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, Layers, Link2, RotateCcw } from "lucide-react";
 import type { BasePose, RigFrame, RigObject } from "../types";
-import { scriptValue, setScriptValue } from "../engine/preset";
+import { setScriptValue } from "../engine/preset";
 
 interface InspectorProps {
   object: RigObject | null;
@@ -78,8 +78,20 @@ function NumberField({ label, value, step = 1, onCommit, suffix }: {
   };
   return (
     <label className="number-field">
-      <span className="number-label">
-        {label}
+      <span className="number-label">{label}</span>
+      <div className="number-stepper">
+        <input
+          type="number" value={draft} step={unit}
+          onFocus={() => setFocused(true)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => { setFocused(false); commit(); }}
+          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+        />{suffix && <em>{suffix}</em>}
+        <button
+          type="button" className="step-button" title={`${label}: −${formatStep(unit)}`}
+          onClick={(event) => { event.preventDefault(); nudge(-1); }}
+        ><ChevronLeft size={14} /></button>
+        {/* Шаг стоит между кнопками: видно, на сколько сдвинет каждое нажатие. */}
         {stepDraft === null ? (
           <button
             type="button" className="step-chip"
@@ -101,19 +113,6 @@ function NumberField({ label, value, step = 1, onCommit, suffix }: {
             }}
           />
         )}
-      </span>
-      <div className="number-stepper">
-        <input
-          type="number" value={draft} step={unit}
-          onFocus={() => setFocused(true)}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => { setFocused(false); commit(); }}
-          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-        />{suffix && <em>{suffix}</em>}
-        <button
-          type="button" className="step-button" title={`${label}: −${formatStep(unit)}`}
-          onClick={(event) => { event.preventDefault(); nudge(-1); }}
-        ><ChevronLeft size={14} /></button>
         <button
           type="button" className="step-button" title={`${label}: +${formatStep(unit)}`}
           onClick={(event) => { event.preventDefault(); nudge(1); }}
@@ -144,28 +143,6 @@ function DeltaField({ label, onApply }: { label: string; onApply: (value: number
   );
 }
 
-function FormulaField({ parameter, script, onChange }: {
-  parameter: string; script: string; onChange: (script: string) => void;
-}) {
-  const external = scriptValue(script, parameter);
-  const [draft, setDraft] = useState(external);
-  const [focused, setFocused] = useState(false);
-  useEffect(() => { if (!focused) setDraft(external); }, [external, focused]);
-  const commit = () => { if (draft.trim() && draft !== external) onChange(setScriptValue(script, parameter, draft.trim())); };
-  return (
-    <label className="formula-field">
-      <span>{parameter}</span>
-      <input
-        value={draft} spellCheck={false}
-        onFocus={() => setFocused(true)}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => { setFocused(false); commit(); }}
-        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-      />
-    </label>
-  );
-}
-
 export function Inspector(props: InspectorProps) {
   const { object, selection, objects, frame, onChange } = props;
 
@@ -175,7 +152,6 @@ export function Inspector(props: InspectorProps) {
     return <section className="inspector panel-surface empty-state"><Crosshair size={25} /><p>Выберите объект на сцене или в дереве</p></section>;
   }
   const updateBase = (patch: Partial<BasePose>) => onChange({ ...object, base: { ...object.base, ...patch } });
-  const updateScript = (script: string) => onChange({ ...object, script });
   const parent = objects.find((item) => item.id === object.parentId);
   const dynamic = frame?.objects[object.id];
 
@@ -222,13 +198,6 @@ export function Inspector(props: InspectorProps) {
             <NumberField label="Pivot Y" value={object.pivot.y} step={0.01} onCommit={(y) => onChange({ ...object, pivot: { ...object.pivot, y } })} />
           </div>
         </div>}
-
-        <div className="property-section">
-          <div className="section-title"><span>Формулы</span><small>ДИНАМИКА</small></div>
-          <div className="formula-list">
-            {["x", "y", "rotation", "sizeY"].map((parameter) => <FormulaField key={parameter} parameter={parameter} script={object.script} onChange={updateScript} />)}
-          </div>
-        </div>
 
         <div className="runtime-readout">
           <div><span>Родитель</span><b>{parent?.name || "Корень сцены"}</b></div>

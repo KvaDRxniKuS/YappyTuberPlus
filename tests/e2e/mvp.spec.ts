@@ -101,13 +101,15 @@ test("reparenting preserves custom formulas", async ({ page }) => {
   expect(moved.script).toContain("layer = inherit + 1");
 });
 
-test("inspector formula edits the actual object script", async ({ page }) => {
+test("inspector layer writes the object script", async ({ page }) => {
   await openStudio(page);
-  const xFormula = page.locator(".formula-field").first().locator("input");
-  await xFormula.fill("sin(time) * 12");
-  await xFormula.press("Enter");
+  const layer = page.locator(".number-field").filter({ hasText: "Слой" }).first().locator('input[type="number"]');
+  await layer.fill("4");
+  await layer.press("Enter");
   const preset = await readPreset(page);
-  expect(preset.objects.find((object: any) => object.id === "character").script).toContain("x = sin(time) * 12");
+  const character = preset.objects.find((object: any) => object.id === "character");
+  expect(character.base.layer).toBe(4);
+  expect(character.script).toContain("layer = 4");
   await expect(page.locator(".engine-status")).toHaveClass(/ready/);
 });
 

@@ -1,5 +1,6 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { frontness, structurePaths } from "./structure";
+import { resolveLayer } from "./layers";
 
 /**
  * Нейтральная поза: динамические параметры выключены, видны только базовые.
@@ -67,9 +68,13 @@ export function applyEnabled(preset: RigPreset, frame: RigFrame): RigFrame {
  */
 export function applyTreeOrder(preset: RigPreset, frame: RigFrame): RigFrame {
   const paths = structurePaths(preset.objects);
+  const layerOf = (id: string) => {
+    const object = preset.objects.find((item) => item.id === id);
+    return object ? resolveLayer(preset.objects, frame, object) : (frame.objects[id]?.layer ?? 0);
+  };
   const order = [...frame.order].sort((a, b) => {
-    const layerA = frame.objects[a]?.layer ?? 0;
-    const layerB = frame.objects[b]?.layer ?? 0;
+    const layerA = layerOf(a);
+    const layerB = layerOf(b);
     if (layerA !== layerB) return layerA - layerB;
     // При равном слое поверх тот, кто выше в структуре (и потомок поверх предка).
     return frontness(paths.get(a), paths.get(b));
@@ -99,7 +104,8 @@ export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
   }
   const paths = structurePaths(preset.objects);
   const order = [...preset.objects]
-    .sort((a, b) => (a.base.layer - b.base.layer) || frontness(paths.get(a.id), paths.get(b.id)))
+    .sort((a, b) => (resolveLayer(preset.objects, null, a) - resolveLayer(preset.objects, null, b))
+      || frontness(paths.get(a.id), paths.get(b.id)))
     .map((object) => object.id);
   return {
     seq,

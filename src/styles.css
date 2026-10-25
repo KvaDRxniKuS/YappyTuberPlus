@@ -177,7 +177,7 @@ input, select { color: var(--text); }
 .section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .section-title > span { color: #aeb6bf; font-size: 11px; font-weight: 650; }
 .section-title small { color: #59636d; font-size: 9.5px; letter-spacing: .8px; }
-.property-grid { display: grid; grid-template-columns: repeat(3, minmax(80px, 1fr)); gap: 7px 9px; }
+.property-grid { display: grid; grid-template-columns: repeat(3, minmax(94px, 1fr)); gap: 7px 9px; }
 .property-grid.two-columns { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
 .number-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .number-field > span { color: #737e89; font-size: 10px; }
@@ -191,7 +191,7 @@ input, select { color: var(--text); }
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 21px;
+  width: 19px;
   height: 20px;
   padding: 0;
   border: 1px solid #2f363f;
@@ -204,19 +204,19 @@ input, select { color: var(--text); }
 .number-stepper .step-button + .step-button { margin-left: 3px; }
 .number-stepper .step-button:hover { border-color: #557a70; background: #26333a; color: #c8e3da; }
 .number-stepper .step-button:active { background: #2f3f46; color: #e2f6ee; }
-/* Шаг правки живёт в строке подписи: там есть место и он рядом со стрелками. */
+/* Подпись — только имя поля: шаг переехал в строку со стрелками. */
 .number-field > span.number-label {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 5px;
   min-width: 0;
 }
-.number-label > .step-chip {
+/* Шаг стоит между «−» и «+»: сразу видно, на сколько сдвинет нажатие. */
+.number-stepper > .step-chip {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  min-width: 24px;
+  min-width: 22px;
   height: 15px;
   padding: 0 4px;
   line-height: 1;
@@ -229,8 +229,11 @@ input, select { color: var(--text); }
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
-.number-label > .step-chip:hover { border-color: #557a70; color: #c8e3da; }
-.number-label > .step-input {
+.number-stepper > .step-chip:hover { border-color: #557a70; color: #c8e3da; }
+.number-stepper > .step-chip { margin: 0 2px; }
+.number-stepper > .step-input {
+  margin: 0 2px;
+  width: 38px;
   flex: 0 0 auto;
   width: 40px;
   height: 15px;
@@ -244,21 +247,16 @@ input, select { color: var(--text); }
   font-size: 9px;
   text-align: center;
 }
-.number-label > .step-input:focus { outline: none; border-color: #7fb8a7; }
+.number-stepper > .step-input:focus { outline: none; border-color: #7fb8a7; }
 .number-field input { width: 100%; min-width: 0; height: 100%; padding: 0 5px; border: 0; background: transparent; font-family: "Cascadia Code", monospace; font-size: 11px; font-variant-numeric: tabular-nums; }
 .number-field input:focus { outline: none; }
 .number-field > div:focus-within { border-color: #609c8c; }
-.number-field em { padding-right: 6px; color: var(--faint); font-size: 10px; font-style: normal; }
+.number-field em { padding-right: 3px; color: var(--faint); font-size: 10px; font-style: normal; }
 .range-property { display: block; margin-top: 9px; }
 .range-property > span { display: flex; justify-content: space-between; color: #737e89; font-size: 10px; margin-bottom: 4px; }
 .range-property b { color: #9da7b1; font-weight: 500; }
 input[type="range"] { width: 100%; height: 3px; appearance: none; border-radius: 4px; background: #363e47; accent-color: var(--accent); }
 input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; height: 10px; border-radius: 50%; background: #91c9ba; border: 2px solid #1c1f24; box-shadow: 0 0 0 1px #587c72; cursor: pointer; }
-.formula-list { display: flex; flex-direction: column; gap: 5px; }
-.formula-field { display: grid; grid-template-columns: 55px 1fr; align-items: center; gap: 6px; }
-.formula-field > span { color: #8ea49e; font-family: monospace; font-size: 11px; }
-.formula-field input { min-width: 0; height: 24px; padding: 0 7px; border: 1px solid #303741; border-radius: 4px; background: #181b20; color: #b8c2cc; font-family: "Cascadia Code", monospace; font-size: 11px; }
-.formula-field input:focus { outline: none; border-color: #609c8c; }
 .runtime-readout { display: flex; gap: 20px; padding: 9px 0 2px; }
 .runtime-readout > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .runtime-readout span { color: var(--faint); font-size: 9.5px; }
