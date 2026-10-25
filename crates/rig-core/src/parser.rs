@@ -274,7 +274,21 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     _ => TokenKind::Ident(ident),
                 }
             }
-            _ => return Err(format!("неизвестный символ '{}' на позиции {}", c, i + 1)),
+            _ => {
+                // Кириллица в идентификаторе — самая частая опечатка: в скрипте
+                // имена латинские, а текст пишется в кавычках.
+                let hint = if c.is_alphabetic() && !c.is_ascii() {
+                    ": имена в скрипте — латиница, а текст пишется в кавычках, например text(\"привет\")"
+                } else {
+                    ""
+                };
+                return Err(format!(
+                    "неизвестный символ '{}' на позиции {}{}",
+                    c,
+                    i + 1,
+                    hint
+                ));
+            }
         };
         tokens.push(Token {
             kind,

@@ -99,18 +99,53 @@ fn check_action(
         ));
         return false;
     }
-    let target = match action_object(call) {
-        Some(id) => {
-            if !object_indices.contains_key(id) {
-                diagnostics.insert(format!(
-                    "{}: команда '{}' ссылается на неизвестный объект '{}'",
-                    label, name, id
-                ));
-                return false;
-            }
-            id
+    // Адресат команды. У медиа-команд объект задаётся строкой: `play("дождь")`.
+    // У `text(…)` строка — это содержимое, поэтому адресатом может быть только
+    // второй аргумент (`text("id", "привет")`), а без него — владелец блока.
+    if name == "text" {
+        if args.is_empty() || args.len() > 2 {
+            diagnostics.insert(format!(
+                "{}: text ждёт текст: text(\"привет\") или text(\"id\", \"привет\")",
+                label
+            ));
+            return false;
         }
-        None => match owner {
+        if !matches!(args.first(), Some(Expr::Text(_))) {
+            diagnostics.insert(format!(
+                "{}: text(…) принимает строку в кавычках: text(\"привет\")",
+                label
+            ));
+            return false;
+        }
+        if args.len() == 2 && !matches!(args.get(1), Some(Expr::Text(_))) {
+            diagnostics.insert(format!(
+                "{}: второй аргумент text(…) — тоже строка: text(\"id\", \"привет\")",
+                label
+            ));
+            return false;
+        }
+    }
+    let explicit = if name == "text" {
+        args.len() >= 2
+    } else {
+        action_object(call).is_some()
+    };
+    let target = if explicit {
+        match &args[0] {
+            Expr::Text(id) => {
+                if !object_indices.contains_key(id) {
+                    diagnostics.insert(format!(
+                        "{}: команда '{}' ссылается на неизвестный объект '{}'",
+                        label, name, id
+                    ));
+                    return false;
+                }
+                id.as_str()
+            }
+            _ => return false,
+        }
+    } else {
+        match owner {
             Some(id) => id,
             None => {
                 diagnostics.insert(format!(
@@ -119,7 +154,7 @@ fn check_action(
                 ));
                 return false;
             }
-        },
+        }
     };
     let kind = object_indices
         .get(target)
@@ -128,13 +163,6 @@ fn check_action(
         if kind != Some(ObjectKind::Text) {
             diagnostics.insert(format!(
                 "{}: text(…) пишет только в текстовый объект",
-                label
-            ));
-            return false;
-        }
-        if args.is_empty() || (action_object(call).is_some() && args.len() < 2) {
-            diagnostics.insert(format!(
-                "{}: text ожидает строку: text(\"привет\") или text(\"id\", \"привет\")",
                 label
             ));
             return false;
@@ -148,7 +176,7 @@ fn check_action(
         ));
         return false;
     }
-    let numbers = if action_object(call).is_some() {
+    let numbers = if explicit {
         args.len().saturating_sub(1)
     } else {
         args.len()
@@ -814,7 +842,13 @@ impl Rig {
         let Expr::Call { name, args, .. } = call else {
             return;
         };
-        let explicit = matches!(args.first(), Some(Expr::Text(_)));
+        // `text("привет")` — строка это содержимое, а адресат — владелец блока;
+        // `text("id", "привет")` — адресат задан первым аргументом.
+        let explicit = if name == "text" {
+            args.len() >= 2 && matches!(args.first(), Some(Expr::Text(_)))
+        } else {
+            matches!(args.first(), Some(Expr::Text(_)))
+        };
         if name == "text" {
             let target = if explicit {
                 match &args[0] {

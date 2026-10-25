@@ -32,7 +32,11 @@ export const DEFAULT_TEXT: TextSpec = {
   lineHeight: 1.2,
 };
 
-const PLACEHOLDER = /\{([^{}]+)\}/g;
+/**
+ * Разбор шаблона за один проход: сначала экранированные подстановки
+ * (`'{…}'`), иначе — обычная подстановка с группой пути.
+ */
+const SCAN = /'\{[^{}]*\}'|\{([^{}]+)\}/g;
 
 /** Канал из журнала сообщений модулей: берём последнее сообщение каждого. */
 export function textChannel(
@@ -46,10 +50,20 @@ export function textChannel(
   return result;
 }
 
-/** Шаблон с подстановками. Неизвестный путь даёт пустую строку. */
+/**
+ * Шаблон с подстановками. Неизвестный путь даёт пустую строку.
+ *
+ * Подстановку можно **экранировать**: `'{twitch.chat.message}'` (в одинарных
+ * кавычках) выводится буквально, вместе с фигурными скобками, — так на экране
+ * можно показать сам шаблон, не читая значение из модуля. Одинарные кавычки при
+ * этом не выводятся.
+ */
 export function resolveTemplate(template: string, channel?: TextChannel): string {
   if (!template) return "";
-  return template.replace(PLACEHOLDER, (_match, raw: string) => {
+  return template.replace(SCAN, (match, raw?: string) => {
+    // Ветка без группы — экранированная подстановка: кавычки снимаем, скобки
+    // оставляем как обычный текст.
+    if (raw === undefined) return match.slice(1, -1);
     const parts = raw.trim().split(".").filter(Boolean);
     if (parts.length < 2) return "";
     const entry = channel?.[parts[0]];
