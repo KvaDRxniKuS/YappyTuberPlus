@@ -106,11 +106,70 @@ export function isAnimatedImage(name: string, type: string, bytes: Uint8Array): 
   return false;
 }
 
+function textAt(bytes: Uint8Array, offset: number, length: number): string {
+  if (bytes.length < offset + length) return "";
+  let result = "";
+  for (let index = 0; index < length; index += 1) result += String.fromCharCode(bytes[offset + index]);
+  return result;
+}
+
+function startsWith(bytes: Uint8Array, pattern: number[]): boolean {
+  if (bytes.length < pattern.length) return false;
+  return pattern.every((byte, index) => bytes[index] === byte);
+}
+
+/**
+ * Тип файла по сигнатурам байт.
+ *
+ * Расширению и MIME верить нельзя: `.mkv` приходит из диалога с пустым типом, а
+ * переименованный файл вообще не говорит о содержимом. Поэтому сначала смотрим
+ * контейнер (PNG/JPEG/GIF/RIFF/EBML/`ftyp`/Ogg/FLAC/MP3), и только если байты
+ * ничего не сказали — верим имени файла. Это и убирает «The source image could
+ * not be decoded»: видео физически не может попасть в спрайт.
+ */
+export function sniffContainer(bytes: Uint8Array): MediaSpec["type"] | null {
+  if (!bytes.length) return null;
+  if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47])) return "image"; // PNG / APNG
+  if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "image"; // JPEG
+  const tag = textAt(bytes, 0, 4);
+  if (tag === "GIF8") return "image";
+  if (tag === "RIFF") {
+    const form = textAt(bytes, 8, 4);
+    if (form === "WEBP") return "image";
+    if (form === "WAVE") return "audio";
+    if (form === "AVI ") return "video";
+  }
+  if (tag === "OggS") return "audio";
+  if (tag === "fLaC") return "audio";
+  if (textAt(bytes, 0, 3) === "ID3") return "audio";
+  if (textAt(bytes, 4, 4) === "ftyp") {
+    const brand = textAt(bytes, 8, 4);
+    if (brand.startsWith("M4A") || brand.startsWith("M4B")) return "audio";
+    if (["avif", "avis", "heic", "heix", "mif1", "msf1"].includes(brand)) return "image";
+    return "video"; // mp4 / mov / m4v
+  }
+  // EBML: WebM и Matroska — оба видео-контейнеры.
+  if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return "video";
+  // MP3 без ID3: кадр начинается с 11 единиц синхронизации.
+  if (bytes.length > 1 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return "audio";
+  if (startsWith(bytes, [0x42, 0x4d])) return "image"; // BMP
+  return null;
+}
+
+/** Узнаёт тип файла: сигнатуры байт важнее MIME и расширения. */
+export async function fileKind(file: File): Promise<MediaSpec["type"] | null> {
+  return sniffContainer(await head(file)) ?? mediaTypeOf(file);
+}
+
 /** Разбирает файл и говорит, какой объект из него получится. */
 export async function inspectFile(file: File): Promise<ImportedFile> {
-  const type = mediaTypeOf(file);
+  const bytes = await head(file);
+  const type = sniffContainer(bytes) ?? mediaTypeOf(file);
   const name = file.name.replace(/\.[^.]+$/, "") || "файл";
 
+  if (!type) {
+    throw new Error(`Файл «${file.name}» не похож на картинку, видео или звук`);
+  }
   if (type === "audio") {
     return { kind: "media", mediaType: "audio", src: await keep(file), name, ...AUDIO_SIZE };
   }
@@ -118,12 +177,14 @@ export async function inspectFile(file: File): Promise<ImportedFile> {
     const size = await videoSize(file).catch(() => ({ ...VIDEO_FALLBACK }));
     return { kind: "media", mediaType: "video", src: await keep(file), name, ...size };
   }
-  if (isAnimatedImage(file.name, file.type, await head(file))) {
-    const size = await imageSize(file).catch(() => ({ ...IMAGE_FALLBACK }));
+  // Картинка обязана декодироваться: иначе на сцене появился бы битый спрайт
+  // с ошибкой «The source image could not be decoded».
+  const size = await imageSize(file).catch(() => null);
+  if (!size) throw new Error(`Не удалось прочитать картинку «${file.name}»`);
+  if (isAnimatedImage(file.name, file.type, bytes)) {
     return { kind: "media", mediaType: "image", src: await keep(file), name, ...size };
   }
   // Осталась обычная картинка — это спрайт, как и раньше.
-  const size = await imageSize(file).catch(() => ({ ...IMAGE_FALLBACK }));
   return { kind: "sprite", mediaType: null, src: await keep(file), name, ...size };
 }
 

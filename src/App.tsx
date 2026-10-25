@@ -11,7 +11,6 @@ import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
 import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
-import { ChainDialog } from "./components/ChainDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeSprite, makeText,
@@ -26,7 +25,6 @@ import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selecti
 import { propagateBase, repivot, reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { appendSnippet } from "./engine/scripts";
-import { buildChain, type ChainSettings } from "./engine/chain";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
 import { applyCaptureWindow, applyOverlayWindow } from "./overlay/window";
 import { useOverlayHost } from "./hooks/useOverlayHost";
@@ -104,7 +102,6 @@ export default function App() {
   const [overlayOpen, setOverlayOpen] = useState(false);
   /** Пресет, ждущий решения по модулям при открытии. */
   const [pending, setPending] = useState<{ preset: RigPreset; path: string | null } | null>(null);
-  const [chainOpen, setChainOpen] = useState(false);
   const [stopped, setStopped] = useState(false);
   const [presetPath, setPresetPath] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -566,9 +563,16 @@ export default function App() {
     const centerX = Math.round(current.canvas.width / 2);
     const centerY = Math.round(current.canvas.height / 2);
     const added: RigObject[] = [];
+    const failed: string[] = [];
     try {
       for (const file of Array.from(files)) {
-        const inspected = await inspectFile(file);
+        // Плохой файл не отменяет пачку: остальные импортируются, а про этот
+        // пользователь получает строку с причиной.
+        const inspected = await inspectFile(file).catch((reason: unknown) => {
+          failed.push(reason instanceof Error ? reason.message : `${file.name}: не удалось прочитать файл`);
+          return null;
+        });
+        if (!inspected) continue;
         const id = uniqueId([...current.objects, ...added], inspected.name);
         if (inspected.kind === "media") {
           added.push(makeMedia(
@@ -592,9 +596,10 @@ export default function App() {
       const last = added.at(-1);
       setSelection(last ? [last.id] : []);
       const media = added.filter((object) => object.kind === "media").length;
-      notify(media === added.length
+      const summary = media === added.length
         ? `Добавлено медиа: ${media}`
-        : `Добавлено объектов: ${added.length} (медиа: ${media})`);
+        : `Добавлено объектов: ${added.length} (медиа: ${media})`;
+      notify(failed.length ? `${summary} · не принято: ${failed.join("; ")}` : summary);
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Не удалось импортировать файл");
     }
@@ -866,7 +871,6 @@ export default function App() {
             commit({ ...current, objects }, { label: "Новая группа" });
             setSelection([id]);
           }}
-          onChain={() => setChainOpen(true)}
           onDelete={deleteSelected}
           onDuplicate={duplicateSelected}
           onToggleVisibility={(id) => {
@@ -1009,7 +1013,7 @@ export default function App() {
       <input
         ref={fileInput}
         type="file"
-        accept="image/*,video/*,audio/*"
+        accept=".png,.jpg,.jpeg,.webp,.gif,.apng,.avif,.mp4,.webm,.mov,.mkv,.m4v,.mp3,.wav,.ogg,.m4a,.flac,.opus,.aac,image/*,video/*,audio/*"
         multiple
         hidden
         onChange={(event) => { void importFiles(event.target.files); event.target.value = ""; }}
@@ -1020,22 +1024,6 @@ export default function App() {
         onApply={() => resolvePending("apply")}
         onKeep={() => resolvePending("keep")}
         onDisable={() => resolvePending("disable")}
-      />}
-      {chainOpen && <ChainDialog
-        objects={preset.objects}
-        ids={selection}
-        onClose={() => setChainOpen(false)}
-        onApply={(settings: ChainSettings) => {
-          const current = presetRef.current;
-          try {
-            const result = buildChain(current.objects, selection, settings);
-            commit({ ...current, objects: result.objects }, { label: "Пружинная цепочка" });
-            notify(`Пружинная цепочка: ${result.links} ${result.links === 1 ? "сегмент" : "сегментов"} на пружине`);
-            setChainOpen(false);
-          } catch (error) {
-            notify(error instanceof Error ? error.message : "Не удалось построить цепочку");
-          }
-        }}
       />}
       {overlayOpen && <OverlayDialog
         config={overlayConfig}

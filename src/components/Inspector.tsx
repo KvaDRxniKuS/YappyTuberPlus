@@ -8,6 +8,7 @@ import { groupBounds } from "../render/bounds";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
 import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
+import { fileKind } from "../engine/importFile";
 
 interface InspectorProps {
   object: RigObject | null;
@@ -157,6 +158,9 @@ export function Inspector(props: InspectorProps) {
   // асинхронно, поэтому хуки стоят до ранних выходов и вызываются всегда.
   const preview = useAssetUrl(object?.image);
   const mediaPreview = useAssetUrl(object?.media?.src);
+  // Понятная ошибка вместо исключения в консоли: «не тот файл» — обычный промах
+  // мышью, а не повод ломать объект.
+  const [imageError, setImageError] = useState<string | null>(null);
 
   if (selection.length > 1) return <MultiInspector {...props} />;
 
@@ -208,9 +212,16 @@ export function Inspector(props: InspectorProps) {
    * ссылка `asset:<id>`. При недоступном хранилище — data URL, как раньше.
    */
   const replaceImage = async (file: File) => {
+    // Спрайт — только картинка. Видео и звук — это медиа-объект, у него свои
+    // настройки, поэтому файл не подменяет картинку молча.
+    if (await fileKind(file) !== "image") {
+      setImageError(`«${file.name}» — не картинка. Видео, звук и анимацию добавляйте кнопкой «Файл» в структуре: получится медиа-объект.`);
+      return;
+    }
     const source = (await storeFile(file)) ?? (await blobToDataUrl(file));
     const probe = new Image();
     probe.onload = () => {
+      setImageError(null);
       if (!imageFit.current || !probe.naturalWidth || !probe.naturalHeight) {
         onChange({ ...object, image: source });
         return;
@@ -224,7 +235,9 @@ export function Inspector(props: InspectorProps) {
         pivot: { x: anchor.x / probe.naturalWidth, y: anchor.y / probe.naturalHeight },
       });
     };
-    probe.onerror = () => onChange({ ...object, image: source });
+    probe.onerror = () => {
+      setImageError(`Не удалось прочитать картинку «${file.name}»: формат не поддерживается.`);
+    };
     probe.src = assetUrl(source) ?? source;
   };
 
@@ -313,7 +326,7 @@ export function Inspector(props: InspectorProps) {
             <input
               ref={imageInput}
               type="file"
-              accept="image/png,image/webp"
+              accept="image/png,image/jpeg,image/webp,image/avif,.png,.jpg,.jpeg,.webp,.avif"
               hidden
               onChange={(event) => {
                 const file = event.target.files?.[0];
@@ -321,6 +334,7 @@ export function Inspector(props: InspectorProps) {
                 if (file) void replaceImage(file);
               }}
             />
+            {imageError && <p className="inline-error">{imageError}</p>}
           </div>
         )}
 
@@ -369,7 +383,7 @@ export function Inspector(props: InspectorProps) {
 }
 
 const MEDIA_REPEATS: MediaRepeat[] = ["restart", "fade", "overlay", "finish"];
-const MEDIA_ACCEPT = "image/*,video/*,audio/*";
+const MEDIA_ACCEPT = ".png,.jpg,.jpeg,.webp,.gif,.apng,.avif,.mp4,.webm,.mov,.mkv,.m4v,.mp3,.wav,.ogg,.m4a,.flac,.opus,.aac,image/*,video/*,audio/*";
 
 /** Медиа-объект: файл, повтор, громкость, скорость и политика повтора. */
 function MediaSection({ object, media, onChange }: {
@@ -378,11 +392,18 @@ function MediaSection({ object, media, onChange }: {
   onChange: (object: RigObject) => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
   const update = (patch: Partial<MediaSpec>) => onChange({ ...object, media: { ...media, ...patch } });
   /** Замена файла: байты — в хранилище webview, в объекте остаётся ссылка. */
   const replace = async (file: File) => {
+    const kind = await fileKind(file);
+    if (!kind) {
+      setError(`«${file.name}» — не картинка, не видео и не звук`);
+      return;
+    }
+    setError(null);
     const src = (await storeFile(file)) ?? (await blobToDataUrl(file));
-    update({ src, type: mediaTypeOf(file), fileName: file.name });
+    update({ src, type: kind, fileName: file.name });
   };
   return (
     <>
@@ -396,6 +417,7 @@ function MediaSection({ object, media, onChange }: {
             <ImageUp size={14} /> {media.src ? "Заменить файл" : "Выбрать файл"}
           </button>
         </div>
+        {error && <p className="inline-error">{error}</p>}
         <input
           ref={fileInput}
           type="file"

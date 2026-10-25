@@ -103,14 +103,27 @@ export function makeText(
   };
 }
 
-/** Чем является выбранный файл: тип определяется по MIME, расширение — запасной путь. */
-export function mediaTypeOf(file: File): MediaSpec["type"] {
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "jfif", "webp", "gif", "apng", "avif", "bmp"];
+const VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "mkv", "m4v", "avi"];
+const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus"];
+
+/**
+ * Чем является выбранный файл по MIME и расширению.
+ *
+ * `null` — «непонятно»: MIME в WebView2 приходит не для всех контейнеров
+ * (например, `.mkv` может прийти пустым). В этом случае решает содержимое —
+ * `sniffContainer` в `importFile.ts` смотрит сигнатуры байт, поэтому видео
+ * никогда не превращается в спрайт с ошибкой декодирования.
+ */
+export function mediaTypeOf(file: File): MediaSpec["type"] | null {
   if (file.type.startsWith("video/")) return "video";
   if (file.type.startsWith("audio/")) return "audio";
+  if (file.type.startsWith("image/")) return "image";
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
-  if (["mp4", "webm", "mov", "mkv", "m4v"].includes(extension)) return "video";
-  if (["mp3", "wav", "ogg", "m4a", "aac", "flac", "opus"].includes(extension)) return "audio";
-  return "image";
+  if (VIDEO_EXTENSIONS.includes(extension)) return "video";
+  if (AUDIO_EXTENSIONS.includes(extension)) return "audio";
+  if (IMAGE_EXTENSIONS.includes(extension)) return "image";
+  return null;
 }
 
 export function makeGroup(id: string, name: string, x = 500, y = 300): RigObject {

@@ -459,17 +459,6 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .color-field input[type="color"] { width: 20px; height: 18px; padding: 0; border: 0; border-radius: 3px; background: transparent; }
 .color-field code { color: #9aa5af; font-family: "Cascadia Code", monospace; font-size: 11px; }
 .overlay-toggles { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; }
-.chain-list { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; padding: 0; list-style: none; }
-.chain-list li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; background: #20242a; color: #b6c0c9; font-size: 12px; }
-.chain-list li b { width: 16px; flex: none; color: #6f7a85; font-family: monospace; font-size: 11px; }
-.chain-list li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chain-list li small { color: #5f6a74; font-size: 10.5px; }
-.chain-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
-.chain-field { display: flex; flex-direction: column; gap: 4px; color: #7f8a94; font-size: 11px; }
-.chain-field > div { display: flex; align-items: center; gap: 6px; }
-.chain-field input { width: 100%; height: 26px; padding: 0 7px; border: 1px solid #363d46; border-radius: 5px; background: #20242a; color: #c6ced6; font-size: 12px; }
-.chain-field small { flex: none; color: #5f6a74; font-size: 10.5px; }
-.chain-hinge-note { flex: 1; color: #7f8a94; font-size: 11.5px; line-height: 1.45; }
 .toggle { display: inline-flex; align-items: center; gap: 7px; color: #89949e; font-size: 11.5px; cursor: pointer; }
 .toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .toggle-track { width: 26px; height: 14px; flex: none; display: flex; align-items: center; padding: 2px; border-radius: 9px; background: #2c323a; border: 1px solid #383f48; transition: background .15s, border-color .15s; }

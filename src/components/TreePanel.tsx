@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FileImage, FileVideo, Film,
-  Folder, FolderPlus, Import, Plus, Spline, Trash2, Type,
+  Folder, FolderPlus, Import, Plus, Trash2, Type,
 } from "lucide-react";
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
@@ -42,8 +42,6 @@ interface TreePanelProps {
   onAddGroup: () => void;
   /** Текстовый объект: шаблон с подстановками из чата. */
   onAddText: () => void;
-  /** Связать выделенные объекты в пружинную цепочку (хвост, лента). */
-  onChain: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
   onToggleVisibility: (id: string) => void;
@@ -91,16 +89,6 @@ export function TreePanel(props: TreePanelProps) {
         <button onClick={props.onAddGroup}><FolderPlus size={14} /> Группа</button>
         <button onClick={props.onAddText} title="Текст с подстановками из чата">
           <Type size={14} /> Текст
-        </button>
-        <button
-          className="wide"
-          onClick={props.onChain}
-          disabled={selectedIds.length < 2}
-          title={selectedIds.length < 2
-            ? "Выделите объекты хвоста по порядку: от корня к кончику"
-            : "Связать выделенные объекты в пружинную цепочку"}
-        >
-          <Spline size={14} /> Цепочка · пружина
         </button>
       </div>
 
