@@ -85,7 +85,9 @@ exit /b 0
 :drop_presets
 if exist "%PRESETS%" (
   del /q "%PRESETS%\*.yappy.json" 2>nul
-  echo Сохранённые пресеты удалены из %PRESETS%
+  rem Папки файлов объектов: рядом с каждым пресетом лежит <имя>.assets.
+  for /d %%D in ("%PRESETS%\*.assets") do rd /s /q "%%~fD"
+  echo Сохранённые пресеты и папки их файлов удалены из %PRESETS%
 ) else (
   echo Папки с сохранёнными пресетами нет.
 )

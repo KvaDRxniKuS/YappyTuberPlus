@@ -13,6 +13,7 @@ WebView2 и папку пресетов. Именно поэтому после 
 | Автосохранение сессии (профиль WebView2) | `%LOCALAPPDATA%\com.yappytuberplus.studio\EBWebView` | Linux: `~/.local/share/com.yappytuberplus.studio/EBWebView`<br>macOS: `~/Library/Application Support/com.yappytuberplus.studio/EBWebView` |
 | Файлы объектов сцены (IndexedDB профиля) | `…\EBWebView\Default\IndexedDB\https_*.indexeddb.leveldb` | там же, внутри `EBWebView/Default/IndexedDB` |
 | Файлы, сохранённые кнопкой «Сохранить» | `%APPDATA%\com.yappytuberplus.studio\presets` | там же, рядом с профилем |
+| Файлы объектов рядом с пресетом | `…\presets\<имя>.assets\` | там же, рядом с `.yappy.json` |
 
 Картинки, GIF, видео и звук приложение хранит **отдельно от пресета** — в
 IndexedDB профиля webview (база `yappytuberplus.assets`). Файл разделён на две
@@ -24,13 +25,29 @@ IndexedDB профиля webview (база `yappytuberplus.assets`). Файл р
 
 - в **автосохранении** — `…\EBWebView\Default\Local Storage\leveldb`, ключ
   `yappytuberplus.preset.v2`, там только ссылки;
-- в **файле** — `presets\<имя>.yappy.json`, а вот сюда файлы **встраиваются
-  обратно** в data URL (`data:image/png;base64,…`) перед записью: файл пресета
-  остаётся самодостаточным и переносится на другую машину целиком.
+- в **файле** — `presets\<имя>.yappy.json`: там тоже только ссылки `asset:<id>`,
+  поэтому сам JSON весит килобайты;
+- рядом с файлом — папка `presets\<имя>.assets\`: в ней лежат сами картинки,
+  видео и звук плюс `index.json` с паспортами (id, имя, тип, размер, файл).
+  Имена файлов — `<id>.<расширение>`. Пресет и папку переносят вместе.
 
-При открытии пресета data URL, наоборот, распаковываются в IndexedDB — это
-делает `src/engine/assets.ts` (`extractAssets` / `inlineAssets`). Старые пресеты
-с data URL открываются так же: разницы для пользователя нет.
+Запись делает Rust (`src-tauri/src/lib.rs`, команды `preset_write_assets`,
+`preset_clean_assets`, `preset_read_asset`, `preset_asset_index`): `<имя>` — это
+имя файла пресета без `.yappy.json`, например `риг.yappy.json` → `риг.yappy.assets`.
+Порядок сохранения — сначала файлы, потом JSON, потом уборка лишнего, поэтому
+прерванное сохранение не оставляет сцену без картинок. Папка принадлежит
+приложению: свои файлы в неё класть не нужно, при следующем сохранении лишние
+удаляются.
+
+При открытии пресета файлы читаются **лениво**: `preset_asset_index` отдаёт
+паспорта, а `preset_read_asset` вызывается только когда объект действительно
+нужно нарисовать, и прочитанное сразу ложится в IndexedDB. Так видео на сотни
+мегабайт не попадает в память целиком. data URL внутри старого JSON при
+открытии, наоборот, распаковываются в IndexedDB — это делает
+`src/engine/assets.ts` (`extractAssets` / `inlineAssets`).
+
+**«Экспорт JSON»** встраивает файлы обратно в data URL: получается один
+самодостаточный файл, который можно отдать другому человеку без папки.
 
 ## Что лежит в автосохранении
 
@@ -59,7 +76,7 @@ IndexedDB профиля webview (база `yappytuberplus.assets`). Файл р
 | Ключ | Что делает |
 |---|---|
 | `--profile` | удаляет профиль WebView2: автосохранение пресета, картинки, раскладку. Приложение стартует с демо-персонажа |
-| `--presets` | удаляет `*.yappy.json` из папки пресетов |
+| `--presets` | удаляет `*.yappy.json` и папки `*.assets` из папки пресетов |
 | `--all` | и то, и другое |
 
 Перед удалением закройте приложение: WebView2 держит профиль открытым, и

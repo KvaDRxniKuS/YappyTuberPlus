@@ -49,6 +49,283 @@ fn preset_read(path: String) -> Result<String, String> {
     std::fs::read_to_string(target).map_err(|error| write_error(target, &error.to_string()))
 }
 
+/// Файл объекта, который редактор отдаёт на запись в папку пресета.
+///
+/// `data` — готовый data URL (`data:image/png;base64,…`): так редактору не нужно
+/// решать, в каком виде передавать байты, а Rust сам отделяет заголовок.
+#[derive(serde::Deserialize)]
+struct AssetFile {
+    id: String,
+    name: String,
+    mime: String,
+    data: String,
+}
+
+/// Запись в `index.json` папки `<имя>.assets`: паспорт файла без байтов.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct AssetEntry {
+    id: String,
+    name: String,
+    mime: String,
+    size: u64,
+    /// Имя файла внутри папки.
+    file: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct AssetIndex {
+    #[serde(default)]
+    version: u32,
+    assets: Vec<AssetEntry>,
+}
+
+const BASE64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Папка файлов рядом с пресетом: `риг.yappy.json` → `риг.yappy.assets`.
+fn asset_dir(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("preset");
+    let stem = name.strip_suffix(".yappy.json").unwrap_or(name);
+    let stem = stem.strip_suffix(".json").unwrap_or(stem);
+    let folder = format!("{}.assets", stem);
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(folder),
+        _ => PathBuf::from(folder),
+    }
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() / 3 * 4 + 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(BASE64_TABLE[(triple >> 18) as usize & 63] as char);
+        out.push(BASE64_TABLE[(triple >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64_TABLE[(triple >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64_TABLE[triple as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3 + 3);
+    let mut bits: u32 = 0;
+    let mut count = 0;
+    for byte in text.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let Some(index) = BASE64_TABLE.iter().position(|&symbol| symbol == byte) else {
+            if byte.is_ascii_whitespace() {
+                continue;
+            }
+            return Err("файл пришёл не в base64".into());
+        };
+        bits = (bits << 6) | index as u32;
+        count += 1;
+        if count == 4 {
+            out.extend_from_slice(&bits.to_be_bytes()[1..]);
+            bits = 0;
+            count = 0;
+        }
+    }
+    // Хвост: два символа — один байт, три — два.
+    if count == 2 {
+        out.push((bits >> 4) as u8);
+    } else if count == 3 {
+        out.push((bits >> 10) as u8);
+        out.push((bits >> 2) as u8);
+    }
+    Ok(out)
+}
+
+/// Расширение по типу файла: папка должна открываться глазами, а не списком `.bin`.
+fn extension_for(mime: &str, name: &str) -> String {
+    if let Some(extension) = Path::new(name).extension().and_then(|value| value.to_str()) {
+        let clean: String = extension
+            .chars()
+            .filter(|symbol| symbol.is_ascii_alphanumeric())
+            .take(8)
+            .collect();
+        if !clean.is_empty() {
+            return clean.to_lowercase();
+        }
+    }
+    let known = match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/avif" => "avif",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        "audio/mpeg" => "mp3",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/ogg" => "ogg",
+        "audio/mp4" => "m4a",
+        "audio/flac" => "flac",
+        _ => "bin",
+    };
+    known.to_string()
+}
+
+fn safe_file_name(id: &str) -> String {
+    let clean: String = id
+        .chars()
+        .map(|symbol| {
+            if symbol.is_ascii_alphanumeric() || symbol == '-' || symbol == '_' {
+                symbol
+            } else {
+                '_'
+            }
+        })
+        .take(120)
+        .collect();
+    if clean.is_empty() {
+        "asset".to_string()
+    } else {
+        clean
+    }
+}
+
+/// Пишет файлы объектов в `<имя>.assets` рядом с пресетом и обновляет `index.json`.
+///
+/// Пресет при этом ссылается на файлы короткими ссылками `asset:<id>`: сам JSON
+/// остаётся маленьким, а папка переносится вместе с ним. Возвращает число
+/// записанных файлов. Уборка старых файлов — отдельная команда
+/// (`preset_clean_assets`): она вызывается после успешной записи пресета, чтобы
+/// прерванное сохранение ничего не потеряло.
+#[tauri::command]
+fn preset_write_assets(path: String, assets: Vec<AssetFile>) -> Result<usize, String> {
+    let dir = asset_dir(Path::new(&path));
+    std::fs::create_dir_all(&dir).map_err(|error| write_error(&dir, &error.to_string()))?;
+    let mut entries: Vec<AssetEntry> = Vec::with_capacity(assets.len());
+    for asset in assets {
+        // data URL → чистый base64: заголовок уже разобран на стороне редактора.
+        let payload = match asset.data.split_once(',') {
+            Some((_, rest)) if asset.data.starts_with("data:") => rest,
+            _ => asset.data.as_str(),
+        };
+        let bytes = base64_decode(payload)?;
+        let file = format!(
+            "{}.{}",
+            safe_file_name(&asset.id),
+            extension_for(&asset.mime, &asset.name)
+        );
+        let target = dir.join(&file);
+        std::fs::write(&target, &bytes)
+            .map_err(|error| write_error(&target, &error.to_string()))?;
+        entries.push(AssetEntry {
+            id: asset.id,
+            name: asset.name,
+            mime: asset.mime,
+            size: bytes.len() as u64,
+            file,
+        });
+    }
+    let index = AssetIndex {
+        version: 1,
+        assets: entries,
+    };
+    let text = serde_json::to_string_pretty(&index)
+        .map_err(|error| format!("index.json: {}", error))?;
+    let manifest = dir.join("index.json");
+    std::fs::write(&manifest, text).map_err(|error| write_error(&manifest, &error.to_string()))?;
+    Ok(index.assets.len())
+}
+
+/// Убирает из папки файлы, которых нет в `index.json`.
+///
+/// Папка принадлежит приложению: свои файлы туда класть нельзя, иначе уборка
+/// их удалит. Вызывается только после успешной записи пресета — так неудачное
+/// сохранение не оставляет сцену без картинок.
+#[tauri::command]
+fn preset_clean_assets(path: String) -> Result<usize, String> {
+    let dir = asset_dir(Path::new(&path));
+    let text = match std::fs::read_to_string(dir.join("index.json")) {
+        Ok(text) => text,
+        Err(_) => return Ok(0),
+    };
+    let index: AssetIndex = match serde_json::from_str(&text) {
+        Ok(index) => index,
+        Err(_) => return Ok(0),
+    };
+    let known: Vec<String> = index.assets.into_iter().map(|entry| entry.file).collect();
+    let mut removed = 0;
+    if let Ok(files) = std::fs::read_dir(&dir) {
+        for file in files.flatten() {
+            let Some(name) = file.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if name == "index.json" || known.iter().any(|known| known == &name) {
+                continue;
+            }
+            if std::fs::remove_file(file.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Паспорта файлов из папки пресета: редактору нужно знать, чего на диске нет,
+/// не читая сами байты.
+#[tauri::command]
+fn preset_asset_index(path: String) -> Result<Vec<AssetEntry>, String> {
+    let manifest = asset_dir(Path::new(&path)).join("index.json");
+    let text = match std::fs::read_to_string(&manifest) {
+        Ok(text) => text,
+        // Папки нет — это не ошибка: пресет может быть совсем новым.
+        Err(_) => return Ok(Vec::new()),
+    };
+    match serde_json::from_str::<AssetIndex>(&text) {
+        Ok(index) => Ok(index.assets),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Читает файл объекта из папки пресета и отдаёт его data URL.
+///
+/// Редактор спрашивает файл лениво — только когда объект действительно нужно
+/// нарисовать. `None` означает «файла нет или папку перенесли без него».
+#[tauri::command]
+fn preset_read_asset(path: String, id: String) -> Result<Option<String>, String> {
+    let dir = asset_dir(Path::new(&path));
+    let text = match std::fs::read_to_string(dir.join("index.json")) {
+        Ok(text) => text,
+        Err(_) => return Ok(None),
+    };
+    let index: AssetIndex = match serde_json::from_str(&text) {
+        Ok(index) => index,
+        Err(_) => return Ok(None),
+    };
+    let Some(entry) = index.assets.into_iter().find(|entry| entry.id == id) else {
+        return Ok(None);
+    };
+    let bytes = match std::fs::read(dir.join(&entry.file)) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    Ok(Some(format!(
+        "data:{};base64,{}",
+        entry.mime,
+        base64_encode(&bytes)
+    )))
+}
+
 fn write_error(path: &Path, reason: &str) -> String {
     format!("{}: {}", path.display(), reason)
 }
@@ -78,6 +355,10 @@ pub fn run() {
             preset_default_dir,
             preset_write,
             preset_read,
+            preset_write_assets,
+            preset_clean_assets,
+            preset_read_asset,
+            preset_asset_index,
             schedule::rig_schedule_start,
             schedule::rig_schedule_inputs,
             schedule::rig_schedule_pause,

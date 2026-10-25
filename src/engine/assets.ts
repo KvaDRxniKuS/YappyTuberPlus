@@ -61,6 +61,16 @@ const urls = new Map<string, string>();
 const pending = new Map<string, Promise<void>>();
 /** Файлы, которых в хранилище нет: не пытаемся читать их на каждом кадре. */
 const missing = new Set<string>();
+/**
+ * Пресет на диске: рядом с ним лежит папка файлов `<имя>.assets`
+ * (`src-tauri/src/lib.rs`, команды `preset_*_assets`). Пока путь не задан,
+ * редактор работает только с хранилищем webview.
+ */
+let diskPath: string | null = null;
+/** Паспорта файлов из папки пресета: имя и тип нужны, чтобы сохранить их обратно. */
+const diskIndex = new Map<string, { name: string; mime: string }>();
+/** Прочитанные с диска data URL: второй раз файл не читаем. */
+const diskCache = new Map<string, string | Promise<string | null>>();
 /** Один раз прочитанный data URL на файл: экспорт не перекодирует видео повторно. */
 const inlined = new Map<string, Promise<string | null>>();
 const listeners = new Set<() => void>();
@@ -78,6 +88,34 @@ export function isAssetRef(source: string | null | undefined): boolean {
 
 export function assetIdOf(source: string | null | undefined): string | null {
   return isAssetRef(source) ? String(source).slice(ASSET_PREFIX.length) : null;
+}
+
+/**
+ * Привязывает хранилище к пресету на диске.
+ *
+ * `entries` — паспорта из `index.json` папки пресета: по ним редактор знает,
+ * как файлы называются, не читая байты. Пустой путь означает «пресет ещё не
+ * сохранён»: читать можно только из хранилища webview.
+ */
+export function setAssetDisk(
+  path: string | null,
+  entries: Iterable<{ id: string; name: string; mime: string }> = [],
+): void {
+  diskPath = path;
+  diskIndex.clear();
+  for (const entry of entries) diskIndex.set(entry.id, { name: entry.name, mime: entry.mime });
+  diskCache.clear();
+  // Другая папка — прежние «файла нет» больше не в силе: файл мог найтись.
+  missing.clear();
+}
+
+export function assetDiskPath(): string | null {
+  return diskPath;
+}
+
+/** Паспорт файла из папки пресета (если он там есть). */
+export function diskAssetInfo(id: string): { name: string; mime: string } | null {
+  return diskIndex.get(id) ?? null;
 }
 
 /** Подписка на появление файлов: по ней редактор и оверлей перерисовываются. */
@@ -162,6 +200,29 @@ export function ensureAssetsOfPreset(preset: RigPreset): void {
   for (const id of assetIdsOfPreset(preset)) ensureAsset(id);
 }
 
+/**
+ * Дожидается загрузки всех файлов пресета и называет объекты, у которых файла
+ * не нашлось ни в хранилище, ни в папке пресета.
+ *
+ * Нужно сразу после открытия файла: иначе объект просто остался бы пустым без
+ * объяснения, почему.
+ */
+export async function ensureAssetsOfPresetSettled(preset: RigPreset): Promise<string[]> {
+  const ids = [...assetIdsOfPreset(preset)];
+  for (const id of ids) ensureAsset(id);
+  await Promise.all(ids.map((id) => pending.get(id) ?? Promise.resolve()));
+  const lost = new Set(ids.filter((id) => missing.has(id)));
+  if (!lost.size) return [];
+  const owners: string[] = [];
+  for (const object of preset.objects) {
+    const sources = [object.image, object.media?.src];
+    if (sources.some((source) => { const id = assetIdOf(source); return !!id && lost.has(id); })) {
+      owners.push(object.name);
+    }
+  }
+  return owners;
+}
+
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve) => {
@@ -197,14 +258,71 @@ function transaction(db: IDBDatabase, mode: IDBTransactionMode, name: string = S
 
 async function readAsset(id: string): Promise<void> {
   const db = await openDb();
-  if (!db) { missing.add(id); return; }
+  if (db) {
+    try {
+      const record = await done<AssetRecord | undefined>(transaction(db, "readonly").get(id));
+      if (record?.blob) {
+        urls.set(id, URL.createObjectURL(record.blob));
+        emit();
+        return;
+      }
+    } catch {
+      // Хранилище ответило ошибкой — не повод сдаваться: файл может лежать
+      // в папке пресета.
+    }
+  }
+  // Пресет открыли из файла: байты лежат в `<имя>.assets` рядом с ним.
+  const data = await readDiskData(id);
+  if (!data) { missing.add(id); return; }
+  acceptAssetData(id, data);
+  void remember(id, data);
+}
+
+/**
+ * Файл из папки `<имя>.assets` рядом с пресетом.
+ *
+ * Читается лениво, по одному файлу: видео на сотни мегабайт не попадает в
+ * память, пока объект не попросят нарисовать. Успешное чтение кладётся в
+ * хранилище webview (`remember`), поэтому следующий запуск не трогает диск.
+ */
+function readDiskData(id: string): Promise<string | null> {
+  const path = diskPath;
+  if (!path) return Promise.resolve(null);
+  const cached = diskCache.get(id);
+  if (typeof cached === "string") return Promise.resolve(cached);
+  if (cached) return cached;
+  const job = (async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const data = await invoke<string | null>("preset_read_asset", { path, id });
+      if (data) diskCache.set(id, data);
+      else diskCache.delete(id);
+      return data;
+    } catch {
+      diskCache.delete(id);
+      return null;
+    }
+  })();
+  diskCache.set(id, job);
+  return job;
+}
+
+/** Кладёт прочитанный с диска файл в хранилище под тем же id. */
+async function remember(id: string, dataUrl: string): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
   try {
-    const record = await done<AssetRecord | undefined>(transaction(db, "readonly").get(id));
-    if (!record?.blob) { missing.add(id); return; }
-    urls.set(id, URL.createObjectURL(record.blob));
-    emit();
+    const blob = dataUrlToBlob(dataUrl);
+    const meta = diskIndex.get(id);
+    const name = meta?.name || id;
+    const mime = meta?.mime || blob.type || "application/octet-stream";
+    const createdAt = Date.now();
+    const hash = await hashOf(blob, name);
+    const info = { id, name, mime, size: blob.size, hash, createdAt };
+    await done(transaction(db, "readwrite").put({ ...info, blob }));
+    await done(transaction(db, "readwrite", META).put(info));
   } catch {
-    missing.add(id);
+    // Кэш — не обязательный шаг: на отрисовку он не влияет.
   }
 }
 
@@ -339,6 +457,17 @@ export async function listAssets(used: Set<string> = new Set()): Promise<AssetUs
   }
 }
 
+/** Паспорт одного файла из хранилища (без байтов). */
+export async function assetInfo(id: string): Promise<AssetInfo | null> {
+  const db = await openDb();
+  if (!db) return null;
+  try {
+    return (await done<AssetInfo | undefined>(transaction(db, "readonly", META).get(id))) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Сколько файлов и байт лежит в хранилище. */
 export async function assetStats(): Promise<{ count: number; bytes: number }> {
   await backfillMeta();
@@ -382,9 +511,12 @@ export async function pruneAssets(keep: Set<string>): Promise<number> {
     // Источник правды — оба хранилища: если запись осталась только в одном
     // (оборванная запись, старый профиль), она тоже считается мусором.
     const keys = new Set<string>();
-    for (const key of await done<IDBValidKey[]>(transaction(db, "readonly").getAllKeys())) keys.add(String(key));
+    for (const key of await done<IDBValidKey[]>(transaction(db, "readonly").getAllKeys())) {
+      keys.add(String(key));
+    }
     try {
-      for (const key of await done<IDBValidKey[]>(transaction(db, "readonly", META).getAllKeys())) keys.add(String(key));
+      const metaKeys = await done<IDBValidKey[]>(transaction(db, "readonly", META).getAllKeys());
+      for (const key of metaKeys) keys.add(String(key));
     } catch { /* паспортов ещё нет */ }
     for (const id of keys) {
       if (keep.has(id)) continue;
@@ -446,7 +578,14 @@ export function inlineSource(source: string): Promise<string | null> {
   if (!job) {
     // Неудачу не кэшируем: файл могли импортировать заново, и следующая запись
     // пресета должна попробовать ещё раз.
-    job = readDataUrl(id).then((data) => {
+    job = (async () => {
+      const stored = await readDataUrl(id);
+      if (stored) return stored;
+      // Пресет открыт из файла: байты лежат в папке рядом с ним.
+      const fromDisk = await readDiskData(id);
+      if (fromDisk) void remember(id, fromDisk);
+      return fromDisk;
+    })().then((data) => {
       if (!data) inlined.delete(id);
       return data;
     });

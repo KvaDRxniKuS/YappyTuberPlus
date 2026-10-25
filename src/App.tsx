@@ -19,14 +19,27 @@ import {
   uniqueId,
 } from "./engine/preset";
 import { inspectFile } from "./engine/importFile";
-import { assetIdsOfPreset, ensureAssetsOfPreset, externalizePreset, pruneAssets } from "./engine/assets";
+import {
+  assetIdsOfPreset,
+  ensureAssetsOfPreset,
+  ensureAssetsOfPresetSettled,
+  externalizePreset,
+  pruneAssets,
+} from "./engine/assets";
 import { textChannel } from "./render/text";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
 import { propagateBase, repivot, reorderNeighbor, reorderObjects } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { appendSnippet } from "./engine/scripts";
-import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
+import {
+  attachPresetDisk,
+  fileNameOf,
+  isTauri,
+  openPresetFile,
+  savePreset,
+  savePresetAs,
+} from "./engine/presetFile";
 import { applyCaptureWindow, applyOverlayWindow } from "./overlay/window";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { useModuleInputs } from "./hooks/useModuleInputs";
@@ -38,6 +51,11 @@ import {
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
 const LAYOUT_KEY = "yappytuberplus.layout.v1";
+/**
+ * Последний файл пресета: по нему на старте подключается папка `<имя>.assets`.
+ * В самом пресете лежат только ссылки, поэтому путь к папке надо помнить.
+ */
+const PRESET_PATH_KEY = "yappytuberplus.preset.path.v1";
 
 /** Как записывать изменение в историю: метка для подсказки и ключ склейки быстрых правок. */
 interface CommitOptions { record?: boolean; label?: string; coalesce?: string }
@@ -45,7 +63,7 @@ interface CommitOptions { record?: boolean; label?: string; coalesce?: string }
 /** Сообщение о сохранении: к нему добавляются объекты, чьи файлы потерялись. */
 function withMissing(message: string, missing?: string[]): string {
   if (!missing?.length) return message;
-  return `${message} · без файлов: ${missing.join(", ")}. Файлы не нашлись в хранилище — импортируйте их заново`;
+  return `${message} · без файлов: ${missing.join(", ")}. Не нашлись ни в хранилище, ни в папке пресета — импортируйте их заново`;
 }
 
 function loadPreset(): RigPreset {
@@ -110,9 +128,17 @@ export default function App() {
   /** Пресет, ждущий решения по модулям при открытии. */
   const [pending, setPending] = useState<{ preset: RigPreset; path: string | null } | null>(null);
   const [stopped, setStopped] = useState(false);
-  const [presetPath, setPresetPath] = useState<string | null>(null);
+  const [presetPath, setPresetPath] = useState<string | null>(() => {
+    try { return localStorage.getItem(PRESET_PATH_KEY); } catch { return null; }
+  });
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const notify = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+  }, []);
   const presetRef = useRef(preset);
   const library = useModuleLibrary();
   const moduleInputs = useModuleInputs(preset.modules, library.version);
@@ -130,22 +156,41 @@ export default function App() {
   /**
    * Файлы объектов — вне пресета (`src/engine/assets.ts`).
    *
-   * На старте data URL из сохранённого пресета переезжают в хранилище webview,
-   * а файлы, на которые больше никто не ссылается, удаляются: история отмены
-   * в этот момент пуста, вернуть ссылку на них уже нечем. Так автосохранение в
-   * localStorage остаётся маленьким, а хранилище не растёт вечно.
+   * На старте подключается папка последнего сохранённого пресета
+   * (`<имя>.assets` рядом с файлом), затем data URL из автосохранения
+   * переезжают в хранилище webview, а файлы, на которые больше никто не
+   * ссылается, удаляются: история отмены в этот момент пуста, вернуть ссылку
+   * на них уже нечем. Так автосохранение остаётся маленьким, а хранилище не
+   * растёт вечно.
    */
   useEffect(() => {
     let active = true;
     void (async () => {
+      await attachPresetDisk(presetPath);
+      if (!active) return;
       const extracted = await externalizePreset(presetRef.current);
       if (!active) return;
       if (extracted.changed) setPreset(extracted.preset);
       ensureAssetsOfPreset(extracted.preset);
+      const lost = await ensureAssetsOfPresetSettled(extracted.preset);
+      if (lost.length && active) {
+        notify(`Не нашлись файлы: ${lost.join(", ")}. Импортируйте их заново`);
+      }
       await pruneAssets(assetIdsOfPreset(extracted.preset));
     })();
     return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Путь пресета запоминается: по нему на старте находится папка файлов. */
+  useEffect(() => {
+    try {
+      if (presetPath) localStorage.setItem(PRESET_PATH_KEY, presetPath);
+      else localStorage.removeItem(PRESET_PATH_KEY);
+    } catch {
+      // Приватный режим: путь просто не запомнится.
+    }
+  }, [presetPath]);
 
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
@@ -153,7 +198,6 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [filesOpen, setFilesOpen] = useState(false);
   const presetInput = useRef<HTMLInputElement>(null);
-  const toastTimer = useRef<number | null>(null);
   presetRef.current = preset;
   inputsRef.current = moduleInputs.inputs;
   selectionRef.current = selection;
@@ -179,12 +223,6 @@ export default function App() {
     redoLabel: history.current.redoLabel,
   }), [historyVersion]);
   const globalNames = preset.globals.split("\n").map((line) => line.match(/^\s*([A-Za-z0-9_]+)\s*=/)?.[1]).filter((name): name is string => !!name);
-
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
-  }, []);
 
   const snapshot = useCallback((): HistorySnapshot => ({
     preset: presetRef.current,
@@ -324,7 +362,7 @@ export default function App() {
     try {
       const result = await openPresetFile();
       applyOpenedPreset(result.preset, result.path);
-      notify(`Открыт ${fileNameOf(result.path) || "пресет"}`);
+      notify(withMissing(`Открыт ${fileNameOf(result.path) || "пресет"}`, result.missing));
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       if (!/отмен/i.test(message)) notify(message);

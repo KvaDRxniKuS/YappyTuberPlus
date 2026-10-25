@@ -1,6 +1,16 @@
 import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
-import { externalizePreset, inlineAssets } from "./assets";
+import {
+  assetIdOf,
+  assetInfo,
+  assetRef,
+  diskAssetInfo,
+  ensureAssetsOfPresetSettled,
+  externalizePreset,
+  inlineAssets,
+  inlineSource,
+  setAssetDisk,
+} from "./assets";
 
 /**
  * Работа с пресетом как с файлом на диске.
@@ -26,7 +36,7 @@ export interface SaveResult {
   backend: FileBackendKind;
   /** В браузере файл скачивается, путь узнать нельзя. */
   downloaded?: boolean;
-  /** Объекты, чьи файлы не нашлись в хранилище и не попали в файл пресета. */
+  /** Объекты, чьи файлы не нашлись и не попали ни в пресет, ни в папку рядом. */
   missing?: string[];
 }
 
@@ -34,6 +44,17 @@ export interface OpenResult {
   preset: RigPreset;
   path: string | null;
   backend: FileBackendKind;
+  /** Объекты, чьих файлов не оказалось ни в хранилище, ни в папке пресета. */
+  missing: string[];
+}
+
+/** Паспорт файла из `index.json` папки пресета. */
+interface AssetEntry {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  file: string;
 }
 
 export function isTauri(): boolean {
@@ -67,24 +88,95 @@ async function defaultDirectory(): Promise<string | null> {
   }
 }
 
-/** Текст файла пресета: ссылки на файлы встроены обратно в data URL. */
+/**
+ * Текст файла пресета для **экспорта**: ссылки на файлы встроены обратно в
+ * data URL, поэтому получается один самодостаточный файл.
+ *
+ * Обычное сохранение так не делает: рядом с пресетом появляется папка
+ * `<имя>.assets` (`writePresetFile`), и файл остаётся коротким.
+ */
 export async function presetFileContents(preset: RigPreset): Promise<{ text: string; missing: string[] }> {
   const { preset: inlined, missing } = await inlineAssets(preset);
   return { text: JSON.stringify(inlined, null, 2), missing };
 }
 
+/**
+ * Привязывает хранилище файлов к пресету на диске.
+ *
+ * Вызывается при открытии, при сохранении и на старте (путь к последнему файлу
+ * запоминается): дальше недостающие в webview файлы читаются из папки лениво.
+ */
+export async function attachPresetDisk(path: string | null): Promise<void> {
+  if (!path || !isTauri()) {
+    setAssetDisk(null);
+    return;
+  }
+  const entries = await tauriInvoke<AssetEntry[]>("preset_asset_index", { path }).catch(() => []);
+  setAssetDisk(path, entries);
+}
+
+/**
+ * Пишет файлы объектов в папку `<имя>.assets` и возвращает имена объектов,
+ * чьи файлы потерялись.
+ *
+ * Ссылки остаются короткими (`asset:<id>`): папка и пресет переносятся вместе.
+ */
+async function writeSidecar(preset: RigPreset, path: string): Promise<string[]> {
+  const owners = new Map<string, string[]>();
+  for (const object of preset.objects) {
+    for (const source of [object.image, object.media?.src]) {
+      const id = assetIdOf(source);
+      if (!id) continue;
+      owners.set(id, [...(owners.get(id) ?? []), object.name]);
+    }
+  }
+  const files: { id: string; name: string; mime: string; data: string }[] = [];
+  const missing: string[] = [];
+  for (const [id, names] of owners) {
+    const data = await inlineSource(assetRef(id));
+    if (!data) {
+      missing.push(names.join(", "));
+      continue;
+    }
+    const meta = (await assetInfo(id)) ?? diskAssetInfo(id);
+    files.push({
+      id,
+      name: meta?.name || id,
+      mime: /^data:([^;,]+)/.exec(data)?.[1] || meta?.mime || "application/octet-stream",
+      data,
+    });
+  }
+  if (files.length) {
+    try {
+      await tauriInvoke<number>("preset_write_assets", { path, assets: files });
+    } catch (reason) {
+      throw new Error(`Файлы объектов не записались рядом с пресетом: ${String(reason)}`);
+    }
+  }
+  // Старые файлы убираются только после успешной записи пресета, поэтому
+  // прерванное сохранение ничего не теряет.
+  await tauriInvoke<number>("preset_clean_assets", { path }).catch(() => 0);
+  return missing;
+}
+
+/** Запись пресета на диск: короткий JSON со ссылками плюс папка файлов рядом. */
+async function writePresetFile(preset: RigPreset, path: string): Promise<string[]> {
+  await tauriInvoke<void>("preset_write", { path, contents: JSON.stringify(preset, null, 2) });
+  return writeSidecar(preset, path);
+}
+
 /** Записывает пресет в текущий файл или просит путь, если файла ещё нет. */
 export async function savePreset(preset: RigPreset, path: string | null): Promise<SaveResult> {
   if (!isTauri()) return downloadPreset(preset);
-  const contents = await presetFileContents(preset);
   let target = path;
   if (!target) {
     const picked = await pickSavePath(preset);
     if (!picked) throw new Error("Сохранение отменено");
     target = picked;
   }
-  await tauriInvoke<void>("preset_write", { path: target, contents: contents.text });
-  return { path: target, backend: "tauri", missing: contents.missing };
+  const missing = await writePresetFile(preset, target);
+  await attachPresetDisk(target);
+  return { path: target, backend: "tauri", missing };
 }
 
 /** Всегда спрашивает директорию и имя файла. */
@@ -92,9 +184,9 @@ export async function savePresetAs(preset: RigPreset): Promise<SaveResult> {
   if (!isTauri()) return downloadPreset(preset);
   const target = await pickSavePath(preset);
   if (!target) throw new Error("Сохранение отменено");
-  const contents = await presetFileContents(preset);
-  await tauriInvoke<void>("preset_write", { path: target, contents: contents.text });
-  return { path: target, backend: "tauri", missing: contents.missing };
+  const missing = await writePresetFile(preset, target);
+  await attachPresetDisk(target);
+  return { path: target, backend: "tauri", missing };
 }
 
 async function pickSavePath(preset: RigPreset): Promise<string | null> {
@@ -123,9 +215,12 @@ export async function openPresetFile(): Promise<OpenResult> {
   if (!path) throw new Error("Открытие отменено");
   const text = await tauriInvoke<string>("preset_read", { path });
   const parsed = parsePreset(text);
+  // Сначала папка пресета: файлы, которых нет в webview, придут из неё.
+  await attachPresetDisk(path);
   // Файлы переезжают в хранилище webview: в редакторе остаются короткие ссылки.
   const extracted = await externalizePreset(parsed);
-  return { preset: extracted.preset, path, backend: "tauri" };
+  const missing = await ensureAssetsOfPresetSettled(extracted.preset);
+  return { preset: extracted.preset, path, backend: "tauri", missing };
 }
 
 export function parsePreset(text: string): RigPreset {

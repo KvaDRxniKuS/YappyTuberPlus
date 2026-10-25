@@ -68,7 +68,9 @@ drop_profile() {
 drop_presets() {
   if [ -d "$PRESETS" ]; then
     find "$PRESETS" -maxdepth 1 -name '*.yappy.json' -delete
-    echo "Сохранённые пресеты удалены из $PRESETS"
+    # Папки файлов объектов: рядом с каждым пресетом лежит <имя>.assets.
+    find "$PRESETS" -maxdepth 1 -type d -name '*.assets' -exec rm -rf {} +
+    echo "Сохранённые пресеты и папки их файлов удалены из $PRESETS"
   else
     echo "Папки с сохранёнными пресетами нет."
   fi
