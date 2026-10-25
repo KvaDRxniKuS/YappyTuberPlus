@@ -14,10 +14,11 @@ import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { ChainDialog } from "./components/ChainDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeSprite, makeText, mediaTypeOf,
+  baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeSprite, makeText,
   normalizeModules, normalizeOverlay, normalizePreset, parentNewObject, setParent, setScriptValue,
   uniqueId,
 } from "./engine/preset";
+import { inspectFile } from "./engine/importFile";
 import { textChannel } from "./render/text";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
@@ -124,8 +125,7 @@ export default function App() {
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
   const selectionRef = useRef(selection);
-  const imageInput = useRef<HTMLInputElement>(null);
-  const mediaInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
   presetRef.current = preset;
@@ -529,78 +529,53 @@ export default function App() {
     commit({ ...current, modules }, { label: label || "Модули" });
   }, [commit]);
 
-  const importSprites = async (files: FileList | null) => {
+  /**
+   * Импорт файлов: один вход для картинок, анимаций, видео и звука.
+   *
+   * Тип объекта определяется по самому файлу (`inspectFile`): обычная картинка
+   * становится спрайтом, анимация, видео и звук — медиа-объектом с нужными
+   * настройками воспроизведения. Отдельных кнопок «добавить видео» поэтому нет.
+   */
+  const importFiles = async (files: FileList | null) => {
     if (!files?.length) return;
-    pushUndo("Импорт спрайтов");
+    pushUndo("Импорт файлов");
     const current = presetRef.current;
-    // Все спрайты встают в центр холста: раньше каждый следующий сдвигался на
+    // Все объекты встают в центр холста: раньше каждый следующий сдвигался на
     // 28 px, и пачка картинок уезжала по диагонали.
     const centerX = Math.round(current.canvas.width / 2);
     const centerY = Math.round(current.canvas.height / 2);
     const added: RigObject[] = [];
     try {
       for (const file of Array.from(files)) {
-        const dataUrl = await readFile(file);
-        const bitmap = await createImageBitmap(file);
-        const name = file.name.replace(/\.[^.]+$/, "");
-        const id = uniqueId([...current.objects, ...added], name);
-        added.push(makeSprite(id, name, dataUrl, bitmap.width, bitmap.height, centerX, centerY));
-        bitmap.close();
-      }
-      setPreset({ ...current, objects: parentNewObject([...current.objects, ...added], added, selectionRef.current) });
-      const last = added.at(-1);
-      setSelection(last ? [last.id] : []);
-      notify(`Добавлено спрайтов: ${added.length}`);
-    } catch (reason) {
-      notify(reason instanceof Error ? reason.message : "Не удалось импортировать изображение");
-    }
-  };
-
-  /**
-   * Импорт медиа: картинка, видео или звук становятся отдельным объектом сцены.
-   * Размер берётся у файла (видео — первый кадр, звук — плоская плашка), чтобы
-   * объект сразу выглядел как источник, а не как безымянный прямоугольник.
-   */
-  const importMedia = async (files: FileList | null) => {
-    if (!files?.length) return;
-    pushUndo("Импорт медиа");
-    const current = presetRef.current;
-    const centerX = Math.round(current.canvas.width / 2);
-    const centerY = Math.round(current.canvas.height / 2);
-    const added: RigObject[] = [];
-    try {
-      for (const file of Array.from(files)) {
-        const dataUrl = await readFile(file);
-        const type = mediaTypeOf(file);
-        const name = file.name.replace(/\.[^.]+$/, "");
-        let width = 480;
-        let height = 270;
-        if (type === "audio") {
-          width = 280;
-          height = 100;
-        } else if (type === "video") {
-          const size = await videoSize(dataUrl);
-          width = size.width;
-          height = size.height;
+        const inspected = await inspectFile(file);
+        const id = uniqueId([...current.objects, ...added], inspected.name);
+        if (inspected.kind === "media") {
+          added.push(makeMedia(
+            id, inspected.name,
+            {
+              src: inspected.src,
+              type: inspected.mediaType ?? "image",
+              fileName: file.name,
+              loop: true,
+              // Звук по умолчанию стартует сразу: так его слышно без скрипта,
+              // а `pause()`/`stop()` и параметр `play` его останавливают.
+              autoplay: inspected.mediaType === "audio",
+            },
+            inspected.width, inspected.height, centerX, centerY,
+          ));
         } else {
-          const bitmap = await createImageBitmap(file);
-          width = bitmap.width;
-          height = bitmap.height;
-          bitmap.close();
+          added.push(makeSprite(id, inspected.name, inspected.src, inspected.width, inspected.height, centerX, centerY));
         }
-        const id = uniqueId([...current.objects, ...added], name);
-        added.push(makeMedia(
-          id, name,
-          { src: dataUrl, type, fileName: file.name, loop: true, autoplay: type === "audio" },
-          width, height, centerX, centerY,
-        ));
       }
       setPreset({ ...current, objects: parentNewObject([...current.objects, ...added], added, selectionRef.current) });
       const last = added.at(-1);
       setSelection(last ? [last.id] : []);
-      notify(`Добавлено медиа: ${added.length}`);
+      const media = added.filter((object) => object.kind === "media").length;
+      notify(media === added.length
+        ? `Добавлено медиа: ${media}`
+        : `Добавлено объектов: ${added.length} (медиа: ${media})`);
     } catch (reason) {
-      notify(reason instanceof Error ? reason.message : "Не удалось импортировать медиа");
+      notify(reason instanceof Error ? reason.message : "Не удалось импортировать файл");
     }
   };
 
@@ -857,8 +832,7 @@ export default function App() {
           onRename={renameObject}
           onRequestRename={requestRename}
           onRenameCancel={() => setRenameId(null)}
-          onImport={() => imageInput.current?.click()}
-          onAddMedia={() => mediaInput.current?.click()}
+          onImport={() => fileInput.current?.click()}
           onAddText={addText}
           onAddGroup={() => {
             const current = presetRef.current;
@@ -898,6 +872,7 @@ export default function App() {
             bounds={layout.showBounds}
             pivots={layout.showPivots}
             texts={engineTexts}
+            onDropFiles={(files) => { void importFiles(files); }}
             onTool={setTool}
             onToggleGrid={() => setShowGrid(!showGrid)}
             onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}
@@ -1008,14 +983,13 @@ export default function App() {
         </div>
       </footer>
 
-      <input ref={imageInput} type="file" accept="image/png,image/webp" multiple hidden onChange={(event) => { void importSprites(event.target.files); event.target.value = ""; }} />
       <input
-        ref={mediaInput}
+        ref={fileInput}
         type="file"
         accept="image/*,video/*,audio/*"
         multiple
         hidden
-        onChange={(event) => { void importMedia(event.target.files); event.target.value = ""; }}
+        onChange={(event) => { void importFiles(event.target.files); event.target.value = ""; }}
       />
       <input ref={presetInput} type="file" accept=".json,.yappy.json,application/json" hidden onChange={(event) => { void importPreset(event.target.files?.[0]); event.target.value = ""; }} />
       {pending && <ModuleApplyDialog
@@ -1106,28 +1080,6 @@ function FpsControl({ mode, limit, actual, onChange }: {
       </label>
     </div>
   );
-}
-
-/** Натуральный размер видео: нужен, чтобы медиа-объект совпал с кадром. */
-function videoSize(source: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const probe = document.createElement("video");
-    probe.preload = "metadata";
-    probe.onloadedmetadata = () => {
-      resolve({ width: probe.videoWidth || 480, height: probe.videoHeight || 270 });
-    };
-    probe.onerror = () => reject(new Error("Не удалось прочитать видео: формат не поддерживается"));
-    probe.src = source;
-  });
-}
-
-function readFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error || new Error("Ошибка чтения файла"));
-    reader.readAsDataURL(file);
-  });
 }
 
 /** Совпадают ли наборы модулей по именам и типам (настройки устройств не важны). */

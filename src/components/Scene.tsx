@@ -36,6 +36,8 @@ interface SceneProps {
   pivots: GuideMode;
   /** Текст из модулей: подстановки `{twitch.chat.message}` в текстовых объектах. */
   texts?: TextChannel;
+  /** Файлы, брошенные на сцену: тип объекта определится по файлу. */
+  onDropFiles?: (files: FileList) => void;
   onTool: (tool: SceneTool) => void;
   onToggleGrid: () => void;
   onCycleBounds: () => void;
@@ -389,7 +391,22 @@ export function Scene(props: SceneProps) {
           <button title="Вписать сцену" onClick={fit}><Focus size={15} /></button>
         </div>
       </div>
-      <div className={`scene-viewport tool-${props.tool}`} ref={viewport} data-scene="viewport">
+      <div
+        className={`scene-viewport tool-${props.tool}`}
+        ref={viewport}
+        data-scene="viewport"
+        onDragOver={(event) => {
+          if (!propsRef.current.onDropFiles || !Array.from(event.dataTransfer.types).includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(event) => {
+          const drop = propsRef.current.onDropFiles;
+          if (!drop || !event.dataTransfer.files.length) return;
+          event.preventDefault();
+          drop(event.dataTransfer.files);
+        }}
+      >
         <canvas
           ref={canvas}
           onPointerDown={(event) => {

@@ -18,10 +18,9 @@ interface TreePanelProps {
   onRename: (id: string, name: string) => void;
   onRequestRename: (id: string | null) => void;
   onRenameCancel: () => void;
+  /** Любой файл: тип объекта определяется по нему самому. */
   onImport: () => void;
   onAddGroup: () => void;
-  /** Медиа-объект: картинка, видео или звук отдельным объектом сцены. */
-  onAddMedia: () => void;
   /** Текстовый объект: шаблон с подстановками из чата. */
   onAddText: () => void;
   /** Связать выделенные объекты в пружинную цепочку (хвост, лента). */
@@ -56,15 +55,21 @@ export function TreePanel(props: TreePanelProps) {
           <span className="eyebrow">СТРУКТУРА</span>
           <h2>Объекты <span className="count-badge">{objects.length}</span></h2>
         </div>
-        <button className="icon-button" title="Импорт PNG/WebP" onClick={props.onImport}><Plus size={17} /></button>
+        <button
+          className="icon-button"
+          title="Добавить файл: картинка, анимация, видео или звук — тип определится сам"
+          onClick={props.onImport}
+        ><Plus size={17} /></button>
       </div>
 
       <div className="tree-toolbar">
-        <button onClick={props.onImport}><FileImage size={14} /> Спрайт</button>
-        <button onClick={props.onAddGroup}><FolderPlus size={14} /> Группа</button>
-        <button onClick={props.onAddMedia} title="Картинка, анимация, видео или звук отдельным объектом">
-          <Film size={14} /> Медиа
+        <button
+          onClick={props.onImport}
+          title="Картинка станет спрайтом, анимация, видео и звук — медиа-объектом. Тип определяется по файлу"
+        >
+          <FileImage size={14} /> Файл
         </button>
+        <button onClick={props.onAddGroup}><FolderPlus size={14} /> Группа</button>
         <button onClick={props.onAddText} title="Текст с подстановками из чата">
           <Type size={14} /> Текст
         </button>
