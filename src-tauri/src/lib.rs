@@ -267,7 +267,7 @@ fn preset_clean_assets(path: String) -> Result<usize, String> {
     let mut removed = 0;
     if let Ok(files) = std::fs::read_dir(&dir) {
         for file in files.flatten() {
-            let Some(name) = file.file_name().to_str().map(str::to_string) else {
+            let Some(name) = file.file_name().to_str().map(|name| name.to_string()) else {
                 continue;
             };
             if name == "index.json" || known.iter().any(|known| known == &name) {
