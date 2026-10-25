@@ -118,6 +118,14 @@ export function structureSignature(preset: RigPreset): string {
       object.id, object.kind, object.parentId, object.name,
       object.pivot.x, object.pivot.y, object.width, object.height,
       imageId(object.image),
+      // Медиа живёт в оверлее своим элементом, поэтому смена файла или настроек
+      // воспроизведения — это новая сцена, а не только новый кадр.
+      object.media ? [imageId(object.media.src), object.media.type, object.media.loop,
+        object.media.autoplay, object.media.muted, object.media.volume, object.media.speed,
+        object.media.repeat, object.media.fade, object.media.voices, object.media.fileName] : null,
+      object.text ? [object.text.template, object.text.font, object.text.size, object.text.color,
+        object.text.align, object.text.bold, object.text.italic, object.text.strokeColor,
+        object.text.strokeWidth, object.text.lineHeight] : null,
     ]),
   });
 }

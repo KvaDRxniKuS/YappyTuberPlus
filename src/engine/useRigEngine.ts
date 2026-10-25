@@ -6,6 +6,7 @@ import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import { neutralFrame, prepareFrame } from "./frame";
 import { enumConstants } from "../modules/manual";
 import { frameProduced } from "./frameSignal";
+import type { TextChannel } from "../render/text";
 
 export type EngineStatus = "loading" | "ready" | "error";
 
@@ -14,6 +15,8 @@ export function useRigEngine(
   inputsRef: RefObject<InputValues>,
   paused: boolean,
   frameSinkRef?: RefObject<((frame: RigFrame) => void) | null>,
+  /** Текст модулей: подстановки в шаблонах текстовых объектов. */
+  textsRef?: RefObject<TextChannel>,
 ) {
   const [backend, setBackend] = useState<EngineBackend | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
@@ -157,7 +160,7 @@ export function useRigEngine(
       setError(response.error || "Ошибка кадра");
       return;
     }
-    const gated = prepareFrame(presetRef.current, response.frame);
+    const gated = prepareFrame(presetRef.current, response.frame, textsRef?.current);
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
     // Окна рисуют не по вечному rAF, а по этому сигналу: новый кадр — новый

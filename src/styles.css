@@ -1337,3 +1337,30 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 /* Спрятать нативные стрелки: они мелкие и мешают попасть в цифру. */
 .mapping-number::-webkit-outer-spin-button,
 .mapping-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Медиа и текст в инспекторе: подпись файла, флажки и выпадающие списки. */
+.media-file {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 6px; border: 1px solid #242c34; border-radius: 4px;
+  background: #0f1215; font-family: "Cascadia Code", ui-monospace, monospace; font-size: 10px;
+}
+.check-line { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: #9aa5b0; font-size: 11px; cursor: pointer; }
+.check-line input { width: 12px; height: 12px; accent-color: var(--accent); }
+.select-property { display: block; margin-top: 9px; }
+.select-property > span { display: block; color: #737e89; font-size: 10px; margin-bottom: 4px; }
+.select-property select {
+  width: 100%; height: 26px; padding: 0 6px; border: 1px solid #2b333c; border-radius: 4px;
+  background: #12161a; color: #cfd9e0; font-size: 11px;
+}
+.select-property select:focus { outline: none; border-color: #609c8c; }
+.text-property { display: block; margin-bottom: 8px; }
+.text-property > span { display: block; color: #737e89; font-size: 10px; margin-bottom: 4px; }
+.text-property textarea {
+  width: 100%; resize: vertical; min-height: 54px; padding: 6px;
+  border: 1px solid #2b333c; border-radius: 4px; background: #0f1215; color: #cfd9e0;
+  font-family: "Cascadia Code", ui-monospace, monospace; font-size: 11px; line-height: 1.5;
+}
+.text-property textarea:focus { outline: none; border-color: #609c8c; }
+.number-field input[type="color"] {
+  width: 100%; height: 22px; padding: 0 2px; border: 0; background: transparent; cursor: pointer;
+}

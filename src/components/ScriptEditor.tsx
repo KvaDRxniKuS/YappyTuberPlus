@@ -72,12 +72,13 @@ const EVENT_CHOICES = [
 ];
 
 // Порядок групп в списке функций под редактором.
-const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare"; title: string }> = [
+const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" | "media"; title: string }> = [
   { id: "math", title: "математика" },
   { id: "vector", title: "векторы" },
   { id: "physics", title: "физика" },
   { id: "random", title: "случайность" },
   { id: "compare", title: "сравнения" },
+  { id: "media", title: "медиа и текст" },
 ];
 
 /** Подчёркивание места ошибки: диапазон приходит из ядра вместе с сообщением. */
@@ -382,6 +383,7 @@ export function ScriptEditor({
             <span><b>on mouse.left.down</b> {"{ x = 200 }"}</span>
             <span><b>trigger kick = mouse.left.down</b>, потом <b>{"on kick { … }"}</b></span>
             <span><b>on start</b> — первый кадр · <b>hold(0.5)</b> кадром позже фронта</span>
+            <span>команды — строкой в блоке: <b>{"on start { play() }"}</b>, <b>{"seek(2.5)"}</b>, <b>{"play(\"дождь\")"}</b></span>
           </div>
           <div className="function-chips">
             {GROUPS.map((group) => (

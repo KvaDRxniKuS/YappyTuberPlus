@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, RotateCcw } from "lucide-react";
-import type { BasePose, RigFrame, RigObject } from "../types";
+import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, RotateCcw, Type } from "lucide-react";
+import type { BasePose, MediaRepeat, MediaSpec, RigFrame, RigObject, TextSpec } from "../types";
+import { MEDIA_REPEAT_LABEL } from "../render/media";
+import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
 import { pivotBaseShift } from "../engine/structure";
@@ -243,7 +245,11 @@ export function Inspector(props: InspectorProps) {
     <section className="inspector panel-surface">
       <div className="inspector-header">
         <div className={`inspector-preview ${object.kind}`}>
-          {object.image ? <img src={object.image} alt="" /> : <Link2 size={20} />}
+          {object.kind === "text" ? <Type size={20} />
+            : object.kind === "media" ? (object.media?.type === "image" && object.media.src
+              ? <img src={object.media.src} alt="" />
+              : object.media?.type === "audio" ? <Music size={20} /> : <Link2 size={20} />)
+            : object.image ? <img src={object.image} alt="" /> : <Link2 size={20} />}
         </div>
         <div className="inspector-title">
           <input
@@ -251,7 +257,12 @@ export function Inspector(props: InspectorProps) {
             title="F2 — переименовать"
             onChange={(event) => onChange({ ...object, name: event.target.value })}
           />
-          <span>{object.id} · {object.kind === "group" ? "группа" : `${object.width}×${object.height}`}</span>
+          <span>
+            {object.id} · {object.kind === "group" ? "группа"
+              : object.kind === "text" ? "текст"
+              : object.kind === "media" ? `медиа · ${object.media?.type === "video" ? "видео" : object.media?.type === "audio" ? "звук" : "картинка"}`
+              : `${object.width}×${object.height}`}
+          </span>
         </div>
         <button className="icon-button" title="Сбросить трансформацию" onClick={() => updateBase({ rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0 })}><RotateCcw size={15} /></button>
       </div>
@@ -308,10 +319,26 @@ export function Inspector(props: InspectorProps) {
           </div>
         )}
 
+        {object.kind === "media" && (
+          <MediaSection
+            object={object}
+            media={object.media ?? normalizeMedia(undefined)}
+            onChange={onChange}
+          />
+        )}
+
+        {object.kind === "text" && (
+          <TextSection
+            object={object}
+            text={object.text ?? normalizeText(undefined)}
+            onChange={onChange}
+          />
+        )}
+
         <div className="property-section compact-section">
           <div className="section-title">
             <span>Пивот</span>
-            <small>{object.kind === "sprite" ? "UV" : "ТОЧКА ВРАЩЕНИЯ"}</small>
+            <small>{object.kind === "group" ? "ТОЧКА ВРАЩЕНИЯ" : "UV"}</small>
           </div>
           <div className="property-grid two-columns">
             <NumberField label="Pivot X" value={shownPivot.x} step={0.01} onCommit={(x) => commitPivot({ ...shownPivot, x })} />
@@ -333,6 +360,169 @@ export function Inspector(props: InspectorProps) {
         </div>
       </div>
     </section>
+  );
+}
+
+const MEDIA_REPEATS: MediaRepeat[] = ["restart", "fade", "overlay", "finish"];
+const MEDIA_ACCEPT = "image/*,video/*,audio/*";
+
+/** Медиа-объект: файл, повтор, громкость, скорость и политика повтора. */
+function MediaSection({ object, media, onChange }: {
+  object: RigObject;
+  media: MediaSpec;
+  onChange: (object: RigObject) => void;
+}) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const update = (patch: Partial<MediaSpec>) => onChange({ ...object, media: { ...media, ...patch } });
+  const replace = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = typeof reader.result === "string" ? reader.result : "";
+      if (!src) return;
+      update({ src, type: mediaTypeOf(file), fileName: file.name });
+    };
+    reader.readAsDataURL(file);
+  };
+  return (
+    <>
+      <div className="property-section compact-section">
+        <div className="section-title"><span>Файл</span><small>{media.type === "video" ? "ВИДЕО" : media.type === "audio" ? "ЗВУК" : "КАРТИНКА"}</small></div>
+        <p className="behaviour-hint media-file" title={media.fileName || "файл не выбран"}>
+          {media.fileName || "Файл не выбран: добавьте картинку, видео или звук"}
+        </p>
+        <div className="image-actions">
+          <button className="button secondary" onClick={() => fileInput.current?.click()}>
+            <ImageUp size={14} /> {media.src ? "Заменить файл" : "Выбрать файл"}
+          </button>
+        </div>
+        <input
+          ref={fileInput}
+          type="file"
+          accept={MEDIA_ACCEPT}
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) replace(file);
+          }}
+        />
+        <div className="property-grid two-columns">
+          <NumberField label="Ширина" value={object.width} step={1} onCommit={(width) => onChange({ ...object, width: Math.max(1, width) })} />
+          <NumberField label="Высота" value={object.height} step={1} onCommit={(height) => onChange({ ...object, height: Math.max(1, height) })} />
+        </div>
+        <label className="check-line">
+          <input type="checkbox" checked={media.loop} onChange={(event) => update({ loop: event.target.checked })} />
+          <span>Зациклить</span>
+        </label>
+        <label className="check-line">
+          <input type="checkbox" checked={media.autoplay} onChange={(event) => update({ autoplay: event.target.checked })} />
+          <span>Играть сразу после запуска</span>
+        </label>
+        {media.type === "video" && (
+          <label className="check-line">
+            <input type="checkbox" checked={media.muted} onChange={(event) => update({ muted: event.target.checked })} />
+            <span>Без звука</span>
+          </label>
+        )}
+      </div>
+
+      <div className="property-section compact-section">
+        <div className="section-title"><span>Воспроизведение</span><small>ОСНОВА</small></div>
+        <label className="range-property">
+          <span>Громкость <b>{Math.round(media.volume * 100)}%</b></span>
+          <input
+            type="range" min="0" max="1" step="0.01" value={media.volume}
+            onChange={(event) => update({ volume: Number(event.target.value) })}
+          />
+        </label>
+        <div className="property-grid two-columns">
+          <NumberField label="Скорость" value={media.speed} step={0.1} suffix="×" onCommit={(speed) => update({ speed: Math.min(4, Math.max(0.1, speed)) })} />
+        </div>
+        <label className="select-property">
+          <span>При повторной активации</span>
+          <select value={media.repeat} onChange={(event) => update({ repeat: event.target.value as MediaRepeat })}>
+            {MEDIA_REPEATS.map((value) => <option key={value} value={value}>{MEDIA_REPEAT_LABEL[value]}</option>)}
+          </select>
+        </label>
+        {media.repeat === "fade" && (
+          <NumberField label="Затухание" value={media.fade} step={0.05} suffix="с" onCommit={(fade) => update({ fade: Math.min(10, Math.max(0, fade)) })} />
+        )}
+        {media.repeat === "overlay" && (
+          <NumberField label="Копий звука" value={media.voices} step={1} onCommit={(voices) => update({ voices: Math.min(8, Math.max(1, Math.round(voices))) })} />
+        )}
+        <p className="behaviour-hint">
+          В скрипте: <b>play()</b> — с начала, <b>seek(сек)</b> — перемотка,
+          <b> pause()</b>, <b>stop()</b>, <b>rate(×)</b>, <b>volume(0..1)</b>; чужой объект
+          указывается первым аргументом: <b>play("дождь")</b>. Параметры <b>play</b>,
+          <b> speed</b> и <b>volume</b> — обычные формулы.
+        </p>
+      </div>
+    </>
+  );
+}
+
+/** Текстовый объект: шаблон, шрифт и подстановки из чата. */
+function TextSection({ object, text, onChange }: {
+  object: RigObject;
+  text: TextSpec;
+  onChange: (object: RigObject) => void;
+}) {
+  const update = (patch: Partial<TextSpec>) => onChange({ ...object, text: { ...text, ...patch } });
+  return (
+    <div className="property-section compact-section">
+      <div className="section-title"><span>Текст</span><small>{"{МОДУЛЬ}.MESSAGE / .USER"}</small></div>
+      <label className="text-property">
+        <span>Шаблон</span>
+        <textarea
+          rows={3}
+          value={text.template}
+          placeholder="{twitch.chat.user}: {twitch.chat.message}"
+          onChange={(event) => update({ template: event.target.value })}
+        />
+      </label>
+      <div className="property-grid two-columns">
+        <NumberField label="Размер" value={text.size} step={2} suffix="px" onCommit={(size) => update({ size: Math.min(400, Math.max(4, size)) })} />
+        <NumberField label="Ширина рамки" value={object.width} step={10} onCommit={(width) => onChange({ ...object, width: Math.max(1, width) })} />
+      </div>
+      <div className="property-grid two-columns">
+        <label className="number-field">
+          <span>Шрифт</span>
+          <div><input value={text.font} onChange={(event) => update({ font: event.target.value })} /></div>
+        </label>
+        <label className="number-field">
+          <span>Цвет</span>
+          <div><input type="color" value={text.color} onChange={(event) => update({ color: event.target.value })} /></div>
+        </label>
+      </div>
+      <label className="select-property">
+        <span>Выравнивание</span>
+        <select value={text.align} onChange={(event) => update({ align: event.target.value as TextSpec["align"] })}>
+          <option value="left">по левому краю</option>
+          <option value="center">по центру</option>
+          <option value="right">по правому краю</option>
+        </select>
+      </label>
+      <label className="check-line">
+        <input type="checkbox" checked={text.bold} onChange={(event) => update({ bold: event.target.checked })} />
+        <span>Полужирный</span>
+      </label>
+      <label className="check-line">
+        <input type="checkbox" checked={text.italic} onChange={(event) => update({ italic: event.target.checked })} />
+        <span>Курсив</span>
+      </label>
+      <div className="property-grid two-columns">
+        <NumberField label="Обводка" value={text.strokeWidth} step={1} suffix="px" onCommit={(strokeWidth) => update({ strokeWidth: Math.min(24, Math.max(0, strokeWidth)) })} />
+        <label className="number-field">
+          <span>Цвет обводки</span>
+          <div><input type="color" value={text.strokeColor} onChange={(event) => update({ strokeColor: event.target.value })} /></div>
+        </label>
+      </div>
+      <p className="behaviour-hint">
+        Текст из чата приходит отдельным каналом: в шаблоне пишутся подстановки
+        <b> {"{twitch.chat.message}"}</b> и <b>{"{twitch.chat.user}"}</b>. Команда
+        <b> text("…")</b> в скрипте заменяет шаблон целиком, а <b>text("")</b> возвращает шаблон.
+      </p>
+    </div>
   );
 }
 

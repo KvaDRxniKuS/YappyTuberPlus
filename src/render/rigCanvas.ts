@@ -2,6 +2,8 @@ import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
 import { frontness, structurePaths } from "../engine/structure";
+import { DEFAULT_MEDIA, MediaAssets } from "./media";
+import { drawTextObject, textContent, type TextChannel } from "./text";
 
 /**
  * Shared Canvas 2D renderer. The editor scene and the OBS overlay use the same
@@ -114,7 +116,7 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
 }
 
 /**
- * Спрайты в порядке отрисовки: слой, затем структура.
+ * Объекты в порядке отрисовки: слой, затем структура.
  *
  * Порядок считается здесь, а не берётся из кадра движка, по двум причинам:
  * слой из скрипта и базовый слой должны действовать одинаково в любой момент
@@ -122,8 +124,8 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
  * обязан быть тот, кто выше в структуре, — индекс в массиве пресета про это
  * не знает. Смена слоя применяется сразу, без перезапуска движка.
  */
-export function orderedSprites(preset: RigPreset, frame: RigFrame | null): RigObject[] {
-  const sprites = preset.objects.filter((object) => object.kind === "sprite");
+export function orderedObjects(preset: RigPreset, frame: RigFrame | null): RigObject[] {
+  const sprites = preset.objects.filter((object) => object.kind !== "group");
   const paths = structurePaths(preset.objects);
   const layerOf = (object: RigObject) => resolveLayer(preset.objects, frame, object);
   return [...sprites].sort((a, b) => (layerOf(a) - layerOf(b))
@@ -143,6 +145,10 @@ export interface DrawRigOptions {
   ghosts?: boolean;
   /** Прозрачность призрака; 0.25 по умолчанию. */
   ghostAlpha?: number;
+  /** Медиа-объекты: звук и видео. Без него медиа рисуется заглушкой. */
+  media?: MediaAssets;
+  /** Текстовый канал модулей: подстановки в шаблоне текстового объекта. */
+  texts?: TextChannel;
 }
 
 /**
@@ -166,19 +172,46 @@ export function drawRig(
 ): void {
   const zoom = options.lineScale ?? 1;
   const ghostAlpha = options.ghostAlpha ?? 0.25;
-  for (const object of orderedSprites(preset, frame)) {
+  for (const object of orderedObjects(preset, frame)) {
     const values = frame?.objects[object.id] || staticValues(object);
     const ghost = values.visible === 0 && options.ghosts === true && scriptHidden(object, values);
     if (values.visible === 0 && !ghost) continue;
     const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
     if (opacity === 0 || values.sizeX === 0 || values.sizeY === 0) continue;
     const matrix = objectMatrix(object, values);
-    const image = assets.get(object.image);
     const left = -object.pivot.x * object.width;
     const top = -object.pivot.y * object.height;
     ctx.save();
     ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
     ctx.globalAlpha = ghost ? opacity * ghostAlpha : opacity;
+    if (object.kind === "text") {
+      drawTextObject(ctx, object, textContent(object, frame, options.texts));
+      ctx.restore();
+      continue;
+    }
+    if (object.kind === "media") {
+      const spec = object.media ?? DEFAULT_MEDIA;
+      const video = spec.type === "video" ? options.media?.video(object.id) : null;
+      const picture = video ?? (spec.type === "image" ? options.media?.image(object.id) : null);
+      const width = spec.type === "video" && video
+        ? object.width || video.videoWidth
+        : object.width;
+      const height = spec.type === "video" && video
+        ? object.height || video.videoHeight
+        : object.height;
+      const boxLeft = -object.pivot.x * width;
+      const boxTop = -object.pivot.y * height;
+      if (picture) {
+        ctx.drawImage(picture, boxLeft, boxTop, width, height);
+      } else if (options.placeholders) {
+        // Звук и ещё не загруженное видео: в редакторе видно место объекта,
+        // в оверлее ничего не рисуется.
+        drawMediaPlaceholder(ctx, spec.type, object, spec.fileName, left, top, 1 / zoom);
+      }
+      ctx.restore();
+      continue;
+    }
+    const image = assets.get(object.image);
     if (image?.complete && image.naturalWidth > 0) {
       ctx.drawImage(image, left, top, object.width, object.height);
     } else if (options.placeholders) {
@@ -190,6 +223,30 @@ export function drawRig(
     }
     ctx.restore();
   }
+}
+
+/** Заглушка медиа-объекта в редакторе: звук не видно, но найти его надо. */
+function drawMediaPlaceholder(
+  ctx: CanvasRenderingContext2D,
+  type: "image" | "video" | "audio",
+  object: RigObject,
+  fileName: string,
+  left: number,
+  top: number,
+  line: number,
+): void {
+  ctx.fillStyle = type === "audio" ? "#2f3b45cc" : "#505965";
+  ctx.fillRect(left, top, object.width, object.height);
+  ctx.strokeStyle = "#8994a1";
+  ctx.lineWidth = line;
+  ctx.strokeRect(left, top, object.width, object.height);
+  const caption = fileName || (type === "audio" ? "звук" : type === "video" ? "видео" : "файл");
+  const size = Math.max(10, Math.min(object.height / 4, object.width / Math.max(4, caption.length * 0.6)));
+  ctx.fillStyle = "#dfe6ee";
+  ctx.font = `${size}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(caption, left + object.width / 2, top + object.height / 2, object.width * 0.9);
 }
 
 export interface ViewTransform {

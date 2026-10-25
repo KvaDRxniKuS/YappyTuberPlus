@@ -30,7 +30,7 @@ export function groupBounds(preset: { objects: RigObject[] }, groupId: string): 
   }
   const points: Point[] = [];
   for (const object of preset.objects) {
-    if (object.kind !== "sprite" || !ids.has(object.id)) continue;
+    if (object.kind === "group" || !ids.has(object.id)) continue;
     points.push(...spriteBounds(object, objectMatrix(object, staticValues(object))));
   }
   if (points.length === 0) {

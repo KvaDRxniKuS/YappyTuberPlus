@@ -28,6 +28,9 @@ pub enum BinaryOp {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Number(f64),
+    /// Строковый литерал: `"дождь"`. Числовые формулы строк не принимают —
+    /// они нужны командам воспроизведения и тексту.
+    Text(String),
     Name(String),
     Unary {
         op: UnaryOp,
@@ -57,6 +60,7 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq)]
 enum TokenKind {
     Number(f64),
+    Text(String),
     Ident(String),
     Plus,
     Minus,
@@ -178,6 +182,42 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     i += 1;
                     TokenKind::Not
                 }
+            }
+            '"' => {
+                i += 1;
+                let mut value = String::new();
+                let mut closed = false;
+                while i < chars.len() {
+                    let current = chars[i];
+                    i += 1;
+                    match current {
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        '\\' => {
+                            let escaped = match chars.get(i) {
+                                Some('n') => '\n',
+                                Some('t') => '\t',
+                                Some('"') => '"',
+                                Some('\\') => '\\',
+                                _ => {
+                                    return Err(format!(
+                                        "неизвестная escape-последовательность на позиции {}",
+                                        i
+                                    ))
+                                }
+                            };
+                            i += 1;
+                            value.push(escaped);
+                        }
+                        other => value.push(other),
+                    }
+                }
+                if !closed {
+                    return Err("строка не закрыта: нет '\"'".into());
+                }
+                TokenKind::Text(value)
             }
             '.' if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
                 i += 1;
@@ -481,6 +521,7 @@ impl ExpressionParser {
     fn primary(&mut self) -> Result<Expr, String> {
         match self.advance() {
             TokenKind::Number(value) => Ok(Expr::Number(value)),
+            TokenKind::Text(value) => Ok(Expr::Text(value)),
             TokenKind::Ident(name) => Ok(Expr::Name(name)),
             TokenKind::LParen => {
                 let expr = self.ternary()?;
@@ -542,11 +583,22 @@ pub struct TriggerDecl {
     pub kind: EventKind,
 }
 
+/// Один оператор в теле блока события.
+///
+/// Присваивание меняет параметр, команда (`play()`, `seek(2)`, `text("…")`)
+/// управляет медиа-объектом или текстом. Команды пишутся только внутри
+/// `on …` — на верхнем уровне скрипта живут формулы.
+#[derive(Debug, Clone)]
+pub enum Statement {
+    Assign(AssignTarget, Arc<Expr>),
+    Call(Arc<Expr>),
+}
+
 /// Блок `on … { имя = выражение … }`.
 #[derive(Debug, Clone)]
 pub struct EventBlock {
     pub source: EventSource,
-    pub body: Vec<(AssignTarget, Arc<Expr>)>,
+    pub body: Vec<Statement>,
 }
 
 /// Ошибка разбора с местом в тексте: редактор подчёркивает этот диапазон.
@@ -782,6 +834,53 @@ fn parse_assignment(
     Ok((target, Arc::new(expr)))
 }
 
+/// Похоже ли начало строки на вызов функции: `play()`, `seek(2)`, `text("…")`.
+fn looks_like_call(text: &str) -> bool {
+    let head = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(text.len());
+    head > 0 && text[head..].starts_with('(') && text.ends_with(')')
+}
+
+/// Оператор тела блока события: присваивание или команда.
+///
+/// Команда — это голая функция в строке: `play()`, `play("дождь")`,
+/// `seek(1.5)`, `text("привет")`. Аргумент-строка нужна, чтобы управлять
+/// чужим объектом из скрипта-контроллера.
+fn parse_statement(
+    text: &str,
+    line: usize,
+    column: usize,
+    next_call_id: &mut u32,
+) -> Result<Statement, ScriptError> {
+    let trimmed = text.trim();
+    if looks_like_call(trimmed) {
+        let expr = parse_expression(trimmed).map_err(|message| {
+            let shift = position_from_message(&message);
+            ScriptError::new(
+                line,
+                column + shift,
+                trimmed.len() - shift.min(trimmed.len()),
+                message,
+            )
+        })?;
+        if !matches!(expr, Expr::Call { .. }) {
+            return Err(ScriptError::new(
+                line,
+                column,
+                trimmed.len(),
+                "ожидалась команда вида 'play()'",
+            ));
+        }
+        let mut counter = CountCalls(*next_call_id);
+        counter.visit(&expr);
+        *next_call_id = counter.0;
+        return Ok(Statement::Call(Arc::new(expr)));
+    }
+    let (target, expression) = parse_assignment(trimmed, line, column, next_call_id)?;
+    Ok(Statement::Assign(target, expression))
+}
+
 /// Разбор скрипта: присваивания, блоки `on …` и объявления `trigger`.
 ///
 /// Строки разбираются по одной, поэтому ошибка всегда знает свою строку и
@@ -958,7 +1057,7 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
             }
             let mut body = Vec::new();
             for (body_line, body_column, text) in body_lines {
-                body.push(parse_assignment(
+                body.push(parse_statement(
                     &text,
                     body_line,
                     body_column,
@@ -973,6 +1072,14 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
             continue;
         }
 
+        if looks_like_call(trimmed) {
+            return Err(ScriptError::new(
+                line_number,
+                column,
+                trimmed.len(),
+                "команда выполняется только внутри блока события: on start { play() }",
+            ));
+        }
         let statement = parse_assignment(trimmed, line_number, column, &mut next_call_id)?;
         if let AssignTarget::Local(name) = &statement.0 {
             let duplicate = script.assignments.iter().any(|(existing, _)| {
@@ -1152,9 +1259,26 @@ mod tests {
             AssignTarget::Foreign { object, param } if object == "head" && param == "rotation"
         ));
         assert!(matches!(
-            &script.events[0].body[0].0,
-            AssignTarget::Foreign { object, param } if object == "head" && param == "x"
+            &script.events[0].body[0],
+            Statement::Assign(AssignTarget::Foreign { object, param }, _)
+                if object == "head" && param == "x"
         ));
+    }
+
+    #[test]
+    fn commands_are_statements_of_event_blocks() {
+        let script =
+            parse_script("on start {\n  play()\n  seek(2.5)\n  text(\"привет\")\n}").unwrap();
+        let body = &script.events[0].body;
+        assert_eq!(body.len(), 3);
+        assert!(matches!(&body[0], Statement::Call(call) if matches!(call.as_ref(), Expr::Call { name, .. } if name == "play")));
+        assert!(matches!(&body[2], Statement::Call(call) if matches!(call.as_ref(), Expr::Call { args, .. } if matches!(args.first(), Some(Expr::Text(text)) if text == "привет"))));
+    }
+
+    #[test]
+    fn command_outside_event_is_an_error() {
+        let error = parse_script("play()").unwrap_err();
+        assert!(error.message.contains("внутри блока события"));
     }
 
     #[test]

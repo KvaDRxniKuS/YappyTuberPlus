@@ -15,7 +15,7 @@ export interface FunctionSignature {
   variadic?: boolean;
   /** Что функция делает — одной строкой. */
   summary: string;
-  group: "math" | "vector" | "physics" | "random" | "compare";
+  group: "math" | "vector" | "physics" | "random" | "compare" | "media";
 }
 
 export const SIGNATURES: Record<string, FunctionSignature> = {
@@ -79,6 +79,18 @@ export const SIGNATURES: Record<string, FunctionSignature> = {
   near: { params: ["a", "b", "eps"], summary: "1, если |a − b| не больше eps", group: "compare" },
   between: { params: ["x", "lo", "hi"], summary: "1, если lo ≤ x ≤ hi (границы в любом порядке)", group: "compare" },
   is: { params: ["x", "a"], variadic: true, summary: "1, если x равно любому из перечисленных", group: "compare" },
+
+  // Команды медиа и текста. В отличие от функций они ничего не возвращают:
+  // пишутся отдельной строкой внутри блока события. Первый аргумент-строка —
+  // id чужого объекта, без него команда действует на свой объект.
+  play: { params: ["объект"], optional: ["объект"], summary: "начать с начала по политике повтора", group: "media" },
+  resume: { params: ["объект"], optional: ["объект"], summary: "продолжить с текущего места", group: "media" },
+  pause: { params: ["объект"], optional: ["объект"], summary: "пауза без перемотки", group: "media" },
+  stop: { params: ["объект"], optional: ["объект"], summary: "остановить и вернуться в начало", group: "media" },
+  seek: { params: ["объект", "секунды"], optional: ["объект"], summary: "перемотать звук или видео на время", group: "media" },
+  rate: { params: ["объект", "скорость"], optional: ["объект"], summary: "скорость воспроизведения, 0.1…4", group: "media" },
+  volume: { params: ["объект", "громкость"], optional: ["объект"], summary: "громкость 0…1 на время", group: "media" },
+  text: { params: ["текст"], optional: ["объект"], summary: "показать текст в текстовом объекте", group: "media" },
 };
 
 export const FUNCTION_NAMES = Object.keys(SIGNATURES);

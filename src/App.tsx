@@ -14,9 +14,11 @@ import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { ChainDialog } from "./components/ChainDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, groupSpot, isDescendant, makeGroup, makeSprite, normalizeModules, normalizeOverlay,
-  normalizePreset, parentNewObject, setParent, setScriptValue, uniqueId,
+  baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeSprite, makeText, mediaTypeOf,
+  normalizeModules, normalizeOverlay, normalizePreset, parentNewObject, setParent, setScriptValue,
+  uniqueId,
 } from "./engine/preset";
+import { textChannel } from "./render/text";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
 import { propagateBase, repivot, reorderNeighbor, reorderObjects } from "./engine/structure";
@@ -123,6 +125,7 @@ export default function App() {
   const history = useRef(new History());
   const selectionRef = useRef(selection);
   const imageInput = useRef<HTMLInputElement>(null);
+  const mediaInput = useRef<HTMLInputElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
   presetRef.current = preset;
@@ -130,7 +133,12 @@ export default function App() {
   selectionRef.current = selection;
 
   const overlay = useOverlayHost(preset);
-  const engine = useRigEngine(preset, inputsRef, paused || stopped, overlay.sinkRef);
+  // Текстовый канал: последнее сообщение каждого модуля. Кадр получает уже
+  // готовый текст, поэтому оверлею не нужен доступ к модулям.
+  const textsRef = useRef<Record<string, { text: string; author?: string }>>({});
+  const engineTexts = useMemo(() => textChannel(moduleInputs.externalTexts), [moduleInputs.externalTexts]);
+  textsRef.current = engineTexts;
+  const engine = useRigEngine(preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef);
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const primaryId = selection.at(-1) ?? null;
   const selected = preset.objects.find((object) => object.id === primaryId) || null;
@@ -548,6 +556,65 @@ export default function App() {
     }
   };
 
+  /**
+   * Импорт медиа: картинка, видео или звук становятся отдельным объектом сцены.
+   * Размер берётся у файла (видео — первый кадр, звук — плоская плашка), чтобы
+   * объект сразу выглядел как источник, а не как безымянный прямоугольник.
+   */
+  const importMedia = async (files: FileList | null) => {
+    if (!files?.length) return;
+    pushUndo("Импорт медиа");
+    const current = presetRef.current;
+    const centerX = Math.round(current.canvas.width / 2);
+    const centerY = Math.round(current.canvas.height / 2);
+    const added: RigObject[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        const dataUrl = await readFile(file);
+        const type = mediaTypeOf(file);
+        const name = file.name.replace(/\.[^.]+$/, "");
+        let width = 480;
+        let height = 270;
+        if (type === "audio") {
+          width = 280;
+          height = 100;
+        } else if (type === "video") {
+          const size = await videoSize(dataUrl);
+          width = size.width;
+          height = size.height;
+        } else {
+          const bitmap = await createImageBitmap(file);
+          width = bitmap.width;
+          height = bitmap.height;
+          bitmap.close();
+        }
+        const id = uniqueId([...current.objects, ...added], name);
+        added.push(makeMedia(
+          id, name,
+          { src: dataUrl, type, fileName: file.name, loop: true, autoplay: type === "audio" },
+          width, height, centerX, centerY,
+        ));
+      }
+      setPreset({ ...current, objects: parentNewObject([...current.objects, ...added], added, selectionRef.current) });
+      const last = added.at(-1);
+      setSelection(last ? [last.id] : []);
+      notify(`Добавлено медиа: ${added.length}`);
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось импортировать медиа");
+    }
+  };
+
+  /** Текстовый объект: шаблон с подстановками из текстового канала. */
+  const addText = () => {
+    const current = presetRef.current;
+    const id = uniqueId(current.objects, "text");
+    const spot = groupSpot(current, selectionRef.current);
+    const object = makeText(id, "Новый текст", { template: "Текст" }, 640, 160, spot.x, spot.y);
+    const objects = parentNewObject([...current.objects, object], [object], selectionRef.current);
+    commit({ ...current, objects }, { label: "Новый текст" });
+    setSelection([id]);
+  };
+
   /** Удаление всей выборки: дети удалённых переезжают к ближайшему живому предку. */
   const deleteSelected = () => {
     const current = presetRef.current;
@@ -791,6 +858,8 @@ export default function App() {
           onRequestRename={requestRename}
           onRenameCancel={() => setRenameId(null)}
           onImport={() => imageInput.current?.click()}
+          onAddMedia={() => mediaInput.current?.click()}
+          onAddText={addText}
           onAddGroup={() => {
             const current = presetRef.current;
             const id = uniqueId(current.objects, "group");
@@ -828,6 +897,7 @@ export default function App() {
             ghosts={paused || stopped}
             bounds={layout.showBounds}
             pivots={layout.showPivots}
+            texts={engineTexts}
             onTool={setTool}
             onToggleGrid={() => setShowGrid(!showGrid)}
             onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}
@@ -939,6 +1009,14 @@ export default function App() {
       </footer>
 
       <input ref={imageInput} type="file" accept="image/png,image/webp" multiple hidden onChange={(event) => { void importSprites(event.target.files); event.target.value = ""; }} />
+      <input
+        ref={mediaInput}
+        type="file"
+        accept="image/*,video/*,audio/*"
+        multiple
+        hidden
+        onChange={(event) => { void importMedia(event.target.files); event.target.value = ""; }}
+      />
       <input ref={presetInput} type="file" accept=".json,.yappy.json,application/json" hidden onChange={(event) => { void importPreset(event.target.files?.[0]); event.target.value = ""; }} />
       {pending && <ModuleApplyDialog
         modules={pending.preset.modules}
@@ -1028,6 +1106,19 @@ function FpsControl({ mode, limit, actual, onChange }: {
       </label>
     </div>
   );
+}
+
+/** Натуральный размер видео: нужен, чтобы медиа-объект совпал с кадром. */
+function videoSize(source: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const probe = document.createElement("video");
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () => {
+      resolve({ width: probe.videoWidth || 480, height: probe.videoHeight || 270 });
+    };
+    probe.onerror = () => reject(new Error("Не удалось прочитать видео: формат не поддерживается"));
+    probe.src = source;
+  });
 }
 
 function readFile(file: File): Promise<string> {

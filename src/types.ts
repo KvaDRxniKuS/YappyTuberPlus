@@ -1,6 +1,12 @@
 export type ParamName =
   | "x" | "y" | "rotation" | "sizeX" | "sizeY"
-  | "skewX" | "skewY" | "opacity" | "visible" | "layer";
+  | "skewX" | "skewY" | "opacity" | "visible" | "layer"
+  /** Медиа: 1 — играет, 0 — пауза. */
+  | "play"
+  /** Медиа: множитель скорости воспроизведения. */
+  | "speed"
+  /** Медиа: множитель громкости 0..1. */
+  | "volume";
 
 export interface Vec2 { x: number; y: number }
 
@@ -17,10 +23,73 @@ export interface BasePose {
   layer: number;
 }
 
+/**
+ * Вид объекта сцены.
+ *
+ * `media` и `text` — дочерние виды спрайта: у них те же параметры позы, пивот,
+ * родитель и скрипт, но вместо картинки — файл воспроизведения или текст.
+ */
+export type ObjectKind = "sprite" | "group" | "media" | "text";
+
+/** Что делать, если событие активировало звук повторно, пока он ещё играет. */
+export type MediaRepeat = "restart" | "fade" | "overlay" | "finish";
+
+/**
+ * Медиа-объект: картинка (в том числе анимированная), видео или звук.
+ *
+ * Все настройки — базовые значения. Скрипт может менять их параметрами
+ * `play`, `speed`, `volume` и командами `play()`, `pause()`, `stop()`,
+ * `seek(сек)`, `rate(x)`, `volume(x)`.
+ */
+export interface MediaSpec {
+  /** Файл как data URL: пресет остаётся одним файлом и переносится целиком. */
+  src: string | null;
+  /** Чем файл является на самом деле: по MIME и расширению. */
+  type: "image" | "video" | "audio";
+  /** Имя файла для подписи в инспекторе. */
+  fileName: string;
+  /** Зациклить воспроизведение. */
+  loop: boolean;
+  /** Запускать сразу после включения сцены. */
+  autoplay: boolean;
+  /** Видео без звука. */
+  muted: boolean;
+  /** Базовая громкость 0..1; умножается на параметр `volume`. */
+  volume: number;
+  /** Базовая скорость 0.1..4; умножается на параметр `speed`. */
+  speed: number;
+  /** Поведение при повторной активации: прервать, затушевать, наложить, доиграть. */
+  repeat: MediaRepeat;
+  /** Длительность затухания при `repeat: "fade"`, секунды. */
+  fade: number;
+  /** Сколько копий звука разрешено при `repeat: "overlay"`. */
+  voices: number;
+}
+
+/** Текстовый объект: шаблон с подстановками из текстового канала модулей. */
+export interface TextSpec {
+  /**
+   * Текст или шаблон. `{путь}` подставляет строку из текстового канала
+   * (`{twitch.chat.message}`), `{twitch.chat.user}` — автора.
+   */
+  template: string;
+  font: string;
+  size: number;
+  color: string;
+  align: "left" | "center" | "right";
+  bold: boolean;
+  italic: boolean;
+  /** Обводка: ширина 0 — без обводки. */
+  strokeColor: string;
+  strokeWidth: number;
+  /** Межстрочный интервал, множитель высоты шрифта. */
+  lineHeight: number;
+}
+
 export interface RigObject {
   id: string;
   name: string;
-  kind: "sprite" | "group";
+  kind: ObjectKind;
   /**
    * Доступность объекта для показа. Умножается на `visible` из скрипта:
    * глаз в структуре гасит объект, не трогая его формулы.
@@ -33,6 +102,10 @@ export interface RigObject {
   script: string;
   width: number;
   height: number;
+  /** Настройки медиа-объекта: есть только у `kind: "media"`. */
+  media?: MediaSpec;
+  /** Настройки текста: есть только у `kind: "text"`. */
+  text?: TextSpec;
 }
 
 export interface RuntimeConfig {
@@ -83,12 +156,29 @@ export interface ScriptErrorInfo {
   message: string;
 }
 
+/** Команда воспроизведения, которую ядро отдало медиа-объекту. */
+export interface MediaCue {
+  /** Растёт на каждую команду: по нему видно, что команда новая. */
+  cue: number;
+  /** `none` — команд не было. */
+  action: "none" | "play" | "resume" | "pause" | "stop" | "seek";
+  /** Секунды для `seek`, иначе 0. */
+  arg: number;
+}
+
 export interface RigFrame {
   seq: number;
   time: number;
   dt: number;
   globals: Record<string, number>;
   objects: Record<string, ObjectFrame>;
+  /**
+   * Команды медиа-объектам по id. Поля может не быть, если ядро старое —
+   * тогда медиа просто живёт по параметрам `play`, `speed`, `volume`.
+   */
+  media?: Record<string, MediaCue>;
+  /** Текст, заданный командой `text("…")`: заменяет шаблон объекта. */
+  texts?: Record<string, string>;
   order: string[];
   diagnostics: string[];
 }

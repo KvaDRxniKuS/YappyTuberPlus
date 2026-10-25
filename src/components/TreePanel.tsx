@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Box, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FileImage,
-  Folder, FolderPlus, Import, Plus, Spline, Trash2,
+  Box, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FileImage, FileVideo, Film,
+  Folder, FolderPlus, Import, Plus, Spline, Trash2, Type,
 } from "lucide-react";
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
@@ -20,6 +20,10 @@ interface TreePanelProps {
   onRenameCancel: () => void;
   onImport: () => void;
   onAddGroup: () => void;
+  /** Медиа-объект: картинка, видео или звук отдельным объектом сцены. */
+  onAddMedia: () => void;
+  /** Текстовый объект: шаблон с подстановками из чата. */
+  onAddText: () => void;
   /** Связать выделенные объекты в пружинную цепочку (хвост, лента). */
   onChain: () => void;
   onDelete: () => void;
@@ -58,6 +62,12 @@ export function TreePanel(props: TreePanelProps) {
       <div className="tree-toolbar">
         <button onClick={props.onImport}><FileImage size={14} /> Спрайт</button>
         <button onClick={props.onAddGroup}><FolderPlus size={14} /> Группа</button>
+        <button onClick={props.onAddMedia} title="Картинка, анимация, видео или звук отдельным объектом">
+          <Film size={14} /> Медиа
+        </button>
+        <button onClick={props.onAddText} title="Текст с подстановками из чата">
+          <Type size={14} /> Текст
+        </button>
         <button
           className="wide"
           onClick={props.onChain}
@@ -148,7 +158,11 @@ export function TreePanel(props: TreePanelProps) {
                 {hasChildren ? (collapsed.has(object.id) ? <ChevronRight size={13} /> : <ChevronDown size={13} />) : <span />}
               </button>
               <span className={`tree-thumbnail ${object.kind}`}>
-                {object.kind === "group" ? <Folder size={15} /> : object.image ? <img src={object.image} alt="" draggable={false} /> : <Box size={15} />}
+                {object.kind === "group" ? <Folder size={15} />
+                  : object.kind === "text" ? <Type size={15} />
+                  : object.kind === "media"
+                    ? object.media?.type === "audio" ? <FileVideo size={15} /> : object.media?.src ? <img src={object.media.src} alt="" draggable={false} /> : <Film size={15} />
+                  : object.image ? <img src={object.image} alt="" draggable={false} /> : <Box size={15} />}
               </span>
               {props.renamingId === object.id
                 ? <TreeRename

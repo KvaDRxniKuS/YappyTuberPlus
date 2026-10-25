@@ -2,10 +2,14 @@ import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules } from "../modules/values";
 import { selectionRoots } from "./selection";
 import {
-  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type ModuleConfig,
+  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type MediaRepeat,
+  type MediaSpec, type ModuleConfig,
   type ModuleInstance,
-  type MouseButton, type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
+  type MouseButton, type ObjectKind, type OverlayConfig, type RigObject, type RigPreset, type TextSpec,
+  type VisemeEntry,
 } from "../types";
+import { DEFAULT_MEDIA } from "../render/media";
+import { DEFAULT_TEXT } from "../render/text";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { enumConstants, sanitizeStateName, uniqueStateName } from "../modules/manual";
@@ -63,6 +67,50 @@ export function makeSprite(id: string, name: string, image: string, width: numbe
     id, name, kind: "sprite", enabled: true, image, parentId: null, pivot: { x: 0.5, y: 0.5 },
     base: { ...DEFAULT_BASE, x, y }, width, height, script: rootScript(),
   };
+}
+
+/** Медиа-объект: те же параметры позы, что у спрайта, плюс данные воспроизведения. */
+export function makeMedia(
+  id: string,
+  name: string,
+  media: Partial<MediaSpec>,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): RigObject {
+  return {
+    id, name, kind: "media", enabled: true, image: null, parentId: null,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE, x, y }, width, height,
+    script: rootScript(), media: { ...DEFAULT_MEDIA, ...media },
+  };
+}
+
+/** Текстовый объект: рамка задаёт ширину переноса и точку вращения. */
+export function makeText(
+  id: string,
+  name: string,
+  text: Partial<TextSpec>,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): RigObject {
+  return {
+    id, name, kind: "text", enabled: true, image: null, parentId: null,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE, x, y }, width, height,
+    script: rootScript(), text: { ...DEFAULT_TEXT, ...text },
+  };
+}
+
+/** Чем является выбранный файл: тип определяется по MIME, расширение — запасной путь. */
+export function mediaTypeOf(file: File): MediaSpec["type"] {
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  if (["mp4", "webm", "mov", "mkv", "m4v"].includes(extension)) return "video";
+  if (["mp3", "wav", "ogg", "m4a", "aac", "flac", "opus"].includes(extension)) return "audio";
+  return "image";
 }
 
 export function makeGroup(id: string, name: string, x = 500, y = 300): RigObject {
@@ -123,6 +171,50 @@ export function setParent(object: RigObject, parentId: string | null): RigObject
   return { ...object, parentId, script };
 }
 
+const MEDIA_TYPES: MediaSpec["type"][] = ["image", "video", "audio"];
+const MEDIA_REPEATS: MediaRepeat[] = ["restart", "fade", "overlay", "finish"];
+
+function finite(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+/** Настройки медиа: неизвестные поля отбрасываются, числа держатся в границах. */
+export function normalizeMedia(raw: unknown): MediaSpec {
+  const source = raw && typeof raw === "object" ? raw as Partial<MediaSpec> : {};
+  return {
+    src: typeof source.src === "string" && source.src ? source.src : null,
+    type: MEDIA_TYPES.includes(source.type as MediaSpec["type"]) ? source.type as MediaSpec["type"] : "image",
+    fileName: typeof source.fileName === "string" ? source.fileName : "",
+    loop: source.loop !== false,
+    autoplay: source.autoplay === true,
+    muted: source.muted === true,
+    volume: finite(source.volume, 1, 0, 1),
+    speed: finite(source.speed, 1, 0.1, 4),
+    repeat: MEDIA_REPEATS.includes(source.repeat as MediaRepeat) ? source.repeat as MediaRepeat : "restart",
+    fade: finite(source.fade, 0.25, 0, 10),
+    voices: Math.round(finite(source.voices, 4, 1, 8)),
+  };
+}
+
+/** Настройки текста: шрифт, размер и цвет всегда в пригодном виде. */
+export function normalizeText(raw: unknown): TextSpec {
+  const source = raw && typeof raw === "object" ? raw as Partial<TextSpec> : {};
+  return {
+    template: typeof source.template === "string" ? source.template : DEFAULT_TEXT.template,
+    font: typeof source.font === "string" && source.font.trim() ? source.font.trim() : DEFAULT_TEXT.font,
+    size: finite(source.size, DEFAULT_TEXT.size, 4, 400),
+    color: typeof source.color === "string" && source.color ? source.color : DEFAULT_TEXT.color,
+    align: source.align === "left" || source.align === "right" ? source.align : "center",
+    bold: source.bold !== false,
+    italic: source.italic === true,
+    strokeColor: typeof source.strokeColor === "string" && source.strokeColor ? source.strokeColor : DEFAULT_TEXT.strokeColor,
+    strokeWidth: finite(source.strokeWidth, DEFAULT_TEXT.strokeWidth, 0, 24),
+    lineHeight: finite(source.lineHeight, DEFAULT_TEXT.lineHeight, 0.5, 3),
+  };
+}
+
 export function normalizePreset(value: unknown): RigPreset | null {
   if (!value || typeof value !== "object") return null;
   const preset = value as Partial<RigPreset>;
@@ -131,15 +223,25 @@ export function normalizePreset(value: unknown): RigPreset | null {
     version: 2,
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
-    objects: preset.objects.map((object) => ({
-      ...object,
-      enabled: object.enabled !== false,
-      base: { ...DEFAULT_BASE, ...object.base },
-      pivot: object.pivot || { x: 0.5, y: 0.5 },
-      width: object.width || 1,
-      height: object.height || 1,
-      script: object.script || (object.parentId ? childScript() : rootScript()),
-    })),
+    objects: preset.objects.map((object) => {
+      const kind: ObjectKind = object.kind === "group" || object.kind === "media" || object.kind === "text"
+        ? object.kind
+        : "sprite";
+      return {
+        ...object,
+        kind,
+        enabled: object.enabled !== false,
+        base: { ...DEFAULT_BASE, ...object.base },
+        pivot: object.pivot || { x: 0.5, y: 0.5 },
+        width: object.width || 1,
+        height: object.height || 1,
+        script: object.script || (object.parentId ? childScript() : rootScript()),
+        // Поля медиа и текста есть только у своего вида объекта: так пресет не
+        // копит мусор от смены вида и остаётся читаемым в JSON.
+        media: kind === "media" ? normalizeMedia(object.media) : undefined,
+        text: kind === "text" ? normalizeText(object.text) : undefined,
+      };
+    }),
     globals: preset.globals || "",
     runtime: {
       fpsMode: preset.runtime?.fpsMode === "display" ? "display" : "limited",
@@ -364,7 +466,11 @@ export function engineStructure(preset: RigPreset): string {
     // Имена состояний enum — часть «контракта» скрипта: переименование
     // состояния пересоздаёт движок, иначе ядро держало бы старые константы.
     constants: enumConstants(preset.modules),
-    objects: preset.objects.map(({ id, kind, parentId, script, width, height }) => ({ id, kind, parentId, script, width, height })),
+    objects: preset.objects.map(({ id, kind, parentId, script, width, height, media }) => ({
+      id, kind, parentId, script, width, height,
+      // Ядру нужны только стартовые значения: с чего начать и как громко.
+      media: media ? { autoplay: media.autoplay, speed: media.speed, volume: media.volume } : null,
+    })),
   });
 }
 

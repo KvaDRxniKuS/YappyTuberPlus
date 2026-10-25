@@ -1,5 +1,9 @@
-use crate::model::{BaseUpdate, Frame, InputValues, NodeKey, ObjectKind, Param, RigPreset, Vec2};
-use crate::parser::{parse_script, AssignTarget, BinaryOp, EventKind, EventSource, Expr, UnaryOp};
+use crate::model::{
+    BaseUpdate, Frame, InputValues, MediaCue, NodeKey, ObjectKind, Param, RigPreset, Vec2,
+};
+use crate::parser::{
+    parse_script, AssignTarget, BinaryOp, EventKind, EventSource, Expr, Statement, UnaryOp,
+};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -31,6 +35,134 @@ struct CompiledEvent {
     owner: Option<String>,
     /// Что присвоить при срабатывании: узел и выражение.
     body: Vec<(NodeKey, Arc<Expr>)>,
+    /// Команды (`play()`, `seek(…)`, `text(…)`): выполняются после присваиваний.
+    actions: Vec<Arc<Expr>>,
+}
+
+/// Команды, которые понимает тело блока события. Всё остальное — формулы.
+const ACTIONS: [&str; 8] = [
+    "play", "resume", "pause", "stop", "seek", "rate", "volume", "text",
+];
+
+/// Состояние воспроизведения медиа-объекта между кадрами.
+///
+/// Команды меняют именно его, а параметры `play`, `speed` и `volume` читают
+/// отсюда, пока скрипт не задал их формулой: `volume = mic.loudness` важнее
+/// команды, потому что формула считается каждый кадр.
+#[derive(Debug, Clone)]
+struct Playback {
+    playing: bool,
+    speed: f64,
+    volume: f64,
+}
+
+impl Default for Playback {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            speed: 1.0,
+            volume: 1.0,
+        }
+    }
+}
+
+/// Объект, которым управляет команда: `play("дождь")` → `Some("дождь")`.
+fn action_object(call: &Expr) -> Option<&str> {
+    match call {
+        Expr::Call { args, .. } => match args.first() {
+            Some(Expr::Text(name)) => Some(name.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Проверка команды на этапе сборки: имя, объект и арность.
+///
+/// Ошибки не ломают сцену — они попадают в диагностику кадра, как и ошибки
+/// присваиваний, а сама команда просто не выполняется.
+fn check_action(
+    call: &Arc<Expr>,
+    owner: Option<&str>,
+    preset: &RigPreset,
+    object_indices: &HashMap<String, usize>,
+    diagnostics: &mut BTreeSet<String>,
+) -> bool {
+    let Expr::Call { name, args, .. } = call.as_ref() else {
+        return false;
+    };
+    let label = owner.unwrap_or("глобальные");
+    if !ACTIONS.contains(&name.as_str()) {
+        diagnostics.insert(format!(
+            "{}: неизвестная команда '{}'; ожидалось play, resume, pause, stop, seek, rate, volume или text",
+            label, name
+        ));
+        return false;
+    }
+    let target = match action_object(call) {
+        Some(id) => {
+            if !object_indices.contains_key(id) {
+                diagnostics.insert(format!(
+                    "{}: команда '{}' ссылается на неизвестный объект '{}'",
+                    label, name, id
+                ));
+                return false;
+            }
+            id
+        }
+        None => match owner {
+            Some(id) => id,
+            None => {
+                diagnostics.insert(format!(
+                    "глобальные: команде '{}' нужен объект: {}("id_объекта", …)",
+                    name, name
+                ));
+                return false;
+            }
+        },
+    };
+    let kind = object_indices
+        .get(target)
+        .map(|index| preset.objects[*index].kind);
+    if name == "text" {
+        if kind != Some(ObjectKind::Text) {
+            diagnostics.insert(format!(
+                "{}: text(…) пишет только в текстовый объект",
+                label
+            ));
+            return false;
+        }
+        if args.is_empty() || (action_object(call).is_some() && args.len() < 2) {
+            diagnostics.insert(format!(
+                "{}: text ожидает строку: text("привет") или text("id", "привет")",
+                label
+            ));
+            return false;
+        }
+        return true;
+    }
+    if kind != Some(ObjectKind::Media) {
+        diagnostics.insert(format!(
+            "{}: '{}' управляет только медиа-объектом",
+            label, name
+        ));
+        return false;
+    }
+    let numbers = if action_object(call).is_some() {
+        args.len().saturating_sub(1)
+    } else {
+        args.len()
+    };
+    let needs_argument = matches!(name.as_str(), "seek" | "rate" | "volume");
+    if needs_argument && numbers == 0 {
+        diagnostics.insert(format!("{}: '{}' ждёт число в скобках", label, name));
+        return false;
+    }
+    if numbers > 1 {
+        diagnostics.insert(format!("{}: у '{}' только один числовой аргумент", label, name));
+        return false;
+    }
+    true
 }
 
 /// Состояние одного блока: прошлое значение, начало удержания и защёлка.
@@ -83,6 +215,14 @@ pub struct Rig {
     event_state: HashMap<usize, EventState>,
     /// Записи чужим объектам из обычных присваиваний: применяются последними.
     writes: Vec<(NodeKey, Arc<Expr>)>,
+    /// Состояние медиа по id объекта: команды и параметры `play/speed/volume`.
+    playback: HashMap<String, Playback>,
+    /// Последняя команда каждому медиа-объекту: уходит в кадр.
+    media: BTreeMap<String, MediaCue>,
+    /// Счётчик команд: по нему редактор понимает, что команда новая.
+    media_seq: u64,
+    /// Текст, заданный командой `text("…")`: заменяет шаблон объекта.
+    texts: BTreeMap<String, String>,
     /// Первый кадр после запуска/остановки: для `on start`.
     started: bool,
     /// Ошибки разбора скриптов: сцена работает, а редактор показывает место ошибки.
@@ -170,7 +310,7 @@ impl Rig {
                             expressions.insert(NodeKey::Global(name.clone()), expr.clone());
                         }
                         AssignTarget::Foreign { object, param } => {
-                            match foreign_key(object, param, &object_indices) {
+                            match foreign_key(object, param, &object_indices, &preset) {
                                 Ok(key) => writes.push((key, expr.clone())),
                                 Err(message) => {
                                     compile_diagnostics.insert(format!("глобальные: {}", message));
@@ -188,7 +328,23 @@ impl Rig {
                         }
                     };
                     let mut body = Vec::new();
-                    for (target, expr) in &block.body {
+                    let mut actions = Vec::new();
+                    for statement in &block.body {
+                        let (target, expr) = match statement {
+                            Statement::Assign(target, expr) => (target, expr),
+                            Statement::Call(call) => {
+                                if check_action(
+                                    call,
+                                    None,
+                                    &preset,
+                                    &object_indices,
+                                    &mut compile_diagnostics,
+                                ) {
+                                    actions.push(call.clone());
+                                }
+                                continue;
+                            }
+                        };
                         let key = match target {
                             AssignTarget::Local(name) => {
                                 if !global_names.iter().any(|existing| existing == name) {
@@ -200,7 +356,7 @@ impl Rig {
                                 NodeKey::Global(name.clone())
                             }
                             AssignTarget::Foreign { object, param } => {
-                                match foreign_key(object, param, &object_indices) {
+                                match foreign_key(object, param, &object_indices, &preset) {
                                     Ok(key) => key,
                                     Err(message) => {
                                         compile_diagnostics.insert(format!("глобальные: {}", message));
@@ -215,6 +371,7 @@ impl Rig {
                         trigger,
                         owner: None,
                         body,
+                        actions,
                     });
                 }
             }
@@ -242,8 +399,15 @@ impl Rig {
                 match target {
                     AssignTarget::Local(name) => match Param::parse(name) {
                         Some(param) => {
-                            expressions
-                                .insert(NodeKey::Param(object.id.clone(), param), expr.clone());
+                            if param.media_only() && object.kind != ObjectKind::Media {
+                                compile_diagnostics.insert(format!(
+                                    "{}: параметр '{}' есть только у медиа-объекта",
+                                    object.id, name
+                                ));
+                            } else {
+                                expressions
+                                    .insert(NodeKey::Param(object.id.clone(), param), expr.clone());
+                            }
                         }
                         None => {
                             compile_diagnostics.insert(format!(
@@ -253,7 +417,7 @@ impl Rig {
                         }
                     },
                     AssignTarget::Foreign { object: other, param } => {
-                        match foreign_key(other, param, &object_indices) {
+                        match foreign_key(other, param, &object_indices, &preset) {
                             Ok(key) => writes.push((key, expr.clone())),
                             Err(message) => {
                                 compile_diagnostics.insert(format!("{}: {}", object.id, message));
@@ -271,10 +435,35 @@ impl Rig {
                     }
                 };
                 let mut body = Vec::new();
-                for (target, expr) in &block.body {
+                let mut actions = Vec::new();
+                for statement in &block.body {
+                    let (target, expr) = match statement {
+                        Statement::Assign(target, expr) => (target, expr),
+                        Statement::Call(call) => {
+                            if check_action(
+                                call,
+                                Some(object.id.as_str()),
+                                &preset,
+                                &object_indices,
+                                &mut compile_diagnostics,
+                            ) {
+                                actions.push(call.clone());
+                            }
+                            continue;
+                        }
+                    };
                     let key = match target {
                         AssignTarget::Local(name) => match Param::parse(name) {
-                            Some(param) => NodeKey::Param(object.id.clone(), param),
+                            Some(param) => {
+                                if param.media_only() && object.kind != ObjectKind::Media {
+                                    compile_diagnostics.insert(format!(
+                                        "{}: параметр '{}' есть только у медиа-объекта",
+                                        object.id, name
+                                    ));
+                                    continue;
+                                }
+                                NodeKey::Param(object.id.clone(), param)
+                            }
                             None => {
                                 compile_diagnostics.insert(format!(
                                     "{}: в блоке события нельзя присвоить '{}'",
@@ -284,7 +473,7 @@ impl Rig {
                             }
                         },
                         AssignTarget::Foreign { object: other, param } => {
-                            match foreign_key(other, param, &object_indices) {
+                            match foreign_key(other, param, &object_indices, &preset) {
                                 Ok(key) => key,
                                 Err(message) => {
                                     compile_diagnostics.insert(format!("{}: {}", object.id, message));
@@ -299,23 +488,51 @@ impl Rig {
                     trigger,
                     owner: Some(object.id.clone()),
                     body,
+                    actions,
                 });
             }
         }
 
         let mut previous = Frame::default();
+        let mut media = BTreeMap::new();
+        let mut playback = HashMap::new();
         for object in &preset.objects {
+            let defaults = object.media.clone().unwrap_or_default();
+            if object.kind == ObjectKind::Media {
+                playback.insert(
+                    object.id.clone(),
+                    Playback {
+                        playing: defaults.autoplay,
+                        speed: defaults.speed,
+                        volume: defaults.volume,
+                    },
+                );
+            }
             let mut values = BTreeMap::new();
             for param in Param::ALL {
                 let value = match param {
                     Param::SizeX | Param::SizeY | Param::Opacity => 1.0,
                     Param::Visible => object.base.visible,
                     Param::Layer => object.base.layer,
+                    Param::Play => {
+                        if defaults.autoplay {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    Param::Speed => defaults.speed,
+                    Param::Volume => defaults.volume,
                     _ => 0.0,
                 };
                 values.insert(param.as_str().to_string(), value);
             }
             previous.objects.insert(object.id.clone(), values);
+            // Медиа-объект без команд всё равно присутствует в кадре: так
+            // редактор видит «команд нет» и не путает это с новым кадром.
+            if object.kind == ObjectKind::Media {
+                media.insert(object.id.clone(), MediaCue::idle());
+            }
         }
 
         Ok(Self {
@@ -332,6 +549,10 @@ impl Rig {
             events,
             event_state: HashMap::new(),
             writes,
+            playback,
+            media,
+            media_seq: 0,
+            texts: BTreeMap::new(),
             started: false,
             compile_diagnostics,
             persistent_globals,
@@ -436,6 +657,8 @@ impl Rig {
             dt: self.dt,
             globals: BTreeMap::new(),
             objects: BTreeMap::new(),
+            media: self.media.clone(),
+            texts: self.texts.clone(),
             order: Vec::new(),
             diagnostics: self
                 .compile_diagnostics
@@ -466,7 +689,7 @@ impl Rig {
             .objects
             .iter()
             .enumerate()
-            .filter(|(_, object)| object.kind == ObjectKind::Sprite)
+            .filter(|(_, object)| object.kind.drawable())
             .map(|(index, object)| {
                 let layer = frame
                     .objects
@@ -497,12 +720,13 @@ impl Rig {
         let seq = self.seq;
         let first_frame = !self.started;
         for index in 0..self.events.len() {
-            let (trigger, owner, body) = {
+            let (trigger, owner, body, actions) = {
                 let event = &self.events[index];
                 (
                     event.trigger.clone(),
                     event.owner.clone(),
                     event.body.clone(),
+                    event.actions.clone(),
                 )
             };
             let fired = match &trigger {
@@ -573,8 +797,106 @@ impl Rig {
                 }
                 self.cache.insert(key, result);
             }
+            for action in actions {
+                self.run_action(&action, &owner, &context);
+            }
         }
         self.started = true;
+    }
+
+    /// Выполняет команду из тела события.
+    ///
+    /// Команда меняет состояние воспроизведения (или текст) и попадает в кадр
+    /// как «билет» с растущим номером: редактор выполняет её ровно один раз,
+    /// даже если кадр повторяется. Формула параметра важнее команды — она
+    /// считается каждый кадр и перебивает одноразовое действие.
+    fn run_action(&mut self, call: &Expr, owner: &Option<String>, context: &NodeKey) {
+        let Expr::Call { name, args, .. } = call else {
+            return;
+        };
+        let explicit = matches!(args.first(), Some(Expr::Text(_)));
+        if name == "text" {
+            let target = if explicit {
+                match &args[0] {
+                    Expr::Text(id) => id.to_string(),
+                    _ => return,
+                }
+            } else {
+                match owner {
+                    Some(id) => id.to_string(),
+                    None => return,
+                }
+            };
+            let content = if explicit { args.get(1) } else { args.first() };
+            if let Some(Expr::Text(value)) = content {
+                // Пустая строка — «вернись к шаблону объекта».
+                if value.is_empty() {
+                    self.texts.remove(&target);
+                } else {
+                    self.texts.insert(target, value.to_string());
+                }
+            }
+            return;
+        }
+        let target = if explicit {
+            match &args[0] {
+                Expr::Text(id) => id.to_string(),
+                _ => return,
+            }
+        } else {
+            match owner {
+                Some(id) => id.to_string(),
+                None => return,
+            }
+        };
+        let Some(index) = self.object_indices.get(&target).copied() else {
+            return;
+        };
+        if self.preset.objects[index].kind != ObjectKind::Media {
+            return;
+        }
+        let rest = if explicit { &args[1..] } else { &args[..] };
+        let argument = rest
+            .first()
+            .map(|expr| self.numeric(expr, context))
+            .unwrap_or(0.0);
+        let cue = match name.as_str() {
+            "play" => Some(("play", 0.0)),
+            "resume" => Some(("resume", 0.0)),
+            "pause" => Some(("pause", 0.0)),
+            "stop" => Some(("stop", 0.0)),
+            "seek" => Some(("seek", argument.max(0.0))),
+            _ => None,
+        };
+        let (playing, speed, volume) = {
+            let state = self.playback.entry(target.clone()).or_default();
+            match name.as_str() {
+                "play" | "resume" => state.playing = true,
+                "pause" | "stop" => state.playing = false,
+                "rate" => state.speed = argument.clamp(0.05, 8.0),
+                "volume" => state.volume = argument.clamp(0.0, 4.0),
+                _ => {}
+            }
+            (state.playing, state.speed, state.volume)
+        };
+        if let Some((action, value)) = cue {
+            self.media_seq += 1;
+            self.media.insert(
+                target.clone(),
+                MediaCue {
+                    cue: self.media_seq,
+                    action: action.to_string(),
+                    arg: value,
+                },
+            );
+        }
+        self.cache.insert(
+            NodeKey::Param(target.clone(), Param::Play),
+            if playing { 1.0 } else { 0.0 },
+        );
+        self.cache
+            .insert(NodeKey::Param(target.clone(), Param::Speed), speed);
+        self.cache.insert(NodeKey::Param(target, Param::Volume), volume);
     }
 
     fn eval_node(&mut self, key: &NodeKey) -> f64 {
@@ -653,6 +975,22 @@ impl Rig {
         let Some(index) = self.object_indices.get(id).copied() else {
             return 0.0;
         };
+        // Параметры воспроизведения не наследуются от родителя: у каждого медиа
+        // своя громкость и скорость, иначе дочерний звук звучал бы вдвое тише.
+        if param.media_only() {
+            let state = self.playback.entry(id.to_string()).or_default();
+            return match param {
+                Param::Play => {
+                    if state.playing {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Param::Speed => state.speed,
+                _ => state.volume,
+            };
+        }
         let parent_id = self.preset.objects[index].parent_id.clone();
         let Some(parent) = parent_id else {
             return match param {
@@ -687,6 +1025,7 @@ impl Rig {
                 .copied()
                 .unwrap_or(match param {
                     Param::SizeX | Param::SizeY | Param::Opacity => 1.0,
+                    Param::Speed | Param::Volume => 1.0,
                     _ => 0.0,
                 }),
         }
@@ -733,6 +1072,15 @@ impl Rig {
     fn eval_expr(&mut self, expr: &Expr, context: &NodeKey) -> Value {
         match expr {
             Expr::Number(value) => Value::Number(*value),
+            // Строка — аргумент команды. В числовой формуле она бессмысленна,
+            // поэтому не ломает кадр, а оставляет диагностику.
+            Expr::Text(_) => {
+                self.diagnostics.insert(
+                    "строка допустима только в аргументе команды: play(\"объект\"), text(\"…\")"
+                        .into(),
+                );
+                Value::Number(0.0)
+            }
             Expr::Name(name) => self.eval_name(name, context),
             Expr::Unary { op, expr } => {
                 let value = self.numeric(expr, context);
@@ -1385,12 +1733,19 @@ fn foreign_key(
     object: &str,
     param: &str,
     indices: &HashMap<String, usize>,
+    preset: &RigPreset,
 ) -> Result<NodeKey, String> {
-    if !indices.contains_key(object) {
+    let Some(index) = indices.get(object).copied() else {
         return Err(format!("объекта '{}' нет в сцене", object));
-    }
+    };
     let parsed = Param::parse(param)
         .ok_or_else(|| format!("у объекта '{}' нет параметра '{}'", object, param))?;
+    if parsed.media_only() && preset.objects[index].kind != ObjectKind::Media {
+        return Err(format!(
+            "параметр '{}' есть только у медиа-объекта, а '{}' — не медиа",
+            param, object
+        ));
+    }
     Ok(NodeKey::Param(object.to_string(), parsed))
 }
 
@@ -1619,6 +1974,7 @@ mod tests {
             script: script.into(),
             width: 100.0,
             height: 100.0,
+            media: None,
         }
     }
 
@@ -1656,6 +2012,44 @@ mod tests {
         assert_eq!(values["x"], 10.0);
         assert_eq!(values["y"], 5.0);
         assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn media_commands_reach_the_frame_once() {
+        let mut media = object("rain", None, "on start { play() }");
+        media.kind = ObjectKind::Media;
+        let mut rig = Rig::new(preset(vec![media], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        let cue = frame.media.get("rain").unwrap().clone();
+        assert_eq!(cue.action, "play");
+        assert!(cue.cue > 0);
+        assert_eq!(frame.objects["rain"]["play"], 1.0);
+        let next = tick(&mut rig, 0.016);
+        assert_eq!(next.media["rain"].cue, cue.cue);
+        assert_eq!(next.objects["rain"]["play"], 1.0);
+    }
+
+    #[test]
+    fn text_command_sets_object_text() {
+        let mut label = object("label", None, "on start { text(\"привет\") }");
+        label.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![label], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert_eq!(frame.texts["label"], "привет");
+    }
+
+    #[test]
+    fn media_params_are_rejected_on_sprites() {
+        let mut rig = Rig::new(preset(
+            vec![object("a", None, "volume = 0.5")],
+            "",
+        ))
+        .unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert!(frame
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("только у медиа-объекта")));
     }
 
     #[test]

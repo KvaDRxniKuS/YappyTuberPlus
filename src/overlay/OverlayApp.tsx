@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
+import { MediaAssets } from "../render/media";
 import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
 import { bridgeUrlFromLocation, overlayBackground, scenePreset } from "./protocol";
@@ -37,6 +38,7 @@ export function OverlayApp() {
   const clientRef = useRef<OverlayClient | null>(null);
   const presetRef = useRef<RigPreset | null>(null);
   const assets = useRef(new SpriteAssets());
+  const mediaAssets = useRef(new MediaAssets());
   /**
    * Планировщик отрисовки. Цикла нет: холст перерисовывается только когда есть
    * новый кадр или изменились настройки, поэтому неподвижный риг не грузит
@@ -144,7 +146,8 @@ export function OverlayApp() {
       ctx.save();
       ctx.translate(transform.offsetX, transform.offsetY);
       ctx.scale(transform.scaleX, transform.scaleY);
-      drawRig(ctx, current, frame, assets.current);
+      mediaAssets.current.sync(current, frame);
+      drawRig(ctx, current, frame, assets.current, { media: mediaAssets.current });
       ctx.restore();
       if (guide) {
         ctx.save();
@@ -154,6 +157,9 @@ export function OverlayApp() {
         ctx.strokeRect(transform.offsetX + 0.5, transform.offsetY + 0.5, current.canvas.width * transform.scaleX, current.canvas.height * transform.scaleY);
         ctx.restore();
       }
+
+      // Видео меняется само: пока оно играет, просим следующий кадр.
+      if (mediaAssets.current.active()) loop.current?.request();
 
       const now = performance.now();
       if (guide && now - windowStart >= 1000) {
@@ -174,6 +180,7 @@ export function OverlayApp() {
     return () => {
       window.removeEventListener("resize", onResize);
       scheduler.stop();
+      mediaAssets.current.dispose();
       if (loop.current === scheduler) loop.current = null;
     };
   }, [guide, background, backgroundColor]);

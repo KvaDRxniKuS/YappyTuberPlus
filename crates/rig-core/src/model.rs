@@ -76,6 +76,46 @@ pub enum ObjectKind {
     #[default]
     Sprite,
     Group,
+    /// Медиа: картинка, видео или звук. Параметры позы — как у спрайта, плюс
+    /// `play`, `speed` и `volume`.
+    Media,
+    /// Текстовый объект: содержимое приходит из шаблона и команд `text(…)`.
+    Text,
+}
+
+impl ObjectKind {
+    /// Объект, который рисуется на сцене: всё, кроме группы.
+    pub fn drawable(self) -> bool {
+        !matches!(self, ObjectKind::Group)
+    }
+}
+
+/// Стартовые настройки медиа-объекта.
+///
+/// Ядро знает только то, что влияет на параметры кадра: с чего начинать
+/// (`autoplay`), какая скорость и громкость заданы в объекте. Остальное —
+/// файл, политика повтора, зацикливание — живёт в редакторе и оверлее.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaDefaults {
+    #[serde(default)]
+    pub autoplay: bool,
+    #[serde(default = "one")]
+    pub speed: f64,
+    #[serde(default = "one")]
+    pub volume: f64,
+}
+
+impl Default for MediaDefaults {
+    fn default() -> Self {
+        // Обычная скорость и полная громкость: медиа без настроек не должно
+        // молчать и не должно играть быстрее.
+        Self {
+            autoplay: false,
+            speed: 1.0,
+            volume: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +140,9 @@ pub struct RigObject {
     pub width: f64,
     #[serde(default)]
     pub height: f64,
+    /// Стартовые настройки медиа: приходят из редактора вместе с объектом.
+    #[serde(default)]
+    pub media: Option<MediaDefaults>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -131,10 +174,16 @@ pub enum Param {
     Opacity,
     Visible,
     Layer,
+    /// Медиа: 1 — играет, 0 — пауза.
+    Play,
+    /// Медиа: множитель скорости воспроизведения.
+    Speed,
+    /// Медиа: множитель громкости 0..1.
+    Volume,
 }
 
 impl Param {
-    pub const ALL: [Param; 10] = [
+    pub const ALL: [Param; 13] = [
         Param::X,
         Param::Y,
         Param::Rotation,
@@ -145,6 +194,9 @@ impl Param {
         Param::Opacity,
         Param::Visible,
         Param::Layer,
+        Param::Play,
+        Param::Speed,
+        Param::Volume,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -159,7 +211,15 @@ impl Param {
             Param::Opacity => "opacity",
             Param::Visible => "visible",
             Param::Layer => "layer",
+            Param::Play => "play",
+            Param::Speed => "speed",
+            Param::Volume => "volume",
         }
+    }
+
+    /// Параметры воспроизведения: есть только у медиа-объектов.
+    pub fn media_only(self) -> bool {
+        matches!(self, Param::Play | Param::Speed | Param::Volume)
     }
 
     /// Имена параметров в скрипте. Канонические — как в `as_str`; короткие и
@@ -176,6 +236,9 @@ impl Param {
             "opacity" => Param::Opacity,
             "visible" => Param::Visible,
             "layer" => Param::Layer,
+            "play" => Param::Play,
+            "speed" | "rate" => Param::Speed,
+            "volume" | "gain" => Param::Volume,
             _ => return None,
         })
     }
@@ -202,6 +265,28 @@ pub struct InputValues {
     pub values: BTreeMap<String, f64>,
 }
 
+/// Одна команда воспроизведения, которую скрипт отдал медиа-объекту.
+///
+/// `cue` растёт на каждую команду: редактор и оверлей запоминают последнее
+/// значение и выполняют команду ровно один раз, даже если соседние кадры
+/// повторяют её или команда пришла с тем же действием подряд.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MediaCue {
+    pub cue: u64,
+    pub action: String,
+    pub arg: f64,
+}
+
+impl MediaCue {
+    pub fn idle() -> Self {
+        Self {
+            cue: 0,
+            action: "none".into(),
+            arg: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Frame {
     pub seq: u64,
@@ -209,6 +294,10 @@ pub struct Frame {
     pub dt: f64,
     pub globals: BTreeMap<String, f64>,
     pub objects: BTreeMap<String, BTreeMap<String, f64>>,
+    /// Команды воспроизведения по id медиа-объекта: `play`, `seek`, `stop`…
+    pub media: BTreeMap<String, MediaCue>,
+    /// Текст, заданный командой `text("…")`: заменяет шаблон объекта.
+    pub texts: BTreeMap<String, String>,
     pub order: Vec<String>,
     pub diagnostics: Vec<String>,
 }

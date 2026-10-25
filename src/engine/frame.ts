@@ -1,6 +1,7 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { frontness, structurePaths } from "./structure";
 import { resolveLayer } from "./layers";
+import { DEFAULT_TEXT, resolveTemplate, type TextChannel } from "../render/text";
 
 /**
  * Нейтральная поза: динамические параметры выключены, видны только базовые.
@@ -10,6 +11,9 @@ import { resolveLayer } from "./layers";
 export const NEUTRAL_PARAMS: ObjectFrame = {
   x: 0, y: 0, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0,
   opacity: 1, visible: 1, layer: 0,
+  // Медиа: стоп, обычная скорость и полная громкость. У остальных объектов
+  // эти параметры просто не читаются.
+  play: 0, speed: 1, volume: 1,
 };
 
 /**
@@ -112,9 +116,28 @@ export function applyTreeOrder(preset: RigPreset, frame: RigFrame): RigFrame {
   return unchanged ? frame : { ...frame, order };
 }
 
-/** Всё, что редактор доделывает поверх кадра движка: флаг enabled и порядок структуры. */
-export function prepareFrame(preset: RigPreset, frame: RigFrame): RigFrame {
-  return applyTreeOrder(preset, applyEnabled(preset, frame));
+/**
+ * Текст объектов: команда `text(…)` важнее шаблона, иначе шаблон заполняется
+ * из текстового канала модулей (чат).
+ *
+ * Готовый текст кладётся прямо в кадр: так одно и то же значение видят и
+ * редактор, и оверлей — оверлею не нужен доступ к модулям.
+ */
+export function applyTexts(preset: RigPreset, frame: RigFrame, channel?: TextChannel): RigFrame {
+  const source = frame.texts ?? {};
+  let texts: Record<string, string> | null = null;
+  for (const object of preset.objects) {
+    if (object.kind !== "text") continue;
+    if (typeof source[object.id] === "string") continue;
+    if (!texts) texts = { ...source };
+    texts[object.id] = resolveTemplate((object.text ?? DEFAULT_TEXT).template, channel);
+  }
+  return texts ? { ...frame, texts } : frame;
+}
+
+/** Всё, что редактор доделывает поверх кадра движка: текст, enabled и порядок. */
+export function prepareFrame(preset: RigPreset, frame: RigFrame, channel?: TextChannel): RigFrame {
+  return applyTreeOrder(preset, applyTexts(preset, applyEnabled(preset, frame), channel));
 }
 
 /**
@@ -142,6 +165,8 @@ export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
     dt: 0,
     globals: {},
     objects,
+    media: {},
+    texts: {},
     order,
     diagnostics: [],
   };

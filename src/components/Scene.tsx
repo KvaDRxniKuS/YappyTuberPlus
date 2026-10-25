@@ -7,9 +7,11 @@ import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset } from "../typ
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, spriteBounds } from "../render/bounds";
 import {
-  drawRig, invertAffine, objectMatrix, orderedSprites, scriptHidden, SpriteAssets, staticValues,
+  drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
 } from "../render/rigCanvas";
+import { MediaAssets } from "../render/media";
+import type { TextChannel } from "../render/text";
 import {
   boxFromCorners, boxFromPoints, boxIntersects, polygonIntersectsBox, selectionRoots,
   type Box, type Point,
@@ -32,6 +34,8 @@ interface SceneProps {
   ghosts: boolean;
   bounds: GuideMode;
   pivots: GuideMode;
+  /** Текст из модулей: подстановки `{twitch.chat.message}` в текстовых объектах. */
+  texts?: TextChannel;
   onTool: (tool: SceneTool) => void;
   onToggleGrid: () => void;
   onCycleBounds: () => void;
@@ -81,6 +85,7 @@ export function Scene(props: SceneProps) {
   const camera = useRef<Camera>({ zoom: 0.8, x: 80, y: 40 });
   const [zoomLabel, setZoomLabel] = useState(80);
   const assets = useRef(new SpriteAssets());
+  const mediaAssets = useRef(new MediaAssets());
   const dirty = useRef(true);
   const interaction = useRef<Interaction>(null);
   const spaceDown = useRef(false);
@@ -149,7 +154,13 @@ export function Scene(props: SceneProps) {
     drawTransparency(ctx, preset.canvas.width, preset.canvas.height);
     if (current.showGrid) drawGrid(ctx, preset.canvas.width, preset.canvas.height, zoom);
 
-    drawRig(ctx, preset, frame, assets.current, { placeholders: true, lineScale: zoom, ghosts: current.ghosts });
+    // Медиа живёт по кадру: команды, громкость, пауза. Синхронизация идёт до
+    // отрисовки, чтобы видео показало именно текущий кадр.
+    mediaAssets.current.sync(preset, frame);
+    drawRig(ctx, preset, frame, assets.current, {
+      placeholders: true, lineScale: zoom, ghosts: current.ghosts,
+      media: mediaAssets.current, texts: current.texts,
+    });
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
@@ -165,6 +176,8 @@ export function Scene(props: SceneProps) {
       label.style.top = `${Math.max(2, y - 24)}px`;
     }
     drawMarquee(ctx, marqueeRef.current);
+    // Видео меняется само по себе: пока оно играет, просим следующий кадр.
+    if (mediaAssets.current.active()) markDirty();
   };
 
   /** Артборд с тенью, нарисованный один раз на изменение размера сцены. */
@@ -234,6 +247,7 @@ export function Scene(props: SceneProps) {
   }, [imageKey, props.preset.objects]);
 
   useEffect(() => assets.current.onChange(() => { markDirty(); }), []);
+  useEffect(() => () => mediaAssets.current.dispose(), []);
 
   useEffect(() => {
     markDirty();
@@ -288,7 +302,7 @@ export function Scene(props: SceneProps) {
   const hitTest = (point: { x: number; y: number }, accept?: (object: RigObject) => boolean): RigObject | null => {
     const current = propsRef.current;
     const frame = current.frameRef.current;
-    const ordered = orderedSprites(current.preset, frame);
+    const ordered = orderedObjects(current.preset, frame);
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
       const object = ordered[index];
       if (accept && !accept(object)) continue;
@@ -314,7 +328,7 @@ export function Scene(props: SceneProps) {
     const { zoom, x, y } = camera.current;
     const result: { id: string; box: Box; corners: Point[] }[] = [];
     for (const object of current.preset.objects) {
-      const corners = object.kind === "sprite"
+      const corners = object.kind !== "group"
         ? spriteBounds(object, objectMatrix(object, staticValues(object)))
         : groupBounds(current.preset, object.id);
       if (!corners) continue;
@@ -396,7 +410,7 @@ export function Scene(props: SceneProps) {
               // пивота), дети спрайта и группы тоже не дёргаются.
               if (object) {
                 const values = current.frameRef.current?.objects[object.id] || staticValues(object);
-                const pivot = object.kind === "sprite"
+                const pivot = object.kind !== "group"
                   ? (() => {
                     const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
                     return {
@@ -635,7 +649,7 @@ function drawHiddenOutlines(ctx: CanvasRenderingContext2D, preset: RigPreset, zo
   for (const id of hidden) {
     const object = preset.objects.find((item) => item.id === id);
     if (!object) continue;
-    const corners = object.kind === "sprite"
+    const corners = object.kind !== "group"
       ? spriteBounds(object, objectMatrix(object, staticValues(object)))
       : groupBounds(preset, object.id);
     if (!corners) continue;
@@ -668,7 +682,7 @@ function drawGuides(
       if (bounds === "selected" && !selected) continue;
       if (bounds === "all" && !visible(object.id)) continue;
       const values = frame?.objects[object.id] || staticValues(object);
-      const corners = object.kind === "sprite"
+      const corners = object.kind !== "group"
         ? spriteBounds(object, objectMatrix(object, values))
         : groupBounds(preset, object.id);
       if (!corners) continue;
@@ -730,7 +744,7 @@ function drawSelection(
     const object = preset.objects.find((item) => item.id === id);
     if (!object) continue;
     const values = frame?.objects[object.id] || staticValues(object);
-    const corners = object.kind === "sprite"
+    const corners = object.kind !== "group"
       ? spriteBounds(object, objectMatrix(object, values))
       : groupBounds(preset, object.id);
     if (!corners) continue;
