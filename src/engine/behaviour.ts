@@ -274,13 +274,28 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   const scale = hasParent ? "inherit" : "1";
   const body: string[] = [];
 
-  const wiggle = (axis: "x" | "y", amplitude: number, frequency: number): string | null => {
+  /**
+   * Покачивание одной оси. «Случайно» не подменяет синусоиду шумом: шум с
+   * аргументом `f` меняет значение раз в 1/f секунды, поэтому качается он
+   * примерно вчетверо медленнее заказанной частоты и заметно слабее по
+   * амплитуде. Вместо этого частота остаётся ровно той, что задана, а
+   * случайность живёт в плавном дрейфе фазы и амплитуды — движение не
+   * повторяется, ритм и размах соответствуют числам в панели.
+   */
+  const wobble = (localSeed: number, amplitude: number, frequency: number, random: boolean): string | null => {
     if (amplitude <= 0 || frequency <= 0) return null;
+    const phase = ((localSeed % 100) / 100) * 2 * Math.PI;
+    const angle = random
+      ? `time * 2 * pi * ${num(frequency)} + ${num(phase)} + noise(${localSeed + 11}, 0.35) * 2.6`
+      : `time * 2 * pi * ${num(frequency)} + ${num(phase)}`;
+    const gain = random ? ` * (0.72 + 0.28 * abs(noise(${localSeed + 23}, 0.45)))` : "";
+    return `sin(${angle}) * ${num(amplitude)}${gain}`;
+  };
+
+  const wiggle = (axis: "x" | "y", amplitude: number, frequency: number): string | null => {
     const localSeed = seed + (axis === "x" ? 0 : 1);
     const random = axis === "y" ? behaviour.wiggleYRandom : behaviour.wiggleRandom;
-    if (random) return `noise(${localSeed}, ${num(frequency)}) * ${num(amplitude)}`;
-    const phase = ((localSeed % 100) / 100) * 2 * Math.PI;
-    return `sin(time * 2 * pi * ${num(frequency)} + ${num(phase)}) * ${num(amplitude)}`;
+    return wobble(localSeed, amplitude, frequency, random);
   };
 
   const position = behaviour.smooth > 0 || behaviour.spring > 0;
@@ -337,15 +352,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
 
   // Угловое покачивание — такой же генератор, как у позиции, но со своим
   // переключателем случайности: хвосту нужен шум, а маятнику — синусоида.
-  const wiggleRot = ((): string | null => {
-    if (behaviour.wiggleRotAmp <= 0 || behaviour.wiggleRotFreq <= 0) return null;
-    const localSeed = seed + 2;
-    if (behaviour.wiggleRotRandom) {
-      return `noise(${localSeed}, ${num(behaviour.wiggleRotFreq)}) * ${num(behaviour.wiggleRotAmp)}`;
-    }
-    const phase = ((localSeed % 100) / 100) * 2 * Math.PI;
-    return `sin(time * 2 * pi * ${num(behaviour.wiggleRotFreq)} + ${num(phase)}) * ${num(behaviour.wiggleRotAmp)}`;
-  })();
+  const wiggleRot = wobble(seed + 2, behaviour.wiggleRotAmp, behaviour.wiggleRotFreq, behaviour.wiggleRotRandom);
 
   // Доворот от речи: угол 0..180 и отдельное направление. «Случайно» — сторона
   // выбирается заново примерно раз в 0.7 с, «поочерёдно» — жёсткое

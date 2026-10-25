@@ -254,14 +254,15 @@ export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelPr
         <p className="behaviour-hint">
           Покачивание работает само по себе: «Поворот при речи» ему не нужен и ничего к нему
           не добавляет — это два независимых генератора. Заданная амплитуда включает его сразу
-          (частота станет 1 Гц), а обнулить можно любым из двух полей.
+          (частота станет 1 Гц), а обнулить можно любым из двух полей. «Случайно» тоже не трогает
+          частоту: качание остаётся ровным по ритму и размаху, просто не повторяется.
         </p>
         <div className="behaviour-state">
           <span>X · случайно<small>иначе — плавная синусоида</small></span>
           <Switch
             checked={behaviour.wiggleRandom}
             onChange={(wiggleRandom) => patch({ wiggleRandom })}
-            title="Шум вместо синусоиды по X: движение неповторяющееся"
+            title="Неповторяющееся покачивание по X: частота остаётся заданной, дрейфуют фаза и амплитуда"
           />
         </div>
         <Row label="X · частота" unit="Гц" value={behaviour.wiggleXFreq}
@@ -273,7 +274,7 @@ export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelPr
           <Switch
             checked={behaviour.wiggleYRandom}
             onChange={(wiggleYRandom) => patch({ wiggleYRandom })}
-            title="Шум вместо синусоиды по Y — независимо от X"
+            title="Неповторяющееся покачивание по Y — независимо от X, частота та же"
           />
         </div>
         <Row label="Y · частота" unit="Гц" value={behaviour.wiggleYFreq}
@@ -285,7 +286,7 @@ export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelPr
           <Switch
             checked={behaviour.wiggleRotRandom}
             onChange={(wiggleRotRandom) => patch({ wiggleRotRandom })}
-            title="Шум вместо синусоиды: угловое покачивание не повторяется"
+            title="Неповторяющееся угловое покачивание: ритм тот же, фаза и амплитуда гуляют"
           />
         </div>
         <Row label="Поворот · частота" unit="Гц" value={behaviour.wiggleRotFreq}
