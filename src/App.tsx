@@ -24,6 +24,7 @@ import { useRigEngine } from "./engine/useRigEngine";
 import { appendSnippet } from "./engine/scripts";
 import { buildChain, type ChainSettings } from "./engine/chain";
 import { fileNameOf, isTauri, openPresetFile, savePreset, savePresetAs } from "./engine/presetFile";
+import { applyCaptureWindow, applyOverlayWindow } from "./overlay/window";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
@@ -280,6 +281,16 @@ export default function App() {
     }, 700);
     return () => window.clearTimeout(timer);
   }, [preset, notify]);
+
+  /**
+   * Окно оверлея и окно захвата по умолчанию равны холсту, поэтому при смене
+   * размера холста они должны переехать вместе с ним — иначе риг окажется
+   * вписан в окно другого размера и «поедет» по масштабу.
+   */
+  useEffect(() => {
+    void applyOverlayWindow(preset.overlay || normalizeOverlay(undefined), preset.canvas);
+    void applyCaptureWindow(preset.overlay || normalizeOverlay(undefined), preset.canvas);
+  }, [preset.canvas.width, preset.canvas.height, preset.overlay?.followCanvas]);
 
   useEffect(() => {
     overlay.setFrozen(stopped, presetRef.current);
@@ -774,7 +785,13 @@ export default function App() {
             onCanvasSize={(width, height) => {
               const current = presetRef.current;
               if (current.canvas.width === width && current.canvas.height === height) return;
-              commit({ ...current, canvas: { width, height } }, { label: `Холст ${width} × ${height}` });
+              // Окно оверлея по умолчанию равно холсту, поэтому в пресете держим
+              // размер оверлея тем же: его видит и ссылка для OBS, и окно захвата.
+              const overlay = current.overlay;
+              const nextOverlay = overlay && overlay.followCanvas !== false
+                ? { ...overlay, followCanvas: true, width, height }
+                : overlay;
+              commit({ ...current, canvas: { width, height }, overlay: nextOverlay }, { label: `Холст ${width} × ${height}` });
               notify(`Холст: ${width} × ${height}`);
             }}
             onSelect={(id, mode) => {
@@ -891,6 +908,7 @@ export default function App() {
       />}
       {overlayOpen && <OverlayDialog
         config={overlayConfig}
+        canvas={preset.canvas}
         viewers={overlay.viewers}
         transport={overlay.transport}
         bridgeReady={overlay.bridgeReady}

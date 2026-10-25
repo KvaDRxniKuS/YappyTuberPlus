@@ -16,6 +16,30 @@ export interface OverlayUrlOptions {
   bridge?: string;
 }
 
+/** Размер холста пресета: он же размер окна оверлея по умолчанию. */
+export type CanvasSize = { width: number; height: number };
+
+/**
+ * Размер окна оверлея и окна захвата.
+ *
+ * По умолчанию окно равно холсту пресета: так риг виден 1:1, а изменение
+ * размера холста тянет окно за собой. Ручной размер (`followCanvas: false`)
+ * остаётся для тех, кому нужно окно другого размера — вписывание масштабирует
+ * картинку.
+ */
+export function overlaySize(
+  config: OverlayConfig,
+  canvas?: CanvasSize | null,
+): { width: number; height: number } {
+  const follow = config.followCanvas !== false && canvas && canvas.width > 0 && canvas.height > 0;
+  const width = follow ? canvas!.width : config.width;
+  const height = follow ? canvas!.height : config.height;
+  return {
+    width: Math.max(120, Math.min(7680, Math.round(width))),
+    height: Math.max(120, Math.min(4320, Math.round(height))),
+  };
+}
+
 /** Absolute URL of the overlay page, valid in Vite dev and in the Tauri build. */
 export function overlayUrl(config: OverlayConfig, options: OverlayUrlOptions = {}): string {
   const base = new URL(`${import.meta.env.BASE_URL || "/"}overlay.html`, window.location.href);
@@ -60,7 +84,11 @@ function message(reason: unknown): string {
  * browser window (dev preview). In the browser the page is still fully
  * functional; only the transparency and click-through flags are unavailable.
  */
-export async function openOverlayWindow(url: string, config: OverlayConfig): Promise<OverlayWindowResult> {
+export async function openOverlayWindow(
+  url: string,
+  config: OverlayConfig,
+  canvas?: CanvasSize | null,
+): Promise<OverlayWindowResult> {
   if (isTauri()) {
     try {
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -68,15 +96,20 @@ export async function openOverlayWindow(url: string, config: OverlayConfig): Pro
       if (existing) {
         await existing.show();
         await existing.setFocus();
-        await applyOverlayWindow(config);
+        await applyOverlayWindow(config, canvas);
         return { mode: "tauri", ok: true };
       }
+      const size = overlaySize(config, canvas);
       const error = await new Promise<string | null>((resolve) => {
         const window_ = new WebviewWindow(OVERLAY_LABEL, {
+          // Адрес только свой (страница приложения): у чужого origin
+          // (например, http://127.0.0.1 встроенного сервера) нет доступа к IPC
+          // Tauri, и окно осталось бы без кадров. Ссылка на встроенный сервер
+          // нужна только для источника браузера в OBS.
           url,
           title: "YappyTuberPlus Overlay",
-          width: Math.max(120, Math.round(config.width)),
-          height: Math.max(120, Math.round(config.height)),
+          width: size.width,
+          height: size.height,
           transparent: true,
           decorations: false,
           shadow: false,
@@ -90,17 +123,18 @@ export async function openOverlayWindow(url: string, config: OverlayConfig): Pro
         void window_.once("tauri://error", (event) => resolve(message(event.payload)));
       });
       if (error) return { mode: "tauri", ok: false, error };
-      await applyOverlayWindow(config);
+      await applyOverlayWindow(config, canvas);
       return { mode: "tauri", ok: true };
     } catch (reason) {
       return { mode: "tauri", ok: false, error: message(reason) };
     }
   }
 
+  const size = overlaySize(config, canvas);
   const features = [
     "popup=yes",
-    `width=${Math.max(240, Math.round(config.width))}`,
-    `height=${Math.max(160, Math.round(config.height))}`,
+    `width=${Math.max(240, size.width)}`,
+    `height=${Math.max(160, size.height)}`,
   ].join(",");
   const popup = window.open(url, BROWSER_WINDOW_NAME, features);
   if (!popup) {
@@ -111,7 +145,10 @@ export async function openOverlayWindow(url: string, config: OverlayConfig): Pro
 }
 
 /** Applies live window flags (size, always-on-top, click-through) in Tauri. */
-export async function applyOverlayWindow(config: OverlayConfig): Promise<void> {
+export async function applyOverlayWindow(
+  config: OverlayConfig,
+  canvas?: CanvasSize | null,
+): Promise<void> {
   if (!isTauri()) return;
   try {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -120,10 +157,8 @@ export async function applyOverlayWindow(config: OverlayConfig): Promise<void> {
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     await window_.setAlwaysOnTop(config.alwaysOnTop);
     await window_.setIgnoreCursorEvents(config.clickThrough);
-    await window_.setSize(new LogicalSize(
-      Math.max(120, Math.round(config.width)),
-      Math.max(120, Math.round(config.height)),
-    ));
+    const size = overlaySize(config, canvas);
+    await window_.setSize(new LogicalSize(size.width, size.height));
   } catch {
     /* Window may be closed or a permission may be missing — not fatal. */
   }
@@ -158,7 +193,10 @@ let browserCapture: Window | null = null;
  * прозрачности — его видно в списке окон OBS, а перетаскивается оно за верхнюю
  * полосу. В браузере (режим разработки) открывается обычное всплывающее окно.
  */
-export async function openCaptureWindow(config: OverlayConfig): Promise<OverlayWindowResult> {
+export async function openCaptureWindow(
+  config: OverlayConfig,
+  canvas?: CanvasSize | null,
+): Promise<OverlayWindowResult> {
   if (isTauri()) {
     try {
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -166,15 +204,16 @@ export async function openCaptureWindow(config: OverlayConfig): Promise<OverlayW
       if (existing) {
         await existing.show();
         await existing.setFocus();
-        await applyCaptureWindow(config);
+        await applyCaptureWindow(config, canvas);
         return { mode: "tauri", ok: true };
       }
+      const captureSize = overlaySize(config, canvas);
       const error = await new Promise<string | null>((resolve) => {
         const window_ = new WebviewWindow(CAPTURE_LABEL, {
           url: captureUrl(),
           title: "YappyTuberPlus — окно захвата",
-          width: Math.max(160, Math.round(config.width)),
-          height: Math.max(120, Math.round(config.height)),
+          width: Math.max(160, captureSize.width),
+          height: Math.max(120, captureSize.height),
           // Прозрачность сохраняем: так альфа уходит в «Захват окна» с
           // включённой опцией прозрачности, как у Spout2/PNGTuber.
           transparent: true,
@@ -190,17 +229,18 @@ export async function openCaptureWindow(config: OverlayConfig): Promise<OverlayW
         void window_.once("tauri://error", (event) => resolve(message(event.payload)));
       });
       if (error) return { mode: "tauri", ok: false, error };
-      await applyCaptureWindow(config);
+      await applyCaptureWindow(config, canvas);
       return { mode: "tauri", ok: true };
     } catch (reason) {
       return { mode: "tauri", ok: false, error: message(reason) };
     }
   }
 
+  const popupSize = overlaySize(config, canvas);
   const features = [
     "popup=yes",
-    `width=${Math.max(160, Math.round(config.width))}`,
-    `height=${Math.max(120, Math.round(config.height))}`,
+    `width=${Math.max(160, popupSize.width)}`,
+    `height=${Math.max(120, popupSize.height)}`,
     "menubar=no",
     "toolbar=no",
   ].join(",");
@@ -239,16 +279,20 @@ export async function closeCaptureWindow(): Promise<void> {
 }
 
 /** Размер окна захвата повторяет настройку оверлея. */
-export async function applyCaptureWindow(config: OverlayConfig): Promise<void> {
+export async function applyCaptureWindow(
+  config: OverlayConfig,
+  canvas?: CanvasSize | null,
+): Promise<void> {
   if (!isTauri()) return;
   try {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const window_ = await WebviewWindow.getByLabel(CAPTURE_LABEL);
     if (!window_) return;
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    const size = overlaySize(config, canvas);
     await window_.setSize(new LogicalSize(
-      Math.max(160, Math.round(config.width)),
-      Math.max(120, Math.round(config.height)),
+      Math.max(160, size.width),
+      Math.max(120, size.height),
     ));
   } catch {
     /* окно могли закрыть — не критично */

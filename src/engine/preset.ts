@@ -306,6 +306,10 @@ const BACKGROUNDS = new Set(["transparent", "color", "chroma"]);
 export function normalizeOverlay(value: Partial<OverlayConfig> | undefined): OverlayConfig {
   const overlay = value || {};
   return {
+    // Старые пресеты получают «по размеру холста»: это ровно то поведение,
+    // которого ждёт пользователь, и оно не ломает картинку — окно просто
+    // совпадает с холстом.
+    followCanvas: overlay.followCanvas !== false,
     width: Math.min(7680, Math.max(120, Math.round(Number(overlay.width) || DEFAULT_OVERLAY.width))),
     height: Math.min(4320, Math.max(120, Math.round(Number(overlay.height) || DEFAULT_OVERLAY.height))),
     scaleMode: overlay.scaleMode && SCALE_MODES.has(overlay.scaleMode) ? overlay.scaleMode : DEFAULT_OVERLAY.scaleMode,

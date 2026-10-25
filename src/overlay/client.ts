@@ -40,6 +40,7 @@ export class OverlayClient {
   private unsubscribe: (() => void) | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<() => void>();
+  private frameListeners = new Set<() => void>();
   private readonly now: () => number;
   private readonly helloIntervalMs: number;
   private readonly staleAfterMs: number;
@@ -64,6 +65,16 @@ export class OverlayClient {
     return () => { this.listeners.delete(listener); };
   }
 
+  /**
+   * Отдельная подписка на кадры. Кадры приходят чаще, чем меняется состояние
+   * (60–120 раз в секунду), и поднимать на каждый из них React незачем:
+   * рисующее окно берёт кадр напрямую и перерисовывает холст.
+   */
+  subscribeFrames(listener: () => void): () => void {
+    this.frameListeners.add(listener);
+    return () => { this.frameListeners.delete(listener); };
+  }
+
   snapshot(): OverlayClientSnapshot {
     return {
       status: this.status,
@@ -85,6 +96,7 @@ export class OverlayClient {
     this.unsubscribe = null;
     this.bus.post({ t: "bye", sender: this.id, role: "viewer" });
     this.listeners.clear();
+    this.frameListeners.clear();
   }
 
   private hello(): void {
@@ -149,6 +161,7 @@ export class OverlayClient {
         this.lastSeq = message.frame.seq;
         this.frame = message.frame;
         this.frameCount += 1;
+        for (const listener of this.frameListeners) listener();
         if (this.status !== "live") this.update("live");
         break;
       }

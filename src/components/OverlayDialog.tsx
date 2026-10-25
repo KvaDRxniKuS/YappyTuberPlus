@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
-import { AppWindow, Check, Copy, MonitorPlay, Radio, Settings2, X } from "lucide-react";
+import { AppWindow, Check, Copy, Link2, MonitorPlay, Radio, Settings2, X } from "lucide-react";
 import type { OverlayConfig } from "../types";
+import { Switch } from "./Switch";
 import {
   applyCaptureWindow, applyOverlayWindow, captureWindowOpen,
   closeCaptureWindow, closeOverlayWindow, isTauri, openCaptureWindow,
-  openOverlayWindow, overlayServerUrl, overlayUrl,
+  openOverlayWindow, overlayServerUrl, overlaySize, overlayUrl, type CanvasSize,
 } from "../overlay/window";
 
 interface OverlayDialogProps {
   config: OverlayConfig;
+  /** Размер холста пресета: окно оверлея по умолчанию равно ему. */
+  canvas: CanvasSize;
   viewers: string[];
   transport: string;
   bridgeReady: boolean;
@@ -42,15 +45,24 @@ export function OverlayDialog(props: OverlayDialogProps) {
   const [serverUrl, setServerUrl] = useState<string | null>(null);
   useEffect(() => { void overlayServerUrl().then(setServerUrl); }, []);
 
-  const url = (() => {
-    if (!serverUrl) {
-      return overlayUrl(props.config, { transport: props.transportParam, bridge: props.bridgeUrl || undefined });
-    }
+  // Два разных адреса, и путать их нельзя:
+  //  • `windowUrl` — страница приложения для нативного окна оверлея. Только
+  //    свой origin имеет доступ к IPC Tauri, поэтому кадры приходят лишь сюда.
+  //  • `obsUrl` — ссылка для источника браузера в OBS: её отдаёт встроенный
+  //    сервер, в браузере — мост.
+  const windowUrl = overlayUrl(props.config, {
+    transport: props.transportParam,
+    bridge: props.bridgeUrl || undefined,
+  });
+  const obsUrl = (() => {
+    if (!serverUrl) return windowUrl;
     const target = new URL(serverUrl);
     target.searchParams.set("overlay", "1");
     if (props.config.showGuide) target.searchParams.set("guide", "1");
     return target.toString();
   })();
+  const size = overlaySize(props.config, props.canvas);
+  const followsCanvas = props.config.followCanvas !== false;
 
   useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") props.onClose(); };
@@ -64,7 +76,7 @@ export function OverlayDialog(props: OverlayDialogProps) {
 
   const openCapture = async () => {
     setBusy(true);
-    const result = await openCaptureWindow(props.config);
+    const result = await openCaptureWindow(props.config, props.canvas);
     setBusy(false);
     setCaptureOpen(result.ok || (await captureWindowOpen()));
     if (!result.ok) {
@@ -89,7 +101,7 @@ export function OverlayDialog(props: OverlayDialogProps) {
 
   const open = async () => {
     setBusy(true);
-    const result = await openOverlayWindow(url, props.config);
+    const result = await openOverlayWindow(windowUrl, props.config, props.canvas);
     setBusy(false);
     if (!result.ok) {
       props.onNotify(result.error || "Не удалось открыть оверлей");
@@ -99,9 +111,15 @@ export function OverlayDialog(props: OverlayDialogProps) {
   };
 
   const change = (patch: Partial<OverlayConfig>) => {
-    props.onChange(patch);
-    void applyOverlayWindow({ ...props.config, ...patch });
-    void applyCaptureWindow({ ...props.config, ...patch });
+    // Возврат к «по размеру холста» сразу записывает в пресет размер холста:
+    // тогда и ссылка для OBS, и окно захвата видят тот же размер.
+    const withSize = patch.followCanvas === true
+      ? { ...patch, width: props.canvas.width, height: props.canvas.height }
+      : patch;
+    const next = { ...props.config, ...withSize };
+    props.onChange(withSize);
+    void applyOverlayWindow(next, props.canvas);
+    void applyCaptureWindow(next, props.canvas);
   };
 
   return (
@@ -125,9 +143,30 @@ export function OverlayDialog(props: OverlayDialogProps) {
         <div className="dialog-body">
           <section className="dialog-section">
             <div className="section-title"><span><Settings2 size={12} /> Окно</span><small>СОХРАНЯЕТСЯ В ПРЕСЕТЕ</small></div>
+            <div className="behaviour-state">
+              <span>
+                По размеру холста
+                <small>{props.canvas.width} × {props.canvas.height} · окно меняется вместе с холстом</small>
+              </span>
+              <Switch
+                checked={followsCanvas}
+                title="Окно оверлея и окно захвата совпадают с холстом пресета"
+                onChange={(followCanvas) => change({ followCanvas })}
+              />
+            </div>
             <div className="overlay-fields">
-              <NumberField label="Ширина" unit="px" value={props.config.width} min={120} max={7680} onCommit={(value) => change({ width: value })} />
-              <NumberField label="Высота" unit="px" value={props.config.height} min={120} max={4320} onCommit={(value) => change({ height: value })} />
+              <NumberField
+                label="Ширина" unit="px"
+                value={followsCanvas ? size.width : props.config.width}
+                min={120} max={7680}
+                onCommit={(value) => change({ followCanvas: false, width: value })}
+              />
+              <NumberField
+                label="Высота" unit="px"
+                value={followsCanvas ? size.height : props.config.height}
+                min={120} max={4320}
+                onCommit={(value) => change({ followCanvas: false, height: value })}
+              />
               <label className="select-field">
                 <span>Вписывание</span>
                 <select value={props.config.scaleMode} onChange={(event) => change({ scaleMode: event.target.value as OverlayConfig["scaleMode"] })}>
@@ -172,14 +211,21 @@ export function OverlayDialog(props: OverlayDialogProps) {
             </p>
             <div className="dialog-actions">
               <button className="button primary" disabled={busy} onClick={() => void open()}><MonitorPlay size={14} /> Открыть оверлей</button>
-              <button className="button secondary" onClick={() => void copy(url, "url")}>
+              <button className="button secondary" onClick={() => void copy(obsUrl, "url")} title={obsUrl}>
                 {copied === "url" ? <Check size={14} /> : <Copy size={14} />} Ссылка для OBS
               </button>
               {isTauri() && (
                 <button className="button secondary" onClick={() => void closeOverlayWindow()}>Закрыть окно</button>
               )}
             </div>
-            <input className="overlay-url" value={url} readOnly onFocus={(event) => event.currentTarget.select()} />
+            <div className="overlay-link-row">
+              <Link2 size={13} />
+              <input className="overlay-url" value={obsUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+            </div>
+            <p className="dialog-note">
+              Окно оверлея открывается из приложения ({windowUrl.includes("tauri") ? "свой адрес приложения" : "адрес редактора"}),
+              а по ссылке для OBS страницу отдаёт встроенный сервер — этот адрес нужен только источнику браузера.
+            </p>
           </section>
 
           <section className="dialog-section">

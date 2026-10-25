@@ -4,6 +4,7 @@ import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import { neutralFrame, prepareFrame } from "./frame";
+import { frameProduced } from "./frameSignal";
 
 export type EngineStatus = "loading" | "ready" | "error";
 
@@ -141,7 +142,7 @@ export function useRigEngine(
   useEffect(() => {
     const schedule = nativeRef.current;
     if (!schedule) return;
-    schedule.settings(presetRef.current.runtime.fpsMode === "limited", presetRef.current.runtime.fpsLimit);
+    schedule.settings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtimeKey]);
 
@@ -155,6 +156,9 @@ export function useRigEngine(
     const gated = prepareFrame(presetRef.current, response.frame);
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
+    // Окна рисуют не по вечному rAF, а по этому сигналу: новый кадр — новый
+    // кадр отрисовки, тишина — ни одного.
+    frameProduced();
     framesRef.current += 1;
     if (nowMs - lastSnapshotRef.current > 120 || gated.diagnostics.length > 0) {
       lastSnapshotRef.current = nowMs;

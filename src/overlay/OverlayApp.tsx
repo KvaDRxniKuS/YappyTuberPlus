@@ -5,6 +5,7 @@ import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
 import { bridgeUrlFromLocation, overlayBackground, scenePreset } from "./protocol";
 import { isTauri } from "./window";
+import { createOnDemandLoop } from "../engine/frameSignal";
 
 function transportOptions(params: URLSearchParams) {
   const transport = params.get("transport");
@@ -36,7 +37,13 @@ export function OverlayApp() {
   const clientRef = useRef<OverlayClient | null>(null);
   const presetRef = useRef<RigPreset | null>(null);
   const assets = useRef(new SpriteAssets());
-  const dirty = useRef(true);
+  /**
+   * Планировщик отрисовки. Цикла нет: холст перерисовывается только когда есть
+   * новый кадр или изменились настройки, поэтому неподвижный риг не грузит
+   * процессор (постоянный rAF заставлял WebView собирать кадр 60 раз в секунду).
+   */
+  const loop = useRef<{ request: () => void; stop: () => void } | null>(null);
+  const markDirty = () => loop.current?.request();
   const [snapshot, setSnapshot] = useState<OverlayClientSnapshot | null>(null);
   const [fps, setFps] = useState(0);
 
@@ -48,6 +55,10 @@ export function OverlayApp() {
       client = new OverlayClient(bus, {});
       clientRef.current = client;
       client.subscribe(() => setSnapshot(client!.snapshot()));
+      // Кадры приходят чаще, чем меняется состояние, и React на них не нужен:
+      // каждый кадр только будит отрисовку холста (через ref — планировщик
+      // создаётся отдельным эффектом и может пересоздаваться).
+      client.subscribeFrames(() => loop.current?.request());
       client.start();
       setSnapshot(client.snapshot());
     });
@@ -74,10 +85,10 @@ export function OverlayApp() {
 
   useEffect(() => {
     assets.current.sync(preset?.objects ?? []);
-    dirty.current = true;
+    markDirty();
   }, [preset]);
 
-  useEffect(() => assets.current.onChange(() => { dirty.current = true; }), []);
+  useEffect(() => assets.current.onChange(() => markDirty()), []);
 
   useEffect(() => {
     document.title = capture
@@ -88,23 +99,23 @@ export function OverlayApp() {
   }, [capture, guide, snapshot?.scene, background]);
 
   useEffect(() => {
-    let animation = 0;
     let lastSeq = -1;
     let frames = 0;
     let windowStart = performance.now();
-    let drawn = false;
 
+    /**
+     * Отрисовка по требованию. Постоянный rAF здесь не нужен: пустой, но вечный
+     * цикл заставляет WebView собирать композитный кадр 60 раз в секунду даже
+     * при неподвижном риге — на прозрачном окне это чистый расход процессора.
+     * Кадр рисуется только по новому кадру от редактора или по правке настроек.
+     */
     const render = () => {
-      animation = requestAnimationFrame(render);
       const element = canvas.current;
       if (!element) return;
       const client = clientRef.current;
       const frame = client?.frame ?? null;
       const current = presetRef.current;
       const sequence = frame?.seq ?? -1;
-      if (drawn && !dirty.current && sequence === lastSeq) return;
-      dirty.current = false;
-      drawn = true;
       if (sequence !== lastSeq) {
         if (sequence > lastSeq && lastSeq >= 0) frames += 1;
         lastSeq = sequence;
@@ -151,8 +162,20 @@ export function OverlayApp() {
         windowStart = now;
       }
     };
-    animation = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animation);
+
+    const scheduler = createOnDemandLoop(render);
+    loop.current = scheduler;
+    // Подписка на кадры живёт в эффекте клиента (он один на всё окно) и будит
+    // именно текущий планировщик. Здесь — только размер окна: он меняется
+    // редко, но без перерисовки холст остался бы растянутым.
+    const onResize = () => scheduler.request();
+    window.addEventListener("resize", onResize);
+    scheduler.request();
+    return () => {
+      window.removeEventListener("resize", onResize);
+      scheduler.stop();
+      if (loop.current === scheduler) loop.current = null;
+    };
   }, [guide, background, backgroundColor]);
 
   return (

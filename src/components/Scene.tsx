@@ -15,6 +15,7 @@ import {
   type Box, type Point,
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
+import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
 
 export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso";
 
@@ -100,10 +101,19 @@ export function Scene(props: SceneProps) {
   const propsRef = useRef(props);
   propsRef.current = props;
 
+  // Отрисовка по требованию: постоянного rAF-цикла больше нет (он грузил
+  // процессор в простое), но любая правка или новый кадр планирует ровно один
+  // кадр отрисовки.
+  const loop = useRef<{ request: () => void; stop: () => void } | null>(null);
+  const markDirty = () => {
+    dirty.current = true;
+    loop.current?.request();
+  };
+
   const setCamera = (next: Camera) => {
     camera.current = next;
     setZoomLabel(Math.round(next.zoom * 100));
-    dirty.current = true;
+    markDirty();
   };
 
   const draw = () => {
@@ -192,7 +202,7 @@ export function Scene(props: SceneProps) {
   const applyCanvasSize = () => {
     const size = parseCanvasSize(sizeDraft);
     setEditingSize(false);
-    dirty.current = true;
+    markDirty();
     if (!size) return;
     const current = propsRef.current.preset.canvas;
     if (sameCanvasSize(size, { width: current.width, height: current.height })) return;
@@ -207,7 +217,7 @@ export function Scene(props: SceneProps) {
         initialized.current = true;
         fit();
       }
-      dirty.current = true;
+      markDirty();
       // Рисуем сразу в колбэке: ResizeObserver вызывается до paint, поэтому
       // браузер не успевает растянуть старый битмап под новую ширину.
       draw();
@@ -220,13 +230,13 @@ export function Scene(props: SceneProps) {
   const imageKey = props.preset.objects.map((object) => object.image).filter(Boolean).join("|");
   useEffect(() => {
     assets.current.sync(props.preset.objects);
-    dirty.current = true;
+    markDirty();
   }, [imageKey, props.preset.objects]);
 
-  useEffect(() => assets.current.onChange(() => { dirty.current = true; }), []);
+  useEffect(() => assets.current.onChange(() => { markDirty(); }), []);
 
   useEffect(() => {
-    dirty.current = true;
+    markDirty();
   }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts]);
 
   useEffect(() => {
@@ -237,7 +247,7 @@ export function Scene(props: SceneProps) {
       if (event.key === "Escape" && interaction.current?.type === "marquee") {
         interaction.current = null;
         marqueeRef.current = null;
-        dirty.current = true;
+        markDirty();
       }
     };
     const keyUp = (event: KeyboardEvent) => { if (event.code === "Space") spaceDown.current = false; };
@@ -247,19 +257,19 @@ export function Scene(props: SceneProps) {
   }, []);
 
   useEffect(() => {
-    let animation = 0;
-    let lastSequence = -1;
-    const render = () => {
-      const sequence = propsRef.current.frameRef.current?.seq ?? -1;
-      if (dirty.current || sequence !== lastSequence) {
-        dirty.current = false;
-        lastSequence = sequence;
-        draw();
-      }
-      animation = requestAnimationFrame(render);
+    const render = createOnDemandLoop(() => {
+      dirty.current = false;
+      draw();
+    });
+    loop.current = render;
+    // Новый кадр от движка — повод перерисовать; нет кадров — цикл спит.
+    const unsubscribe = onFrameProduced(() => { render.request(); });
+    if (dirty.current) render.request();
+    return () => {
+      unsubscribe();
+      render.stop();
+      loop.current = null;
     };
-    animation = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animation);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -425,7 +435,7 @@ export function Scene(props: SceneProps) {
                 additive: event.shiftKey || event.ctrlKey || event.metaKey,
               };
               marqueeRef.current = { shape, start: screen, current: screen, points: [screen] };
-              dirty.current = true;
+              markDirty();
               return;
             }
             const hit = hitTest(point);
@@ -478,7 +488,7 @@ export function Scene(props: SceneProps) {
                 current: point,
                 points: current.shape === "lasso" ? [...current.points] : current.points,
               };
-              dirty.current = true;
+              markDirty();
               return;
             }
             const point = scenePoint(event);
@@ -497,7 +507,7 @@ export function Scene(props: SceneProps) {
               current.points.push(screenPoint(event));
               finishMarquee(current);
               marqueeRef.current = null;
-              dirty.current = true;
+              markDirty();
             }
             // Верхний объект выбирается только настоящим кликом: короткое
             // нажатие без движения, а не перетаскивание поверх выделения.
@@ -509,7 +519,7 @@ export function Scene(props: SceneProps) {
           onPointerCancel={() => {
             interaction.current = null;
             marqueeRef.current = null;
-            dirty.current = true;
+            markDirty();
           }}
           onWheel={(event) => {
             event.preventDefault();
@@ -532,7 +542,7 @@ export function Scene(props: SceneProps) {
               onBlur={() => applyCanvasSize()}
               onKeyDown={(event) => {
                 if (event.key === "Enter") applyCanvasSize();
-                else if (event.key === "Escape") { setEditingSize(false); dirty.current = true; }
+                else if (event.key === "Escape") { setEditingSize(false); markDirty(); }
               }}
             />
           ) : (

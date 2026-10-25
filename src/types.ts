@@ -44,6 +44,12 @@ export type OverlayScaleMode = "contain" | "cover" | "stretch" | "pixel";
 export type OverlayBackground = "transparent" | "color" | "chroma";
 
 export interface OverlayConfig {
+  /**
+   * Размер окна оверлея берётся из холста пресета. Ширина и высота ниже —
+   * значения на случай ручного размера (`followCanvas: false`); при
+   * `followCanvas` они всё равно пересчитываются из холста.
+   */
+  followCanvas: boolean;
   width: number;
   height: number;
   scaleMode: OverlayScaleMode;
@@ -244,6 +250,9 @@ export const DEFAULT_LAYOUT: EditorLayout = {
 };
 
 export const DEFAULT_OVERLAY: OverlayConfig = {
+  // По умолчанию окно оверлея совпадает с холстом: риг виден 1:1 и не нужно
+  // подбирать размеры руками, а изменение размера холста тянет окно за собой.
+  followCanvas: true,
   width: 900,
   height: 620,
   scaleMode: "contain",

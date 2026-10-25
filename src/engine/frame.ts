@@ -17,8 +17,34 @@ export const NEUTRAL_PARAMS: ObjectFrame = {
  * кто-то из родителей. Глаз в структуре меняет только этот флаг, формулы и
  * `visible` в скрипте остаются нетронутыми.
  */
+const objectMapCache = new WeakMap<RigObject[], Map<string, RigObject>>();
+
+/**
+ * Карта «id → объект» для массива пресета.
+ *
+ * Массив `preset.objects` меняется только при правке структуры, поэтому карту
+ * можно не пересобирать каждый кадр. Без неё поиск объекта по id шёл через
+ * `Array.find` — это квадрат на каждый кадр при сортировке порядка отрисовки.
+ */
+export function objectMap(objects: RigObject[]): Map<string, RigObject> {
+  const cached = objectMapCache.get(objects);
+  if (cached) return cached;
+  const map = new Map(objects.map((object) => [object.id, object]));
+  objectMapCache.set(objects, map);
+  return map;
+}
+
+const disabledCache = new WeakMap<RigObject[], Set<string>>();
+
+/**
+ * Кэш выключенных объектов: набор зависит только от `enabled` и иерархии, а они
+ * меняются вместе с массивом объектов. Без кэша каждый кадр заново строились
+ * карты и обходились цепочки родителей.
+ */
 export function disabledIds(objects: RigObject[]): Set<string> {
-  const byId = new Map(objects.map((object) => [object.id, object]));
+  const cached = disabledCache.get(objects);
+  if (cached) return cached;
+  const byId = objectMap(objects);
   const cache = new Map<string, boolean>();
   const isDisabled = (id: string): boolean => {
     if (cache.has(id)) return cache.get(id)!;
@@ -37,7 +63,9 @@ export function disabledIds(objects: RigObject[]): Set<string> {
     }
     return cache.get(id) ?? false;
   };
-  return new Set(objects.filter((object) => isDisabled(object.id)).map((object) => object.id));
+  const result = new Set(objects.filter((object) => isDisabled(object.id)).map((object) => object.id));
+  disabledCache.set(objects, result);
+  return result;
 }
 
 /**
@@ -68,8 +96,9 @@ export function applyEnabled(preset: RigPreset, frame: RigFrame): RigFrame {
  */
 export function applyTreeOrder(preset: RigPreset, frame: RigFrame): RigFrame {
   const paths = structurePaths(preset.objects);
+  const byId = objectMap(preset.objects);
   const layerOf = (id: string) => {
-    const object = preset.objects.find((item) => item.id === id);
+    const object = byId.get(id);
     return object ? resolveLayer(preset.objects, frame, object) : (frame.objects[id]?.layer ?? 0);
   };
   const order = [...frame.order].sort((a, b) => {

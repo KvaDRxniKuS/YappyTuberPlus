@@ -32,8 +32,8 @@ export interface NativeScheduleOptions {
 export interface NativeSchedule {
   /** Пауза: поток перестаёт считать кадры, время после неё начинается заново. */
   pause: (paused: boolean) => void;
-  /** Смена лимитера FPS без перезапуска потока. */
-  settings: (limited: boolean, fpsLimit: number) => void;
+  /** Пересчитать частоту без перезапуска потока (режим «Экран» — частота монитора). */
+  settings: () => void;
   /** Сброс таймлайна: следующий кадр считается с `dt = 0`. */
   resetClock: () => void;
   /** Остановка потока и отписка от события кадра. */
@@ -42,6 +42,44 @@ export interface NativeSchedule {
 
 function reason(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
+}
+
+/**
+ * Частота отрисовки экрана.
+ *
+ * В режиме «Экран» движок должен тикать с частотой монитора, а не «как можно
+ * чаще»: лишние кадры не видно, но каждый из них — это расчёт, JSON, IPC и
+ * отрисовка, то есть прямая нагрузка на процессор. В браузере цикл и так идёт
+ * по `requestAnimationFrame`, а в приложении частоту задаёт Rust — поэтому
+ * частоту экрана измеряем здесь, за полсекунды, и отдаём планировщику.
+ */
+export async function measureDisplayHz(timeoutMs = 600): Promise<number> {
+  if (typeof requestAnimationFrame !== "function") return 60;
+  return new Promise((resolve) => {
+    let first = 0;
+    let count = 0;
+    let settled = false;
+    const clamp = (hz: number) => Math.min(240, Math.max(30, Math.round(hz)));
+    const finish = (hz: number) => {
+      if (settled) return;
+      settled = true;
+      resolve(clamp(hz));
+    };
+    // Свёрнутое окно не получает rAF — не ждём вечно, берём разумные 60 Гц.
+    const timer = setTimeout(() => finish(count > 4 ? (count * 1000) / (performance.now() - first) : 60), timeoutMs);
+    const step = (now: number) => {
+      if (settled) return;
+      if (!first) first = now;
+      else count += 1;
+      if (count >= 12) {
+        clearTimeout(timer);
+        finish((count * 1000) / (now - first));
+        return;
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
 }
 
 export async function startNativeSchedule(options: NativeScheduleOptions): Promise<NativeSchedule | null> {
@@ -67,6 +105,11 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
   let unlisten: (() => void) | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let paused = false;
+  // Частота экрана для режима «Экран»: измеряем один раз на запуск.
+  const displayHz = options.fpsMode() === "display" ? await measureDisplayHz() : 60;
+  const rate = () => options.fpsMode() === "display"
+    ? { limited: true, fpsLimit: displayHz }
+    : { limited: true, fpsLimit: Math.min(480, Math.max(1, options.fpsLimit())) };
 
   try {
     unlisten = await listen<string | EngineResponse>(FRAME_EVENT, (event) => {
@@ -82,11 +125,12 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
       }
       options.onFrame(payload);
     });
+    const initial = rate();
     await invoke("rig_schedule_start", {
       handle: options.handle,
       inputs: snapshot(),
-      limited: options.fpsMode() === "limited",
-      fpsLimit: options.fpsLimit(),
+      limited: initial.limited,
+      fpsLimit: initial.fpsLimit,
     });
   } catch (error) {
     unlisten?.();
@@ -110,13 +154,14 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
       timer = setInterval(push, next ? INPUT_INTERVAL_PAUSED_MS : INPUT_INTERVAL_MS);
       void invoke("rig_schedule_pause", { paused: next }).catch((error: unknown) => options.onError(reason(error)));
     },
-    settings(limited: boolean, fpsLimit: number) {
+    settings() {
       if (disposed) return;
+      const next = rate();
       void invoke("rig_schedule_start", {
         handle: options.handle,
         inputs: snapshot(),
-        limited,
-        fpsLimit,
+        limited: next.limited,
+        fpsLimit: next.fpsLimit,
       }).catch((error: unknown) => options.onError(reason(error)));
     },
     resetClock() {
