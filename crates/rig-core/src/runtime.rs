@@ -114,7 +114,7 @@ fn check_action(
             Some(id) => id,
             None => {
                 diagnostics.insert(format!(
-                    "глобальные: команде '{}' нужен объект: {}("id_объекта", …)",
+                    "глобальные: команде '{}' нужен объект: {}(\"id_объекта\", …)",
                     name, name
                 ));
                 return false;
@@ -134,7 +134,7 @@ fn check_action(
         }
         if args.is_empty() || (action_object(call).is_some() && args.len() < 2) {
             diagnostics.insert(format!(
-                "{}: text ожидает строку: text("привет") или text("id", "привет")",
+                "{}: text ожидает строку: text(\"привет\") или text(\"id\", \"привет\")",
                 label
             ));
             return false;
