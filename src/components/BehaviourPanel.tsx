@@ -167,19 +167,62 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
           min={20} max={600} step={10} onCommit={(squashOut) => patch({ squashOut })} />
         <Row label="Подпрыгивание при речи" hint="вверх, пиксели" unit="px" value={behaviour.bounce}
           min={0} max={400} step={1} onCommit={(bounce) => patch({ bounce })} />
+        <Row label="Скорость подпрыгивания" hint="меньше — резче" unit="мс" value={behaviour.bounceSpeed}
+          min={20} max={600} step={10} onCommit={(bounceSpeed) => patch({ bounceSpeed })} />
+        <div className="behaviour-state">
+          <span>Прыгать один раз<small>иначе — держится всю речь</small></span>
+          <Switch
+            checked={behaviour.bounceOnce}
+            onChange={(bounceOnce) => patch({ bounceOnce })}
+            title="Прыгнуть один раз и опуститься, даже если речь продолжается"
+          />
+        </div>
+        {behaviour.bounceOnce && (
+          <Row label="Длительность прыжка" hint="сколько держится вверху" unit="мс" value={behaviour.bounceHold}
+            min={100} max={3000} step={50} onCommit={(bounceHold) => patch({ bounceHold })} />
+        )}
       </section>
 
       <section className="behaviour-section">
         <div className="section-title"><span><RotateCw size={13} /> Доворот и пределы</span></div>
-        <Row label="Доворот при речи" hint="−180…180°" unit="°" value={behaviour.rotationalDrag}
-          min={-180} max={180} step={1} onCommit={(rotationalDrag) => patch({ rotationalDrag })} />
+        <Row label="Поворот при речи" hint="максимум, 0 — выключено" unit="°" value={behaviour.dragAngle}
+          min={0} max={180} step={1} onCommit={(dragAngle) => patch({ dragAngle })} />
+        <div className="behaviour-state">
+          <span>Направление<small>куда доворачивать</small></span>
+          <div className="segmented small dense">
+            {([
+              { id: "right", text: "вправо", title: "Всегда в одну сторону — вправо" },
+              { id: "left", text: "влево", title: "Всегда в одну сторону — влево" },
+              { id: "random", text: "случайно", title: "Направление меняется случайно, плавно" },
+              { id: "alternate", text: "поочерёдно", title: "Сперва в одну сторону, потом в другую, раз в 1.2 с" },
+            ] as const).map((option) => (
+              <button
+                key={option.id}
+                className={behaviour.dragMode === option.id ? "active" : ""}
+                title={option.title}
+                onClick={() => patch({ dragMode: option.id })}
+              >
+                {option.text}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="behaviour-state">
+          <span>В диапазоне<small>угол — это максимум</small></span>
+          <Switch
+            checked={behaviour.dragInRange}
+            onChange={(dragInRange) => patch({ dragInRange })}
+            title="Угол — максимум: фактический поворот гуляет случайно от 0 до него"
+          />
+        </div>
         <Row label="Предел влево" hint="0 — не поворачивать влево" unit="°" value={behaviour.rotationalLimitLeft}
           min={0} max={180} step={1} onCommit={(rotationalLimitLeft) => patch({ rotationalLimitLeft })} />
         <Row label="Предел вправо" hint="0 — не поворачивать вправо" unit="°" value={behaviour.rotationalLimitRight}
           min={0} max={180} step={1} onCommit={(rotationalLimitRight) => patch({ rotationalLimitRight })} />
         <p className="behaviour-hint">
-          Пределы действуют, только если задан хотя бы один из них: ноль с одной стороны — это
-          честный запрет поворота в эту сторону, а не «без предела».
+          Пределы — это диапазон сустава <b>относительно родителя</b>: нога не вылетает из него, как бы
+          ни качалась. Ноль с одной стороны — честный запрет в эту сторону; если оба нуля, предела
+          нет. В мировой физике предела не бывает: там угла родителя в формуле нет.
         </p>
       </section>
 
@@ -201,6 +244,18 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
           min={0} max={8} step={0.1} onCommit={(wiggleYFreq) => patch({ wiggleYFreq })} />
         <Row label="Y · амплитуда" unit="px" value={behaviour.wiggleYAmp}
           min={0} max={60} step={0.5} onCommit={(wiggleYAmp) => patch({ wiggleYAmp })} />
+        <div className="behaviour-state">
+          <span>Случайно · поворот<small>иначе — плавная синусоида</small></span>
+          <Switch
+            checked={behaviour.wiggleRotRandom}
+            onChange={(wiggleRotRandom) => patch({ wiggleRotRandom })}
+            title="Шум вместо синусоиды: угловое покачивание не повторяется"
+          />
+        </div>
+        <Row label="Поворот · частота" unit="Гц" value={behaviour.wiggleRotFreq}
+          min={0} max={8} step={0.1} onCommit={(wiggleRotFreq) => patch({ wiggleRotFreq })} />
+        <Row label="Поворот · амплитуда" unit="°" value={behaviour.wiggleRotAmp}
+          min={0} max={90} step={0.5} onCommit={(wiggleRotAmp) => patch({ wiggleRotAmp })} />
       </section>
 
       <section className="behaviour-section">

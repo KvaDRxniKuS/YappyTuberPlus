@@ -379,6 +379,9 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .input-slider.disabled { opacity: .55; }
 .talking-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; color: #89949e; font-family: monospace; font-size: 11px; }
 .segmented.small button { min-width: 25px; }
+/* Четыре режима направления не влезают в строку — переносим и ужимаем. */
+.segmented.dense { flex-wrap: wrap; justify-content: flex-end; gap: 2px; max-width: 62%; }
+.segmented.dense button { padding: 3px 5px; font-size: 10.5px; min-width: 0; }
 .signal-dot { width: 6px; height: 6px; border-radius: 50%; background: #414850; }
 .signal-dot.on { background: var(--accent); box-shadow: 0 0 7px #82d5c155; }
 .visemes { padding: 5px 0 10px; border-bottom: 1px solid var(--border-soft); }

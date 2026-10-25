@@ -20,6 +20,9 @@ export type VisibilityRule = "none" | "open" | "closed";
 /** Координаты, в которых физика поворота держит «тяжёлую» сторону. */
 export type PhysSpace = "world" | "parent";
 
+/** Куда доворачивать объект от речи. */
+export type DragMode = "right" | "left" | "random" | "alternate";
+
 export interface Behaviour {
   /** Сглаживание позиции: 0 — без фильтра, 1 — сильно отстаёт. */
   smooth: number;
@@ -37,18 +40,32 @@ export interface Behaviour {
   squashOut: number;
   /** Подпрыгивание при речи, пиксели вверх. 0 — выключено. */
   bounce: number;
-  /** Доворот от речи, градусы (−180..180). */
-  rotationalDrag: number;
-  /** Предел отклонения влево, градусы 0..180. */
+  /** Скорость подпрыгивания: полураспад подъёма, мс. */
+  bounceSpeed: number;
+  /** `true` — прыгнуть один раз и опуститься, даже если речь не кончилась. */
+  bounceOnce: boolean;
+  /** Как долго держится одиночный прыжок, мс (только при `bounceOnce`). */
+  bounceHold: number;
+  /** Угол поворота от речи, градусы 0..180. 0 — выключено. */
+  dragAngle: number;
+  /** Куда поворачивать: вправо, влево, случайно или поочерёдно. */
+  dragMode: DragMode;
+  /** Угол — это максимум: фактический выбирается случайно в 0..угол. */
+  dragInRange: boolean;
+  /** Предел отклонения от родителя влево, градусы 0..180. */
   rotationalLimitLeft: number;
-  /** Предел отклонения вправо, градусы 0..180. */
+  /** Предел отклонения от родителя вправо, градусы 0..180. */
   rotationalLimitRight: number;
-  /** `true` — покачивание шумом, `false` — плавной синусоидой. */
+  /** `true` — покачивание позиции шумом, `false` — плавной синусоидой. */
   wiggleRandom: boolean;
   wiggleXFreq: number;
   wiggleXAmp: number;
   wiggleYFreq: number;
   wiggleYAmp: number;
+  /** То же для углового покачивания — со своим переключателем. */
+  wiggleRotRandom: boolean;
+  wiggleRotFreq: number;
+  wiggleRotAmp: number;
   /** Рот: `open` — виден при речи, `closed` — виден в тишине. */
   mouth: VisibilityRule;
   /** Глаз: `open` — виден при открытых глазах, `closed` — на моргании. */
@@ -76,7 +93,12 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   squashIn: 90,
   squashOut: 240,
   bounce: 0,
-  rotationalDrag: 0,
+  bounceSpeed: 120,
+  bounceOnce: false,
+  bounceHold: 700,
+  dragAngle: 0,
+  dragMode: "right",
+  dragInRange: false,
   rotationalLimitLeft: 0,
   rotationalLimitRight: 0,
   wiggleRandom: false,
@@ -84,6 +106,9 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   wiggleXAmp: 0,
   wiggleYFreq: 0,
   wiggleYAmp: 0,
+  wiggleRotRandom: false,
+  wiggleRotFreq: 0,
+  wiggleRotAmp: 0,
   mouth: "none",
   eye: "none",
   physRotation: null,
@@ -107,6 +132,11 @@ function seedOf(id: string): number {
   let hash = 7;
   for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) % 9973;
   return hash + 11;
+}
+
+/** Число из пресета с зажимом в границы: битый JSON не должен ломать формулу. */
+function clampNumber(value: number, min: number, max: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
 /** Частота и затухание пружины по «силе» 0..1: больше сила — мягче и качается дольше. */
@@ -133,9 +163,10 @@ export function isDefault(behaviour: Behaviour): boolean {
   return behaviour.smooth === 0 && behaviour.spring === 0
     && behaviour.rotationSmooth === 0 && behaviour.rotationSpring === 0
     && behaviour.squash === 0 && behaviour.bounce === 0
-    && behaviour.rotationalDrag === 0
+    && behaviour.dragAngle === 0
     && behaviour.rotationalLimitLeft === 0 && behaviour.rotationalLimitRight === 0
     && behaviour.wiggleXAmp === 0 && behaviour.wiggleYAmp === 0
+    && behaviour.wiggleRotAmp === 0
     && behaviour.mouth === "none" && behaviour.eye === "none"
     && behaviour.physRotation === null && behaviour.physSpace === "world";
 }
@@ -149,7 +180,10 @@ export function readBehaviour(script: string): Behaviour {
       const raw: unknown = JSON.parse(trimmed.slice(META.length));
       if (!raw || typeof raw !== "object") break;
       const source = raw as Record<string, unknown>;
-      const merged: Behaviour = { ...DEFAULT_BEHAVIOUR, ...(source as Partial<Behaviour>) };
+      // Старое знаковое поле `rotationalDrag` в настройки не попадает: его
+      // переводим в угол + направление, иначе оно вернулось бы в JSON.
+      const { rotationalDrag: legacyDrag, ...rest } = source as Record<string, unknown>;
+      const merged: Behaviour = { ...DEFAULT_BEHAVIOUR, ...(rest as Partial<Behaviour>) };
       // Старый общий предел (±N) переносим в два односторонних.
       if (typeof source.rotationalLimit === "number"
         && source.rotationalLimitLeft === undefined && source.rotationalLimitRight === undefined) {
@@ -157,9 +191,24 @@ export function readBehaviour(script: string): Behaviour {
         merged.rotationalLimitLeft = magnitude;
         merged.rotationalLimitRight = magnitude;
       }
+      // Старый доворот был знаковым: минус — влево, плюс — вправо.
+      if (typeof legacyDrag === "number" && legacyDrag !== 0 && source.dragAngle === undefined) {
+        merged.dragAngle = Math.min(180, Math.abs(legacyDrag));
+        merged.dragMode = legacyDrag < 0 ? "left" : "right";
+      }
       merged.physRotation = typeof merged.physRotation === "number" ? merged.physRotation : null;
       merged.physSpace = merged.physSpace === "parent" ? "parent" : "world";
+      merged.dragMode = (["right", "left", "random", "alternate"] as const)
+        .includes(merged.dragMode) ? merged.dragMode : "right";
+      merged.dragAngle = clampNumber(merged.dragAngle, 0, 180, 0);
+      merged.bounceSpeed = clampNumber(merged.bounceSpeed, 10, 2000, 120);
+      merged.bounceHold = clampNumber(merged.bounceHold, 60, 5000, 700);
+      merged.wiggleRotFreq = clampNumber(merged.wiggleRotFreq, 0, 20, 0);
+      merged.wiggleRotAmp = clampNumber(merged.wiggleRotAmp, 0, 180, 0);
       merged.wiggleRandom = merged.wiggleRandom === true;
+      merged.wiggleRotRandom = merged.wiggleRotRandom === true;
+      merged.bounceOnce = merged.bounceOnce === true;
+      merged.dragInRange = merged.dragInRange === true;
       return merged;
     } catch {
       break;
@@ -209,7 +258,16 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   if (position || wiggleY || bounce) {
     const parts = [target("y")];
     if (bounce) {
-      const hop = `mic.speak * ${num(behaviour.bounce)}`;
+      // Скорость подъёма задаётся отдельно от фильтра позиции, поэтому
+      // «резкий прыжок при вязком следовании» — рабочая комбинация.
+      const rise = `smooth(mic.speak, ${num(behaviour.bounceSpeed)})`;
+      // Один прыжок — это импульс: быстрый фронт минус медленный спад. Разница
+      // гаснет, даже если речь не кончилась, а в тишине оба слагаемых уходят в
+      // ноль, и следующий всплеск речи снова даёт прыжок.
+      const shape = behaviour.bounceOnce
+        ? `max(${rise} - smooth(mic.speak, ${num(Math.max(behaviour.bounceHold, behaviour.bounceSpeed))}), 0)`
+        : rise;
+      const hop = `${shape} * ${num(behaviour.bounce)}`;
       // Если внешнего фильтра нет, подпрыгивание сглаживает собственная пружина:
       // иначе объект дёргался бы мгновенно.
       parts.push(`- ${position ? hop : `spring(${hop}, 2.2, 0.55)`}`);
@@ -218,16 +276,44 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     body.push(`y = ${filtered(parts.join(" "))}`);
   }
 
-  const drag = behaviour.rotationalDrag !== 0;
   const limitLeft = Math.max(0, behaviour.rotationalLimitLeft);
   const limitRight = Math.max(0, behaviour.rotationalLimitRight);
+  const limits = limitLeft > 0 || limitRight > 0;
+  const drag = behaviour.dragAngle > 0;
   const rotFilter = behaviour.rotationSmooth > 0 || behaviour.rotationSpring > 0;
   const heavy = heavyAngle(object.pivot);
   const physical = behaviour.physRotation !== null && heavy !== null;
 
+  // Угловое покачивание — такой же генератор, как у позиции, но со своим
+  // переключателем случайности: хвосту нужен шум, а маятнику — синусоида.
+  const wiggleRot = ((): string | null => {
+    if (behaviour.wiggleRotAmp <= 0 || behaviour.wiggleRotFreq <= 0) return null;
+    const localSeed = seed + 2;
+    if (behaviour.wiggleRotRandom) {
+      return `noise(${localSeed}, ${num(behaviour.wiggleRotFreq)}) * ${num(behaviour.wiggleRotAmp)}`;
+    }
+    const phase = ((localSeed % 100) / 100) * 2 * Math.PI;
+    return `sin(time * 2 * pi * ${num(behaviour.wiggleRotFreq)} + ${num(phase)}) * ${num(behaviour.wiggleRotAmp)}`;
+  })();
+
+  // Доворот от речи: угол 0..180 и отдельное направление. «Случайно» — плавный
+  // шум знака, «поочерёдно» — жёсткое перекидывание стороны раз в 1.2 с,
+  // «в диапазоне» — угол это максимум, фактический берётся из 0..угол.
+  const dragDirection = (): string => {
+    if (behaviour.dragMode === "left") return "-1";
+    if (behaviour.dragMode === "random") return `noise(${seed + 3}, 0.8)`;
+    if (behaviour.dragMode === "alternate") return `sign(cos(time * ${num(5.236)}))`;
+    return "1";
+  };
+  const dragPush = `mic.speak * ${
+    behaviour.dragInRange ? `abs(noise(${seed + 4}, 0.35)) * ${num(behaviour.dragAngle)}` : num(behaviour.dragAngle)
+  } * ${dragDirection()}`;
+  const deviation = [drag ? dragPush : null, wiggleRot].filter(Boolean) as string[];
+
   // Фильтр поворота — отдельная функция: он ставится и на наследуемый угол,
-  // и на собственный доворот. Две независимые цепочки (у каждой свой узел
-  // состояния) дают честный предел: он ограничивает именно отклонение.
+  // и на собственное отклонение. Две независимые цепочки (у каждой свой узел
+  // состояния) дают честный предел: `limit` ограничивает именно отклонение от
+  // родителя, а не сумму с его углом.
   const rotateFilter = (expression: string): string => {
     let result = expression;
     if (behaviour.rotationSmooth > 0) result = `smooth(${result}, ${num(behaviour.rotationSmooth * 260)})`;
@@ -238,7 +324,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     return result;
   };
 
-  if (physical || rotFilter || drag) {
+  if (physical || rotFilter || deviation.length) {
     let expression: string;
     if (physical) {
       // Тяжёлая сторона смотрит в угол physRotation. В `world` угол мировой:
@@ -248,19 +334,28 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       // плечо, вокруг которого считается «тяжесть».
       const aim = behaviour.physRotation! - heavy! - object.base.rotation;
       const { frequency, damping } = springParams(behaviour.physSmooth);
-      const target = behaviour.physSpace === "parent" && hasParent
+      const parentSpace = behaviour.physSpace === "parent" && hasParent;
+      const aimExpr = parentSpace
         ? `inherit ${aim < 0 ? "-" : "+"} ${num(Math.abs(aim))}`
         : num(aim);
-      expression = `spring(${target}, ${num(frequency)}, ${num(damping)})`;
+      const targetSum = wiggleRot ? `${aimExpr} + ${wiggleRot}` : aimExpr;
+      const inner = `spring(${targetSum}, ${num(frequency)}, ${num(damping)})`;
+      // Пределы — диапазон сустава относительно родителя. В мировой системе
+      // угла родителя в формуле нет: ограничивать нечего, предел не пишется.
+      expression = parentSpace && limits
+        ? `inherit + limit(${inner} - inherit, ${num(-limitLeft)}, ${num(limitRight)})`
+        : inner;
+    } else if (deviation.length) {
+      let dev = deviation.join(" + ");
+      // Без поворотного фильтра у доворота своя пружина: он не должен
+      // появляться мгновенно.
+      if (rotFilter) dev = rotateFilter(dev);
+      else if (drag) dev = `spring(${dev}, 2.4, 0.35)`;
+      if (limits) dev = `limit(${dev}, ${num(-limitLeft)}, ${num(limitRight)})`;
+      const base = hasParent ? (rotFilter ? rotateFilter("inherit") : "inherit") : "0";
+      expression = hasParent ? `${base} + ${dev}` : dev;
     } else {
-      const base = hasParent ? "inherit" : "0";
-      expression = rotFilter ? rotateFilter(base) : base;
-    }
-    if (drag) {
-      const push = `mic.speak * ${num(behaviour.rotationalDrag)}`;
-      let shaped = (!physical && rotFilter) ? rotateFilter(push) : `spring(${push}, 2.4, 0.35)`;
-      if (limitLeft > 0 || limitRight > 0) shaped = `limit(${shaped}, ${num(-limitLeft)}, ${num(limitRight)})`;
-      expression = `${expression} + ${shaped}`;
+      expression = rotateFilter(hasParent ? "inherit" : "0");
     }
     body.push(`rotation = ${expression}`);
   }
