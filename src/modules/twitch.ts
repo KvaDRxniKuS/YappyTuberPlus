@@ -33,13 +33,21 @@ export interface TwitchEventSpec {
   label: string;
   /** Право доступа: без него Twitch не создаст подписку. Пусто — право не нужно. */
   scope: string;
+  /**
+   * Дополнительное поле условия с нашим же id.
+   *
+   * Twitch требует его не всегда, но там, где требует, без него подписка
+   * отклоняется с 400: у чата это `user_id` (чей чат читаем), у фоллова
+   * (версия 2) — `moderator_user_id` (кто получает события).
+   */
+  extra?: "user" | "moderator";
   /** Что появляется во входах по умолчанию. */
   rule: Omit<ExternalSourceRule, "event">;
 }
 
 /**
- * Список событий: подобран под то, что реально двигает персонажа — награды,
- * bits, подписки, рейды. Чат сюда не входит: в ядро уходят только числа.
+ * Список событий: подобран под то, что реально двигает персонажа — чат, награды,
+ * bits, подписки, рейды. Текст чата в числа не идёт: он показывается отдельно.
  */
 export const TWITCH_EVENTS: TwitchEventSpec[] = [
   {
@@ -47,6 +55,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     version: "1",
     label: "Сообщение в чате",
     scope: "user:read:chat",
+    extra: "user",
     // Счётчик: каждое сообщение прибавляет единицу. Сам текст в числа не идёт —
     // он показывается в панели «Входы» и в журнале.
     rule: {
@@ -79,6 +88,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     version: "2",
     label: "Новый подписчик канала",
     scope: "moderator:read:followers",
+    extra: "moderator",
     // В событии нет числа: сам факт — это единица на несколько секунд.
     rule: {
       input: "follow", path: "$.payload.event.followed_at", label: "Фоллов",
@@ -385,6 +395,8 @@ export class TwitchChannel {
   private socket: WebSocket | null = null;
   private sessionId: string | null = null;
   private broadcasterId: string | null = null;
+  /** Наш собственный id: его просят условия чата и фоллова. */
+  private ownId: string | null = null;
   private stopped = false;
   private retry: number | null = null;
   private attempts = 0;
@@ -480,7 +492,10 @@ export class TwitchChannel {
       const fresh = await this.freshToken();
       this.broadcasterId = null;
       const id = await this.resolveBroadcaster(fresh);
-      return `канал «${this.token?.login ?? this.source.channel}» найден, ID ${id}`;
+      const own = await this.resolveOwnUser(fresh);
+      // Один id на всё — норма для стримера, который следит за своим каналом.
+      const note = own === id ? "" : ` (токен от другого аккаунта: ${own})`;
+      return `канал «${this.token?.login ?? this.source.channel}» найден, ID ${id}${note}`;
     } catch (reason) {
       return describe(reason);
     }
@@ -554,6 +569,19 @@ export class TwitchChannel {
     return next;
   }
 
+  /**
+   * Свой id по токену: `GET /helix/users` без параметров возвращает владельца токена.
+   * Нужен для условий `user_id` (чат) и `moderator_user_id` (фоллов).
+   */
+  private async resolveOwnUser(token: TwitchToken): Promise<string> {
+    if (this.ownId) return this.ownId;
+    const body = await this.api<{ data?: Array<{ id: string }> }>("/users", token);
+    const user = body.data?.[0];
+    if (!user) throw new HttpError("Twitch не вернул пользователя по токену");
+    this.ownId = user.id;
+    return user.id;
+  }
+
   private async resolveBroadcaster(token: TwitchToken): Promise<string> {
     const login = this.source.channel ?? "";
     if (this.broadcasterId) return this.broadcasterId;
@@ -590,6 +618,20 @@ export class TwitchChannel {
     return parseJson<T>(response);
   }
 
+  /**
+   * Условие подписки. Twitch строг к составу: лишнее поле отклоняет подписку так
+   * же, как недостающее, поэтому собираем его по описанию события.
+   */
+  private async condition(spec: TwitchEventSpec, token: TwitchToken): Promise<Record<string, string>> {
+    const condition: Record<string, string> = { broadcaster_user_id: this.broadcasterId ?? "" };
+    if (spec.extra === "user") {
+      condition.user_id = await this.resolveOwnUser(token);
+    } else if (spec.extra === "moderator") {
+      condition.moderator_user_id = await this.resolveOwnUser(token);
+    }
+    return condition;
+  }
+
   /** Подписка на событие. `409` — уже есть такая: это не ошибка для нас. */
   private async subscribe(spec: TwitchEventSpec, token: TwitchToken): Promise<void> {
     const response = await httpRequest({
@@ -603,7 +645,7 @@ export class TwitchChannel {
       body: JSON.stringify({
         type: spec.type,
         version: spec.version,
-        condition: { broadcaster_user_id: this.broadcasterId },
+        condition: await this.condition(spec, token),
         transport: { method: "websocket", session_id: this.sessionId },
       }),
     });
