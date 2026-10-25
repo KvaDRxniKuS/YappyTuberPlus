@@ -161,6 +161,11 @@ export function Inspector(props: InspectorProps) {
   // Понятная ошибка вместо исключения в консоли: «не тот файл» — обычный промах
   // мышью, а не повод ломать объект.
   const [imageError, setImageError] = useState<string | null>(null);
+  // Поля замены картинки: хуки обязаны вызываться в каждом рендере, поэтому
+  // стоят здесь, до ранних выходов «ничего не выбрано» и «выбрано несколько».
+  // Ниже они читаются обработчиками уже с готовым объектом.
+  const imageInput = useRef<HTMLInputElement>(null);
+  const imageFit = useRef(false);
 
   if (selection.length > 1) return <MultiInspector {...props} />;
 
@@ -205,8 +210,6 @@ export function Inspector(props: InspectorProps) {
    * натуральный размер новой картинки: пивот при этом пересчитывается так,
    * чтобы прежняя точка привязки осталась на том же месте картинки.
    */
-  const imageInput = useRef<HTMLInputElement>(null);
-  const imageFit = useRef(false);
   /**
    * Замена картинки: файл уходит в хранилище webview, а в объекте остаётся
    * ссылка `asset:<id>`. При недоступном хранилище — data URL, как раньше.

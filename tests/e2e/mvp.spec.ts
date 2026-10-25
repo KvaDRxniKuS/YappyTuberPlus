@@ -267,3 +267,36 @@ test("Alt+↓ переставляет объект в структуре", asyn
   await page.keyboard.press("Control+z");
   await expect(rows.nth(4)).toContainText("Глаз · левый");
 });
+
+test("клик по пустому месту сцены снимает выделение, но не роняет окно", async ({ page }) => {
+  const errors = await openStudio(page);
+  await expect(page.locator(".inspector-title input")).toHaveValue("Тело");
+
+  // Нижний левый угол холста — заведомо пустое место: там нет ни спрайта, ни
+  // группы, ни подписи размера холста, которая живёт у верхнего левого угла.
+  const box = (await page.locator(".scene-viewport canvas").boundingBox())!;
+  await page.mouse.click(box.x + 6, box.y + box.height - 6);
+
+  // Выделение снято: инспектор показывает заглушку, сцена и панели на месте.
+  await expect(page.locator(".inspector.empty-state")).toBeVisible();
+  await expect(page.locator(".inspector.empty-state")).toContainText("Выберите объект");
+  await expect(page.locator(".tree-row.selected")).toHaveCount(0);
+  await expect(page.locator(".scene-viewport canvas")).toBeVisible();
+  await expect(page.locator(".right-tabs")).toBeVisible();
+  await expect(page.locator(".tree-footer")).toBeVisible();
+  // Возврат выделения кликом по дереву тоже работает: интерфейс живой.
+  await page.locator(".tree-row").filter({ hasText: "Тело" }).click();
+  await expect(page.locator(".inspector-title input")).toHaveValue("Тело");
+  expect(errors).toEqual([]);
+});
+
+test("мультивыделение не роняет инспектор", async ({ page }) => {
+  const errors = await openStudio(page);
+  const rows = page.locator(".tree-row");
+  await rows.nth(4).click();
+  await rows.nth(5).click({ modifiers: ["Control"] });
+  await expect(page.locator(".inspector .multi-list")).toBeVisible();
+  await expect(page.locator(".multi-name")).toHaveCount(2);
+  await expect(page.locator(".app-shell")).toBeVisible();
+  expect(errors).toEqual([]);
+});
