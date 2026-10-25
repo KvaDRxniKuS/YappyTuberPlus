@@ -86,7 +86,10 @@ export class MediaAssets {
       if (cue && cue.cue !== entry.lastCue) {
         entry.lastCue = cue.cue;
         this.applyCue(entry, cue);
-        entry.lastPlay = cue.action === "pause" || cue.action === "stop" ? 0 : 1;
+        // Перемотка и громкость не меняют состояние «играет/стоит»: иначе
+        // следующий кадр считал бы это переключением и ставил паузу.
+        if (cue.action === "play" || cue.action === "resume") entry.lastPlay = 1;
+        else if (cue.action === "pause" || cue.action === "stop") entry.lastPlay = 0;
       } else if (play !== entry.lastPlay) {
         // Параметр `play` — это тоже запуск: так работает формула «играть,
         // когда говорю», без единой команды в скрипте.

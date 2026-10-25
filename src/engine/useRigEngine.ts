@@ -50,7 +50,12 @@ export function useRigEngine(
     }).catch((reason: unknown) => {
       if (!active) return;
       setStatus("error");
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      // Старое ядро не знает новых видов объектов: подсказываем, что делать,
+      // вместо загадочного «unknown variant media».
+      setError(/unknown variant|media|text|invalid type/i.test(message) && /wasm/i.test(backend?.label ?? "")
+        ? `${message} — пересоберите ядро: npm run build:wasm (или bat-файл сборки)`
+        : message);
     });
     return () => { active = false; };
   }, []);
@@ -120,7 +125,12 @@ export function useRigEngine(
     }).catch((reason: unknown) => {
       if (!active) return;
       setStatus("error");
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      // Старое ядро не знает новых видов объектов: подсказываем, что делать,
+      // вместо загадочного «unknown variant media».
+      setError(/unknown variant|media|text|invalid type/i.test(message) && /wasm/i.test(backend?.label ?? "")
+        ? `${message} — пересоберите ядро: npm run build:wasm (или bat-файл сборки)`
+        : message);
     });
     return () => {
       active = false;
