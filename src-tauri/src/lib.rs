@@ -3,7 +3,6 @@ mod pointer;
 mod overlay_server;
 mod schedule;
 
-use rig_core::RuntimeStore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Manager, State};

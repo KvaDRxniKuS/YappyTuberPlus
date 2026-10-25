@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, Layers, Link2, RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, RotateCcw } from "lucide-react";
 import type { BasePose, RigFrame, RigObject } from "../types";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
@@ -183,6 +183,44 @@ export function Inspector(props: InspectorProps) {
     : object.pivot;
   const shownPivot = object.kind === "group" ? groupFraction : object.pivot;
 
+  /**
+   * Замена картинки у существующего спрайта.
+   *
+   * Без этого сломанный или устаревший PNG приходилось лечить «удалить и
+   * импортировать заново», а вместе с объектом пропадали его скрипт, дети,
+   * пивот и поведение. Здесь меняется только `image` — идентификатор, скрипты
+   * и иерархия остаются прежними. Второй режим подгоняет `width/height` под
+   * натуральный размер новой картинки: пивот при этом пересчитывается так,
+   * чтобы прежняя точка привязки осталась на том же месте картинки.
+   */
+  const imageInput = useRef<HTMLInputElement>(null);
+  const imageFit = useRef(false);
+  const replaceImage = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const source = typeof reader.result === "string" ? reader.result : "";
+      if (!source) return;
+      const probe = new Image();
+      probe.onload = () => {
+        if (!imageFit.current || !probe.naturalWidth || !probe.naturalHeight) {
+          onChange({ ...object, image: source });
+          return;
+        }
+        const anchor = { x: object.pivot.x * object.width, y: object.pivot.y * object.height };
+        onChange({
+          ...object,
+          image: source,
+          width: probe.naturalWidth,
+          height: probe.naturalHeight,
+          pivot: { x: anchor.x / probe.naturalWidth, y: anchor.y / probe.naturalHeight },
+        });
+      };
+      probe.onerror = () => onChange({ ...object, image: source });
+      probe.src = source;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const commitPivot = (next: { x: number; y: number }) => {
     if (object.kind === "sprite") {
       // Картинка спрайта рисуется со сдвигом −pivot × размер, поэтому база
@@ -236,6 +274,39 @@ export function Inspector(props: InspectorProps) {
             <input type="range" min="0" max="1" step="0.01" value={object.base.opacity} onChange={(event) => updateBase({ opacity: Number(event.target.value) })} />
           </label>
         </div>
+
+        {object.kind === "sprite" && (
+          <div className="property-section compact-section">
+            <div className="section-title"><span>Картинка</span><small>PNG / WEBP</small></div>
+            <div className="image-actions">
+              <button
+                className="button secondary"
+                title="Заменить картинку, сохранив размеры и точку привязки"
+                onClick={() => { imageFit.current = false; imageInput.current?.click(); }}
+              >
+                <ImageUp size={14} /> Заменить
+              </button>
+              <button
+                className="button secondary"
+                title="Заменить картинку и взять её натуральный размер; прежняя точка привязки останется на месте"
+                onClick={() => { imageFit.current = true; imageInput.current?.click(); }}
+              >
+                Заменить и подогнать размер
+              </button>
+            </div>
+            <input
+              ref={imageInput}
+              type="file"
+              accept="image/png,image/webp"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) replaceImage(file);
+              }}
+            />
+          </div>
+        )}
 
         <div className="property-section compact-section">
           <div className="section-title">
