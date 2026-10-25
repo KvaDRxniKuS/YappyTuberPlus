@@ -4,6 +4,8 @@ import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOp
 import { inputRange, moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey, isPointerKind } from "../modules/values";
 import { usePointerInputs } from "./usePointerInputs";
+import { useExternalSource } from "./useExternalSource";
+import type { ExternalStatus } from "../modules/sources";
 
 export interface ModuleInputsApi {
   /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
@@ -26,6 +28,8 @@ export interface ModuleInputsApi {
   cancelCalibration: () => void;
   /** Стоп анимации: счётчики нажатий клавиш начинаются заново. */
   resetPointerHits: () => void;
+  /** Состояние внешних источников по имени модуля: подключён, ждёт, ошибка. */
+  externalStatuses: Record<string, ExternalStatus>;
 }
 
 const BLINK_TICK = 33;
@@ -244,18 +248,21 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   );
   const pointerInputs = usePointerInputs(pointerActive);
   const pointer = pointerInputs.frame;
+  // Внешние источники (WebSocket и будущие транспорты) живут рядом с указателем.
+  const externalInputs = useExternalSource(modules, libraryVersion);
 
   const inputs = useMemo<InputValues>(() => ({
-    values: composeValues(modules, { audio, manual, auto, pointer }),
+    values: composeValues(modules, { audio, manual, auto, pointer, external: externalInputs.values }),
     signals: {},
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [modules, audio, manual, auto, pointer, libraryVersion]);
+  }), [modules, audio, manual, auto, pointer, externalInputs.values, libraryVersion]);
 
   return {
     inputs, audio, manual, auto, devices, active, error, contextState,
     start, stop, setManual, refreshDevices, calibrate, cancelCalibration,
     // Стоп анимации: счётчики нажатий клавиш начинаются заново.
     resetPointerHits: pointerInputs.resetHits,
+    externalStatuses: externalInputs.statuses,
   };
 }
 

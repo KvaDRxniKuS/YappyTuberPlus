@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, RefreshCw, Search, SlidersHorizontal,
-  Trash2, X,
+  Trash2, Wifi, X,
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
 import type { DeviceOption } from "../modules/audio";
@@ -17,6 +17,8 @@ import { KeyBindingRow, KeyboardKeysEditor } from "./KeyboardEditor";
 import { EnumStatesEditor } from "./EnumStatesEditor";
 import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
+import { ExternalSourceEditor } from "./ExternalSourceEditor";
+import type { ExternalStatus } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
 interface ModulesPanelProps extends CalibrationApi {
@@ -30,6 +32,8 @@ interface ModulesPanelProps extends CalibrationApi {
    * повторный клик по тому же модулю ничего бы не изменил.
    */
   focus?: { name: string; nonce: number } | null;
+  /** Состояние внешних источников по имени модуля: подключён, ждёт, ошибка. */
+  externalStatuses?: Record<string, ExternalStatus>;
 }
 
 /**
@@ -285,6 +289,14 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     />
                   )}
 
+                  {definition.kind === "external" && (
+                    <ExternalSourceEditor
+                      module={module}
+                      status={props.externalStatuses?.[module.name]}
+                      onChange={(source, label) => patchConfig(module, "source", source, label)}
+                    />
+                  )}
+
                   {definition.kind === "manual" && module.config.mode === "enum" && (
                     <EnumStatesEditor
                       module={module}
@@ -442,6 +454,7 @@ function paletteIcon(kind: ModuleKind) {
   if (kind === "loudness") return <Mic size={14} />;
   if (kind === "keyboard" || kind === "key") return <Keyboard size={14} />;
   if (kind === "mouse") return <MousePointerClick size={14} />;
+  if (kind === "external") return <Wifi size={14} />;
   return <SlidersHorizontal size={14} />;
 }
 

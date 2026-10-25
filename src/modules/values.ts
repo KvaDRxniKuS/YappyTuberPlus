@@ -7,6 +7,7 @@ import {
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { frameValue, type AudioFrame } from "./audio";
+import { externalInputs } from "./external";
 import {
   keyboardKeys, keyLabel, mouseButtonLabel, mouseButtons, mouseValue, type PointerFrame,
 } from "./pointer";
@@ -25,6 +26,8 @@ export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   if (definition.kind === "viseme") return visemeInputs(module);
   // Ручной модуль в режиме «Состояния» задаёт входы сам: номер + флаг на состояние.
   if (definition.kind === "manual" && manualMode(module) === "enum") return enumInputs(module);
+  // Внешний источник: входы задаёт таблица отображения, а не шаблон.
+  if (definition.kind === "external") return externalInputs(module, definition.inputs);
   if (definition.kind === "keyboard") {
     return keyboardKeys(module).map((key) => ({
       name: key.name,
@@ -118,6 +121,8 @@ export interface ModuleSources {
   auto: Record<string, number>;
   /** Клавиатура и мышь: снимок за кадр. */
   pointer?: PointerFrame;
+  /** Внешние источники: `{ bridge: { hr: 72 } }` — уже с учётом правил. */
+  external?: Record<string, Record<string, number>>;
 }
 
 /**
@@ -163,6 +168,20 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
         if (invertY && spec.name === "y") value = 1 - value;
         else if (invertY && spec.name === "dy") value = -value;
         values[inputKey(module, spec.name)] = Number.isFinite(value) ? value : 0;
+      }
+      continue;
+    }
+
+    if (definition.kind === "external") {
+      // Источник отдаёт только то, что реально пришло: не пришло — ноль,
+      // чтобы скрипт не читал залипшее прошлое значение.
+      const sample = sources.external?.[module.name];
+      for (const spec of specs) {
+        if (!inputEnabled(module, spec.name)) continue;
+        const value = sample?.[spec.name];
+        values[inputKey(module, spec.name)] = Number.isFinite(value as number)
+          ? (value as number)
+          : fallbackValue(module, definition, spec);
       }
       continue;
     }

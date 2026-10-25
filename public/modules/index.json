@@ -6,6 +6,7 @@
     "viseme",
     "keyboard",
     "key",
-    "mouse"
+    "mouse",
+    "external"
   ]
 }

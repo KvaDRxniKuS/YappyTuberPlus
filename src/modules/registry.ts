@@ -65,7 +65,7 @@ const FALLBACK: ModuleDefinition = {
 };
 
 /** Порядок карточек в палитре: сначала источники сигнала, потом ручные. */
-const ORDER = ["loudness", "viseme", "keyboard", "key", "mouse", "autoblink", "manual"];
+const ORDER = ["loudness", "viseme", "keyboard", "key", "mouse", "external", "autoblink", "manual"];
 
 const library = new Map<string, ModuleDefinition>();
 const listeners = new Set<() => void>();
@@ -140,7 +140,7 @@ export function normalizeDefinition(raw: unknown): ModuleDefinition | null {
   const fields = Array.isArray(source.fields)
     ? source.fields.map(normalizeField).filter((field): field is ModuleField => field !== null)
     : [];
-  const known: ModuleKind[] = ["loudness", "manual", "autoblink", "viseme", "keyboard", "key", "mouse"];
+  const known: ModuleKind[] = ["loudness", "manual", "autoblink", "viseme", "keyboard", "key", "mouse", "external"];
   const kind = known.includes(source.kind as ModuleKind) ? (source.kind as ModuleKind) : "manual";
   return {
     id,
@@ -270,14 +270,23 @@ export function moduleDefaults(definition: ModuleDefinition): ModuleConfig {
     if (field.default !== undefined) config[field.key] = field.default;
   }
   const merged: ModuleConfig = { ...config, ...definition.defaults };
-  // Списки (состояния enum, виземы, клавиши, кнопки) копируем: иначе два
-  // экземпляра одного шаблона делили бы один массив и правка одного меняла
-  // бы другой.
+  // Списки (состояния enum, виземы, клавиши, кнопки) и вложенные объекты
+  // (источник внешнего модуля) копируем вглубь: иначе два экземпляра одного
+  // шаблона делили бы один массив и правка одного меняла бы другой.
   for (const [key, value] of Object.entries(merged)) {
-    if (!Array.isArray(value)) continue;
-    merged[key] = value.map((item) => (item && typeof item === "object" ? { ...item } : item)) as ModuleConfig[string];
+    if (!value || typeof value !== "object") continue;
+    merged[key] = cloneValue(value) as ModuleConfig[string];
   }
   return merged;
+}
+
+/** Копия настроек: массивы поэлементно, вложенные объекты рекурсивно. */
+function cloneValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, cloneValue(item)]));
+  }
+  return value;
 }
 
 /** Поле видно, если совпали все условия `showWhen`. */

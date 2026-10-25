@@ -109,7 +109,41 @@ export interface InputValues {
  * Реализация модуля в коде. Шаблоны из папки `modules` описывают входы и
  * настройки, а поведение выбирается по этому полю.
  */
-export type ModuleKind = "loudness" | "manual" | "autoblink" | "viseme" | "keyboard" | "key" | "mouse";
+export type ModuleKind =
+  | "loudness" | "manual" | "autoblink" | "viseme" | "keyboard" | "key" | "mouse"
+  /** Значения из сети: WebSocket (и позже HTTP/OSC) по таблице отображения. */
+  | "external";
+
+/** Транспорт внешнего источника. `ws` работает уже сейчас, остальные — по мере Rust-слоя. */
+export type ExternalSourceTransport = "ws" | "http" | "osc";
+
+/** Правило отображения: поле JSON → вход модуля. */
+export interface ExternalSourceRule {
+  /** Имя входа: в скрипте это `<модуль>.<input>`. */
+  input: string;
+  /** Путь в сообщении: `$.value`, `$.data.bpm`, `$.items[0].n`. */
+  path: string;
+  label?: string;
+  kind?: "level" | "db" | "flag";
+  min?: number;
+  max?: number;
+  scale?: number;
+  offset?: number;
+  /** Удержание импульса, мс: события вроде «пришла награда» живут один пакет. */
+  holdMs?: number;
+}
+
+/** Внешний источник в настройках экземпляра (`config.source`). */
+export interface ExternalSourceConfig {
+  transport: ExternalSourceTransport;
+  /** Адрес: `ws://127.0.0.1:17801/inputs`, `wss://…`. */
+  url: string;
+  /** Сообщение сразу после подключения (JSON-строка): подписка или авторизация. */
+  subscribe?: string;
+  mapping: ExternalSourceRule[];
+  /** Переподключаться при обрыве; по умолчанию да. */
+  reconnect?: boolean;
+}
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */
 export type ModuleType = string;
@@ -177,11 +211,17 @@ export interface ModuleConfig {
   buttons?: MouseButton[];
   /** Состояния ручного модуля в режиме `enum`: список экземпляра. */
   states?: EnumState[];
+  /** Настройки внешнего источника (модуль `external`). */
+  source?: ExternalSourceConfig;
   /** Нормализовать сумму визем к 1. */
   normalize?: boolean;
   /** Порог слышимости для визем, дБ. */
   gate?: number;
-  [key: string]: number | string | boolean | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[] | undefined;
+  [key: string]:
+    | number | string | boolean
+    | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[]
+    | ExternalSourceConfig
+    | undefined;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */

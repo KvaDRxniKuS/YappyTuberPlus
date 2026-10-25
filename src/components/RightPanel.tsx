@@ -9,6 +9,7 @@ import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
+import type { ExternalStatus } from "../modules/sources";
 import type { ScriptCheck } from "../engine/scripts";
 import { namedTriggers } from "../engine/scripts";
 
@@ -42,6 +43,8 @@ interface RightPanelProps {
   checkScript?: ScriptCheck;
   calibrate: CalibrationApi["calibrate"];
   cancelCalibration: CalibrationApi["cancelCalibration"];
+  /** Состояние внешних источников: видно в карточке модуля. */
+  externalStatuses?: Record<string, ExternalStatus>;
 }
 
 type Tab = "behaviour" | "object" | "globals" | "inputs" | "modules";
@@ -100,6 +103,7 @@ export function RightPanel(props: RightPanelProps) {
           error={props.audioError}
           onChange={props.onModules}
           focus={focusModule}
+          externalStatuses={props.externalStatuses}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

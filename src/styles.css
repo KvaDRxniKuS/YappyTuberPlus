@@ -1226,3 +1226,37 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .key-add { align-self: flex-start; }
 .key-capture { color: #e0b06f; font-size: 11px; }
 .key-picker { display: flex; align-items: center; gap: 6px; }
+
+/* ---------- Внешний источник в карточке модуля ---------- */
+.external-editor { display: flex; flex-direction: column; gap: 6px; }
+.external-status {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 5px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418;
+  font-size: 11.5px;
+}
+.external-dot { width: 7px; height: 7px; border-radius: 50%; background: #4a5560; flex: none; }
+.external-dot.live { background: #5bbf9b; box-shadow: 0 0 6px rgba(91, 191, 155, .7); }
+.external-dot.connecting { background: #e0b06f; }
+.external-dot.error { background: #d47b73; }
+.external-dot.unsupported { background: #8a7fbd; }
+.external-status-message { color: #a7b1ba; }
+.module-field-text {
+  min-width: 0; width: 100%; padding: 3px 5px; border: 1px solid #242c34; border-radius: 4px;
+  background: #0f1215; color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace;
+}
+.module-field-text:focus { outline: none; border-color: #609c8c; }
+.external-mapping { display: flex; flex-direction: column; gap: 3px; padding: 6px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418; }
+.external-mapping-head,
+.external-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(48px, 1.1fr) minmax(74px, 1.6fr) minmax(48px, 1fr) 42px 42px 40px 40px 52px auto;
+  gap: 4px; align-items: center;
+}
+.external-mapping-head { color: #5d6872; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.external-mapping-row { padding: 2px 0; border-top: 1px solid #171c21; }
+.external-mapping-row input {
+  min-width: 0; width: 100%; padding: 3px 4px; border: 1px solid #242c34; border-radius: 4px;
+  background: #0f1215; color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace;
+}
+.external-mapping-row input:focus { outline: none; border-color: #609c8c; }
+.external-add { align-self: flex-start; }

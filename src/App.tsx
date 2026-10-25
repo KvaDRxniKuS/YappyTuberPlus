@@ -858,6 +858,7 @@ export default function App() {
           checkScript={engine.checkScript}
           calibrate={moduleInputs.calibrate}
           cancelCalibration={moduleInputs.cancelCalibration}
+          externalStatuses={moduleInputs.externalStatuses}
         /></div>
       </div>
 
