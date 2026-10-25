@@ -33,6 +33,83 @@ export function visemeInputs(module: ModuleInstance): ModuleInputSpec[] {
   }));
 }
 
+/**
+ * Числа из любой сериализованной формы.
+ *
+ * `JSON` не различает массив и типизированный массив, поэтому `Float32Array`
+ * после сохранения выглядит как объект `{"0":…,"1":…}`. Читаем и такое: иначе
+ * записанный эталон молча пропадал бы при загрузке пресета.
+ */
+function readVector(raw: unknown): number[] | null {
+  let source: unknown[] | null = null;
+  if (Array.isArray(raw)) source = raw;
+  else if (ArrayBuffer.isView(raw) && !(raw instanceof DataView)) source = Array.from(raw as unknown as ArrayLike<number>);
+  else if (raw && typeof raw === "object") {
+    const keys = Object.keys(raw as Record<string, unknown>)
+      .filter((key) => /^\d+$/.test(key))
+      .sort((left, right) => Number(left) - Number(right));
+    if (keys.length > 0) source = keys.map((key) => (raw as Record<string, unknown>)[key]);
+  } else if (typeof raw === "string") {
+    const parts = raw.split(/[\s,;]+/).filter(Boolean);
+    if (parts.length > 1) source = parts;
+  }
+  if (!source || source.length < 2) return null;
+  const values: number[] = [];
+  for (const item of source) {
+    const value = typeof item === "number" ? item : Number(item);
+    if (!Number.isFinite(value)) return null;
+    values.push(value);
+  }
+  return values;
+}
+
+/** Растягивает вектор до нужного числа полос линейной интерполяцией. */
+function resample(vector: number[], length: number): number[] {
+  if (vector.length === length) return vector;
+  if (vector.length === 1) return new Array(length).fill(vector[0]);
+  const step = (vector.length - 1) / (length - 1);
+  const result: number[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const position = index * step;
+    const left = Math.floor(position);
+    const right = Math.min(vector.length - 1, left + 1);
+    const mix = position - left;
+    result.push(vector[left] * (1 - mix) + vector[right] * mix);
+  }
+  return result;
+}
+
+/**
+ * Эталон виземы в `VISEME_BANDS` полос.
+ *
+ * Число полос могло измениться между версиями, а форма — пострадать от
+ * сериализации. Поэтому эталон не выбрасывается, а приводится к нужному
+ * размеру: записанный звук — это данные пользователя, и терять их нельзя.
+ * После пересчёта вектор снова приводится к единичной длине, чтобы скалярное
+ * произведение осталось косинусом.
+ */
+export function readTemplate(raw: unknown): number[] | null {
+  const vector = readVector(raw);
+  if (!vector) return null;
+  return unitVector(resample(vector, VISEME_BANDS));
+}
+
+/**
+ * Все варианты записи из настроек виземы: массив эталонов, один эталон или
+ * поле `template` из старых пресетов.
+ */
+export function readTemplates(raw: unknown, legacy: unknown = undefined): number[][] {
+  const list = Array.isArray(raw) && raw.some((item) => Array.isArray(item) || (item && typeof item === "object"))
+    ? raw
+    : raw === undefined || raw === null ? [] : [raw];
+  const templates = list
+    .map((item) => readTemplate(item))
+    .filter((item): item is number[] => !!item);
+  if (templates.length > 0) return templates;
+  const single = readTemplate(legacy);
+  return single ? [single] : [];
+}
+
 /** Центр полосы `index`: полосы логарифмические от 80 Гц до 8 кГц. */
 export function bandFrequency(index: number): number {
   return 80 * Math.exp(((index + 0.5) / VISEME_BANDS) * Math.log(8000 / 80));

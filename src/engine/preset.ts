@@ -6,7 +6,7 @@ import {
   type MouseButton, type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
 } from "../types";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
-import { VISEME_BANDS, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
+import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { keyInputName, mouseButtons, uniqueButtonName, uniqueKeyName } from "../modules/pointer";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
@@ -190,9 +190,10 @@ function normalizeVisemesConfig(raw: unknown): VisemeEntry[] {
     if (!item || typeof item !== "object") continue;
     const entry = item as Record<string, unknown>;
     const name = uniqueVisemeName(entries, sanitizeVisemeName(typeof entry.name === "string" ? entry.name : ""));
-    const templates = (Array.isArray(entry.templates) ? entry.templates : [])
-      .filter((template): template is unknown[] => Array.isArray(template) && template.length === VISEME_BANDS)
-      .map((template) => template.map((value) => (Number.isFinite(Number(value)) ? Number(value) : 0)));
+    // Эталоны читаются терпимо: массив, `Float32Array`-подобный объект, строка,
+    // другая длина и старое поле `template`. Выбрасывать записанный звук из-за
+    // формы хранения нельзя — это данные пользователя, они не восстанавливаются.
+    const templates = readTemplates(entry.templates, entry.template);
     entries.push({
       name,
       label: typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 12) : name,
