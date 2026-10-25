@@ -147,6 +147,17 @@ export interface VisemeEntry {
   templates: number[][];
 }
 
+/**
+ * Состояние ручного модуля в режиме `enum`: имя для скрипта и подпись для
+ * панели. Номер состояния — это и есть значение входа `manual.value`.
+ */
+export interface EnumState {
+  /** Имя входа: `mode.idle`, `mode.walk`. Только латиница, цифры и `_`. */
+  name: string;
+  /** Как показывать в панели: «Покой», «Идёт». */
+  label: string;
+}
+
 export interface ModuleConfig {
   /** Идентификатор устройства из `navigator.mediaDevices`. */
   deviceId?: string;
@@ -164,11 +175,13 @@ export interface ModuleConfig {
   code?: string;
   /** Дополнительные кнопки мыши: список экземпляра. */
   buttons?: MouseButton[];
+  /** Состояния ручного модуля в режиме `enum`: список экземпляра. */
+  states?: EnumState[];
   /** Нормализовать сумму визем к 1. */
   normalize?: boolean;
   /** Порог слышимости для визем, дБ. */
   gate?: number;
-  [key: string]: number | string | boolean | VisemeEntry[] | KeyboardKey[] | MouseButton[] | undefined;
+  [key: string]: number | string | boolean | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[] | undefined;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */

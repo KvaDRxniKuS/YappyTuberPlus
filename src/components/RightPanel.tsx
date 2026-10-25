@@ -3,6 +3,7 @@ import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, SlidersHorizo
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
+import { enumConstants } from "../modules/manual";
 import { InputsPanel } from "./InputsPanel";
 import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
@@ -115,6 +116,7 @@ export function RightPanel(props: RightPanelProps) {
             globals={props.globals}
             moduleInputs={props.modules.flatMap((module) => moduleInputKeys(module).map((item) => item.key))}
             triggers={namedTriggers(props.globalScript)}
+            constants={Object.keys(enumConstants(props.modules))}
             onCheck={props.checkScript}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}

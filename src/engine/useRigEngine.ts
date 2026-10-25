@@ -4,6 +4,7 @@ import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import { neutralFrame, prepareFrame } from "./frame";
+import { enumConstants } from "../modules/manual";
 import { frameProduced } from "./frameSignal";
 
 export type EngineStatus = "loading" | "ready" | "error";
@@ -64,6 +65,9 @@ export function useRigEngine(
       canvas: current.canvas,
       globals: current.globals,
       objects: current.objects.map((object) => ({ ...object, image: null })),
+      // Состояния enum приходят в ядро числами: в скрипте `manual.value == walk`
+      // читается по имени, а не по номеру.
+      constants: enumConstants(current.modules),
     };
     backend.call({ op: "create", config }).then(async (response) => {
       if (!response.ok || response.handle === undefined) {

@@ -873,19 +873,35 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
         }
 
         // Блок события: `on <условие> { … }`.
-        if let Some(rest) = keyword_at(trimmed, "on") {
+        //
+        // `event.<условие> { … }` — та же запись без `on`. Автодополнение
+        // подставляет входы как `event.модуль.вход`, поэтому разрешаем писать
+        // этот заголовок напрямую. Строка, где слева от `{` есть `=`,
+        // остаётся присваиванием: `event` — обычное имя объекта.
+        let event_block = keyword_at(trimmed, "on")
+            .map(|rest| (rest, "on".len()))
+            .or_else(|| {
+                let rest = trimmed.strip_prefix("event.")?;
+                let head = rest.split('{').next().unwrap_or("");
+                if rest.contains('{') && !head.contains('=') {
+                    Some((rest, "event.".len()))
+                } else {
+                    None
+                }
+            });
+        if let Some((rest, prefix_len)) = event_block {
             let open = rest.find('{').ok_or_else(|| {
                 ScriptError::new(line_number, column, trimmed.len(), "у блока события нет '{'")
             })?;
             let header_text = &rest[..open];
             let header = header_text.trim();
-            let header_column = column + "on".len() + (header_text.len() - header_text.trim_start().len());
+            let header_column = column + prefix_len + (header_text.len() - header_text.trim_start().len());
             if header.is_empty() {
                 return Err(ScriptError::new(
                     line_number,
                     header_column,
                     trimmed.len(),
-                    "после 'on' ожидалось условие: 'start', 'имя' или 'модуль.вход.тип'",
+                    "после 'on' или 'event.' ожидалось условие: 'start', 'имя' или 'модуль.вход.тип'",
                 ));
             }
             let event_source = parse_event_source(header).map_err(|message| {
@@ -1097,6 +1113,35 @@ mod tests {
             }
             other => panic!("ожидался входной источник, а не {:?}", other),
         }
+    }
+
+    #[test]
+    fn event_header_without_on_parses() {
+        // `event.mouse.left.down { … }` — автодополнение подставляет именно
+        // такую форму, и она должна работать без `on`.
+        let script = parse_script("event.mouse.left.down { a = 1 }\nevent.key.space.hold(0.5) { b = 2 }\nevent.start { c = 3 }").unwrap();
+        assert_eq!(script.events.len(), 3);
+        match &script.events[0].source {
+            EventSource::Input { source, kind } => {
+                assert_eq!(source, "mouse.left");
+                assert!(matches!(kind, EventKind::Down));
+            }
+            other => panic!("ожидался входной источник, а не {:?}", other),
+        }
+        assert!(matches!(&script.events[1].source, EventSource::Input { kind: EventKind::Hold(value), .. } if (*value - 0.5).abs() < 1e-9));
+        assert!(matches!(&script.events[2].source, EventSource::Start));
+        assert_eq!(script.events[0].body.len(), 1);
+    }
+
+    #[test]
+    fn event_object_assignment_is_not_a_block() {
+        // Объект с именем `event` остаётся объектом: `event.x = 5` — присваивание.
+        let script = parse_script("event.x = 5").unwrap();
+        assert!(script.events.is_empty());
+        assert!(matches!(
+            &script.assignments[0].0,
+            AssignTarget::Foreign { object, param } if object == "event" && param == "x"
+        ));
     }
 
     #[test]

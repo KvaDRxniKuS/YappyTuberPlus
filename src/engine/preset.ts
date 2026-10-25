@@ -2,11 +2,13 @@ import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules } from "../modules/values";
 import { selectionRoots } from "./selection";
 import {
-  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type KeyboardKey, type ModuleConfig, type ModuleInstance,
+  DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type ModuleConfig,
+  type ModuleInstance,
   type MouseButton, type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
 } from "../types";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
+import { enumConstants, sanitizeStateName, uniqueStateName } from "../modules/manual";
 import { keyInputName, mouseButtons, uniqueButtonName, uniqueKeyName } from "../modules/pointer";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
@@ -203,6 +205,27 @@ function normalizeVisemesConfig(raw: unknown): VisemeEntry[] {
   return entries;
 }
 
+/**
+ * Состояния ручного модуля (`mode: "enum"`): имя для скрипта и подпись.
+ * Список живёт в настройках экземпляра, поэтому нормализуется отдельно —
+ * иначе общая нормализация полей выбросила бы массив.
+ */
+function normalizeEnumStates(raw: unknown): EnumState[] {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const list = Array.isArray(source.states) ? source.states : [];
+  const states: EnumState[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const name = uniqueStateName(states, sanitizeStateName(typeof entry.name === "string" ? entry.name : ""));
+    states.push({
+      name,
+      label: typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 24) : name,
+    });
+  }
+  return states;
+}
+
 /** Клавиши клавиатурного модуля: код клавиши и уникальное имя входа. */
 function normalizeKeyboardKeys(raw: unknown): KeyboardKey[] {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -263,10 +286,16 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const keys = definition.kind === "keyboard" || Array.isArray(rawConfig.keys)
       ? normalizeKeyboardKeys(item.config)
       : null;
+    // Режим берём из настроек или из шаблона: у старого модуля его может не быть.
+    const isEnum = definition.kind === "manual"
+      && (rawConfig.mode === "enum" || Array.isArray(rawConfig.states));
+    const states = isEnum ? normalizeEnumStates(item.config) : null;
     const buttons = definition.kind === "mouse" || Array.isArray(rawConfig.buttons)
       ? normalizeMouseButtons(item.config)
       : null;
-    const knownInputs = visemes
+    const knownInputs = states
+      ? ["value", ...states.map((entry) => entry.name)]
+      : visemes
       ? visemes.map((entry) => entry.name)
       : keys
         ? keys.map((key) => key.name)
@@ -289,6 +318,7 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
         ...moduleDefaults(definition),
         ...(unknown ? rawConfig : normalizeConfig(definition.fields, item.config)),
         ...(visemes ? { visemes } : {}),
+        ...(states ? { states } : {}),
         ...(keys ? { keys } : {}),
         ...(buttons ? { buttons } : {}),
         // Код клавиши — не поле шаблона, но он обязан пережить любую загрузку.
@@ -331,6 +361,9 @@ export function engineStructure(preset: RigPreset): string {
   return JSON.stringify({
     canvas: preset.canvas,
     globals: preset.globals,
+    // Имена состояний enum — часть «контракта» скрипта: переименование
+    // состояния пересоздаёт движок, иначе ядро держало бы старые константы.
+    constants: enumConstants(preset.modules),
     objects: preset.objects.map(({ id, kind, parentId, script, width, height }) => ({ id, kind, parentId, script, width, height })),
   });
 }

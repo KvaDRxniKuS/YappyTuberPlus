@@ -72,11 +72,12 @@ const EVENT_CHOICES = [
 ];
 
 // Порядок групп в списке функций под редактором.
-const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random"; title: string }> = [
+const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare"; title: string }> = [
   { id: "math", title: "математика" },
   { id: "vector", title: "векторы" },
   { id: "physics", title: "физика" },
   { id: "random", title: "случайность" },
+  { id: "compare", title: "сравнения" },
 ];
 
 /** Подчёркивание места ошибки: диапазон приходит из ядра вместе с сообщением. */
@@ -115,12 +116,14 @@ interface ScriptEditorProps {
   moduleInputs?: string[];
   /** Имена событий из `trigger … = …` в глобальном скрипте. */
   triggers?: string[];
+  /** Константы модулей: состояния enum (`walk`, `mode_walk`). */
+  constants?: string[];
   onCheck?: ScriptCheck;
   onApply: (value: string) => void;
 }
 
 export function ScriptEditor({
-  value, objectIds, globals, moduleInputs = [], triggers = [], onCheck, onApply,
+  value, objectIds, globals, moduleInputs = [], triggers = [], constants = [], onCheck, onApply,
 }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -129,7 +132,7 @@ export function ScriptEditor({
   const runCheckRef = useRef<(source: string) => void>(() => {});
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const completionData = useRef({ objectIds, globals, moduleInputs, triggers });
+  const completionData = useRef({ objectIds, globals, moduleInputs, triggers, constants });
   const [hint, setHint] = useState("");
   const [errorText, setErrorText] = useState("");
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
@@ -139,7 +142,7 @@ export function ScriptEditor({
   const pinned = favorites.filter((name) => SIGNATURES[name] !== undefined);
   applyRef.current = onApply;
   checkRef.current = onCheck;
-  completionData.current = { objectIds, globals, moduleInputs, triggers };
+  completionData.current = { objectIds, globals, moduleInputs, triggers, constants };
 
   useEffect(() => {
     if (!host.current) return;
@@ -170,21 +173,23 @@ export function ScriptEditor({
       checkTimer.current = setTimeout(() => runCheck(source), 320);
     };
 
+    // Заголовок события: `on …`, `event.…` (без `on`) или правая часть `trigger`.
     const isHeader = (prefix: string) =>
-      /^\s*on\s+[\w.]*$/.test(prefix) || /^\s*trigger\s+[\w]+\s*=\s*[\w.]*$/.test(prefix);
+      /^\s*(?:on|event\.)\s*[\w.]*$/.test(prefix) || /^\s*trigger\s+[\w]+\s*=\s*[\w.]*$/.test(prefix);
 
     const completion = (context: CompletionContext): CompletionResult | null => {
       const word = context.matchBefore(/[A-Za-z0-9_.]*/);
       if (!word || (word.from === word.to && !context.explicit)) return null;
       const {
         objectIds: ids, globals: globalNames, moduleInputs: inputNames, triggers: triggerNames,
+        constants: constantNames,
       } = completionData.current;
       const line = context.state.doc.lineAt(context.pos);
       const prefix = context.state.sliceDoc(line.from, context.pos);
 
       // Заголовок события: `on …` или правая часть `trigger имя = …`.
       if (isHeader(prefix)) {
-        const typed = word.text.replace(/^event\./, "");
+        const typed = word.text.replace(/^event\./, "").replace(/\.$/, "");
         if (inputNames.includes(typed)) {
           // Вход выбран целиком: подсказываем тип и сразу раскрываем тело блока.
           return {
@@ -244,7 +249,8 @@ export function ScriptEditor({
         };
       }
       const options = [...new Set([
-        ...ids, ...globalNames, ...PARAMETERS, ...INPUTS, ...inputNames, ...triggerNames, ...FUNCTION_NAMES,
+        ...ids, ...globalNames, ...PARAMETERS, ...INPUTS, ...inputNames, ...triggerNames, ...constantNames,
+        ...FUNCTION_NAMES,
       ])].map((label) => {
         if (SIGNATURES[label]) {
           return {
@@ -265,7 +271,9 @@ export function ScriptEditor({
                 ? "глобальная переменная"
                 : triggerNames.includes(label)
                   ? "своё событие"
-                  : "встроенное";
+                  : constantNames.includes(label)
+                    ? "состояние модуля"
+                    : "встроенное";
         return { label, type: PARAMETERS.includes(label) ? "property" : "variable", detail };
       });
       return { from: word.from, options, validFor: /^[A-Za-z0-9_.]*$/ };

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { AudioLines, ChevronDown, Code2, RefreshCw, Trash2 } from "lucide-react";
-import type { InputValues, ModuleInstance, RigFrame, VisemeEntry } from "../types";
+import type { EnumState, InputValues, ModuleInstance, RigFrame, VisemeEntry } from "../types";
 import { frameValue, type AudioFrame } from "../modules/audio";
 import {
   inputDefault, inputRange, moduleDefaults, moduleDefinition, refreshLibrary, type ModuleInputSpec,
 } from "../modules/registry";
 import { inputEnabled, inputKey, instanceInputs, isPointerKind } from "../modules/values";
 import { visemeEntries } from "../modules/viseme";
+import { enumStates, manualMode, stateIndex } from "../modules/manual";
 import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 import { eventSnippet } from "../engine/scripts";
 
@@ -174,17 +175,22 @@ export function InputsPanel(props: InputsPanelProps) {
                 ? holdMeter(module)
                 : { min: range.min, max: range.max };
               const viseme = definition.kind === "viseme";
+              // Ручной модуль в режиме «Состояния»: панель показывает номер
+              // выбранного состояния и флаги, которые выводит движок входов.
+              const enumMode = definition.kind === "manual" && manualMode(module) === "enum";
               const value = !module.enabled || !on
                 ? undefined
-                : pointer
+                : enumMode
                   ? props.inputs.values[key] ?? 0
-                  : live
-                    ? viseme
-                      ? props.inputs.values[key] ?? 0
-                      : frameValue(props.audio[module.name], spec.name) ?? inputDefault(spec)
-                    : auto
-                      ? props.auto[key] ?? range.min
-                      : props.manual[key] ?? range.min;
+                  : pointer
+                    ? props.inputs.values[key] ?? 0
+                    : live
+                      ? viseme
+                        ? props.inputs.values[key] ?? 0
+                        : frameValue(props.audio[module.name], spec.name) ?? inputDefault(spec)
+                      : auto
+                        ? props.auto[key] ?? range.min
+                        : props.manual[key] ?? range.min;
               const entry = viseme ? visemeEntries(module).find((item) => item.name === spec.name) : undefined;
               const active = recorder.recording?.key === key;
               return (
@@ -196,7 +202,11 @@ export function InputsPanel(props: InputsPanelProps) {
                     min={meter.min}
                     max={meter.max}
                     step={range.step}
-                    mode={live || auto || pointer ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
+                    mode={enumMode
+                      ? spec.name === "value" ? "enum" : "state"
+                      : live || auto || pointer ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
+                    states={enumMode ? enumStates(module) : undefined}
+                    stateIndex={enumMode ? stateIndex(module, props.inputs.values[inputKey(module, "value")]) : undefined}
                     reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}
                     onChange={(next) => props.onManual(key, next)}
                     action={viseme ? (
@@ -261,7 +271,12 @@ function InputRow(props: {
   min: number;
   max: number;
   step: number;
-  mode: "read" | "flag" | "slider";
+  /** `enum` — выбор состояния, `state` — его флаг. */
+  mode: "read" | "flag" | "slider" | "enum" | "state";
+  /** Список состояний ручного модуля: нужен режимам `enum` и `state`. */
+  states?: EnumState[];
+  /** Номер выбранного состояния. */
+  stateIndex?: number;
   reason: string | null;
   onChange: (value: number) => void;
   /** Дополнительная кнопка в строке значения: у визем это запись эталона. */
@@ -283,6 +298,43 @@ function InputRow(props: {
     ? Math.max(0, Math.min(1, (safe + 80) / 80))
     : Math.max(0, Math.min(1, (safe - props.min) / span));
   const display = spec.kind === "db" ? `${safe.toFixed(0)} dB` : safe.toFixed(2);
+
+  if (props.mode === "state") {
+    // Флаг состояния: показывает, выбрано ли оно, и позволяет выбрать его
+    // кликом — это тот же выбор, что и в списке номера.
+    const index = props.states?.findIndex((state) => state.name === props.spec.name) ?? -1;
+    const selected = index >= 0 && index === props.stateIndex;
+    return (
+      <button
+        type="button"
+        className={`input-flag input-state ${selected ? "selected" : ""}`}
+        title={props.spec.hint}
+        onClick={() => { if (index >= 0) props.onChange(index); }}
+      >
+        <code>{props.name}</code>
+        <span className={`signal-dot ${selected ? "on" : ""}`} />
+      </button>
+    );
+  }
+
+  if (props.mode === "enum") {
+    const states = props.states ?? [];
+    const current = props.stateIndex ?? 0;
+    return (
+      <label className="input-flag input-enum">
+        <code>{props.name}</code>
+        <select
+          value={String(current)}
+          title={props.spec.hint}
+          onChange={(event) => props.onChange(Number(event.target.value))}
+        >
+          {states.map((state, index) => (
+            <option key={state.name} value={index}>{state.label} · {state.name}</option>
+          ))}
+        </select>
+      </label>
+    );
+  }
 
   if (props.mode === "flag") {
     return (

@@ -110,6 +110,13 @@ pub struct RigPreset {
     pub objects: Vec<RigObject>,
     #[serde(default)]
     pub globals: String,
+    /// Именованные числа из модулей: состояния `enum` и подобные подписи.
+    ///
+    /// В пресет они не пишутся — их собирает фронтенд из настроек модулей и
+    /// присылает в `create`. В скрипте такое имя читается как число, поэтому
+    /// сравнение выглядит по-человечески: `manual.value == walk`.
+    #[serde(default)]
+    pub constants: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

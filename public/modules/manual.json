@@ -1,7 +1,7 @@
 {
   "id": "manual",
   "title": "Manual",
-  "description": "Ручной вход: тумблер 0/1 или число с границами. Всегда регулируется ползунком.",
+  "description": "Ручной вход: тумблер 0/1, число с границами или состояния (enum) для режимов персонажа.",
   "kind": "manual",
   "audio": false,
   "inputs": [
@@ -10,11 +10,22 @@
   "fields": [
     { "key": "mode", "label": "Режим", "type": "select", "default": "number", "options": [
       { "value": "flag", "label": "0 / 1" },
-      { "value": "number", "label": "Число" }
+      { "value": "number", "label": "Число" },
+      { "value": "enum", "label": "Состояния" }
     ] },
     { "key": "min", "label": "Минимум", "type": "number", "min": -1000, "max": 1000, "step": 0.01, "default": 0, "showWhen": { "mode": "number" } },
     { "key": "max", "label": "Максимум", "type": "number", "min": -1000, "max": 1000, "step": 0.01, "default": 1, "showWhen": { "mode": "number" } },
     { "key": "step", "label": "Шаг", "type": "number", "min": 0.001, "max": 100, "step": 0.001, "default": 0.01, "showWhen": { "mode": "number" } }
   ],
-  "defaults": { "mode": "number", "min": 0, "max": 1, "step": 0.01 }
+  "defaults": {
+    "mode": "number",
+    "min": 0,
+    "max": 1,
+    "step": 0.01,
+    "states": [
+      { "name": "idle", "label": "Покой" },
+      { "name": "walk", "label": "Идёт" },
+      { "name": "run", "label": "Бежит" }
+    ]
+  }
 }

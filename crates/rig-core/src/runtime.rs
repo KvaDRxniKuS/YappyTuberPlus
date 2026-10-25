@@ -920,6 +920,12 @@ impl Rig {
         if self.expressions.contains_key(&global_key) || self.persistent_globals.contains(name) {
             return Value::Number(self.eval_node(&global_key));
         }
+        // Именованные числа из модулей (состояния enum): их сравнение в скрипте
+        // выглядит как `manual.value == walk`. Константа не переменная — её
+        // нельзя присвоить, поэтому проверка идёт после глобальных выражений.
+        if let Some(value) = self.preset.constants.get(name) {
+            return Value::Number(*value);
+        }
         if self.object_indices.contains_key(name) {
             if matches!(context, NodeKey::Global(_)) {
                 return self.error_value(format!(
@@ -1285,11 +1291,25 @@ impl Rig {
                     .unwrap_or(0.0),
             );
         }
+        if name == "is" {
+            // `is(x, a, b, …)` — «x равно любому из»: так сравнивают состояния
+            // enum, не собирая длинную цепочку `||`.
+            if args.len() < 2 {
+                self.diagnostics
+                    .insert("is ожидает хотя бы два аргумента: is(x, a, …)".into());
+                return Value::Number(0.0);
+            }
+            let values = self.numbers(args, context);
+            let hit = values[1..]
+                .iter()
+                .any(|value| (value - values[0]).abs() <= 1e-9);
+            return Value::Number(if hit { 1.0 } else { 0.0 });
+        }
         let expected = match name {
             "abs" | "sign" | "round" | "floor" | "ceil" | "sqrt" | "exp" | "log" | "sin"
             | "cos" | "tan" | "sind" | "cosd" | "tand" | "deg" | "rad" => 1,
             "pow" | "atan2" | "mod" | "px" | "uv" => 2,
-            "limit" | "lerp" | "smoothstep" => 3,
+            "limit" | "lerp" | "smoothstep" | "near" | "between" => 3,
             "clamp" => 4,
             _ => {
                 return self.error_value(format!("неизвестная функция '{}'; использован 0", name));
@@ -1332,6 +1352,24 @@ impl Rig {
             "limit" => v[0].clamp(v[1].min(v[2]), v[1].max(v[2])),
             "clamp" => v[1] + (v[0] - v[1]).clamp(v[2].min(v[3]), v[2].max(v[3])),
             "lerp" => v[0] + (v[1] - v[0]) * v[2],
+            // Сравнения возвращают 0/1, поэтому их можно ставить в формулы и
+            // умножать на амплитуду.
+            "near" => {
+                if (v[0] - v[1]).abs() <= v[2].abs() {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            "between" => {
+                let lo = v[1].min(v[2]);
+                let hi = v[1].max(v[2]);
+                if v[0] >= lo && v[0] <= hi {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             "smoothstep" => {
                 let t = ((v[2] - v[0]) / (v[1] - v[0])).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
@@ -1592,11 +1630,49 @@ mod tests {
             },
             objects,
             globals: globals.into(),
+            constants: BTreeMap::new(),
         }
     }
 
     fn tick(rig: &mut Rig, time: f64) -> Frame {
         rig.tick(time, InputValues::default(), false, false, None)
+    }
+
+    #[test]
+    fn constants_from_modules_read_as_numbers() {
+        // Состояния enum приходят из модулей константами: сравнение в скрипте
+        // пишется по имени состояния, а не по номеру.
+        let mut preset = preset(
+            vec![object("a", None, "x = manual.value == walk ? 10 : 0\ny = is(manual.value, idle, walk) ? 5 : 0")],
+            "",
+        );
+        preset.constants.insert("idle".into(), 0.0);
+        preset.constants.insert("walk".into(), 1.0);
+        let mut rig = Rig::new(preset).unwrap();
+        let mut inputs = InputValues::default();
+        inputs.values.insert("manual.value".into(), 1.0);
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        let values = frame.objects.get("a").unwrap();
+        assert_eq!(values["x"], 10.0);
+        assert_eq!(values["y"], 5.0);
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn comparison_helpers_return_flags() {
+        // Сравнения — обычные числа 0/1; удобнее всего проверять их на
+        // глобальных переменных, где имя не обязано быть параметром.
+        let mut rig = Rig::new(preset(
+            vec![],
+            "near_ok = near(0.5, 0.52, 0.05)\nnear_no = near(0.5, 0.9, 0.05)\n\ninside = between(3, 1, 5)\noutside = between(9, 1, 5)\nany = is(2, 1, 2, 3)",
+        ))
+        .unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert_eq!(frame.globals["near_ok"], 1.0);
+        assert_eq!(frame.globals["near_no"], 0.0);
+        assert_eq!(frame.globals["inside"], 1.0);
+        assert_eq!(frame.globals["outside"], 0.0);
+        assert_eq!(frame.globals["any"], 1.0);
     }
 
     #[test]

@@ -15,7 +15,7 @@ export interface FunctionSignature {
   variadic?: boolean;
   /** Что функция делает — одной строкой. */
   summary: string;
-  group: "math" | "vector" | "physics" | "random";
+  group: "math" | "vector" | "physics" | "random" | "compare";
 }
 
 export const SIGNATURES: Record<string, FunctionSignature> = {
@@ -74,6 +74,11 @@ export const SIGNATURES: Record<string, FunctionSignature> = {
   shake: { params: ["amplitude", "frequencyHz", "seed"], optional: ["seed"], summary: "плавное дрожание вокруг нуля", group: "random" },
   random: { params: ["min", "max"], summary: "новое число каждый кадр", group: "random" },
   autoblink: { params: ["minMs", "maxMs", "seed"], optional: ["seed"], summary: "0/1; сам планирует моргание", group: "random" },
+
+  // Сравнения: возвращают 0 или 1, поэтому их можно умножать и складывать в формуле.
+  near: { params: ["a", "b", "eps"], summary: "1, если |a − b| не больше eps", group: "compare" },
+  between: { params: ["x", "lo", "hi"], summary: "1, если lo ≤ x ≤ hi (границы в любом порядке)", group: "compare" },
+  is: { params: ["x", "a"], variadic: true, summary: "1, если x равно любому из перечисленных", group: "compare" },
 };
 
 export const FUNCTION_NAMES = Object.keys(SIGNATURES);

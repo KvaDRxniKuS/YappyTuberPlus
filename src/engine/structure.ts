@@ -211,7 +211,7 @@ export interface PivotValues {
  *
  * Спрайт рисуется от `−pivot × размер`, то есть пивот — это и есть его
  * `base.x/base.y`: чтобы картинка осталась на месте, база двигается на
- * `M · Δpivot · размер`, где `M = R · Skew · S` — линейная часть матрицы
+ * `M · Δpivot · размер`, где `M = R · S · Skew` — линейная часть матрицы
  * отрисовки (то же самое, что строит `objectMatrix`).
  */
 export function pivotBaseShift(object: RigObject, values: PivotValues | null | undefined, next: PivotPose): PivotPose {
@@ -223,16 +223,17 @@ export function pivotBaseShift(object: RigObject, values: PivotValues | null | u
   const radians = (rotation * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
-  // R · Skew, дальше умножение на масштаб по осям.
-  const a = cos - sin * skewY;
-  const b = sin + cos * skewY;
-  const c = cos * skewX - sin;
-  const d = sin * skewX + cos;
   const dx = (next.x - object.pivot.x) * object.width;
   const dy = (next.y - object.pivot.y) * object.height;
+  // Сначала масштаб, потом перекос — тот же порядок, что в `objectMatrix`.
+  const shearedX = dx + skewX * dy;
+  const shearedY = skewY * dx + dy;
+  const scaledX = shearedX * scaleX;
+  const scaledY = shearedY * scaleY;
+  // И поворот вокруг пивота.
   return {
-    x: (a * dx * scaleX + c * dy * scaleY),
-    y: (b * dx * scaleX + d * dy * scaleY),
+    x: cos * scaledX - sin * scaledY,
+    y: sin * scaledX + cos * scaledY,
   };
 }
 

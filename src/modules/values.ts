@@ -5,6 +5,7 @@ import {
   type ModuleDefinition, type ModuleInputSpec,
 } from "./registry";
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
+import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { frameValue, type AudioFrame } from "./audio";
 import {
   keyboardKeys, keyLabel, mouseButtonLabel, mouseButtons, mouseValue, type PointerFrame,
@@ -22,6 +23,8 @@ export function inputKey(module: ModuleInstance, input: string): string {
 export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   const definition = moduleDefinition(module.type);
   if (definition.kind === "viseme") return visemeInputs(module);
+  // Ручной модуль в режиме «Состояния» задаёт входы сам: номер + флаг на состояние.
+  if (definition.kind === "manual" && manualMode(module) === "enum") return enumInputs(module);
   if (definition.kind === "keyboard") {
     return keyboardKeys(module).map((key) => ({
       name: key.name,
@@ -178,6 +181,21 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
       }
       const final = module.config.normalize === true ? normalizeVisemes(local) : local;
       Object.assign(values, final);
+      continue;
+    }
+
+    // Состояния: хранится одно число (номер выбранного), флаги выводятся из
+    // него. Так панель не может показать два выбранных состояния сразу.
+    if (definition.kind === "manual" && manualMode(module) === "enum") {
+      const index = stateIndex(module, sources.manual[inputKey(module, "value")]);
+      for (const spec of specs) {
+        if (!inputEnabled(module, spec.name)) continue;
+        if (spec.name === "value") values[inputKey(module, spec.name)] = index;
+      }
+      enumStates(module).forEach((state, position) => {
+        if (!inputEnabled(module, state.name)) return;
+        values[inputKey(module, state.name)] = position === index ? 1 : 0;
+      });
       continue;
     }
 

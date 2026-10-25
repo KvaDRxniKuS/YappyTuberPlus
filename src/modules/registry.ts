@@ -269,7 +269,15 @@ export function moduleDefaults(definition: ModuleDefinition): ModuleConfig {
   for (const field of definition.fields) {
     if (field.default !== undefined) config[field.key] = field.default;
   }
-  return { ...config, ...definition.defaults };
+  const merged: ModuleConfig = { ...config, ...definition.defaults };
+  // Списки (состояния enum, виземы, клавиши, кнопки) копируем: иначе два
+  // экземпляра одного шаблона делили бы один массив и правка одного меняла
+  // бы другой.
+  for (const [key, value] of Object.entries(merged)) {
+    if (!Array.isArray(value)) continue;
+    merged[key] = value.map((item) => (item && typeof item === "object" ? { ...item } : item)) as ModuleConfig[string];
+  }
+  return merged;
 }
 
 /** Поле видно, если совпали все условия `showWhen`. */

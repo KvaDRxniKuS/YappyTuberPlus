@@ -91,8 +91,13 @@ export function transformPoint(matrix: Affine, x: number, y: number): { x: numbe
 }
 
 /**
- * translate(base + dynamic) · rotate · skew · scale, computed with plain
+ * translate(base + dynamic) · rotate · scale · skew, computed with plain
  * arithmetic: no DOMMatrix allocation in the per-sprite hot path.
+ *
+ * Масштаб стоит перед перекосом: угол наклона задаётся в «своих» единицах
+ * спрайта и не меняется от `sizeX/sizeY`. Перекос при этом остаётся вокруг
+ * пивота (начало координат объекта): пивот неподвижен, а грань, которая дальше
+ * от него, при том же угле проходит большее расстояние.
  */
 export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
   const radians = (object.base.rotation + values.rotation) * Math.PI / 180;
@@ -105,7 +110,7 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
     a: object.base.sizeX * values.sizeX, b: 0, c: 0,
     d: object.base.sizeY * values.sizeY, e: 0, f: 0,
   };
-  return multiplyAffine(multiplyAffine(multiplyAffine(translate, rotate), skew), scale);
+  return multiplyAffine(multiplyAffine(multiplyAffine(translate, rotate), scale), skew);
 }
 
 /**

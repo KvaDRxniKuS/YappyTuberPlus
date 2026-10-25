@@ -13,6 +13,8 @@ import { inputEnabled, instanceInputs, moduleInputs, sanitizeModuleName, uniqueM
 import { Switch } from "./Switch";
 import { VisemeEditor } from "./VisemeEditor";
 import { KeyBindingRow, KeyboardKeysEditor } from "./KeyboardEditor";
+import { EnumStatesEditor } from "./EnumStatesEditor";
+import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
@@ -210,6 +212,13 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     />
                   )}
 
+                  {definition.kind === "manual" && module.config.mode === "enum" && (
+                    <EnumStatesEditor
+                      module={module}
+                      onStates={(states, label) => patchConfig(module, "states", states, label)}
+                    />
+                  )}
+
                   {definition.kind === "key" && (
                     <div className="key-editor">
                       <div className="key-editor-head"><span>Клавиша</span><span /><span /></div>
@@ -256,7 +265,17 @@ export function ModulesPanel(props: ModulesPanelProps) {
                               field={field}
                               module={module}
                               devices={props.devices}
-                              onValue={(value, label) => patchConfig(module, field.key, value, label)}
+                              onValue={(value, label) => {
+                                // Переключение Manual в «Состояния» сразу даёт
+                                // список: пустой enum в панели не с чем сравнивать.
+                                if (field.key === "mode" && value === "enum" && !Array.isArray(module.config.states)) {
+                                  patch(module.name, {
+                                    config: { ...module.config, mode: "enum", states: ENUM_STATES_BASE.map((state) => ({ ...state })) },
+                                  }, "Режим состояний");
+                                  return;
+                                }
+                                patchConfig(module, field.key, value, label);
+                              }}
                             />
                           </div>
                         </div>
