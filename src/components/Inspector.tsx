@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, Layers, Link2, RotateCcw } from "lucide-react";
 import type { BasePose, RigFrame, RigObject } from "../types";
 import { setScriptValue } from "../engine/preset";
+import { groupBounds } from "../render/bounds";
 
 interface InspectorProps {
   object: RigObject | null;
@@ -12,6 +13,8 @@ interface InspectorProps {
   onSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
   onBases: (patch: Partial<BasePose>, coalesce?: string) => void;
+  /** Пивот группы — это точка вращения: база переезжает, дети остаются на месте. */
+  onGroupPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
   onOffset: (delta: { x?: number; y?: number }) => void;
   onLayer: (layer: number) => void;
   onVisible: (visible: number) => void;
@@ -155,6 +158,40 @@ export function Inspector(props: InspectorProps) {
   const parent = objects.find((item) => item.id === object.parentId);
   const dynamic = frame?.objects[object.id];
 
+  /**
+   * Пивот группы — это точка вращения, а не UV картинки: у группы настоящий
+   * пивот — `base.x/base.y`, а доля 0..1 считается от её габаритов и показывается
+   * в полях. Ввод доли переводит её в точку внутри габаритов и переставляет базу;
+   * дети при этом стоят на месте, потому что их offset считается от базы родителя.
+   */
+  const groupBox = object.kind === "group" ? groupBounds({ objects }, object.id) : null;
+  const groupRect = ((): { left: number; top: number; width: number; height: number } | null => {
+    if (!groupBox) return null;
+    const xs = groupBox.map((corner) => corner.x);
+    const ys = groupBox.map((corner) => corner.y);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return { left, top, width: Math.max(...xs) - left, height: Math.max(...ys) - top };
+  })();
+  const groupFraction = groupRect && groupRect.width > 0 && groupRect.height > 0
+    ? {
+      x: (object.base.x - groupRect.left) / groupRect.width,
+      y: (object.base.y - groupRect.top) / groupRect.height,
+    }
+    : object.pivot;
+  const shownPivot = object.kind === "group" ? groupFraction : object.pivot;
+
+  const commitPivot = (next: { x: number; y: number }) => {
+    if (object.kind !== "group" || !groupRect || groupRect.width <= 0 || groupRect.height <= 0) {
+      onChange({ ...object, pivot: next });
+      return;
+    }
+    props.onGroupPivot(object.id, {
+      x: groupRect.left + next.x * groupRect.width,
+      y: groupRect.top + next.y * groupRect.height,
+    }, next);
+  };
+
   return (
     <section className="inspector panel-surface">
       <div className="inspector-header">
@@ -194,18 +231,18 @@ export function Inspector(props: InspectorProps) {
         <div className="property-section compact-section">
           <div className="section-title">
             <span>Пивот</span>
-            <small>{object.kind === "sprite" ? "UV" : "ФИЗИКА"}</small>
+            <small>{object.kind === "sprite" ? "UV" : "ТОЧКА ВРАЩЕНИЯ"}</small>
           </div>
           <div className="property-grid two-columns">
-            <NumberField label="Pivot X" value={object.pivot.x} step={0.01} onCommit={(x) => onChange({ ...object, pivot: { ...object.pivot, x } })} />
-            <NumberField label="Pivot Y" value={object.pivot.y} step={0.01} onCommit={(y) => onChange({ ...object, pivot: { ...object.pivot, y } })} />
+            <NumberField label="Pivot X" value={shownPivot.x} step={0.01} onCommit={(x) => commitPivot({ ...shownPivot, x })} />
+            <NumberField label="Pivot Y" value={shownPivot.y} step={0.01} onCommit={(y) => commitPivot({ ...shownPivot, y })} />
           </div>
           {object.kind === "group" && (
             <p className="behaviour-hint">
-              У группы нет картинки, поэтому пивот не сдвигает спрайт и не переносит точку вращения:
-              дети ходят вокруг <b>позиции</b> группы — сдвиньте «Позицию X/Y», если нужен другой
-              центр. Пивот группы задаёт «тяжёлую» сторону для «Физики поворота»: по центру
-              (0.5 / 0.5) она считается выключенной.
+              У группы нет картинки, её «картинка» — дети, поэтому пивот группы и есть точка
+              вращения: числа задают её место внутри габаритов группы (0.5 / 0.5 — центр), дети при
+              этом остаются на месте, а вращение и «Физика поворота» считаются от неё. То же самое
+              делает инструмент <b>Пивот (P)</b> кликом по группе.
             </p>
           )}
         </div>

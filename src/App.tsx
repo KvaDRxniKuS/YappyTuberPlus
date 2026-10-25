@@ -408,6 +408,20 @@ export default function App() {
   }, [commit]);
 
   /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
+  /**
+   * Пивот группы — это точка вращения: база переезжает туда, дети остаются на
+   * месте (их offset считается от базы родителя). Поэтому здесь не нужен
+   * propagateBase — он бы утащил детей за базой.
+   */
+  const pivotGroup = useCallback((id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => {
+    commit((current) => ({
+      ...current,
+      objects: current.objects.map((object) => (object.id === id
+        ? { ...object, base: { ...object.base, x: base.x, y: base.y }, pivot }
+        : object)),
+    }), { label: "Пивот группы" });
+  }, [commit]);
+
   const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
     const current = presetRef.current;
     const ids = new Set(selectionRef.current);
@@ -785,6 +799,7 @@ export default function App() {
               const object = preset.objects.find((item) => item.id === id);
               if (object) updateObject({ ...object, pivot });
             }}
+            onGroupPivot={pivotGroup}
           />
           <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
           <Inspector
@@ -796,6 +811,7 @@ export default function App() {
             onSelect={selectOnly}
             onToggleSelect={toggleSelection}
             onBases={updateSelectedBases}
+            onGroupPivot={pivotGroup}
             onOffset={offsetSelected}
             onLayer={setSelectedLayer}
             onVisible={setSelectedVisible}

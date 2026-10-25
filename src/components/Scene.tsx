@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset } from "../types";
 import { GUIDE_LABEL } from "../types";
+import { groupBounds, spriteBounds } from "../render/bounds";
 import {
   drawRig, invertAffine, objectMatrix, orderedSprites, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
@@ -41,6 +42,8 @@ interface SceneProps {
   onDragStart: () => void;
   onDragObjects: (ids: string[], initial: Record<string, BasePose>, delta: { x: number; y: number }) => void;
   onPivot: (id: string, pivot: { x: number; y: number }) => void;
+  /** Пивот группы: точка вращения переезжает под курсор, дети остаются на месте. */
+  onGroupPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
@@ -375,8 +378,8 @@ export function Scene(props: SceneProps) {
             }
             const point = scenePoint(event);
             if (current.tool === "pivot" && current.primaryId) {
-              const object = current.preset.objects.find((item) => item.id === current.primaryId && item.kind === "sprite");
-              if (object) {
+              const object = current.preset.objects.find((item) => item.id === current.primaryId);
+              if (object?.kind === "sprite") {
                 const values = current.frameRef.current?.objects[object.id] || staticValues(object);
                 const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
                 current.onPivot(object.id, {
@@ -384,6 +387,30 @@ export function Scene(props: SceneProps) {
                   y: (local.y + object.pivot.y * object.height) / object.height,
                 });
                 return;
+              }
+              // У группы картинки нет: её «картинка» — дети. Пивот группы — это
+              // точка вращения, поэтому база переезжает под курсор, а дети
+              // остаются на месте (их offset пересчитывается сам). В pivot
+              // пишется UV этой точки в габаритах группы — по нему физика
+              // понимает «тяжёлую» сторону.
+              if (object?.kind === "group") {
+                const bounds = groupBounds(current.preset, object.id);
+                if (bounds) {
+                  const xs = bounds.map((corner) => corner.x);
+                  const ys = bounds.map((corner) => corner.y);
+                  const width = Math.max(...xs) - Math.min(...xs);
+                  const height = Math.max(...ys) - Math.min(...ys);
+                  const unit = (value: number) => Math.min(1, Math.max(0, value));
+                  current.onGroupPivot(
+                    object.id,
+                    { x: point.x, y: point.y },
+                    {
+                      x: width > 0 ? unit((point.x - Math.min(...xs)) / width) : object.pivot.x,
+                      y: height > 0 ? unit((point.y - Math.min(...ys)) / height) : object.pivot.y,
+                    },
+                  );
+                  return;
+                }
               }
             }
             if (current.tool === "marquee" || current.tool === "lasso") {
@@ -541,60 +568,9 @@ const TOOL_HINT: Record<SceneTool, string> = {
   move: "Перемещение меняет базовую позу",
   marquee: "Тяните рамку; Shift — добавить к выборке",
   lasso: "Обведите объекты; Shift — добавить к выборке",
-  pivot: "Клик по спрайту задаёт пивот",
+  pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
 };
-
-/** Квадрат границ объекта в координатах сцены по его текущей матрице. */
-function spriteBounds(object: RigObject, matrix: Affine): Point[] {
-  const left = -object.pivot.x * object.width;
-  const top = -object.pivot.y * object.height;
-  return [
-    transformPoint(matrix, left, top),
-    transformPoint(matrix, left + object.width, top),
-    transformPoint(matrix, left + object.width, top + object.height),
-    transformPoint(matrix, left, top + object.height),
-  ];
-}
-
-/** Базовые границы группы: объединение базовых рамок всех её потомков-спрайтов. */
-function groupBounds(preset: RigPreset, groupId: string): Point[] | null {
-  const ids = new Set<string>([groupId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const object of preset.objects) {
-      if (object.parentId && ids.has(object.parentId) && !ids.has(object.id)) {
-        ids.add(object.id);
-        changed = true;
-      }
-    }
-  }
-  const points: Point[] = [];
-  for (const object of preset.objects) {
-    if (object.kind !== "sprite" || !ids.has(object.id)) continue;
-    points.push(...spriteBounds(object, objectMatrix(object, staticValues(object))));
-  }
-  if (points.length === 0) {
-    const group = preset.objects.find((object) => object.id === groupId);
-    if (!group) return null;
-    return [
-      { x: group.base.x - 14, y: group.base.y - 14 },
-      { x: group.base.x + 14, y: group.base.y - 14 },
-      { x: group.base.x + 14, y: group.base.y + 14 },
-      { x: group.base.x - 14, y: group.base.y + 14 },
-    ];
-  }
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  return [
-    { x: minX, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY },
-  ];
-}
 
 /** Объект считается выделенным, если выделен он сам или любой его предок. */
 function isSelectedTree(preset: RigPreset, objectId: string, selectedIds: string[]): boolean {
