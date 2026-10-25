@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
-import { getEngineBackend, type EngineBackend } from "./backend";
+import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
+import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import { neutralFrame, prepareFrame } from "./frame";
 
 export type EngineStatus = "loading" | "ready" | "error";
@@ -28,6 +29,14 @@ export function useRigEngine(
   const basesKey = baseStructure(preset);
   presetRef.current = preset;
   pausedRef.current = paused;
+
+  // Нативный планировщик: в приложении кадры считает Rust, в браузере — rAF.
+  const nativeRef = useRef<NativeSchedule | null>(null);
+  const deliverRef = useRef<((response: EngineResponse, nowMs: number) => void) | null>(null);
+  const framesRef = useRef(0);
+  const fpsWindowRef = useRef(0);
+  const lastSnapshotRef = useRef(0);
+  const runtimeKey = `${preset.runtime.fpsMode}:${preset.runtime.fpsLimit}`;
 
   useEffect(() => {
     let active = true;
@@ -72,6 +81,34 @@ export function useRigEngine(
         void backend.call({ op: "dispose", handle: previous });
       }
       setStatus("ready");
+      // Нативное приложение: кадры считает Rust, поэтому поток не встаёт,
+      // когда окно редактора свёрнуто. Браузер остаётся на requestAnimationFrame.
+      if (backend.native && active) {
+        const schedule = await startNativeSchedule({
+          handle: response.handle,
+          inputsRef,
+          fpsMode: () => presetRef.current.runtime.fpsMode,
+          fpsLimit: () => presetRef.current.runtime.fpsLimit,
+          onFrame: (frameResponse) => {
+            const deliver = deliverRef.current;
+            if (!deliver) return;
+            if (pausedRef.current) return;
+            deliver(frameResponse, performance.now());
+          },
+          onError: (message) => {
+            // Планировщик не поднялся — молча возвращаемся к rAF, но причину
+            // показываем в строке статуса.
+            setError(`Планировщик Rust: ${message}`);
+          },
+        });
+        if (!active) {
+          // Окно уже пересоздало движок: поток, поднявшийся после этого, не нужен.
+          schedule?.stop();
+        } else if (schedule) {
+          nativeRef.current = schedule;
+          if (pausedRef.current) schedule.pause(true);
+        }
+      }
     }).catch((reason: unknown) => {
       if (!active) return;
       setStatus("error");
@@ -79,6 +116,9 @@ export function useRigEngine(
     });
     return () => {
       active = false;
+      const schedule = nativeRef.current;
+      nativeRef.current = null;
+      schedule?.stop();
       if (ownHandle !== null && handleRef.current === ownHandle) handleRef.current = null;
       if (ownHandle !== null) void backend.call({ op: "dispose", handle: ownHandle });
     };
@@ -94,17 +134,47 @@ export function useRigEngine(
 
   useEffect(() => {
     resetClockRef.current = true;
+    nativeRef.current?.pause(paused);
   }, [paused]);
 
+  // Смена лимитера FPS: Rust пересчитывает интервал, поток не перезапускается.
   useEffect(() => {
-    if (!backend) return;
+    const schedule = nativeRef.current;
+    if (!schedule) return;
+    schedule.settings(presetRef.current.runtime.fpsMode === "limited", presetRef.current.runtime.fpsLimit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtimeKey]);
+
+  // Доставка кадра: одна и та же для Rust-планировщика и для rAF-цикла.
+  deliverRef.current = (response: EngineResponse, nowMs: number) => {
+    if (!response.ok || !response.frame) {
+      setStatus("error");
+      setError(response.error || "Ошибка кадра");
+      return;
+    }
+    const gated = prepareFrame(presetRef.current, response.frame);
+    frameRef.current = gated;
+    frameSinkRef?.current?.(gated);
+    framesRef.current += 1;
+    if (nowMs - lastSnapshotRef.current > 120 || gated.diagnostics.length > 0) {
+      lastSnapshotRef.current = nowMs;
+      setSnapshot(gated);
+    }
+    if (fpsWindowRef.current === 0) fpsWindowRef.current = nowMs;
+    if (nowMs - fpsWindowRef.current >= 1000) {
+      setActualFps(Math.round(framesRef.current * 1000 / (nowMs - fpsWindowRef.current)));
+      framesRef.current = 0;
+      fpsWindowRef.current = nowMs;
+    }
+  };
+
+  useEffect(() => {
+    // В нативном приложении кадры считает Rust-планировщик: здесь rAF не нужен.
+    if (!backend || backend.native) return;
     let animation = 0;
     let nextDue = 0;
     let inFlight = false;
     let disposed = false;
-    let frames = 0;
-    let fpsWindowStart = performance.now();
-    let lastSnapshot = 0;
 
     const loop = (nowMs: number) => {
       const handle = handleRef.current;
@@ -133,24 +203,7 @@ export function useRigEngine(
           resetClock,
         }).then((response) => {
           if (disposed) return;
-          if (!response.ok || !response.frame) {
-            setStatus("error");
-            setError(response.error || "Ошибка кадра");
-            return;
-          }
-          const gated = prepareFrame(presetRef.current, response.frame);
-          frameRef.current = gated;
-          frameSinkRef?.current?.(gated);
-          frames += 1;
-          if (nowMs - lastSnapshot > 120 || gated.diagnostics.length > 0) {
-            lastSnapshot = nowMs;
-            setSnapshot(gated);
-          }
-          if (nowMs - fpsWindowStart >= 1000) {
-            setActualFps(Math.round(frames * 1000 / (nowMs - fpsWindowStart)));
-            frames = 0;
-            fpsWindowStart = nowMs;
-          }
+          deliverRef.current?.(response, nowMs);
         }).catch((reason: unknown) => {
           if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
         }).finally(() => { inFlight = false; });

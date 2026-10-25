@@ -12,6 +12,12 @@ export interface EngineResponse {
 
 export interface EngineBackend {
   readonly label: string;
+  /**
+   * Кадры считает сам Rust-планировщик: в нативном приложении цикл не зависит
+   * от видимого окна, поэтому оверлей не замирает при свёрнутом редакторе.
+   * В браузере кадры продвигает `requestAnimationFrame`, как и раньше.
+   */
+  readonly native: boolean;
   call(request: Record<string, unknown>): Promise<EngineResponse>;
 }
 
@@ -24,6 +30,7 @@ interface RigExports extends WebAssembly.Exports {
 
 class WasmBackend implements EngineBackend {
   readonly label = "Rust · WASM";
+  readonly native = false;
   constructor(private readonly exports: RigExports) {}
 
   async call(request: Record<string, unknown>): Promise<EngineResponse> {
@@ -48,6 +55,7 @@ class WasmBackend implements EngineBackend {
 
 class TauriBackend implements EngineBackend {
   readonly label = "Rust · native";
+  readonly native = true;
   async call(request: Record<string, unknown>): Promise<EngineResponse> {
     const result = await invoke<string>("rig_call", { request: JSON.stringify(request) });
     return JSON.parse(result) as EngineResponse;

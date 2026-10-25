@@ -4,7 +4,7 @@ import type { OverlayConfig } from "../types";
 import {
   applyCaptureWindow, applyOverlayWindow, captureWindowOpen,
   closeCaptureWindow, closeOverlayWindow, isTauri, openCaptureWindow,
-  openOverlayWindow, overlayUrl,
+  openOverlayWindow, overlayServerUrl, overlayUrl,
 } from "../overlay/window";
 
 interface OverlayDialogProps {
@@ -37,7 +37,20 @@ export function OverlayDialog(props: OverlayDialogProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
-  const url = overlayUrl(props.config, { transport: props.transportParam, bridge: props.bridgeUrl || undefined });
+  // Встроенный сервер приложения: тот же релей и та же страница, но без
+  // отдельного процесса Node. В браузере сервера нет — остаётся ссылка через мост.
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
+  useEffect(() => { void overlayServerUrl().then(setServerUrl); }, []);
+
+  const url = (() => {
+    if (!serverUrl) {
+      return overlayUrl(props.config, { transport: props.transportParam, bridge: props.bridgeUrl || undefined });
+    }
+    const target = new URL(serverUrl);
+    target.searchParams.set("overlay", "1");
+    if (props.config.showGuide) target.searchParams.set("guide", "1");
+    return target.toString();
+  })();
 
   useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") props.onClose(); };
@@ -153,6 +166,9 @@ export function OverlayDialog(props: OverlayDialogProps) {
             <p className="dialog-note">
               Оверлей только рисует готовые кадры. Симуляцию продвигает редактор, поэтому stateful-формулы
               не шагают дважды и пауза совпадает с превью.
+              {serverUrl
+                ? " Ссылка ведёт на встроенный сервер приложения: он отдаёт страницу оверлея и релей, отдельный npm run overlay:bridge не нужен."
+                : ""}
             </p>
             <div className="dialog-actions">
               <button className="button primary" disabled={busy} onClick={() => void open()}><MonitorPlay size={14} /> Открыть оверлей</button>

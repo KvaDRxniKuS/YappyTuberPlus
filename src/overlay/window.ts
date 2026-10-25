@@ -26,6 +26,25 @@ export function overlayUrl(config: OverlayConfig, options: OverlayUrlOptions = {
   return base.toString();
 }
 
+/**
+ * Адрес встроенного сервера оверлея.
+ *
+ * В нативном приложении сервер поднимается сам: он отдаёт страницу оверлея и
+ * релей `/overlay-ws`, поэтому источнику браузера в OBS больше не нужен
+ * отдельный `npm run overlay:bridge`. В браузере сервера нет — вернётся `null`,
+ * и диалог покажет прежнюю ссылку через мост.
+ */
+export async function overlayServerUrl(): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const url = await invoke<string | null>("overlay_server_url");
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
 export interface OverlayWindowResult {
   ok: boolean;
   mode: "tauri" | "browser";

@@ -1,14 +1,19 @@
 #[cfg(target_os = "windows")]
 mod pointer;
+mod overlay_server;
+mod schedule;
 
 use rig_core::RuntimeStore;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::Arc;
 use tauri::{Manager, State};
 
+/// Единый движок приложения: его держат и команда `rig_call`, и планировщик
+/// кадров. Блокировка берётся на один вызов ядра, поэтому `create`,
+/// `updateBase` и `tick` не могут выполняться одновременно.
 #[tauri::command]
-fn rig_call(state: State<'_, Mutex<RuntimeStore>>, request: &str) -> String {
-    match state.lock() {
+fn rig_call(state: State<'_, Arc<schedule::Shared>>, request: &str) -> String {
+    match state.store.lock() {
         Ok(mut store) => store.call_json(request),
         Err(_) => "{\"ok\":false,\"error\":\"Rust runtime lock is poisoned\"}".into(),
     }
@@ -50,14 +55,19 @@ fn write_error(path: &Path, reason: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let shared = Arc::new(schedule::Shared::new());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(RuntimeStore::default()))
+        .manage(shared)
         .setup(|app| {
             // Глобальные клавиатура и мышь: хук только читает ввод и шлёт события
             // в окно редактора. На других платформах модули работают от window.
             #[cfg(target_os = "windows")]
             pointer::spawn(app.handle().clone());
+            // Встроенный сервер оверлея: страница для источника браузера OBS и
+            // релей сообщений. Отдельный `npm run overlay:bridge` больше не нужен.
+            let server = overlay_server::start(app.handle().clone());
+            app.manage(server);
             let _ = app;
             Ok(())
         })
@@ -65,7 +75,15 @@ pub fn run() {
             rig_call,
             preset_default_dir,
             preset_write,
-            preset_read
+            preset_read,
+            schedule::rig_schedule_start,
+            schedule::rig_schedule_inputs,
+            schedule::rig_schedule_pause,
+            schedule::rig_schedule_reset_clock,
+            schedule::rig_schedule_stop,
+            schedule::rig_schedule_status,
+            overlay_server::overlay_server_url,
+            overlay_server::overlay_server_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running YappyTuberPlus");
