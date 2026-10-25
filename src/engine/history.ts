@@ -1,4 +1,5 @@
 import type { RigPreset } from "../types";
+import { assetIdOf } from "./assets";
 
 /**
  * История изменений пресета вместе с выделением.
@@ -55,6 +56,26 @@ export class History {
     if (!step) return null;
     this.past.push({ snapshot: current, label: step.label, at: now });
     return step.snapshot;
+  }
+
+  /**
+   * Файлы, на которые ссылаются снимки истории.
+   *
+   * Уборка хранилища (панель «Файлы объектов») обязана их сохранить: иначе
+   * Ctrl+Z вернёт объект, а его картинка уже удалена. На старте история пуста,
+   * поэтому автоматическая уборка видит только открытый пресет.
+   */
+  assetIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const step of [...this.past, ...this.future]) {
+      for (const object of step.snapshot.preset.objects) {
+        const image = assetIdOf(object.image);
+        if (image) ids.add(image);
+        const media = assetIdOf(object.media?.src);
+        if (media) ids.add(media);
+      }
+    }
+    return ids;
   }
 
   clear(): void {

@@ -22,8 +22,14 @@ import type { RigObject, RigPreset } from "../types";
  */
 
 const DB_NAME = "yappytuberplus.assets";
-const DB_VERSION = 1;
+// Версия 2 разделила байты и описание файла: списку файлов (панель «Файлы
+// объектов») нужны только имена и размеры, и незачем ради этого вычитывать из
+// хранилища видео на сотни мегабайт.
+const DB_VERSION = 2;
+/** Байты: `{ id, name, blob, … }`. */
 const STORE = "assets";
+/** Описание файла без байтов: `{ id, name, mime, size, hash, createdAt }`. */
+const META = "meta";
 
 /** Префикс ссылки на файл в хранилище. Всё остальное — обычный URL или data URL. */
 export const ASSET_PREFIX = "asset:";
@@ -34,7 +40,19 @@ export interface AssetRecord {
   mime: string;
   size: number;
   createdAt: number;
+  /** Отпечаток содержимого: по нему один и тот же файл не хранится дважды. */
+  hash?: string;
   blob: Blob;
+}
+
+/** Описание файла без байтов: то, что показывает панель «Файлы объектов». */
+export interface AssetInfo {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  hash: string;
+  createdAt: number;
 }
 
 /** Готовые `blob:` URL по id: их отдают канве и медиа-элементам. */
@@ -47,6 +65,8 @@ const missing = new Set<string>();
 const inlined = new Map<string, Promise<string | null>>();
 const listeners = new Set<() => void>();
 let dbPromise: Promise<IDBDatabase | null> | null = null;
+/** Паспорта старых файлов переносятся в `meta` один раз за сеанс. */
+let backfilled: Promise<void> | null = null;
 
 export function assetRef(id: string): string {
   return `${ASSET_PREFIX}${id}`;
@@ -152,6 +172,10 @@ function openDb(): Promise<IDBDatabase | null> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(META)) {
+        const meta = db.createObjectStore(META, { keyPath: "id" });
+        meta.createIndex("hash", "hash", { unique: false });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => resolve(null);
@@ -167,8 +191,8 @@ function done<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-function transaction(db: IDBDatabase, mode: IDBTransactionMode): IDBObjectStore {
-  return db.transaction(STORE, mode).objectStore(STORE);
+function transaction(db: IDBDatabase, mode: IDBTransactionMode, name: string = STORE): IDBObjectStore {
+  return db.transaction(name, mode).objectStore(name);
 }
 
 async function readAsset(id: string): Promise<void> {
@@ -191,25 +215,96 @@ function newId(): string {
 }
 
 /**
+ * Отпечаток файла для дедупликации.
+ *
+ * До 32 МБ считается SHA-256 по содержимому: одинаковые картинки, скачанные
+ * дважды, лягут в хранилище одним файлом. Более крупные файлы не читаются
+ * целиком — для них отпечаток строится из размера, типа и имени: этого хватает,
+ * чтобы повторный импорт того же видео не удвоил хранилище, и не требует держать
+ * сотни мегабайт в памяти.
+ */
+async function hashOf(blob: Blob, name: string): Promise<string> {
+  const mime = blob.type || "application/octet-stream";
+  if (blob.size > 32 * 1024 * 1024) return `big:${blob.size}:${mime}:${name}`;
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return `size:${blob.size}:${mime}:${name}`;
+  }
+}
+
+function infoOf(record: AssetRecord): AssetInfo {
+  return {
+    id: record.id,
+    name: record.name,
+    mime: record.mime,
+    size: record.size,
+    hash: record.hash ?? "",
+    createdAt: record.createdAt,
+  };
+}
+
+/**
+ * Паспорта файлов, сохранённых первой версией хранилища: там метаданных в
+ * отдельном месте не было. Перенос идёт один раз и не мешает работе — если
+ * паспорт не успел появиться, его просто не будет в списке до следующего раза.
+ */
+async function backfillMeta(): Promise<void> {
+  if (backfilled) return backfilled;
+  backfilled = (async () => {
+    const db = await openDb();
+    if (!db) return;
+    try {
+      const known = new Set(
+        (await done<IDBValidKey[]>(transaction(db, "readonly", META).getAllKeys())).map(String),
+      );
+      // Ключи читаются отдельно от записей: список файлов не должен тянуть в
+      // память сразу все байты (в сцене может быть видео на сотни мегабайт).
+      const keys = await done<IDBValidKey[]>(transaction(db, "readonly").getAllKeys());
+      for (const key of keys) {
+        const id = String(key);
+        if (known.has(id)) continue;
+        const record = await done<AssetRecord | undefined>(transaction(db, "readonly").get(id));
+        if (!record?.blob) continue;
+        const hash = record.hash ?? await hashOf(record.blob, record.name);
+        await done(transaction(db, "readwrite", META).put({ ...infoOf(record), hash }));
+      }
+    } catch {
+      // Хранилище недоступно или испорчено — панель файлов просто покажет меньше.
+    }
+  })();
+  return backfilled;
+}
+
+/**
  * Кладёт файл в хранилище и возвращает ссылку `asset:<id>`.
  *
- * `null` означает «хранилище недоступно» — вызывающий код тогда оставляет
- * data URL, и пресет ведёт себя как раньше.
+ * Один и тот же файл хранится один раз: если отпечаток уже есть, возвращается
+ * существующая ссылка. `null` означает «хранилище недоступно» — вызывающий код
+ * тогда оставляет data URL, и пресет ведёт себя как раньше.
  */
 export async function storeBlob(blob: Blob, name: string): Promise<string | null> {
   const db = await openDb();
   if (!db) return null;
+  const hash = await hashOf(blob, name);
+  try {
+    const same = await done<AssetInfo[]>(transaction(db, "readonly", META).index("hash").getAll(hash) as IDBRequest<AssetInfo[]>);
+    const existing = same.find((info) => info.size === blob.size && info.mime === (blob.type || "application/octet-stream"));
+    if (existing) {
+      if (!urls.has(existing.id)) urls.set(existing.id, URL.createObjectURL(blob));
+      missing.delete(existing.id);
+      emit();
+      return assetRef(existing.id);
+    }
+  } catch { /* индекса нет — просто положим новую запись */ }
   const id = newId();
-  const record: AssetRecord = {
-    id,
-    name,
-    mime: blob.type || "application/octet-stream",
-    size: blob.size,
-    createdAt: Date.now(),
-    blob,
-  };
+  const createdAt = Date.now();
+  const mime = blob.type || "application/octet-stream";
+  const record: AssetRecord = { id, name, mime, size: blob.size, createdAt, hash, blob };
   try {
     await done(transaction(db, "readwrite").add(record));
+    await done(transaction(db, "readwrite", META).put({ id, name, mime, size: blob.size, hash, createdAt }));
   } catch {
     return null;
   }
@@ -222,39 +317,78 @@ export async function storeFile(file: File): Promise<string | null> {
   return storeBlob(file, file.name);
 }
 
+/** Какой файл чем занят: панель «Файлы объектов» показывает это в списке. */
+export interface AssetUsage extends AssetInfo {
+  /** На файл ссылается открытый пресет. */
+  used: boolean;
+}
+
+export async function listAssets(used: Set<string> = new Set()): Promise<AssetUsage[]> {
+  await backfillMeta();
+  const db = await openDb();
+  if (!db) return [];
+  try {
+    const infos = await done<AssetInfo[]>(
+      transaction(db, "readonly", META).getAll() as IDBRequest<AssetInfo[]>,
+    );
+    return infos
+      .map((info) => ({ ...info, used: used.has(info.id) }))
+      .sort((left, right) => right.createdAt - left.createdAt);
+  } catch {
+    return [];
+  }
+}
+
 /** Сколько файлов и байт лежит в хранилище. */
 export async function assetStats(): Promise<{ count: number; bytes: number }> {
+  await backfillMeta();
   const db = await openDb();
   if (!db) return { count: 0, bytes: 0 };
   try {
-    const records = await done<AssetRecord[]>(transaction(db, "readonly").getAll() as IDBRequest<AssetRecord[]>);
+    const infos = await done<AssetInfo[]>(
+      transaction(db, "readonly", META).getAll() as IDBRequest<AssetInfo[]>,
+    );
     return {
-      count: records.length,
-      bytes: records.reduce((sum, record) => sum + (record.size || 0), 0),
+      count: infos.length,
+      bytes: infos.reduce((sum, info) => sum + (info.size || 0), 0),
     };
   } catch {
     return { count: 0, bytes: 0 };
   }
 }
 
+async function removeAsset(db: IDBDatabase, id: string): Promise<void> {
+  await done(transaction(db, "readwrite").delete(id));
+  try { await done(transaction(db, "readwrite", META).delete(id)); } catch { /* паспорта могло не быть */ }
+  const url = urls.get(id);
+  if (url) { URL.revokeObjectURL(url); urls.delete(id); }
+  inlined.delete(id);
+  missing.delete(id);
+  backfilled = null;
+}
+
 /**
- * Удаляет файлы, на которые больше никто не ссылается. Вызывается на старте,
- * когда история отмены пуста и вернуть удалённую ссылку уже нечем.
+ * Удаляет файлы, на которые больше никто не ссылается.
+ *
+ * Вызывается на старте (история отмены пуста — вернуть ссылку нечем) и кнопкой
+ * «Убрать неиспользуемые» в панели файлов.
  */
 export async function pruneAssets(keep: Set<string>): Promise<number> {
+  await backfillMeta();
   const db = await openDb();
   if (!db) return 0;
   let removed = 0;
   try {
-    const keys = await done<IDBValidKey[]>(transaction(db, "readonly").getAllKeys());
-    for (const key of keys) {
-      const id = String(key);
+    // Источник правды — оба хранилища: если запись осталась только в одном
+    // (оборванная запись, старый профиль), она тоже считается мусором.
+    const keys = new Set<string>();
+    for (const key of await done<IDBValidKey[]>(transaction(db, "readonly").getAllKeys())) keys.add(String(key));
+    try {
+      for (const key of await done<IDBValidKey[]>(transaction(db, "readonly", META).getAllKeys())) keys.add(String(key));
+    } catch { /* паспортов ещё нет */ }
+    for (const id of keys) {
       if (keep.has(id)) continue;
-      await done(transaction(db, "readwrite").delete(key));
-      const url = urls.get(id);
-      if (url) { URL.revokeObjectURL(url); urls.delete(id); }
-      inlined.delete(id);
-      missing.delete(id);
+      await removeAsset(db, id);
       removed += 1;
     }
   } catch {
@@ -310,7 +444,12 @@ export function inlineSource(source: string): Promise<string | null> {
   if (!id) return Promise.resolve(source);
   let job = inlined.get(id);
   if (!job) {
-    job = readDataUrl(id);
+    // Неудачу не кэшируем: файл могли импортировать заново, и следующая запись
+    // пресета должна попробовать ещё раз.
+    job = readDataUrl(id).then((data) => {
+      if (!data) inlined.delete(id);
+      return data;
+    });
     inlined.set(id, job);
   }
   return job;
@@ -319,25 +458,31 @@ export function inlineSource(source: string): Promise<string | null> {
 /**
  * Пресет для записи на диск: все ссылки заменены на data URL, поэтому файл
  * пресета остаётся одним самодостаточным файлом.
+ *
+ * Если файла в хранилище не оказалось (папку профиля чистили, ссылка пришла из
+ * чужого пресета), ссылка остаётся как есть, а объект попадает в `missing`:
+ * молча записывать битый пресет нельзя, человек должен узнать, что файл не
+ * попал в сохранение.
  */
-export async function inlineAssets(preset: RigPreset): Promise<RigPreset> {
+export async function inlineAssets(preset: RigPreset): Promise<{ preset: RigPreset; missing: string[] }> {
   let changed = false;
+  const missing: string[] = [];
   const objects: RigObject[] = [];
   for (const object of preset.objects) {
     let next = object;
     if (isAssetRef(object.image) && object.image) {
       const source = await inlineSource(object.image);
-      next = { ...next, image: source };
-      changed = true;
+      if (source) { next = { ...next, image: source }; changed = true; }
+      else missing.push(`${object.name} (картинка)`);
     }
     if (next.media?.src && isAssetRef(next.media.src)) {
       const source = await inlineSource(next.media.src);
-      next = { ...next, media: { ...next.media, src: source } };
-      changed = true;
+      if (source) { next = { ...next, media: { ...next.media, src: source } }; changed = true; }
+      else missing.push(`${object.name} (${next.media.fileName || "файл"})`);
     }
     objects.push(next);
   }
-  return changed ? { ...preset, objects } : preset;
+  return { preset: changed ? { ...preset, objects } : preset, missing };
 }
 
 /** Пресет, у которого файлы заменены на ссылки: рабочее состояние редактора. */

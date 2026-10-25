@@ -26,6 +26,8 @@ export interface SaveResult {
   backend: FileBackendKind;
   /** В браузере файл скачивается, путь узнать нельзя. */
   downloaded?: boolean;
+  /** Объекты, чьи файлы не нашлись в хранилище и не попали в файл пресета. */
+  missing?: string[];
 }
 
 export interface OpenResult {
@@ -66,8 +68,9 @@ async function defaultDirectory(): Promise<string | null> {
 }
 
 /** Текст файла пресета: ссылки на файлы встроены обратно в data URL. */
-export async function presetFileContents(preset: RigPreset): Promise<string> {
-  return JSON.stringify(await inlineAssets(preset), null, 2);
+export async function presetFileContents(preset: RigPreset): Promise<{ text: string; missing: string[] }> {
+  const { preset: inlined, missing } = await inlineAssets(preset);
+  return { text: JSON.stringify(inlined, null, 2), missing };
 }
 
 /** Записывает пресет в текущий файл или просит путь, если файла ещё нет. */
@@ -80,8 +83,8 @@ export async function savePreset(preset: RigPreset, path: string | null): Promis
     if (!picked) throw new Error("Сохранение отменено");
     target = picked;
   }
-  await tauriInvoke<void>("preset_write", { path: target, contents });
-  return { path: target, backend: "tauri" };
+  await tauriInvoke<void>("preset_write", { path: target, contents: contents.text });
+  return { path: target, backend: "tauri", missing: contents.missing };
 }
 
 /** Всегда спрашивает директорию и имя файла. */
@@ -89,8 +92,9 @@ export async function savePresetAs(preset: RigPreset): Promise<SaveResult> {
   if (!isTauri()) return downloadPreset(preset);
   const target = await pickSavePath(preset);
   if (!target) throw new Error("Сохранение отменено");
-  await tauriInvoke<void>("preset_write", { path: target, contents: await presetFileContents(preset) });
-  return { path: target, backend: "tauri" };
+  const contents = await presetFileContents(preset);
+  await tauriInvoke<void>("preset_write", { path: target, contents: contents.text });
+  return { path: target, backend: "tauri", missing: contents.missing };
 }
 
 async function pickSavePath(preset: RigPreset): Promise<string | null> {
@@ -132,12 +136,13 @@ export function parsePreset(text: string): RigPreset {
 
 /** Браузерный запасной путь — только для разработки. */
 export async function downloadPreset(preset: RigPreset): Promise<SaveResult> {
-  const blob = new Blob([await presetFileContents(preset)], { type: "application/json" });
+  const contents = await presetFileContents(preset);
+  const blob = new Blob([contents.text], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = presetFileName(preset.name);
   anchor.click();
   URL.revokeObjectURL(url);
-  return { path: null, backend: "browser", downloaded: true };
+  return { path: null, backend: "browser", downloaded: true, missing: contents.missing };
 }

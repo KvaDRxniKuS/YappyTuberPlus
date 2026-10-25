@@ -475,6 +475,24 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .overlay-steps b { color: #b3bdc6; font-weight: 600; }
 .overlay-steps code { padding: 1px 4px; border-radius: 3px; background: #262b32; color: #98b3aa; font-size: 10.5px; }
 .overlay-steps li::marker { color: #5a6b66; }
+/* ---------- Файлы объектов (хранилище вне пресета) ---------- */
+.files-dialog { width: min(600px, 100%); }
+.files-summary { display: flex; align-items: center; gap: 12px; padding: 9px 15px; border-bottom: 1px solid var(--border-soft); background: #191c21; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.files-summary b { color: #b3bdc6; font-size: 11.5px; font-weight: 600; }
+.files-summary .files-unused { color: var(--warning); }
+.file-list { display: flex; flex-direction: column; gap: 2px; max-height: min(340px, 42vh); overflow: auto; margin-top: 9px; }
+.file-row { display: grid; grid-template-columns: minmax(0, 1fr) 62px 76px 76px; gap: 8px; align-items: center; padding: 5px 7px; border-radius: 4px; background: #1d2126; color: #9aa5af; font-size: 11.5px; }
+.file-row.orphan { color: #74808a; background: #1b1e23; }
+.file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-kind { color: #66717a; font-size: 10.5px; }
+.file-size { text-align: right; font-variant-numeric: tabular-nums; }
+.file-state { text-align: right; color: #6f7a85; font-size: 10.5px; }
+.file-state.used { color: var(--accent); }
+.file-state.kept { color: #d9b26a; }
+.file-empty { padding: 10px 0; color: #6f7a85; font-size: 11.5px; line-height: 1.55; }
+.files-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 15px; border-top: 1px solid #2a2f35; color: #66717a; font-size: 10.5px; }
+.files-footer code { color: #93b0c8; font-family: "Cascadia Code", monospace; font-size: 10.5px; }
+
 @keyframes dialog-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(.995); } to { opacity: 1; transform: none; } }
 

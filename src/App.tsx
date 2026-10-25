@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen,
-  Gauge, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
+  Gauge, HardDrive, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
   Undo2, X,
 } from "lucide-react";
 import { TreePanel } from "./components/TreePanel";
@@ -11,6 +11,7 @@ import { RightPanel } from "./components/RightPanel";
 import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
 import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
+import { FilesDialog } from "./components/FilesDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeSprite, makeText,
@@ -40,6 +41,12 @@ const LAYOUT_KEY = "yappytuberplus.layout.v1";
 
 /** Как записывать изменение в историю: метка для подсказки и ключ склейки быстрых правок. */
 interface CommitOptions { record?: boolean; label?: string; coalesce?: string }
+
+/** Сообщение о сохранении: к нему добавляются объекты, чьи файлы потерялись. */
+function withMissing(message: string, missing?: string[]): string {
+  if (!missing?.length) return message;
+  return `${message} · без файлов: ${missing.join(", ")}. Файлы не нашлись в хранилище — импортируйте их заново`;
+}
 
 function loadPreset(): RigPreset {
   try {
@@ -144,6 +151,7 @@ export default function App() {
   const history = useRef(new History());
   const selectionRef = useRef(selection);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
   const presetInput = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
   presetRef.current = preset;
@@ -230,16 +238,32 @@ export default function App() {
     try {
       const result = await savePreset(presetRef.current, presetPath);
       if (result.downloaded) {
-        notify("Браузерный режим: файл скачан. В приложении «Сохранить» перезаписывает файл на диске");
+        notify(withMissing(
+          "Браузерный режим: файл скачан. В приложении «Сохранить» перезаписывает файл на диске",
+          result.missing,
+        ));
         return;
       }
       setPresetPath(result.path);
       setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
-      notify(`Сохранено: ${fileNameOf(result.path) || "пресет"}`);
+      notify(withMissing(`Сохранено: ${fileNameOf(result.path) || "пресет"}`, result.missing));
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Не удалось сохранить пресет");
     }
   }, [notify, presetPath]);
+
+  /**
+   * Файлы, на которые ссылается сцена: по этому набору панель файлов понимает,
+   * что можно убрать. Набор мемоизируется — иначе новый `Set` на каждый кадр
+   * заставлял бы панель перечитывать хранилище.
+   */
+  const usedAssetIds = useMemo(() => assetIdsOfPreset(preset), [preset]);
+  /** Сцена плюс снимки истории: файлы из-под Ctrl+Z уборка не трогает. */
+  const keepAssetIds = useMemo(
+    () => new Set([...usedAssetIds, ...history.current.assetIds()]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [usedAssetIds, historyState],
+  );
 
   /** «Сохранить как…» всегда спрашивает папку и имя; в браузере такого диалога нет. */
   const saveCurrentAs = useCallback(async () => {
@@ -251,7 +275,7 @@ export default function App() {
       const result = await savePresetAs(presetRef.current);
       setPresetPath(result.path);
       setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
-      notify(`Сохранено как: ${fileNameOf(result.path) || "пресет"}`);
+      notify(withMissing(`Сохранено как: ${fileNameOf(result.path) || "пресет"}`, result.missing));
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Не удалось сохранить пресет");
     }
@@ -834,6 +858,13 @@ export default function App() {
             <MonitorPlay size={16} />
             {overlay.viewers.length > 0 && <span className="overlay-badge">{overlay.viewers.length}</span>}
           </button>
+          <button
+            className="icon-button"
+            title="Файлы объектов: хранилище картинок, видео и звука вне пресета"
+            onClick={() => setFilesOpen(true)}
+          >
+            <HardDrive size={16} />
+          </button>
           <button className="button secondary" title="Создать пустой пресет" onClick={newPreset}><FilePlus2 size={14} /> Создать</button>
           <button className="button secondary" title="Открыть файл пресета" onClick={() => void openFile()}><FolderOpen size={14} /> Открыть</button>
           <div className="split-button">
@@ -1024,6 +1055,12 @@ export default function App() {
         onApply={() => resolvePending("apply")}
         onKeep={() => resolvePending("keep")}
         onDisable={() => resolvePending("disable")}
+      />}
+      {filesOpen && <FilesDialog
+        usedIds={usedAssetIds}
+        keepIds={keepAssetIds}
+        onClose={() => setFilesOpen(false)}
+        onNotify={notify}
       />}
       {overlayOpen && <OverlayDialog
         config={overlayConfig}
