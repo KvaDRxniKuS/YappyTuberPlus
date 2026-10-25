@@ -267,7 +267,8 @@ layer = inherit
   в нативном окне ловятся глобально, без перехвата клавиш), **Внешний источник**
   (мост из сети: WebSocket в окне, HTTP-опрос, SSE, OSC по UDP и Twitch — нативное
   идёт мимо CORS; таблица «поле JSON → вход» делает входы без кода — пульсомер, игра,
-  бот, награды и bits канала);
+  бот, награды и bits канала), **Пульсометр** (готовый модуль под мост
+  `pulse-bridge.bat`: пульс и удар, без железа — тренажёр);
   имя экземпляра — префикс входа, поэтому `mic.talking` и `mic_left.talking` живут рядом.
 - Шаблоны модулей — JSON в `public/modules/` (`index.json` + `<id>.json`): входы и поля
   настроек описываются данными, поведение выбирает поле `kind`. Новый шаблон — новый файл.
@@ -519,12 +520,14 @@ YappyTuberPlus/
 ├── start-yappytuber.bat      # обновление и запуск для Windows
 ├── start-yappytuber.sh       # то же для Linux/macOS
 ├── reset-yappytuber-data.bat # где лежат данные и как их сбросить (.sh — для Linux/macOS)
+├── pulse-bridge.bat          # мост пульсометра: WS и HTTP на 127.0.0.1
 ├── install-build-tools.bat   # установка Node.js, Rust, Build Tools, WebView2
 ├── build-yappytuber.bat      # сборка .exe и установщика (Windows)
 ├── build-yappytuber.sh       # сборка для Linux/macOS
 ├── scripts/
 │   ├── build-wasm.mjs
 │   ├── generate-demo-sprites.mjs
+│   ├── pulse-bridge.mjs      # мост пульсометра (WS + HTTP, без зависимостей)
 │   ├── overlay-bridge.mjs    # WS-мост для OBS Browser Source (только разработка в браузере)
 │   └── smoke-engine.mjs
 ├── docs/DESIGN.md
