@@ -114,8 +114,14 @@ export type ModuleKind =
   /** Значения из сети: WebSocket (и позже HTTP/OSC) по таблице отображения. */
   | "external";
 
-/** Транспорт внешнего источника. `ws` работает уже сейчас, остальные — по мере Rust-слоя. */
-export type ExternalSourceTransport = "ws" | "http" | "osc";
+/**
+ * Транспорт внешнего источника.
+ *
+ * `ws` живёт в окне и работает и в браузере, и в приложении. `http`, `sse` и
+ * `osc` выполняет Rust: только так запросы идут мимо CORS, а UDP вообще доступен
+ * лишь из нативного слоя.
+ */
+export type ExternalSourceTransport = "ws" | "http" | "sse" | "osc";
 
 /** Правило отображения: поле JSON → вход модуля. */
 export interface ExternalSourceRule {
@@ -143,6 +149,8 @@ export interface ExternalSourceConfig {
   mapping: ExternalSourceRule[];
   /** Переподключаться при обрыве; по умолчанию да. */
   reconnect?: boolean;
+  /** Пауза между опросами для `http`, мс (100…600000). */
+  intervalMs?: number;
 }
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */

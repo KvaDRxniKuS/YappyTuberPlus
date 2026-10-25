@@ -1260,3 +1260,4 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 }
 .external-mapping-row input:focus { outline: none; border-color: #609c8c; }
 .external-add { align-self: flex-start; }
+.external-hint { margin: 0; }

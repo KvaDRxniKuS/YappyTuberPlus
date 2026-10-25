@@ -1,16 +1,23 @@
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
-import { applyMapping, readExternalSource } from "./external";
+import { applyMapping, isNativeTransport, readExternalSource } from "./external";
+import { isTauri } from "../engine/presetFile";
 
 /**
  * Хост внешних источников.
  *
- * Один экземпляр на приложение: он держит сокеты, переподключается и превращает
- * пакеты в числа. Модули только описывают источник, поэтому два модуля с одинаковым
- * адресом делят одно соединение, а выключение модуля честно закрывает сокет.
+ * Задача одна: превратить настройки модулей в живые числа. Транспорт при этом
+ * разный, но правила отображения — общие, поэтому пресет не зависит от того,
+ * как именно пришли данные.
  *
- * Значения не толкаются в React на каждый пакет: хост складывает их у себя, а окно
- * забирает раз в тик — так поток 60–120 пакетов в секунду не превращается в поток
- * перерисовок.
+ * - `ws` держит само окно: WebSocket не подчиняется CORS и работает и в браузере,
+ *   и в нативном окне.
+ * - `http`, `sse`, `osc` выполняет Rust (`src-tauri/src/sources.rs`) и присылает
+ *   в окно событие `yappy://source` с сырым текстом пакета. В браузере этих
+ *   транспортов нет: там честный статус «только в приложении», а не тишина.
+ *
+ * Значения не толкаются в React на каждый пакет: хост складывает их у себя, а
+ * окно забирает раз в тик — так поток 60–120 пакетов в секунду не превращается
+ * в поток перерисовок.
  */
 
 export type ExternalState = "idle" | "connecting" | "live" | "error" | "unsupported";
@@ -37,8 +44,16 @@ interface Entry {
   retry: ReturnType<typeof setTimeout> | null;
   attempts: number;
   closed: boolean;
+  /** Транспорт живёт в Rust: останавливать его нужно командой, а не close(). */
+  native: boolean;
 }
 
+/** Событие из Rust: состояние источника или сырой текст пакета. */
+type NativePayload =
+  | { kind: "state"; name: string; state: ExternalState; message?: string | null }
+  | { kind: "text"; name: string; text: string };
+
+const NATIVE_EVENT = "yappy://source";
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
 
@@ -46,17 +61,16 @@ function emptyStatus(state: ExternalState = "idle", message: string | null = nul
   return { state, message, packets: 0 };
 }
 
-function sameRules(left: ExternalSourceRule[], right: ExternalSourceRule[]): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-/** Конфиг из настроек экземпляра в виде, пригодном для сравнения и запуска. */
-export function sourceConfig(module: ModuleInstance): ExternalSourceConfig {
-  return readExternalSource(module.config as Record<string, unknown>);
+/** Команда Rust: запуск и остановка источника. */
+async function invokeSource(command: string, args: Record<string, unknown>): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke(command, args);
 }
 
 export class ExternalSourceHost {
   private entries = new Map<string, Entry>();
+  private unlisten: (() => void) | null = null;
+  private listener: Promise<boolean> | null = null;
 
   /**
    * Приводит соединения к желаемому списку: новые открывает, изменившиеся
@@ -87,7 +101,14 @@ export class ExternalSourceHost {
     const now = Date.now();
     const result: Record<string, number> = { ...entry.values };
     for (const [input, hold] of Object.entries(entry.holds)) {
-      if (hold.until > now) result[input] = hold.value;
+      if (hold.until > now) {
+        result[input] = hold.value;
+        continue;
+      }
+      // Импульс погас: значение возвращается в ноль, а не залипает на последнем.
+      delete entry.holds[input];
+      entry.values[input] = 0;
+      result[input] = 0;
     }
     return result;
   }
@@ -109,6 +130,7 @@ export class ExternalSourceHost {
     entry.closed = true;
     if (entry.retry) clearTimeout(entry.retry);
     entry.retry = null;
+    if (entry.native) void invokeSource("source_stop", { name }).catch(() => undefined);
     try { entry.socket?.close(); } catch { /* сокет мог уже закрыться */ }
     entry.socket = null;
     this.entries.delete(name);
@@ -116,21 +138,24 @@ export class ExternalSourceHost {
 
   dispose(): void {
     for (const name of [...this.entries.keys()]) this.close(name);
+    this.unlisten?.();
+    this.unlisten = null;
+    this.listener = null;
   }
 
   private open(name: string, source: ExternalSourceConfig, key: string): void {
+    const native = isNativeTransport(source.transport);
     const entry: Entry = {
       source, key, socket: null, status: emptyStatus(), values: {}, holds: {},
-      retry: null, attempts: 0, closed: false,
+      retry: null, attempts: 0, closed: false, native,
     };
     this.entries.set(name, entry);
     if (!source.url) {
       entry.status = emptyStatus("idle", "не указан адрес источника");
       return;
     }
-    if (source.transport !== "ws") {
-      // Честно: транспорт появится вместе с Rust-слоем, тихо не притворяемся.
-      entry.status = emptyStatus("unsupported", `транспорт «${source.transport}» появится позже: сейчас доступен ws`);
+    if (native) {
+      void this.startNative(name, entry);
       return;
     }
     if (typeof WebSocket === "undefined") {
@@ -138,6 +163,99 @@ export class ExternalSourceHost {
       return;
     }
     this.connect(entry);
+  }
+
+  /** Подписка на события Rust: одна на всё приложение. */
+  private ensureListener(): Promise<boolean> {
+    if (!this.listener) {
+      this.listener = (async () => {
+        if (!isTauri()) return false;
+        try {
+          const event = await import("@tauri-apps/api/event");
+          this.unlisten = await event.listen<NativePayload>(NATIVE_EVENT, (message) => {
+            this.handleNative(message.payload);
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+    }
+    return this.listener;
+  }
+
+  private async startNative(name: string, entry: Entry): Promise<void> {
+    if (!isTauri()) {
+      entry.status = emptyStatus("unsupported", this.nativeHint(entry.source));
+      return;
+    }
+    entry.status = emptyStatus("connecting");
+    const ready = await this.ensureListener();
+    if (!ready) {
+      entry.status = emptyStatus("error", "нет связи с нативной частью приложения");
+      return;
+    }
+    if (entry.closed) return;
+    try {
+      await invokeSource("source_start", {
+        config: {
+          name,
+          transport: entry.source.transport,
+          url: entry.source.url,
+          intervalMs: entry.source.intervalMs,
+        },
+      });
+    } catch (reason) {
+      entry.status = emptyStatus("error", describe(reason));
+    }
+  }
+
+  private nativeHint(source: ExternalSourceConfig): string {
+    if (source.transport === "osc") {
+      return "OSC нужен нативный слой: откройте приложение (в браузере UDP недоступен)";
+    }
+    return "запросы блокирует CORS: транспорт работает в приложении, в браузере — только WebSocket";
+  }
+
+  private handleNative(payload: NativePayload): void {
+    if (!payload || typeof payload !== "object") return;
+    const entry = this.entries.get(payload.name);
+    if (!entry || entry.closed) return;
+    if (payload.kind === "state") {
+      const state = payload.state;
+      entry.status = {
+        state,
+        message: payload.message ?? null,
+        packets: entry.status.packets,
+      };
+      // Останов или сбой — нули: залипшее значение хуже отсутствия.
+      if (state === "error" || state === "idle") {
+        entry.values = {};
+        entry.holds = {};
+      }
+      return;
+    }
+    if (payload.kind === "text") this.ingest(entry, payload.text);
+  }
+
+  /** Разбор одного пакета: таблица отображения превращает его в числа. */
+  private ingest(entry: Entry, text: string): void {
+    if (!text) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { return; }
+    const mapped = applyMapping(parsed, entry.source.mapping);
+    if (Object.keys(mapped).length === 0) return;
+    const now = Date.now();
+    for (const [input, value] of Object.entries(mapped)) {
+      const rule = entry.source.mapping.find((item) => item.input === input);
+      // Импульс: ненулевое значение держится, чтобы событие успело сработать.
+      // Явный ноль снимает удержание сразу: так ведут себя и OSC-флаги, и
+      // источники, которые присылают и начало, и конец события.
+      if (rule?.holdMs && value !== 0) entry.holds[input] = { value, until: now + rule.holdMs };
+      else delete entry.holds[input];
+      entry.values[input] = value;
+    }
+    entry.status = { ...entry.status, state: "live", message: null, packets: entry.status.packets + 1 };
   }
 
   private connect(entry: Entry): void {
@@ -163,19 +281,7 @@ export class ExternalSourceHost {
     socket.onmessage = (event) => {
       if (entry.closed) return;
       const payload = typeof event.data === "string" ? event.data : "";
-      if (!payload) return;
-      let parsed: unknown;
-      try { parsed = JSON.parse(payload); } catch { return; }
-      const mapped = applyMapping(parsed, entry.source.mapping);
-      const now = Date.now();
-      for (const [input, value] of Object.entries(mapped)) {
-        const rule = entry.source.mapping.find((item) => item.input === input);
-        // Импульс: ненулевое значение держится, чтобы событие успело сработать.
-        if (rule?.holdMs && value !== 0) entry.holds[input] = { value, until: now + rule.holdMs };
-        else if (!rule?.holdMs) delete entry.holds[input];
-        entry.values[input] = value;
-      }
-      entry.status = { ...entry.status, state: "live", packets: entry.status.packets + 1 };
+      if (payload) this.ingest(entry, payload);
     };
     socket.onerror = () => {
       if (entry.closed) return;
@@ -212,9 +318,21 @@ export function externalSourcesOf(modules: ModuleInstance[], enabled: (module: M
     .map((module) => ({ name: module.name, source: sourceConfig(module) }));
 }
 
+/** Конфиг из настроек экземпляра в виде, пригодном для сравнения и запуска. */
+export function sourceConfig(module: ModuleInstance): ExternalSourceConfig {
+  return readExternalSource(module.config as Record<string, unknown>);
+}
+
 /** Правила отображения модуля — короткий доступ для панелей. */
 export function sourceRules(module: ModuleInstance): ExternalSourceRule[] {
   return sourceConfig(module).mapping;
 }
 
-export { sameRules };
+function describe(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  return String(reason);
+}
+
+export function sameRules(left: ExternalSourceRule[], right: ExternalSourceRule[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}

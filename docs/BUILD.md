@@ -108,6 +108,14 @@ rustup target add wasm32-unknown-unknown # ядро рига собираетс�
 Если Rust установлен, но `wasm32` не добавлен, `npm run build` остановится с ошибкой
 про target — лечится командой `rustup target add wasm32-unknown-unknown`.
 
+### Новые Rust-зависимости
+
+Внешние источники добавляют два крейта: `reqwest` (HTTP-опрос и SSE, с `rustls-tls`,
+поэтому OpenSSL в системе не нужен) и `tokio` (`net`/`time`/`rt`/`sync` — UDP для OSC).
+Первый запуск `cargo build` после обновления скачает их и обновит `src-tauri/Cargo.lock`.
+Если сборка запускается с `--locked`, добавьте в неё `cargo update -p reqwest` или
+уберите флаг: интернет нужен только на этом шаге.
+
 ## 3. Сборка
 
 ### Проверка в нативном окне

@@ -1,6 +1,6 @@
 import { Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
-import { EXTERNAL_TRANSPORTS, defaultRule, readExternalSource } from "../modules/external";
+import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, readExternalSource } from "../modules/external";
 import type { ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
 
@@ -11,18 +11,12 @@ interface ExternalSourceEditorProps {
   onChange: (source: ExternalSourceConfig, label?: string) => void;
 }
 
-const TRANSPORT_LABEL: Record<ExternalSourceConfig["transport"], string> = {
-  ws: "WebSocket",
-  http: "HTTP",
-  osc: "OSC",
-};
-
 const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
   idle: "не запущен",
   connecting: "подключаюсь",
   live: "подключён",
   error: "нет связи",
-  unsupported: "пока недоступно",
+  unsupported: "только в приложении",
 };
 
 /**
@@ -36,6 +30,7 @@ const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
 export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   const source = readExternalSource(props.module.config as Record<string, unknown>);
   const status = props.status;
+  const info = TRANSPORT_INFO[source.transport];
   const patch = (change: Partial<ExternalSourceConfig>, label?: string) => {
     props.onChange({ ...source, ...change }, label);
   };
@@ -67,7 +62,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
       </div>
 
       <div className="module-fields">
-        <div className="module-field" title="Как соединяться с источником. WebSocket работает и в браузере, и в приложении.">
+        <div className="module-field" title="Как соединяться с источником: WebSocket работает и в браузере, остальные транспорты — только в приложении.">
           <span className="module-field-label">Транспорт</span>
           <div className="module-field-value">
             <select
@@ -75,37 +70,56 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               onChange={(event) => patch({ transport: event.target.value as ExternalSourceConfig["transport"] }, "Транспорт источника")}
             >
               {EXTERNAL_TRANSPORTS.map((transport) => (
-                <option key={transport} value={transport}>{TRANSPORT_LABEL[transport]}</option>
+                <option key={transport} value={transport}>{TRANSPORT_INFO[transport].label}</option>
               ))}
             </select>
           </div>
         </div>
 
-        <div className="module-field" title="Адрес источника: ws://127.0.0.1:17801/inputs или wss://…">
+        <div className="module-field" title={info.placeholder}>
           <span className="module-field-label">Адрес</span>
           <div className="module-field-value">
             <input
               className="module-field-text"
               value={source.url}
               spellCheck={false}
-              placeholder="ws://127.0.0.1:17801/inputs"
+              placeholder={info.placeholder}
               onChange={(event) => patch({ url: event.target.value }, "Адрес источника")}
             />
           </div>
         </div>
 
-        <div className="module-field" title="Сообщение сразу после подключения: подписка или авторизация (JSON-строка).">
-          <span className="module-field-label">Подписка</span>
-          <div className="module-field-value">
-            <input
-              className="module-field-text"
-              value={source.subscribe ?? ""}
-              spellCheck={false}
-              placeholder='{"type":"subscribe","channel":"hr"}'
-              onChange={(event) => patch({ subscribe: event.target.value.trim() ? event.target.value : undefined }, "Подписка источника")}
-            />
+        {source.transport === "http" && (
+          <div className="module-field" title="Как часто опрашивать адрес: 100…600000 мс.">
+            <span className="module-field-label">Опрос</span>
+            <div className="module-field-value">
+              <input
+                className="module-field-number"
+                type="number"
+                min={100}
+                max={600000}
+                step={100}
+                value={source.intervalMs ?? 1000}
+                onChange={(event) => patch({ intervalMs: Math.min(600_000, Math.max(100, Number(event.target.value) || 1000)) }, "Пауза опроса")}
+              />
+            </div>
           </div>
-        </div>
+        )}
+
+        {source.transport === "ws" && (
+          <div className="module-field" title="Сообщение сразу после подключения: подписка или авторизация (JSON-строка).">
+            <span className="module-field-label">Подписка</span>
+            <div className="module-field-value">
+              <input
+                className="module-field-text"
+                value={source.subscribe ?? ""}
+                spellCheck={false}
+                placeholder='{"type":"subscribe","channel":"hr"}'
+                onChange={(event) => patch({ subscribe: event.target.value.trim() ? event.target.value : undefined }, "Подписка источника")}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="module-field" title="Переподключаться при обрыве: значения на время обрыва обнуляются.">
           <span className="module-field-label">Переподключение</span>
@@ -121,6 +135,8 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           </div>
         </div>
       </div>
+
+      <p className="module-hint external-hint">{transportHint(source.transport)}</p>
 
       <div className="external-mapping">
         <div className="external-mapping-head">
@@ -147,7 +163,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               value={rule.path}
               spellCheck={false}
               placeholder="$.heart_rate"
-              title="Путь в сообщении: $.value, $.data.bpm, $.items[0].n"
+              title={pathHint(source.transport)}
               onChange={(event) => patchRule(index, { path: event.target.value }, "Поле источника")}
             />
             <input
@@ -201,4 +217,16 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
       </div>
     </div>
   );
+}
+
+function transportHint(transport: ExternalSourceConfig["transport"]): string {
+  if (transport === "ws") return "WebSocket работает и в браузере, и в приложении.";
+  if (transport === "osc") return "OSC принимает UDP-пакеты из сети; адрес OSC виден как ключ: $[\"/avatar/parameters/HR\"].";
+  if (transport === "sse") return "Сервер событий: каждое событие data: приходит одним пакетом.";
+  return "Ответ на каждый опрос приходит одним пакетом; пауза настраивается выше.";
+}
+
+function pathHint(transport: ExternalSourceConfig["transport"]): string {
+  if (transport === "osc") return 'Адрес OSC в кавычках: $["/avatar/parameters/HR"]';
+  return "Путь в сообщении: $.value, $.data.bpm, $.items[0].n";
 }

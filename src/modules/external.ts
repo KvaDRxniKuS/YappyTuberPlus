@@ -9,12 +9,32 @@ import type { ModuleInputSpec } from "./registry";
  * нужен. Детальная настройка — те же поля, но у каждого входа: подпись, границы,
  * множитель, смещение и удержание импульса.
  *
- * Сейчас поддержан транспорт `ws` (WebSocket): он не подчиняется CORS, поэтому
- * работает и в браузере, и в нативном окне. `http` и `osc` ждут Rust-транспорта —
- * до этого они честно показывают статус «не поддержан», а не молчат.
+ * `ws` (WebSocket) работает в окне и не подчиняется CORS, поэтому одинаково
+ * живёт в браузере и в приложении. `http`, `sse` и `osc` поднимает Rust
+ * (`src-tauri/src/sources.rs`): браузерные запросы упёрлись бы в CORS, а до UDP
+ * из вебвью не добраться вовсе. В браузере эти транспорты честно пишут, что
+ * доступны только в приложении.
  */
 
-export const EXTERNAL_TRANSPORTS: ExternalSourceConfig["transport"][] = ["ws", "http", "osc"];
+export const EXTERNAL_TRANSPORTS: ExternalSourceConfig["transport"][] = ["ws", "http", "sse", "osc"];
+
+/** Подсказка адреса и поведение транспорта: одна таблица для панели и проверок. */
+export const TRANSPORT_INFO: Record<ExternalSourceConfig["transport"], {
+  label: string;
+  placeholder: string;
+  /** Транспорт выполняет Rust, а не окно. */
+  native: boolean;
+}> = {
+  ws: { label: "WebSocket", placeholder: "ws://127.0.0.1:17801/inputs", native: false },
+  http: { label: "HTTP-опрос", placeholder: "http://127.0.0.1:17802/state", native: true },
+  sse: { label: "SSE-поток", placeholder: "http://127.0.0.1:17802/events", native: true },
+  osc: { label: "OSC (UDP)", placeholder: "udp://0.0.0.0:9000", native: true },
+};
+
+/** Транспорт выполняет Rust: у него своя нативная часть и своя пауза опроса. */
+export function isNativeTransport(transport: ExternalSourceConfig["transport"]): boolean {
+  return transport !== "ws";
+}
 
 /** Типы источника живут в `types.ts` вместе с настройками экземпляра. */
 export type ExternalRule = ExternalSourceRule;
@@ -27,6 +47,7 @@ export function defaultExternalSource(): ExternalSourceConfig {
     url: "",
     mapping: [{ input: "value", path: "$.value", min: 0, max: 1 }],
     reconnect: true,
+    intervalMs: 1000,
   };
 }
 
@@ -77,6 +98,7 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
     subscribe: typeof source.subscribe === "string" && source.subscribe.trim() ? source.subscribe.trim() : undefined,
     mapping,
     reconnect: source.reconnect !== false,
+    intervalMs: Math.min(600_000, Math.max(100, readNumber(source.intervalMs, 1000))),
   };
 }
 
@@ -118,7 +140,12 @@ export function readPath(payload: unknown, path: string): unknown {
     if (char === "[") {
       const close = rest.indexOf("]", index);
       if (close === -1) return undefined;
-      const key = rest.slice(index + 1, close).trim();
+      // Ключ может быть в кавычках: у OSC адрес содержит слэши —
+      // `$["/avatar/parameters/HR"]`, иначе путь не разобрать.
+      let key = rest.slice(index + 1, close).trim();
+      if (key.length >= 2 && (key[0] === '"' || key[0] === "'") && key[key.length - 1] === key[0]) {
+        key = key.slice(1, -1);
+      }
       current = step(current, key);
       index = close + 1;
       continue;

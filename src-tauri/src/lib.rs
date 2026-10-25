@@ -2,6 +2,7 @@
 mod pointer;
 mod overlay_server;
 mod schedule;
+mod sources;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,6 +59,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(shared)
+        // Внешние источники: HTTP, SSE и OSC живут в Rust, WebSocket — в окне.
+        .manage(sources::Sources::default())
         .setup(|app| {
             // Глобальные клавиатура и мышь: хук только читает ввод и шлёт события
             // в окно редактора. На других платформах модули работают от window.
@@ -82,7 +85,10 @@ pub fn run() {
             schedule::rig_schedule_stop,
             schedule::rig_schedule_status,
             overlay_server::overlay_server_url,
-            overlay_server::overlay_server_status
+            overlay_server::overlay_server_status,
+            sources::source_start,
+            sources::source_stop,
+            sources::source_stop_all
         ])
         .run(tauri::generate_context!())
         .expect("error while running YappyTuberPlus");
