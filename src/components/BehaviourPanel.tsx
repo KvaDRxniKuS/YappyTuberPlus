@@ -144,12 +144,13 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
         <div className="section-title"><span><Waves size={13} /> Реакция</span></div>
         <p className="behaviour-hint">
           Фильтр стоит на итоговой цели, поэтому влияет на всё движение объекта: наследство
-          родителя, покачивание, подпрыгивание. Сглаживание — демпфер, пружина — перелёт.
+          родителя, покачивание, подпрыгивание. Сглаживание — тормоз: именно оно гасит силу
+          пружины. Пружина — резкость: чем больше сила, тем резче тянет и дольше качается.
           У поворота фильтруются обе части угла — наследуемая и собственный доворот.
         </p>
         <Row label="Сглаживание" hint="drag: 0 — без фильтра" unit="" value={behaviour.smooth}
           min={0} max={1} step={0.01} onCommit={(smooth) => patch({ smooth })} />
-        <Row label="Пружина" hint="догоняет с перелётом" unit="" value={behaviour.spring}
+        <Row label="Пружина" hint="сила: резче тянет и сильнее качается" unit="" value={behaviour.spring}
           min={0} max={1} step={0.01} onCommit={(spring) => patch({ spring })} />
         <Row label="Сглаживание поворота" unit="" value={behaviour.rotationSmooth}
           min={0} max={1} step={0.01} onCommit={(rotationSmooth) => patch({ rotationSmooth })} />
@@ -220,26 +221,34 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
         <Row label="Предел вправо" hint="0 — не поворачивать вправо" unit="°" value={behaviour.rotationalLimitRight}
           min={0} max={180} step={1} onCommit={(rotationalLimitRight) => patch({ rotationalLimitRight })} />
         <p className="behaviour-hint">
-          Пределы — это диапазон сустава <b>относительно родителя</b>: нога не вылетает из него, как бы
-          ни качалась. Ноль с одной стороны — честный запрет в эту сторону; если оба нуля, предела
-          нет. В мировой физике предела не бывает: там угла родителя в формуле нет.
+          Пределы — это диапазон сустава <b>вокруг положения покоя</b>: нога не вылетает из него, как
+          бы ни качалась. С физикой они ограничивают свободное вращение вокруг пивота. Ноль с одной
+          стороны — честный запрет в эту сторону; если оба нуля, предела нет.
         </p>
       </section>
 
       <section className="behaviour-section">
         <div className="section-title"><span><Waves size={13} /> Покачивание</span></div>
         <div className="behaviour-state">
-          <span>Случайно<small>иначе — плавная синусоида</small></span>
+          <span>X · случайно<small>иначе — плавная синусоида</small></span>
           <Switch
             checked={behaviour.wiggleRandom}
             onChange={(wiggleRandom) => patch({ wiggleRandom })}
-            title="Шум вместо синусоиды: движение неповторяющееся"
+            title="Шум вместо синусоиды по X: движение неповторяющееся"
           />
         </div>
         <Row label="X · частота" unit="Гц" value={behaviour.wiggleXFreq}
           min={0} max={8} step={0.1} onCommit={(wiggleXFreq) => patch({ wiggleXFreq })} />
         <Row label="X · амплитуда" unit="px" value={behaviour.wiggleXAmp}
           min={0} max={60} step={0.5} onCommit={(wiggleXAmp) => patch({ wiggleXAmp })} />
+        <div className="behaviour-state">
+          <span>Y · случайно<small>иначе — плавная синусоида</small></span>
+          <Switch
+            checked={behaviour.wiggleYRandom}
+            onChange={(wiggleYRandom) => patch({ wiggleYRandom })}
+            title="Шум вместо синусоиды по Y — независимо от X"
+          />
+        </div>
         <Row label="Y · частота" unit="Гц" value={behaviour.wiggleYFreq}
           min={0} max={8} step={0.1} onCommit={(wiggleYFreq) => patch({ wiggleYFreq })} />
         <Row label="Y · амплитуда" unit="px" value={behaviour.wiggleYAmp}
@@ -289,11 +298,11 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
       <section className="behaviour-section">
         <div className="section-title"><span><RotateCw size={13} /> Физика поворота</span></div>
         <p className="behaviour-hint">
-          Пружина ориентирует «тяжёлую» сторону (ту, что дальше от пивота) в угол: 0° — вниз,
-          90° — вправо, 180° — вверх. Пивот должен быть сдвинут к краю: он задаёт плечо.
-          В мировой системе спрайт держит угол в мире и не едет за поворотом тела (подвеска,
-          серьга, прядь). В родительской угол задан внутри тела: тело подхватывает спрайт,
-          а пружина запаздывает — так качается рука на плече.
+          Физика — это мотор: пружина тянет «тяжёлую» сторону (ту, что дальше от пивота) к углу
+          0° — вниз, 90° — вправо, 180° — вверх. Свободное вращение получается само: речь не
+          давит на угол постоянно, а толкает мотор импульсом, и объект качается вокруг покоя.
+          Пивот задаёт плечо, пределы сверху — размах. Мировая система держит угол в мире
+          (подвеска, серьга, прядь), родительская — внутри тела (рука на плече).
         </p>
         {heavy === null
           ? <p className="behaviour-hint">Пивот по центру: физике не за что тянуть. Сдвиньте пивот к краю спрайта в инспекторе.</p>
@@ -337,8 +346,16 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
                   )}
                   <Row label={behaviour.physSpace === "parent" ? "Угол в теле" : "Мировой угол"} unit="°" value={behaviour.physRotation}
                     min={-180} max={180} step={1} onCommit={(physRotation) => patch({ physRotation })} />
-                  <Row label="Плавность" hint="0 — жёстко, 1 — вязко" unit="" value={behaviour.physSmooth}
+                  <Row label="Плавность" hint="0 — свободно и долго качается, 1 — вязко" unit="" value={behaviour.physSmooth}
                     min={0} max={1} step={0.01} onCommit={(physSmooth) => patch({ physSmooth })} />
+                  <Row label="Длительность импульса" hint="толчок от речи" unit="мс" value={behaviour.dragImpulse}
+                    min={40} max={1500} step={10} onCommit={(dragImpulse) => patch({ dragImpulse })} />
+                  <p className="behaviour-hint">
+                    С физикой «Поворот при речи» работает как толчок: направление и угол берутся
+                    из него, но постоянного давления нет — мотор возвращает объект к покою сам.
+                    «Сглаживание поворота» здесь работает как трение, «Пружина поворота» — нет:
+                    два пружинных контура подряд только гасят друг друга.
+                  </p>
                 </>
               )}
             </>

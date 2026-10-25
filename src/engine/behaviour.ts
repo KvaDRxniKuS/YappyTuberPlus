@@ -48,6 +48,11 @@ export interface Behaviour {
   bounceHold: number;
   /** Угол поворота от речи, градусы 0..180. 0 — выключено. */
   dragAngle: number;
+  /**
+   * Длительность импульса от речи, мс. С физикой речь не давит постоянно, а
+   * толкает мотор раз за всплеск: у толчка быстрый фронт (60 мс) и этот спад.
+   */
+  dragImpulse: number;
   /** Куда поворачивать: вправо, влево, случайно или поочерёдно. */
   dragMode: DragMode;
   /** Угол — это максимум: фактический выбирается случайно в 0..угол. */
@@ -56,8 +61,10 @@ export interface Behaviour {
   rotationalLimitLeft: number;
   /** Предел отклонения от родителя вправо, градусы 0..180. */
   rotationalLimitRight: number;
-  /** `true` — покачивание позиции шумом, `false` — плавной синусоидой. */
+  /** `true` — покачивание X шумом, `false` — плавной синусоидой. */
   wiggleRandom: boolean;
+  /** То же для Y: у осей независимые переключатели. */
+  wiggleYRandom: boolean;
   wiggleXFreq: number;
   wiggleXAmp: number;
   wiggleYFreq: number;
@@ -97,11 +104,13 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   bounceOnce: false,
   bounceHold: 700,
   dragAngle: 0,
+  dragImpulse: 260,
   dragMode: "right",
   dragInRange: false,
   rotationalLimitLeft: 0,
   rotationalLimitRight: 0,
   wiggleRandom: false,
+  wiggleYRandom: false,
   wiggleXFreq: 0,
   wiggleXAmp: 0,
   wiggleYFreq: 0,
@@ -139,11 +148,30 @@ function clampNumber(value: number, min: number, max: number, fallback: number):
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
-/** Частота и затухание пружины по «силе» 0..1: больше сила — мягче и качается дольше. */
+/**
+ * Частота и затухание пружины по «силе» 0..1. Сила — это резкость мотора:
+ * больше сила — выше частота (тянет резче) и меньше затухание (качается
+ * дольше). Гасит разгулявшуюся пружину сглаживание — оно стоит перед ней в
+ * цепочке, поэтому «резко дёрнуть и мягко отпустить» — рабочая комбинация.
+ */
 function springParams(strength: number): { frequency: number; damping: number } {
+  const force = Math.min(1, Math.max(0, strength));
   return {
-    frequency: 4.5 - 3.8 * Math.min(1, Math.max(0, strength)),
-    damping: 0.85 - 0.6 * Math.min(1, Math.max(0, strength)),
+    frequency: 1.8 + 6.2 * force,
+    damping: 0.8 - 0.55 * force,
+  };
+}
+
+/**
+ * Физика поворота: «плавность» — это среда, в которой качается мотор.
+ * 0 — свободный маятник (резкий и долго качается), 1 — вязко (тянет медленно
+ * и быстро успокаивается).
+ */
+function physSpringParams(smoothness: number): { frequency: number; damping: number } {
+  const viscosity = Math.min(1, Math.max(0, smoothness));
+  return {
+    frequency: 4.2 - 3.2 * viscosity,
+    damping: 0.14 + 0.56 * viscosity,
   };
 }
 
@@ -206,7 +234,13 @@ export function readBehaviour(script: string): Behaviour {
       merged.wiggleRotFreq = clampNumber(merged.wiggleRotFreq, 0, 20, 0);
       merged.wiggleRotAmp = clampNumber(merged.wiggleRotAmp, 0, 180, 0);
       merged.wiggleRandom = merged.wiggleRandom === true;
+      // Раньше переключатель был один на обе оси: старый пресет получает тот же
+      // режим для Y, новый — синусоиду по умолчанию.
+      merged.wiggleYRandom = source.wiggleYRandom === undefined
+        ? merged.wiggleRandom
+        : merged.wiggleYRandom === true;
       merged.wiggleRotRandom = merged.wiggleRotRandom === true;
+      merged.dragImpulse = clampNumber(merged.dragImpulse, 40, 2000, 260);
       merged.bounceOnce = merged.bounceOnce === true;
       merged.dragInRange = merged.dragInRange === true;
       return merged;
@@ -227,7 +261,8 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   const wiggle = (axis: "x" | "y", amplitude: number, frequency: number): string | null => {
     if (amplitude <= 0 || frequency <= 0) return null;
     const localSeed = seed + (axis === "x" ? 0 : 1);
-    if (behaviour.wiggleRandom) return `noise(${localSeed}, ${num(frequency)}) * ${num(amplitude)}`;
+    const random = axis === "y" ? behaviour.wiggleYRandom : behaviour.wiggleRandom;
+    if (random) return `noise(${localSeed}, ${num(frequency)}) * ${num(amplitude)}`;
     const phase = ((localSeed % 100) / 100) * 2 * Math.PI;
     return `sin(time * 2 * pi * ${num(frequency)} + ${num(phase)}) * ${num(amplitude)}`;
   };
@@ -296,18 +331,24 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     return `sin(time * 2 * pi * ${num(behaviour.wiggleRotFreq)} + ${num(phase)}) * ${num(behaviour.wiggleRotAmp)}`;
   })();
 
-  // Доворот от речи: угол 0..180 и отдельное направление. «Случайно» — плавный
-  // шум знака, «поочерёдно» — жёсткое перекидывание стороны раз в 1.2 с,
-  // «в диапазоне» — угол это максимум, фактический берётся из 0..угол.
+  // Доворот от речи: угол 0..180 и отдельное направление. «Случайно» — сторона
+  // выбирается заново примерно раз в 0.7 с, «поочерёдно» — жёсткое
+  // перекидывание раз в 1.2 с, «в диапазоне» — угол это максимум, а фактический
+  // берётся случайно из 0..угол на ту же «фразу». Куски постоянны внутри фразы:
+  // случайное число на кадр дёргало бы объект вместо плавного качания.
+  const phrase = `floor(time * 1.5)`;
   const dragDirection = (): string => {
     if (behaviour.dragMode === "left") return "-1";
-    if (behaviour.dragMode === "random") return `noise(${seed + 3}, 0.8)`;
+    if (behaviour.dragMode === "random") return `sign(rnd(${phrase} + ${seed + 3}, -1, 1))`;
     if (behaviour.dragMode === "alternate") return `sign(cos(time * ${num(5.236)}))`;
     return "1";
   };
-  const dragPush = `mic.speak * ${
-    behaviour.dragInRange ? `abs(noise(${seed + 4}, 0.35)) * ${num(behaviour.dragAngle)}` : num(behaviour.dragAngle)
+  const dragAmount = `${
+    behaviour.dragInRange
+      ? `rnd(${phrase} + ${seed + 4}, 0, ${num(behaviour.dragAngle)})`
+      : num(behaviour.dragAngle)
   } * ${dragDirection()}`;
+  const dragPush = `mic.speak * ${dragAmount}`;
   const deviation = [drag ? dragPush : null, wiggleRot].filter(Boolean) as string[];
 
   // Фильтр поворота — отдельная функция: он ставится и на наследуемый угол,
@@ -327,24 +368,34 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   if (physical || rotFilter || deviation.length) {
     let expression: string;
     if (physical) {
-      // Тяжёлая сторона смотрит в угол physRotation. В `world` угол мировой:
-      // поворот родителя в цель не входит, поэтому спрайт его игнорирует и
-      // висит в мире. В `parent` добавляется `inherit` — тело подхватывает
-      // спрайт, а пружина запаздывает и даёт качок. Пивот обязателен: он задаёт
-      // плечо, вокруг которого считается «тяжесть».
+      // «Физика» — это мотор: пружина тянет «тяжёлую» сторону к углу
+      // physRotation. Речь на угол не давит постоянно, а толкает мотор
+      // импульсом, поэтому объект качается вокруг положения покоя и
+      // успокаивается — это и есть свободное вращение вокруг пивота. Пределы
+      // ограничивают размах вокруг покоя, пивот задаёт плечо.
       const aim = behaviour.physRotation! - heavy! - object.base.rotation;
-      const { frequency, damping } = springParams(behaviour.physSmooth);
+      const { frequency, damping } = physSpringParams(behaviour.physSmooth);
       const parentSpace = behaviour.physSpace === "parent" && hasParent;
-      const aimExpr = parentSpace
+      // Положение покоя: в родительской системе к углу тела прибавляется
+      // собственный угол объекта, в мировой он один.
+      const rest = parentSpace
         ? `inherit ${aim < 0 ? "-" : "+"} ${num(Math.abs(aim))}`
         : num(aim);
-      const targetSum = wiggleRot ? `${aimExpr} + ${wiggleRot}` : aimExpr;
-      const inner = `spring(${targetSum}, ${num(frequency)}, ${num(damping)})`;
-      // Пределы — диапазон сустава относительно родителя. В мировой системе
-      // угла родителя в формуле нет: ограничивать нечего, предел не пишется.
-      expression = parentSpace && limits
-        ? `inherit + limit(${inner} - inherit, ${num(-limitLeft)}, ${num(limitRight)})`
+      // Импульс: быстрый фронт минус медленный спад. Постоянной силы нет, так
+      // что мотор возвращает объект к покою, а толчок задаёт качание.
+      const kick = `max(smooth(mic.speak, 60) - smooth(mic.speak, ${num(behaviour.dragImpulse)}), 0)`;
+      const impulse = drag ? `${kick} * ${dragAmount}` : null;
+      const push = [impulse, wiggleRot].filter(Boolean).join(" + ");
+      const inner = `spring(${rest}${push ? ` + ${push}` : ""}, ${num(frequency)}, ${num(damping)})`;
+      expression = limits
+        ? `${rest} + limit(${inner} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
         : inner;
+      // «Сглаживание поворота» с физикой работает как трение: мотор тянет,
+      // но движение выходит вязким. smooth не перелетает цель, поэтому предел,
+      // посчитанный выше, остаётся честным.
+      if (behaviour.rotationSmooth > 0) {
+        expression = `smooth(${expression}, ${num(behaviour.rotationSmooth * 260)})`;
+      }
     } else if (deviation.length) {
       let dev = deviation.join(" + ");
       // Без поворотного фильтра у доворота своя пружина: он не должен
