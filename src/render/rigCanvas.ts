@@ -129,6 +129,22 @@ export interface DrawRigOptions {
   placeholders?: boolean;
   /** Line width scale for placeholders (editor zoom). */
   lineScale?: number;
+  /**
+   * Показывать спрайты, скрытые скриптом (по текущим входам), полупрозрачным
+   * «призраком» вместо полного исчезновения. Так при остановке симуляции видно,
+   * что рот или глаз на сцене есть, просто сейчас им положено быть невидимыми.
+   */
+  ghosts?: boolean;
+  /** Прозрачность призрака; 0.25 по умолчанию. */
+  ghostAlpha?: number;
+}
+
+/**
+ * Скрыт ли спрайт именно скриптом. Глаз в дереве (`enabled`) и базовое
+ * `visible` — это осознанно скрытые объекты, их призраками не показываем.
+ */
+export function scriptHidden(object: RigObject, values: { visible: number }): boolean {
+  return values.visible === 0 && object.enabled !== false && object.base.visible !== 0;
 }
 
 /**
@@ -143,9 +159,11 @@ export function drawRig(
   options: DrawRigOptions = {},
 ): void {
   const zoom = options.lineScale ?? 1;
+  const ghostAlpha = options.ghostAlpha ?? 0.25;
   for (const object of orderedSprites(preset, frame)) {
     const values = frame?.objects[object.id] || staticValues(object);
-    if (values.visible === 0) continue;
+    const ghost = values.visible === 0 && options.ghosts === true && scriptHidden(object, values);
+    if (values.visible === 0 && !ghost) continue;
     const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
     if (opacity === 0 || values.sizeX === 0 || values.sizeY === 0) continue;
     const matrix = objectMatrix(object, values);
@@ -154,7 +172,7 @@ export function drawRig(
     const top = -object.pivot.y * object.height;
     ctx.save();
     ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
-    ctx.globalAlpha = opacity;
+    ctx.globalAlpha = ghost ? opacity * ghostAlpha : opacity;
     if (image?.complete && image.naturalWidth > 0) {
       ctx.drawImage(image, left, top, object.width, object.height);
     } else if (options.placeholders) {

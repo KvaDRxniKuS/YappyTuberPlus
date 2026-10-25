@@ -87,8 +87,10 @@ export interface Behaviour {
    * так рука качается на плече.
    */
   physSpace: PhysSpace;
-  /** Плавность мировой физики: 0 — жёстко, 1 — вязко. */
+  /** Вязкость мотора физики: 0 — свободный маятник, 1 — вязкая среда. */
   physSmooth: number;
+  /** Сила мотора физики: резкость (частота) пружины, 0 — мягко, 1 — резко. */
+  physForce: number;
 }
 
 export const DEFAULT_BEHAVIOUR: Behaviour = {
@@ -123,6 +125,7 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   physRotation: null,
   physSpace: "world",
   physSmooth: 0.4,
+  physForce: 0.4,
 };
 
 const START = "// ── поведение: вкладка «Поведение» ──";
@@ -163,17 +166,17 @@ function springParams(strength: number): { frequency: number; damping: number } 
 }
 
 /**
- * Физика поворота — свободный маятник. Затухание почти нулевое и **не**
- * зависит от ползунка: тело, которое толкнули, качается само, а останавливает
- * его только «Сглаживание поворота» (оно стоит после пружины и съедает
- * амплитуду) или пределы. «Плавность» задаёт частоту: 0 — резкий, звонкий
- * мотор (4.2 Гц), 1 — тягучий и медленный (1 Гц).
+ * Параметры мотора физики: сила — резкость (частота), плавность — вязкость
+ * (затухание). При плавности 0 мотор звонкий и почти не тормозит (0.02), при 1
+ * это вязкая среда (0.70): толчок гаснет за пару качков. Частота при силе 0 —
+ * 1.8 Гц, при 1 — 8 Гц.
  */
-function physSpringParams(smoothness: number): { frequency: number; damping: number } {
+function physSpringParams(force: number, smoothness: number): { frequency: number; damping: number } {
+  const strength = Math.min(1, Math.max(0, force));
   const viscosity = Math.min(1, Math.max(0, smoothness));
   return {
-    frequency: 4.2 - 3.2 * viscosity,
-    damping: 0.02,
+    frequency: 1.8 + 6.2 * strength,
+    damping: 0.02 + 0.68 * viscosity,
   };
 }
 
@@ -243,6 +246,8 @@ export function readBehaviour(script: string): Behaviour {
         : merged.wiggleYRandom === true;
       merged.wiggleRotRandom = merged.wiggleRotRandom === true;
       merged.dragImpulse = clampNumber(merged.dragImpulse, 40, 2000, 260);
+      merged.physForce = clampNumber(merged.physForce, 0, 1, 0.4);
+      merged.physSmooth = clampNumber(merged.physSmooth, 0, 1, 0.4);
       merged.bounceOnce = merged.bounceOnce === true;
       merged.dragInRange = merged.dragInRange === true;
       return merged;
@@ -340,6 +345,10 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   // случайное число на кадр дёргало бы объект вместо плавного качания.
   const phrase = `floor(time * 1.5)`;
   const dragDirection = (): string => {
+    // Ноль с одной стороны — честный запрет: в эту сторону доворота нет вовсе,
+    // поэтому «случайно» и «поочерёдно» не бьются о закрытый упор.
+    if (limitLeft === 0 && limitRight > 0) return "1";
+    if (limitRight === 0 && limitLeft > 0) return "-1";
     if (behaviour.dragMode === "left") return "-1";
     if (behaviour.dragMode === "random") return `sign(rnd(${phrase} + ${seed + 3}, -1, 1))`;
     if (behaviour.dragMode === "alternate") return `sign(cos(time * ${num(5.236)}))`;
@@ -376,42 +385,56 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       // удар и дальше болтается по инерции, пока его не остановит сглаживание
       // поворота (или предел). Пивот задаёт плечо.
       const aim = behaviour.physRotation! - heavy! - object.base.rotation;
-      const { frequency, damping } = physSpringParams(behaviour.physSmooth);
+      // Мотор физики: «плавность» задаёт и частоту, и затухание. Высокая
+      // плавность — вязко (движение останавливается, едва речь кончилась),
+      // низкая — свободный звонкий маятник.
+      const { frequency, damping } = physSpringParams(behaviour.physForce, behaviour.physSmooth);
       const parentSpace = behaviour.physSpace === "parent" && hasParent;
-      // Положение покоя: в родительской системе к углу тела прибавляется
-      // собственный угол объекта, в мировой он один.
-      const rest = parentSpace
-        ? `inherit ${aim < 0 ? "-" : "+"} ${num(Math.abs(aim))}`
-        : num(aim);
-      // Импульс: быстрый фронт минус медленный спад. Постоянной силы нет, так
-      // что мотор возвращает объект к покою, а толчок задаёт качание.
+      // Положение покоя. Родительская система: угол задан внутри тела, поэтому
+      // к нему прибавляется поворот родителя. Мировая: спрайт держит угол в
+      // мире и **противостоит** повороту тела — `− inherit` как раз и держит
+      // сумму «родитель + объект» постоянной.
+      const rest = !hasParent
+        ? num(aim)
+        : parentSpace
+          ? `inherit ${aim < 0 ? "-" : "+"} ${num(Math.abs(aim))}`
+          : `${num(aim)} - inherit`;
+      // Импульс: быстрый фронт минус медленный спад. Постоянного давления нет,
+      // поэтому мотор всё время возвращает объект к покою, а толчок задаёт
+      // качание — то, ради чего физика и включается.
       const kick = `max(smooth(mic.speak, 60) - smooth(mic.speak, ${num(behaviour.dragImpulse)}), 0)`;
-      // Импульс не должен быть сильнее сустава: иначе размах гарантированно
-      // больше допуска, и объект залипает на упоре, перескакивая с одной
-      // стороны на другую. Поэтому угол толчка зажимается пределом.
-      const reach = limits ? Math.min(behaviour.dragAngle, Math.max(limitLeft, limitRight)) : behaviour.dragAngle;
-      const impulseAngle = `${num(reach)} * ${dragDirection()}`;
-      const impulse = drag ? `${kick} * ${impulseAngle}` : null;
+      // Импульс не должен быть сильнее сустава: при почти нулевом затухании
+      // толчок больше допуска залипает на упоре и дребезжит между сторонами.
+      // Ноль с одной стороны — честный запрет: толкаем только в разрешённую.
+      const room = [limitLeft, limitRight].filter((value) => value > 0);
+      const reach = limits ? Math.min(behaviour.dragAngle, Math.min(...room)) : behaviour.dragAngle;
+      const impulse = drag ? `${kick} * ${num(reach)} * ${dragDirection()}` : null;
       const push = [impulse, wiggleRot].filter(Boolean).join(" + ");
       const inner = `spring(${rest}${push ? ` + ${push}` : ""}, ${num(frequency)}, ${num(damping)})`;
-      expression = limits
-        ? `${rest} + limit(${inner} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
-        : inner;
+      // С физикой работает только сглаживание — как трение после мотора.
+      // «Пружина поворота» тут не участвует: второй пружинный контур подряд
+      // гасит первый. Предел — на отклонение от родителя.
       // «Сглаживание поворота» с физикой работает как трение: мотор тянет,
       // но движение выходит вязким. smooth не перелетает цель, поэтому предел,
       // посчитанный выше, остаётся честным.
-      if (behaviour.rotationSmooth > 0) {
-        expression = `smooth(${expression}, ${num(behaviour.rotationSmooth * 260)})`;
-      }
+      const filtered = behaviour.rotationSmooth > 0
+        ? `smooth(${inner}, ${num(behaviour.rotationSmooth * 260)})`
+        : inner;
+      expression = limits
+        ? `${rest} + limit(${filtered} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
+        : filtered;
     } else if (deviation.length) {
+      const rest = hasParent ? "inherit" : "0";
       let dev = deviation.join(" + ");
       // Без поворотного фильтра у доворота своя пружина: он не должен
       // появляться мгновенно.
-      if (rotFilter) dev = rotateFilter(dev);
-      else if (drag) dev = `spring(${dev}, 2.4, 0.35)`;
-      if (limits) dev = `limit(${dev}, ${num(-limitLeft)}, ${num(limitRight)})`;
-      const base = hasParent ? (rotFilter ? rotateFilter("inherit") : "inherit") : "0";
-      expression = hasParent ? `${base} + ${dev}` : dev;
+      if (!rotFilter && drag) dev = `spring(${dev}, 2.4, 0.35)`;
+      // Предел ставится на отклонение от родителя, а фильтр — на итоговый угол:
+      // сглаживание и пружина поворота действуют на реакцию объекта целиком.
+      const filtered = rotateFilter(`${rest} + ${dev}`);
+      expression = limits
+        ? `${rest} + limit(${filtered} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
+        : filtered;
     } else {
       expression = rotateFilter(hasParent ? "inherit" : "0");
     }

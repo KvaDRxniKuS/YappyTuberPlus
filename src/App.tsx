@@ -14,8 +14,8 @@ import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { ChainDialog } from "./components/ChainDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, isDescendant, makeGroup, makeSprite, normalizeModules, normalizeOverlay, normalizePreset,
-  setParent, setScriptValue, uniqueId,
+  baseUpdates, groupSpot, isDescendant, makeGroup, makeSprite, normalizeModules, normalizeOverlay,
+  normalizePreset, parentNewObject, setParent, setScriptValue, uniqueId,
 } from "./engine/preset";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
@@ -467,7 +467,7 @@ export default function App() {
         added.push(makeSprite(id, name, dataUrl, bitmap.width, bitmap.height, centerX, centerY));
         bitmap.close();
       }
-      setPreset({ ...current, objects: [...current.objects, ...added] });
+      setPreset({ ...current, objects: parentNewObject([...current.objects, ...added], added, selectionRef.current) });
       const last = added.at(-1);
       setSelection(last ? [last.id] : []);
       notify(`Добавлено спрайтов: ${added.length}`);
@@ -701,8 +701,12 @@ export default function App() {
           onRenameCancel={() => setRenameId(null)}
           onImport={() => imageInput.current?.click()}
           onAddGroup={() => {
-            const id = uniqueId(preset.objects, "group");
-            commit({ ...preset, objects: [...preset.objects, makeGroup(id, "Новая группа")] }, { label: "Новая группа" });
+            const current = presetRef.current;
+            const id = uniqueId(current.objects, "group");
+            const spot = groupSpot(current, selectionRef.current);
+            const group = makeGroup(id, "Новая группа", spot.x, spot.y);
+            const objects = parentNewObject([...current.objects, group], [group], selectionRef.current);
+            commit({ ...current, objects }, { label: "Новая группа" });
             setSelection([id]);
           }}
           onChain={() => setChainOpen(true)}
@@ -730,6 +734,7 @@ export default function App() {
             primaryId={primaryId}
             tool={tool}
             showGrid={showGrid}
+            ghosts={paused || stopped}
             bounds={layout.showBounds}
             pivots={layout.showPivots}
             onTool={setTool}

@@ -112,9 +112,31 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
     return <div className="empty-state behaviour-empty"><Spline size={24} /><p>Выберите объект: пресет поведения настраивается для каждого объекта отдельно</p></div>;
   }
 
+  /**
+   * Покачивание — самостоятельный генератор, а не добавка к «Повороту при речи».
+   * Поэтому правка одного числа включает его сама: задали амплитуду — частота
+   * становится 1 Гц, задали частоту — амплитуда берёт значение по умолчанию.
+   * Обнулить покачивание по-прежнему можно любым из двух полей.
+   */
   const patch = (next: Partial<Behaviour>) => {
     if (!object) return;
-    const written = writeBehaviour(object.script, { ...behaviour, ...next }, object);
+    const merged: Behaviour = { ...behaviour, ...next };
+    const couple = (
+      amplitudeKey: "wiggleXAmp" | "wiggleYAmp" | "wiggleRotAmp",
+      frequencyKey: "wiggleXFreq" | "wiggleYFreq" | "wiggleRotFreq",
+      defaultAmplitude: number,
+    ) => {
+      if (next[amplitudeKey] !== undefined && merged[amplitudeKey] > 0 && merged[frequencyKey] === 0) {
+        merged[frequencyKey] = 1;
+      }
+      if (next[frequencyKey] !== undefined && merged[frequencyKey] > 0 && merged[amplitudeKey] === 0) {
+        merged[amplitudeKey] = defaultAmplitude;
+      }
+    };
+    couple("wiggleXAmp", "wiggleXFreq", 8);
+    couple("wiggleYAmp", "wiggleYFreq", 8);
+    couple("wiggleRotAmp", "wiggleRotFreq", 10);
+    const written = writeBehaviour(object.script, merged, object);
     onChange(written.script);
   };
 
@@ -144,9 +166,10 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
         <div className="section-title"><span><Waves size={13} /> Реакция</span></div>
         <p className="behaviour-hint">
           Фильтр стоит на итоговой цели, поэтому влияет на всё движение объекта: наследство
-          родителя, покачивание, подпрыгивание. Сглаживание — тормоз: именно оно гасит силу
-          пружины. Пружина — резкость: чем больше сила, тем резче тянет и дольше качается.
-          У поворота фильтруются обе части угла — наследуемая и собственный доворот.
+          родителя, покачивание, подпрыгивание, доворот. Сглаживание — тормоз: именно оно гасит
+          силу пружины. Пружина — резкость: чем больше сила, тем резче тянет и качается. Угол
+          фильтруется так же целиком; предел при этом ограничивает только доворот, а не угол
+          родителя.
         </p>
         <Row label="Сглаживание" hint="drag: 0 — без фильтра" unit="" value={behaviour.smooth}
           min={0} max={1} step={0.01} onCommit={(smooth) => patch({ smooth })} />
@@ -221,14 +244,19 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
         <Row label="Предел вправо" hint="0 — не поворачивать вправо" unit="°" value={behaviour.rotationalLimitRight}
           min={0} max={180} step={1} onCommit={(rotationalLimitRight) => patch({ rotationalLimitRight })} />
         <p className="behaviour-hint">
-          Пределы — это диапазон сустава <b>вокруг положения покоя</b>: нога не вылетает из него, как
-          бы ни качалась. С физикой они ограничивают свободное вращение вокруг пивота. Ноль с одной
-          стороны — честный запрет в эту сторону; если оба нуля, предела нет.
+          Пределы — это диапазон сустава <b>вокруг положения покоя</b>: объект не вылетает из него,
+          как бы ни качался — и с физикой, и без неё. Ноль с одной стороны — честный запрет в эту
+          сторону; если оба нуля, предела нет.
         </p>
       </section>
 
       <section className="behaviour-section">
         <div className="section-title"><span><Waves size={13} /> Покачивание</span></div>
+        <p className="behaviour-hint">
+          Покачивание работает само по себе: «Поворот при речи» ему не нужен и ничего к нему
+          не добавляет — это два независимых генератора. Заданная амплитуда включает его сразу
+          (частота станет 1 Гц), а обнулить можно любым из двух полей.
+        </p>
         <div className="behaviour-state">
           <span>X · случайно<small>иначе — плавная синусоида</small></span>
           <Switch
@@ -299,11 +327,12 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
         <div className="section-title"><span><RotateCw size={13} /> Физика поворота</span></div>
         <p className="behaviour-hint">
           Физика — это свободный маятник: пружина тянет «тяжёлую» сторону (ту, что дальше от
-          пивота) к углу 0° — вниз, 90° — вправо, 180° — вверх, но затухание почти нулевое.
-          Речь не давит на угол постоянно, а толкает импульсом: тело получает удар и болтается
-          само. Останавливает его только «Сглаживание поворота» (в разделе «Реакция») или упор
-          предела. Пивот задаёт плечо. Мировая система держит угол в мире (подвеска, серьга,
-          прядь), родительская — внутри тела (рука на плече).
+          пивота) к углу 0° — вниз, 90° — вправо, 180° — вверх. Речь не давит на угол постоянно,
+          а толкает импульсом: тело получает удар и болтается само, пока его не остановит
+          затухание мотора или упор предела. «Сила» — резкость (частота), «Плавность» — вязкость:
+          при 0 мотор звонкий и качается долго, при 1 гаснет за пару качков. Пивот задаёт плечо.
+          Мировая система держит угол в мире (подвеска, серьга, прядь), родительская — внутри
+          тела (рука на плече).
         </p>
         {heavy === null
           ? <p className="behaviour-hint">Пивот по центру: физике не за что тянуть. Сдвиньте пивот к краю спрайта в инспекторе.</p>
@@ -347,15 +376,17 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
                   )}
                   <Row label={behaviour.physSpace === "parent" ? "Угол в теле" : "Мировой угол"} unit="°" value={behaviour.physRotation}
                     min={-180} max={180} step={1} onCommit={(physRotation) => patch({ physRotation })} />
-                  <Row label="Плавность" hint="частота: 0 — звонкий мотор, 1 — тягучий" unit="" value={behaviour.physSmooth}
+                  <Row label="Сила" hint="резкость: больше — выше частота и злее бросок" unit="" value={behaviour.physForce}
+                    min={0} max={1} step={0.01} onCommit={(physForce) => patch({ physForce })} />
+                  <Row label="Плавность" hint="вязкость: 0 — качается долго, 1 — гаснет сразу" unit="" value={behaviour.physSmooth}
                     min={0} max={1} step={0.01} onCommit={(physSmooth) => patch({ physSmooth })} />
                   <Row label="Длительность импульса" hint="толчок от речи" unit="мс" value={behaviour.dragImpulse}
                     min={40} max={1500} step={10} onCommit={(dragImpulse) => patch({ dragImpulse })} />
                   <p className="behaviour-hint">
-                    С физикой «Поворот при речи» — это сила толчка: направление и угол берутся из
-                    него, но объект после удара качается сам. Толчок не бывает сильнее предела
-                    сустава. «Сглаживание поворота» тут единственный тормоз, «Пружина поворота» не
-                    участвует: два пружинных контура подряд только гасят друг друга.
+                    С физикой «Поворот при речи» — это толчок: угол и направление берутся из него,
+                    но постоянной силы нет, объект после удара качается сам. «Длительность импульса»
+                    — сколько длится толчок. «Сглаживание поворота» работает как трение,
+                    «Пружина поворота» не участвует: два пружинных контура подряд гасят друг друга.
                   </p>
                 </>
               )}

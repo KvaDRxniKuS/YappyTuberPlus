@@ -6,7 +6,7 @@ import {
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset } from "../types";
 import { GUIDE_LABEL } from "../types";
 import {
-  drawRig, invertAffine, objectMatrix, orderedSprites, SpriteAssets, staticValues,
+  drawRig, invertAffine, objectMatrix, orderedSprites, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
 } from "../render/rigCanvas";
 import {
@@ -26,6 +26,8 @@ interface SceneProps {
   primaryId: string | null;
   tool: SceneTool;
   showGrid: boolean;
+  /** Пауза или стоп: скрытое по входам рисуется полупрозрачным призраком. */
+  ghosts: boolean;
   bounds: GuideMode;
   pivots: GuideMode;
   onTool: (tool: SceneTool) => void;
@@ -132,7 +134,7 @@ export function Scene(props: SceneProps) {
     drawTransparency(ctx, preset.canvas.width, preset.canvas.height);
     if (current.showGrid) drawGrid(ctx, preset.canvas.width, preset.canvas.height, zoom);
 
-    drawRig(ctx, preset, frame, assets.current, { placeholders: true, lineScale: zoom });
+    drawRig(ctx, preset, frame, assets.current, { placeholders: true, lineScale: zoom, ghosts: current.ghosts });
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
@@ -220,7 +222,7 @@ export function Scene(props: SceneProps) {
 
   useEffect(() => {
     dirty.current = true;
-  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots]);
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -276,7 +278,9 @@ export function Scene(props: SceneProps) {
       const object = ordered[index];
       if (accept && !accept(object)) continue;
       const values = frame?.objects[object.id] || staticValues(object);
-      if (values.visible === 0) continue;
+      // Призрак виден на сцене, значит по нему можно и щёлкнуть: иначе
+      // полупрозрачный спрайт выглядел бы некликабельным.
+      if (values.visible === 0 && !(current.ghosts && scriptHidden(object, values))) continue;
       const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;

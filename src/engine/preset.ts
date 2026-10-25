@@ -1,5 +1,6 @@
 import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules } from "../modules/values";
+import { selectionRoots } from "./selection";
 import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type KeyboardKey, type ModuleConfig, type ModuleInstance,
   type MouseButton, type OverlayConfig, type RigObject, type RigPreset, type VisemeEntry,
@@ -334,3 +335,41 @@ export function baseStructure(preset: RigPreset): string {
 }
 
 export type { BasePose };
+
+/**
+ * Куда встаёт новый объект. Один выделенный — новый становится его ребёнком
+ * (спрайт «прилипает» к телу, группа — к выбранному узлу). Несколько
+ * выделенных — новый становится их общим родителем: группа подхватывает всю
+ * пачку. Без выделения новый объект остаётся в корне сцены.
+ */
+export function parentNewObject(
+  objects: RigObject[],
+  created: RigObject[],
+  selected: string[],
+): RigObject[] {
+  const roots = selectionRoots(objects, selected);
+  if (roots.length === 1) {
+    const parent = roots[0];
+    return objects.map((object) => (created.includes(object) ? setParent(object, parent) : object));
+  }
+  // Один новый объект на несколько выделенных — единственный случай, когда
+  // «стать родителем» однозначно: два новых спрайта не могут оба быть родителем.
+  if (roots.length > 1 && created.length === 1) {
+    const parent = created[0].id;
+    return objects.map((object) => (roots.includes(object.id) ? setParent(object, parent) : object));
+  }
+  return objects;
+}
+
+/** Точка, вокруг которой ставится новая группа: центр выделения, иначе центр холста. */
+export function groupSpot(preset: RigPreset, selected: string[]): { x: number; y: number } {
+  const picked = preset.objects.filter((object) => selected.includes(object.id));
+  if (!picked.length) {
+    return { x: Math.round(preset.canvas.width / 2), y: Math.round(preset.canvas.height / 2) };
+  }
+  return {
+    x: Math.round(picked.reduce((sum, object) => sum + object.base.x, 0) / picked.length),
+    y: Math.round(picked.reduce((sum, object) => sum + object.base.y, 0) / picked.length),
+  };
+}
+

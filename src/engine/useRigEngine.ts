@@ -172,6 +172,18 @@ export function useRigEngine(
    */
   const resetTimeline = useCallback(() => {
     const neutral = neutralFrame(presetRef.current);
+    // Видимость на стоп-кадре берём с последнего живого кадра: она посчитана по
+    // текущим входам (рот в тишине, глаз на моргании). Сцена покажет такие
+    // спрайты «призраками», а не уберёт их совсем — иначе при расстановке
+    // непонятно, есть объект или его нет.
+    const live = frameRef.current;
+    if (live) {
+      for (const object of presetRef.current.objects) {
+        const values = live.objects[object.id];
+        const target = neutral.objects[object.id];
+        if (values && target) neutral.objects[object.id] = { ...target, visible: values.visible };
+      }
+    }
     frameRef.current = neutral;
     setSnapshot(neutral);
     resetClockRef.current = true;
