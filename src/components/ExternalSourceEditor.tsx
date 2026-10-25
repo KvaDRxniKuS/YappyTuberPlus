@@ -8,6 +8,7 @@ import {
 } from "../modules/twitch";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
+import { NumberField } from "./NumberField";
 
 interface ExternalSourceEditorProps {
   module: ModuleInstance;
@@ -218,14 +219,15 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           <div className="module-field" title="Как часто опрашивать адрес: 100…600000 мс.">
             <span className="module-field-label">Опрос</span>
             <div className="module-field-value">
-              <input
+              <NumberField
                 className="module-field-number"
-                type="number"
+                value={source.intervalMs ?? 1000}
                 min={100}
                 max={600000}
                 step={100}
-                value={source.intervalMs ?? 1000}
-                onChange={(event) => patch({ intervalMs: Math.min(600_000, Math.max(100, Number(event.target.value) || 1000)) }, "Пауза опроса")}
+                integer
+                title="Пауза опроса, мс: 100…600000"
+                onCommit={(next) => patch({ intervalMs: next }, "Пауза опроса")}
               />
             </div>
           </div>
@@ -391,39 +393,42 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               title="Подпись входа в панели"
               onChange={(event) => patchRule(index, { label: event.target.value || undefined }, "Подпись входа")}
             />
-            <input
-              type="number"
+            <NumberField
+              className="mapping-number"
               value={rule.min ?? 0}
+              step={0.1}
               title="Нижняя граница значения"
-              onChange={(event) => patchRule(index, { min: Number(event.target.value) }, "Нижняя граница")}
+              onCommit={(next) => patchRule(index, { min: next }, "Нижняя граница")}
             />
-            <input
-              type="number"
+            <NumberField
+              className="mapping-number"
               value={rule.max ?? 1}
+              step={0.1}
               title="Верхняя граница значения"
-              onChange={(event) => patchRule(index, { max: Number(event.target.value) }, "Верхняя граница")}
+              onCommit={(next) => patchRule(index, { max: next }, "Верхняя граница")}
             />
-            <input
-              type="number"
-              step={0.1}
+            <NumberField
+              className="mapping-number"
               value={rule.scale ?? 1}
-              title="Множитель: применяется до смещения"
-              onChange={(event) => patchRule(index, { scale: Number(event.target.value) }, "Множитель")}
-            />
-            <input
-              type="number"
               step={0.1}
-              value={rule.offset ?? 0}
-              title="Смещение: прибавляется после множителя"
-              onChange={(event) => patchRule(index, { offset: Number(event.target.value) }, "Смещение")}
+              title="Множитель: применяется до смещения"
+              onCommit={(next) => patchRule(index, { scale: next }, "Множитель")}
             />
-            <input
-              type="number"
+            <NumberField
+              className="mapping-number"
+              value={rule.offset ?? 0}
+              step={0.1}
+              title="Смещение: прибавляется после множителя"
+              onCommit={(next) => patchRule(index, { offset: next }, "Смещение")}
+            />
+            <NumberField
+              className="mapping-number"
+              value={rule.holdMs ?? 0}
               min={0}
               step={50}
-              value={rule.holdMs ?? 0}
+              integer
               title="Удержание импульса, мс: событие живёт это время, потом гаснет"
-              onChange={(event) => patchRule(index, { holdMs: Math.max(0, Number(event.target.value)) }, "Удержание импульса")}
+              onCommit={(next) => patchRule(index, { holdMs: next }, "Удержание импульса")}
             />
             <button className="icon-button" title="Удалить вход" onClick={() => removeRule(index)}><Trash2 size={12} /></button>
           </div>

@@ -1327,3 +1327,13 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   background: #0f1215; color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace;
 }
 .twitch-add input:focus { outline: none; border-color: #609c8c; }
+
+/* Числовые ячейки таблицы источника: свой размер, чтобы влезали в строку. */
+.mapping-number {
+  min-width: 0; width: 100%; padding: 3px 4px; border: 1px solid #242c34; border-radius: 4px;
+  background: #0f1215; color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace;
+}
+.mapping-number:focus { outline: none; border-color: #609c8c; }
+/* Спрятать нативные стрелки: они мелкие и мешают попасть в цифру. */
+.mapping-number::-webkit-outer-spin-button,
+.mapping-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

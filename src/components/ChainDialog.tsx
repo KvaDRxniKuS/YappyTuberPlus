@@ -3,6 +3,7 @@ import { Spline, X } from "lucide-react";
 import type { RigObject } from "../types";
 import { DEFAULT_CHAIN, type ChainSettings } from "../engine/chain";
 import { Switch } from "./Switch";
+import { NumberField } from "./NumberField";
 
 interface ChainDialogProps {
   objects: RigObject[];
@@ -25,17 +26,13 @@ function ChainField({ label, unit, value, min, max, step, onCommit }: {
     <label className="chain-field">
       <span>{label}</span>
       <div>
-        <input
-          type="number"
+        <NumberField
+          className="chain-number"
           value={value}
           min={min}
           max={max}
           step={step}
-          onChange={(event) => {
-            const parsed = Number(event.target.value);
-            if (!Number.isFinite(parsed)) return;
-            onCommit(Math.min(max, Math.max(min, parsed)));
-          }}
+          onCommit={onCommit}
         />
         <small>{unit}</small>
       </div>

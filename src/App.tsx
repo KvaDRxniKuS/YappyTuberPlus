@@ -57,6 +57,37 @@ function loadLayout(): EditorLayout {
   } catch { return DEFAULT_LAYOUT; }
 }
 
+/** Ширина разделителя: она тоже занимает место в раскладке. */
+const SPLITTER_WIDTH = 8;
+/** Сколько места обязано остаться сцене: меньше — и рисовать негде. */
+const SCENE_MIN = 300;
+
+/**
+ * Пределы панелей считаются от окна, а не берутся из головы: тянуть разделитель
+ * можно до тех пор, пока сцена не упрётся в минимум. Иначе на узком экране
+ * «максимальная» панель вылезала бы за границу и утаскивала раскладку вправо.
+ */
+function layoutLimits(layout: { leftWidth: number; rightWidth: number; leftCollapsed: boolean; rightCollapsed: boolean }) {
+  const width = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const leftSplitter = layout.leftCollapsed ? 0 : SPLITTER_WIDTH;
+  const rightSplitter = layout.rightCollapsed ? 0 : SPLITTER_WIDTH;
+  const leftShown = layout.leftCollapsed ? 0 : layout.leftWidth;
+  const rightShown = layout.rightCollapsed ? 0 : layout.rightWidth;
+  const maxLeft = Math.max(170, width - SCENE_MIN - rightSplitter - rightShown);
+  const maxRight = Math.max(300, width - SCENE_MIN - leftSplitter - leftShown);
+  const height = typeof window === "undefined" ? 900 : window.innerHeight;
+  return {
+    leftWidth: [170, maxLeft] as const,
+    rightWidth: [300, maxRight] as const,
+    sceneHeight: [200, Math.max(220, height - 285)] as const,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
 export default function App() {
   const [preset, setPreset] = useState<RigPreset>(loadPreset);
   const [selection, setSelection] = useState<string[]>(() => (preset.objects[0] ? [preset.objects[0].id] : []));
@@ -633,13 +664,32 @@ export default function App() {
 
   const resize = (key: "leftWidth" | "rightWidth" | "sceneHeight", delta: number) => {
     setLayout((current) => {
-      const limits = {
-        leftWidth: [170, 460], rightWidth: [300, 760], sceneHeight: [200, Math.max(220, window.innerHeight - 285)],
-      } as const;
+      const limits = layoutLimits(current);
       const [min, max] = limits[key];
+      // Предел берётся от окна: панель не может вытолкнуть сцену и уехать за край.
       return { ...current, [key]: Math.min(max, Math.max(min, current[key] + delta)) };
     });
   };
+
+  // Окно уменьшили — панели ужимаются вместе с ним, иначе правая уедет за
+  // границу экрана и до неё будет не добраться.
+  useEffect(() => {
+    const fit = () => setLayout((current) => {
+      const limits = layoutLimits(current);
+      const next = {
+        ...current,
+        leftWidth: clamp(current.leftWidth, limits.leftWidth[0], limits.leftWidth[1]),
+        rightWidth: clamp(current.rightWidth, limits.rightWidth[0], limits.rightWidth[1]),
+        sceneHeight: clamp(current.sceneHeight, limits.sceneHeight[0], limits.sceneHeight[1]),
+      };
+      return next.leftWidth === current.leftWidth
+        && next.rightWidth === current.rightWidth
+        && next.sceneHeight === current.sceneHeight ? current : next;
+    });
+    window.addEventListener("resize", fit);
+    fit();
+    return () => window.removeEventListener("resize", fit);
+  }, []);
 
   // Библиотека модулей читается из папки modules при старте. Ждём её, иначе
   // первый кадр ушёл бы в ядро без входов и завалил диагностику именами.

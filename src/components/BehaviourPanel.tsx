@@ -28,11 +28,13 @@ function Row({ label, hint, value, min, max, step, unit, onCommit }: {
   const [draft, setDraft] = useState<string | null>(null);
   const clamp = (input: number) => Math.min(max, Math.max(min, input));
 
-  const type = (text: string) => {
-    setDraft(text);
-    const parsed = Number(text.replace(",", "."));
-    if (text.trim() === "" || !Number.isFinite(parsed)) return;
-    onCommit(clamp(parsed));
+  // Пока печатают — только черновик: иначе «0.5» превращалось бы в «5»,
+  // а промежуточное «1» в поле с максимумом 1 обрезало бы следующую цифру.
+  const type = (text: string) => setDraft(text);
+  const commit = () => {
+    const parsed = Number((draft ?? "").trim().replace(",", "."));
+    if ((draft ?? "").trim() !== "" && Number.isFinite(parsed)) onCommit(clamp(parsed));
+    setDraft(null);
   };
 
   return (
@@ -48,7 +50,8 @@ function Row({ label, hint, value, min, max, step, unit, onCommit }: {
             step={step}
             value={draft ?? value}
             onChange={(event) => type(event.target.value)}
-            onBlur={() => setDraft(null)}
+            onBlur={commit}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
             title="Можно вписать число руками"
           />
           <small>{unit.trim()}</small>

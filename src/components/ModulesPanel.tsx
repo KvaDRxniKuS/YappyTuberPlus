@@ -18,6 +18,7 @@ import { EnumStatesEditor } from "./EnumStatesEditor";
 import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { ExternalSourceEditor } from "./ExternalSourceEditor";
+import { NumberField } from "./NumberField";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
@@ -517,14 +518,14 @@ function FieldControl(props: {
 
   const numeric = typeof value === "number" ? value : Number(value ?? field.default ?? 0);
   return (
-    <input
+    <NumberField
       className="module-field-number"
-      type="number"
+      value={Number.isFinite(numeric) ? numeric : 0}
       min={field.min}
       max={field.max}
       step={field.step ?? 1}
-      value={Number.isFinite(numeric) ? numeric : 0}
-      onChange={(event) => props.onValue(clampNumber(Number(event.target.value), field), field.label)}
+      // Ограничения применяются после ввода, а не на каждом нажатии.
+      onCommit={(next) => props.onValue(clampNumber(next, field), field.label)}
     />
   );
 }

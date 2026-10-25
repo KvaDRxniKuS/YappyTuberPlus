@@ -40,7 +40,7 @@ export interface TwitchEventSpec {
    * отклоняется с 400: у чата это `user_id` (чей чат читаем), у фоллова
    * (версия 2) — `moderator_user_id` (кто получает события).
    */
-  extra?: "user" | "moderator";
+  extra?: "user" | "moderator" | "from";
   /** Что появляется во входах по умолчанию. */
   rule: Omit<ExternalSourceRule, "event">;
 }
@@ -120,6 +120,8 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     version: "1",
     label: "Рейд на канал",
     scope: "",
+    // Рейду нужно, ОТКУДА пришли: без этого условия Twitch отвечает 400.
+    extra: "from",
     rule: {
       input: "raid", path: "$.payload.event.viewers", label: "Рейд, зрителей",
       kind: "level", min: 0, max: 100_000, scale: 1, offset: 0, holdMs: 6000,
@@ -397,6 +399,8 @@ export class TwitchChannel {
   private broadcasterId: string | null = null;
   /** Наш собственный id: его просят условия чата и фоллова. */
   private ownId: string | null = null;
+  /** Логин владельца токена: по нему видно, с какого аккаунта выполнен вход. */
+  private ownLogin: string | null = null;
   private stopped = false;
   private retry: number | null = null;
   private attempts = 0;
@@ -492,10 +496,12 @@ export class TwitchChannel {
       const fresh = await this.freshToken();
       this.broadcasterId = null;
       const id = await this.resolveBroadcaster(fresh);
-      const own = await this.resolveOwnUser(fresh);
+      await this.resolveOwnUser(fresh);
       // Один id на всё — норма для стримера, который следит за своим каналом.
-      const note = own === id ? "" : ` (токен от другого аккаунта: ${own})`;
-      return `канал «${this.token?.login ?? this.source.channel}» найден, ID ${id}${note}`;
+      const channel = this.token?.login ?? this.source.channel;
+      const own = this.ownLogin ?? "неизвестно";
+      if (id === this.ownId) return `канал «${channel}» найден, ID ${id}, вход с того же аккаунта`;
+      return `канал «${channel}» найден, ID ${id}, но вход выполнен как «${own}»: войдите аккаунтом канала`;
     } catch (reason) {
       return describe(reason);
     }
@@ -575,11 +581,12 @@ export class TwitchChannel {
    */
   private async resolveOwnUser(token: TwitchToken): Promise<string> {
     if (this.ownId) return this.ownId;
-    const body = await this.api<{ data?: Array<{ id: string }> }>("/users", token);
+    const body = await this.api<{ data?: Array<{ id: string; login?: string; display_name?: string }> }>("/users", token);
     const user = body.data?.[0];
-    if (!user) throw new HttpError("Twitch не вернул пользователя по токену");
+    if (!user?.id) throw new HttpError("Twitch не вернул пользователя по токену");
     this.ownId = user.id;
-    return user.id;
+    this.ownLogin = user.display_name || user.login || null;
+    return this.ownId;
   }
 
   private async resolveBroadcaster(token: TwitchToken): Promise<string> {
@@ -590,7 +597,11 @@ export class TwitchChannel {
       token,
     );
     const user = body.data?.[0];
-    if (!user) throw new HttpError(`канал «${login}» не найден`);
+    // Пустой массив — это «не найден», а не «нет прав»: частая путаница в ответах
+    // Helix. Текст ошибки должен вести к делу, а не в тупик.
+    if (!user?.id) {
+      throw new HttpError(`канал «${login}» не найден: проверьте логин (без @ и без адреса)`);
+    }
     this.token = { ...token, login: user.display_name };
     writeTwitchToken(this.source.clientId ?? "", this.token);
     return user.id;
@@ -623,17 +634,30 @@ export class TwitchChannel {
    * же, как недостающее, поэтому собираем его по описанию события.
    */
   private async condition(spec: TwitchEventSpec, token: TwitchToken): Promise<Record<string, string>> {
-    const condition: Record<string, string> = { broadcaster_user_id: this.broadcasterId ?? "" };
+    // Пустой id Twitch отклоняет словами «validation error», поэтому проверяем
+    // сами и говорим по-человечески.
+    if (!this.broadcasterId) {
+      throw new HttpError(
+        `не определён id канала «${this.source.channel ?? ""}»: проверьте логин и войдите заново`,
+      );
+    }
+    const condition: Record<string, string> = { broadcaster_user_id: this.broadcasterId };
     if (spec.extra === "user") {
       condition.user_id = await this.resolveOwnUser(token);
     } else if (spec.extra === "moderator") {
       condition.moderator_user_id = await this.resolveOwnUser(token);
+    } else if (spec.extra === "from") {
+      // Ловим рейды, которые приходят на наш канал, с любого канала-источника.
+      condition.from_broadcaster_user_id = await this.resolveOwnUser(token);
     }
     return condition;
   }
 
   /** Подписка на событие. `409` — уже есть такая: это не ошибка для нас. */
   private async subscribe(spec: TwitchEventSpec, token: TwitchToken): Promise<void> {
+    // Условие собираем до запроса: в тексте ошибки оно помогает понять причину,
+    // а сами id не секрет (это же не токен).
+    const condition = await this.condition(spec, token);
     const response = await httpRequest({
       method: "POST",
       url: `${HELIX}/eventsub/subscriptions`,
@@ -645,13 +669,23 @@ export class TwitchChannel {
       body: JSON.stringify({
         type: spec.type,
         version: spec.version,
-        condition: await this.condition(spec, token),
+        condition,
         transport: { method: "websocket", session_id: this.sessionId },
       }),
     });
     if (response.status === 202 || response.status === 409) return;
     if (response.status === 403) {
       throw new HttpError(`нет права «${spec.scope}»: отметьте его при входе в Twitch`, 403);
+    }
+    if (response.status === 400) {
+      // 400 у подписки почти всегда про id канала: например, вход выполнен не с
+      // того аккаунта, и канал из настроек этому токену не «свой».
+      const own = this.ownLogin ? ` (вход выполнен как ${this.ownLogin})` : "";
+      throw new HttpError(
+        `Twitch отклонил условие подписки${own}: ${JSON.stringify(condition)}. `
+        + `Проверьте канал «${this.source.channel ?? ""}» — он должен быть вашим`,
+        400,
+      );
     }
     throw new HttpError(`подписка «${spec.label}»: ${response.status} ${response.body.slice(0, 160)}`, response.status);
   }
