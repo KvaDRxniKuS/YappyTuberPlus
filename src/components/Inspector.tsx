@@ -191,13 +191,24 @@ export function Inspector(props: InspectorProps) {
           </label>
         </div>
 
-        {object.kind === "sprite" && <div className="property-section compact-section">
-          <div className="section-title"><span>Пивот</span><small>UV</small></div>
+        <div className="property-section compact-section">
+          <div className="section-title">
+            <span>Пивот</span>
+            <small>{object.kind === "sprite" ? "UV" : "ФИЗИКА"}</small>
+          </div>
           <div className="property-grid two-columns">
             <NumberField label="Pivot X" value={object.pivot.x} step={0.01} onCommit={(x) => onChange({ ...object, pivot: { ...object.pivot, x } })} />
             <NumberField label="Pivot Y" value={object.pivot.y} step={0.01} onCommit={(y) => onChange({ ...object, pivot: { ...object.pivot, y } })} />
           </div>
-        </div>}
+          {object.kind === "group" && (
+            <p className="behaviour-hint">
+              У группы нет картинки, поэтому пивот не сдвигает спрайт и не переносит точку вращения:
+              дети ходят вокруг <b>позиции</b> группы — сдвиньте «Позицию X/Y», если нужен другой
+              центр. Пивот группы задаёт «тяжёлую» сторону для «Физики поворота»: по центру
+              (0.5 / 0.5) она считается выключенной.
+            </p>
+          )}
+        </div>
 
         <div className="runtime-readout">
           <div><span>Родитель</span><b>{parent?.name || "Корень сцены"}</b></div>
