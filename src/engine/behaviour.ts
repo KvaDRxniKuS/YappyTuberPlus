@@ -17,6 +17,9 @@ import type { RigObject, Vec2 } from "../types";
 
 export type VisibilityRule = "none" | "open" | "closed";
 
+/** Координаты, в которых физика поворота держит «тяжёлую» сторону. */
+export type PhysSpace = "world" | "parent";
+
 export interface Behaviour {
   /** Сглаживание позиции: 0 — без фильтра, 1 — сильно отстаёт. */
   smooth: number;
@@ -52,6 +55,14 @@ export interface Behaviour {
   eye: VisibilityRule;
   /** Мировой поворот «тяжёлой» стороной: 0 — вниз, 90 — вправо. `null` — выкл. */
   physRotation: number | null;
+  /**
+   * В каких координатах считается угол физики.
+   * `world` — мировая: спрайт держит заданный мировой угол и **не** едет за
+   * поворотом тела (подвеска, серьга, прядь). `parent` — родительская: угол
+   * задан внутри родителя, тело подхватывает спрайт, а пружина запаздывает —
+   * так рука качается на плече.
+   */
+  physSpace: PhysSpace;
   /** Плавность мировой физики: 0 — жёстко, 1 — вязко. */
   physSmooth: number;
 }
@@ -76,6 +87,7 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   mouth: "none",
   eye: "none",
   physRotation: null,
+  physSpace: "world",
   physSmooth: 0.4,
 };
 
@@ -125,7 +137,7 @@ export function isDefault(behaviour: Behaviour): boolean {
     && behaviour.rotationalLimitLeft === 0 && behaviour.rotationalLimitRight === 0
     && behaviour.wiggleXAmp === 0 && behaviour.wiggleYAmp === 0
     && behaviour.mouth === "none" && behaviour.eye === "none"
-    && behaviour.physRotation === null;
+    && behaviour.physRotation === null && behaviour.physSpace === "world";
 }
 
 /** Настройки из скрипта: JSON-строка комментария. */
@@ -146,6 +158,7 @@ export function readBehaviour(script: string): Behaviour {
         merged.rotationalLimitRight = magnitude;
       }
       merged.physRotation = typeof merged.physRotation === "number" ? merged.physRotation : null;
+      merged.physSpace = merged.physSpace === "parent" ? "parent" : "world";
       merged.wiggleRandom = merged.wiggleRandom === true;
       return merged;
     } catch {
@@ -228,10 +241,17 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   if (physical || rotFilter || drag) {
     let expression: string;
     if (physical) {
-      // Мировая ориентация: тяжёлая сторона смотрит в угол physRotation.
+      // Тяжёлая сторона смотрит в угол physRotation. В `world` угол мировой:
+      // поворот родителя в цель не входит, поэтому спрайт его игнорирует и
+      // висит в мире. В `parent` добавляется `inherit` — тело подхватывает
+      // спрайт, а пружина запаздывает и даёт качок. Пивот обязателен: он задаёт
+      // плечо, вокруг которого считается «тяжесть».
       const aim = behaviour.physRotation! - heavy! - object.base.rotation;
       const { frequency, damping } = springParams(behaviour.physSmooth);
-      expression = `spring(${num(aim)}, ${num(frequency)}, ${num(damping)})`;
+      const target = behaviour.physSpace === "parent" && hasParent
+        ? `inherit ${aim < 0 ? "-" : "+"} ${num(Math.abs(aim))}`
+        : num(aim);
+      expression = `spring(${target}, ${num(frequency)}, ${num(damping)})`;
     } else {
       const base = hasParent ? "inherit" : "0";
       expression = rotFilter ? rotateFilter(base) : base;

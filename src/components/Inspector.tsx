@@ -19,11 +19,43 @@ interface InspectorProps {
   onDuplicate: () => void;
 }
 
+const STEP_KEY = "yappytuber.inspector-steps";
+
+/** Шаг, который пользователь ввёл руками: он общий для всех объектов. */
+function readSteps(): Record<string, number> {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(STEP_KEY) || "{}");
+    return raw && typeof raw === "object" ? raw as Record<string, number> : {};
+  } catch {
+    return {};
+  }
+}
+
+function savedStep(label: string, fallback: number): number {
+  const value = readSteps()[label];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function saveStep(label: string, value: number): void {
+  try {
+    localStorage.setItem(STEP_KEY, JSON.stringify({ ...readSteps(), [label]: value }));
+  } catch {
+    // Приватный режим: шаг просто не запомнится.
+  }
+}
+
+/** `0.1` вместо `0.10000000000000001`. */
+const formatStep = (value: number) => String(Number(value.toFixed(4)));
+
 function NumberField({ label, value, step = 1, onCommit, suffix }: {
   label: string; value: number; step?: number; suffix?: string; onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(Number(value.toFixed(4))));
   const [focused, setFocused] = useState(false);
+  // Шаг правки: по умолчанию из разметки, но его можно вписать руками —
+  // иначе угол приходилось бы доводить по 0.1° сотнями кликов.
+  const [unit, setUnit] = useState(() => savedStep(label, step));
+  const [stepDraft, setStepDraft] = useState<string | null>(null);
   useEffect(() => { if (!focused) setDraft(String(Number(value.toFixed(4)))); }, [value, focused]);
   const commit = () => {
     const parsed = Number(draft);
@@ -32,27 +64,58 @@ function NumberField({ label, value, step = 1, onCommit, suffix }: {
   };
   // Стрелки горизонтальные и свои: нативные спиннеры мелкие и стоят столбиком.
   const nudge = (direction: -1 | 1) => {
-    const next = Number((value + direction * step).toFixed(4));
+    const next = Number((value + direction * unit).toFixed(4));
     setDraft(String(Number(next.toFixed(4))));
     onCommit(next);
   };
+  const commitStep = () => {
+    const parsed = Number((stepDraft ?? "").replace(",", "."));
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 1000) {
+      setUnit(parsed);
+      saveStep(label, parsed);
+    }
+    setStepDraft(null);
+  };
   return (
     <label className="number-field">
-      <span>{label}</span>
+      <span className="number-label">
+        {label}
+        {stepDraft === null ? (
+          <button
+            type="button" className="step-chip"
+            title={`Шаг изменения: ${formatStep(unit)}. Нажмите и введите своё число`}
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); setStepDraft(formatStep(unit)); }}
+          >
+            {formatStep(unit)}
+          </button>
+        ) : (
+          <input
+            className="step-input" type="number" min="0.001" max="1000" step="any" autoFocus
+            value={stepDraft} title="Шаг изменения: Enter — применить, Escape — отменить"
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => setStepDraft(event.target.value)}
+            onBlur={commitStep}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") setStepDraft(null);
+            }}
+          />
+        )}
+      </span>
       <div className="number-stepper">
         <input
-          type="number" value={draft} step={step}
+          type="number" value={draft} step={unit}
           onFocus={() => setFocused(true)}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => { setFocused(false); commit(); }}
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
         />{suffix && <em>{suffix}</em>}
         <button
-          type="button" className="step-button" title={`${label}: −${step}`}
+          type="button" className="step-button" title={`${label}: −${formatStep(unit)}`}
           onClick={(event) => { event.preventDefault(); nudge(-1); }}
         ><ChevronLeft size={14} /></button>
         <button
-          type="button" className="step-button" title={`${label}: +${step}`}
+          type="button" className="step-button" title={`${label}: +${formatStep(unit)}`}
           onClick={(event) => { event.preventDefault(); nudge(1); }}
         ><ChevronRight size={14} /></button>
       </div>
@@ -139,7 +202,7 @@ export function Inspector(props: InspectorProps) {
           <div className="property-grid">
             <NumberField label="Позиция X" value={object.base.x} step={1} onCommit={(x) => updateBase({ x })} />
             <NumberField label="Позиция Y" value={object.base.y} step={1} onCommit={(y) => updateBase({ y })} />
-            <NumberField label="Поворот" value={object.base.rotation} step={0.1} suffix="°" onCommit={(rotation) => updateBase({ rotation })} />
+            <NumberField label="Поворот" value={object.base.rotation} step={1} suffix="°" onCommit={(rotation) => updateBase({ rotation })} />
             <NumberField label="Слой" value={object.base.layer} step={1} onCommit={(layer) => {
               onChange({ ...object, base: { ...object.base, layer }, script: setScriptValue(object.script, "layer", String(layer)) });
             }} />
@@ -227,7 +290,7 @@ function MultiInspector(props: InspectorProps) {
             <NumberField label="Слой" value={primary.base.layer} step={1} onCommit={onLayer} />
             <NumberField label="Масштаб X" value={primary.base.sizeX} step={0.05} onCommit={(sizeX) => onBases({ sizeX })} />
             <NumberField label="Масштаб Y" value={primary.base.sizeY} step={0.05} onCommit={(sizeY) => onBases({ sizeY })} />
-            <NumberField label="Поворот" value={primary.base.rotation} step={0.1} suffix="°" onCommit={(rotation) => onBases({ rotation })} />
+            <NumberField label="Поворот" value={primary.base.rotation} step={1} suffix="°" onCommit={(rotation) => onBases({ rotation })} />
           </div>
           <label className="range-property">
             <span>Непрозрачность <b>{Math.round(primary.base.opacity * 100)}%</b></span>

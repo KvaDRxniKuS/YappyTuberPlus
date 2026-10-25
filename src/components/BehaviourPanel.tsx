@@ -232,10 +232,13 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
       </section>
 
       <section className="behaviour-section">
-        <div className="section-title"><span><RotateCw size={13} /> Мировая физика</span></div>
+        <div className="section-title"><span><RotateCw size={13} /> Физика поворота</span></div>
         <p className="behaviour-hint">
-          Пружина ориентирует «тяжёлую» сторону (ту, что дальше от пивота) в мировой угол: 0° — вниз,
-          90° — вправо, 180° — вверх. Пивот должен быть сдвинут к краю.
+          Пружина ориентирует «тяжёлую» сторону (ту, что дальше от пивота) в угол: 0° — вниз,
+          90° — вправо, 180° — вверх. Пивот должен быть сдвинут к краю: он задаёт плечо.
+          В мировой системе спрайт держит угол в мире и не едет за поворотом тела (подвеска,
+          серьга, прядь). В родительской угол задан внутри тела: тело подхватывает спрайт,
+          а пружина запаздывает — так качается рука на плече.
         </p>
         {heavy === null
           ? <p className="behaviour-hint">Пивот по центру: физике не за что тянуть. Сдвиньте пивот к краю спрайта в инспекторе.</p>
@@ -252,7 +255,32 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
               </div>
               {behaviour.physRotation !== null && (
                 <>
-                  <Row label="Мировой угол" unit="°" value={behaviour.physRotation}
+                  <div className="behaviour-state">
+                    <span>Координаты<small>где считается угол</small></span>
+                    <div className="segmented small">
+                      <button
+                        className={behaviour.physSpace === "world" ? "active" : ""}
+                        title="Мировая: спрайт держит угол в мире и не поворачивается вместе с телом — подвеска, серьга, прядь"
+                        onClick={() => patch({ physSpace: "world" })}
+                      >
+                        мировая
+                      </button>
+                      <button
+                        className={behaviour.physSpace === "parent" ? "active" : ""}
+                        title="Родительская: угол считается внутри тела — тело подхватывает спрайт, пружина запаздывает и даёт качок — рука на плече"
+                        onClick={() => patch({ physSpace: "parent" })}
+                      >
+                        родительская
+                      </button>
+                    </div>
+                  </div>
+                  {behaviour.physSpace === "parent" && !object.parentId && (
+                    <p className="behaviour-hint">
+                      У объекта нет родителя: родительская система совпадает с мировой, поворачивать
+                      его не за кем. Привяжите объект к телу в дереве.
+                    </p>
+                  )}
+                  <Row label={behaviour.physSpace === "parent" ? "Угол в теле" : "Мировой угол"} unit="°" value={behaviour.physRotation}
                     min={-180} max={180} step={1} onCommit={(physRotation) => patch({ physRotation })} />
                   <Row label="Плавность" hint="0 — жёстко, 1 — вязко" unit="" value={behaviour.physSmooth}
                     min={0} max={1} step={0.01} onCommit={(physSmooth) => patch({ physSmooth })} />
