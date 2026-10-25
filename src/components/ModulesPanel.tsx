@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, Search, SlidersHorizontal, Trash2, X,
+  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, RefreshCw, Search, SlidersHorizontal,
+  Trash2, X,
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
 import type { DeviceOption } from "../modules/audio";
 import {
-  fieldVisible, inputRange, moduleDefaults, moduleDefinition,
+  fieldVisible, inputRange, moduleDefaults, moduleDefinition, refreshLibrary,
   type ModuleDefinition, type ModuleField,
 } from "../modules/registry";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
@@ -23,6 +24,12 @@ interface ModulesPanelProps extends CalibrationApi {
   devices: DeviceOption[];
   error: string | null;
   onChange: (modules: ModuleInstance[], label?: string) => void;
+  /**
+   * Переход к модулю из вкладки «Входы»: карточку нужно раскрыть, показать на
+   * экране и подсветить. `nonce` отличается при каждом переходе — иначе
+   * повторный клик по тому же модулю ничего бы не изменил.
+   */
+  focus?: { name: string; nonce: number } | null;
 }
 
 /**
@@ -39,6 +46,48 @@ export function ModulesPanel(props: ModulesPanelProps) {
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const library = useModuleLibrary();
   const recorder = useVisemeRecorder(props);
+  // Сброс настроек спрашивает подтверждение: вместе с полями шаблона пропадут
+  // записи визем, состояния enum и калибровки — их не восстановить.
+  const [confirmReset, setConfirmReset] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const cardRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  useEffect(() => {
+    const focus = props.focus;
+    if (!focus) return;
+    setCollapsed((current) => current.filter((name) => name !== focus.name));
+    setConfirmReset(null);
+    // Поиск не должен прятать модуль, к которому перешли.
+    setQuery((current) => {
+      const needle = current.trim().toLowerCase();
+      if (!needle) return current;
+      const target = props.modules.find((module) => module.name === focus.name);
+      if (!target) return current;
+      const definition = moduleDefinition(target.type);
+      const haystack = [target.name, definition.title, definition.id,
+        ...moduleInputs(target).map((item) => item.key)].join(" ").toLowerCase();
+      return haystack.includes(needle) ? current : "";
+    });
+    setHighlight(focus.name);
+    // Карточка уже в документе: прокрутка идёт после перерисовки.
+    const scroll = requestAnimationFrame(() => {
+      cardRefs.current[focus.name]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    const timer = window.setTimeout(() => setHighlight(null), 2400);
+    return () => { cancelAnimationFrame(scroll); window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.focus?.nonce]);
+
+  /** Вернуть настройки экземпляра к шаблону из папки modules. */
+  const resetTemplate = async (module: ModuleInstance) => {
+    setConfirmReset(null);
+    await refreshLibrary();
+    // Возвращаем и выключенные входы: шаблон снова «как новый».
+    patch(module.name, {
+      config: moduleDefaults(moduleDefinition(module.type)),
+      disabledInputs: undefined,
+    }, "Сброс настроек модуля");
+  };
 
   useEffect(() => {
     // Свёрнутость живёт в компоненте: после перезапуска карточки снова раскрыты.
@@ -150,7 +199,11 @@ export function ModulesPanel(props: ModulesPanelProps) {
           const open = !isCollapsed(module.name);
           const fields = definition.fields.filter((field) => fieldVisible(field, module.config));
           return (
-            <section className={`module-card ${module.enabled ? "" : "disabled"} ${open ? "" : "collapsed"}`} key={module.name}>
+            <section
+              className={`module-card ${module.enabled ? "" : "disabled"} ${open ? "" : "collapsed"} ${highlight === module.name ? "focused" : ""}`}
+              key={module.name}
+              ref={(element) => { cardRefs.current[module.name] = element; }}
+            >
               <header>
                 <Switch
                   checked={module.enabled}
@@ -177,6 +230,11 @@ export function ModulesPanel(props: ModulesPanelProps) {
                   ><ChevronDown size={13} /></button>
                   <button className="icon-button" title="Дублировать модуль" onClick={() => duplicate(module)}><Copy size={13} /></button>
                   <button
+                    className={`icon-button ${confirmReset === module.name ? "danger" : ""}`}
+                    title="Сбросить настройки экземпляра к шаблону"
+                    onClick={() => setConfirmReset(confirmReset === module.name ? null : module.name)}
+                  ><RefreshCw size={13} /></button>
+                  <button
                     className="icon-button"
                     title="Удалить модуль"
                     onClick={() => props.onChange(props.modules.filter((item) => item.name !== module.name), "Удаление модуля")}
@@ -188,6 +246,21 @@ export function ModulesPanel(props: ModulesPanelProps) {
                   </span>
                 )}
               </header>
+
+              {/* Подтверждение сброса — отдельной строкой под заголовком:
+                  в строке заголовка ему не хватит места. */}
+              {confirmReset === module.name && (
+                <div className="module-reset-confirm">
+                  <span>
+                    Сбросить настройки «{module.name}» к шаблону? Пропадут записи визем,
+                    состояния, клавиши, кнопки и калибровки — вернуть их будет нельзя.
+                  </span>
+                  <div>
+                    <button className="button secondary" onClick={() => void resetTemplate(module)}>Сбросить</button>
+                    <button className="button ghost" onClick={() => setConfirmReset(null)}>Отмена</button>
+                  </div>
+                </div>
+              )}
 
               {open && (
                 <>

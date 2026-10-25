@@ -56,6 +56,23 @@ export function RightPanel(props: RightPanelProps) {
   // Значения кадра — свёрнутая секция: скрипт забирает всю высоту колонки,
   // а кадр открывается по клику и не висит пустой третью экрана.
   const [valuesOpen, setValuesOpen] = useState(false);
+  /**
+   * Переход «из входов в настройки модуля»: вкладка переключается, а карточка
+   * раскрывается и подсвечивается. Номер перехода нужен, чтобы повторный клик
+   * по тому же модулю тоже срабатывал.
+   */
+  const [focusModule, setFocusModule] = useState<{ name: string; nonce: number } | null>(null);
+  const openModule = (name: string) => {
+    setTab("modules");
+    setFocusModule({ name, nonce: Date.now() });
+  };
+  // Переход одноразовый: подсветка отработала — заявку снимаем, иначе возврат
+  // на вкладку «Модули» снова мигал бы той же карточкой.
+  useEffect(() => {
+    if (!focusModule) return;
+    const timer = window.setTimeout(() => setFocusModule(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [focusModule]);
   const editorValue = tab === "globals" ? props.globalScript : props.selected?.script || "";
   const editorKey = tab === "globals" ? "globals" : props.selected?.id || "empty";
   const dynamic = props.selected ? props.frame?.objects[props.selected.id] : null;
@@ -82,6 +99,7 @@ export function RightPanel(props: RightPanelProps) {
           devices={props.devices}
           error={props.audioError}
           onChange={props.onModules}
+          focus={focusModule}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />
@@ -97,6 +115,7 @@ export function RightPanel(props: RightPanelProps) {
           onManual={props.onManual}
           onModules={props.onModules}
           onInsertSnippet={props.onInsertSnippet}
+          onOpenModule={openModule}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

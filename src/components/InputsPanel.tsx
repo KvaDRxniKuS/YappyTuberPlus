@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { AudioLines, ChevronDown, Code2, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowUpRight, AudioLines, ChevronDown, Code2, Trash2 } from "lucide-react";
 import type { EnumState, InputValues, ModuleInstance, RigFrame, VisemeEntry } from "../types";
 import { frameValue, type AudioFrame } from "../modules/audio";
 import {
-  inputDefault, inputRange, moduleDefaults, moduleDefinition, refreshLibrary, type ModuleInputSpec,
+  inputDefault, inputRange, moduleDefinition, type ModuleInputSpec,
 } from "../modules/registry";
 import { inputEnabled, inputKey, instanceInputs, isPointerKind } from "../modules/values";
 import { visemeEntries } from "../modules/viseme";
@@ -21,6 +21,8 @@ interface InputsPanelProps extends CalibrationApi {
   frame: RigFrame | null;
   onManual: (key: string, value: number) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
+  /** Переход к настройкам модуля: вкладка «Модули» с подсветкой нужной карточки. */
+  onOpenModule: (name: string) => void;
   /** Вставка готового блока события в текущий скрипт. */
   onInsertSnippet: (snippet: string) => void;
 }
@@ -40,15 +42,6 @@ export function InputsPanel(props: InputsPanelProps) {
   const isActionsOpen = (name: string) => actions.includes(name);
   const toggleActions = (name: string) => {
     setActions((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
-  };
-  /** Перечитать шаблон из папки modules и вернуть настройки к умолчаниям. */
-  const reloadTemplate = async (module: ModuleInstance) => {
-    await refreshLibrary();
-    const config = moduleDefaults(moduleDefinition(module.type));
-    props.onModules(
-      props.modules.map((item) => (item.name === module.name ? { ...item, config } : item)),
-      "Обновление модуля из шаблона",
-    );
   };
   const removeModule = (module: ModuleInstance) => {
     props.onModules(
@@ -118,10 +111,10 @@ export function InputsPanel(props: InputsPanelProps) {
                 <button
                   type="button"
                   className="icon-button"
-                  title="Перечитать шаблон из папки modules и сбросить настройки"
-                  onClick={() => { void reloadTemplate(module); }}
+                  title="Открыть модуль в настройках: шаблон, поля, сброс"
+                  onClick={() => props.onOpenModule(module.name)}
                 >
-                  <RefreshCw size={12} />
+                  <ArrowUpRight size={12} />
                 </button>
                 <button
                   type="button"
