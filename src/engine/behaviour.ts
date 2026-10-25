@@ -32,6 +32,10 @@ export interface Behaviour {
   rotationSmooth: number;
   /** Пружина на повороте. */
   rotationSpring: number;
+  /** Скаляр размера по X к базовому размеру спрайта (1 — как в инспекторе). */
+  scaleX: number;
+  /** Скаляр размера по Y: тем же полем удобно править высоту, не заходя в инспектор. */
+  scaleY: number;
   /** Сквош от речи: -1..1. Минус меняет оси местами. 0 — выключено. */
   squash: number;
   /** Скорость деформации, мс. */
@@ -98,6 +102,8 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   spring: 0,
   rotationSmooth: 0,
   rotationSpring: 0,
+  scaleX: 1,
+  scaleY: 1,
   squash: 0,
   squashIn: 90,
   squashOut: 240,
@@ -195,6 +201,7 @@ export function heavyAngle(pivot: Vec2): number | null {
 export function isDefault(behaviour: Behaviour): boolean {
   return behaviour.smooth === 0 && behaviour.spring === 0
     && behaviour.rotationSmooth === 0 && behaviour.rotationSpring === 0
+    && behaviour.scaleX === 1 && behaviour.scaleY === 1
     && behaviour.squash === 0 && behaviour.bounce === 0
     && behaviour.dragAngle === 0
     && behaviour.rotationalLimitLeft === 0 && behaviour.rotationalLimitRight === 0
@@ -234,6 +241,8 @@ export function readBehaviour(script: string): Behaviour {
       merged.dragMode = (["right", "left", "random", "alternate"] as const)
         .includes(merged.dragMode) ? merged.dragMode : "right";
       merged.dragAngle = clampNumber(merged.dragAngle, 0, 180, 0);
+      merged.scaleX = clampNumber(merged.scaleX, 0.05, 5, 1);
+      merged.scaleY = clampNumber(merged.scaleY, 0.05, 5, 1);
       merged.bounceSpeed = clampNumber(merged.bounceSpeed, 10, 2000, 120);
       merged.bounceHold = clampNumber(merged.bounceHold, 60, 5000, 700);
       merged.wiggleRotFreq = clampNumber(merged.wiggleRotFreq, 0, 20, 0);
@@ -441,18 +450,32 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     body.push(`rotation = ${expression}`);
   }
 
+  // Скаляры размера: отдельные числа, чтобы высоту и ширину можно было править
+  // здесь же, не заходя в инспектор. Умножаются на базовый «Масштаб» объекта.
+  const sizeBase = (value: number): string => {
+    if (value === 1) return scale;
+    return hasParent ? `inherit * ${num(value)}` : num(value);
+  };
+  const scaledX = sizeBase(behaviour.scaleX);
+  const scaledY = sizeBase(behaviour.scaleY);
   if (behaviour.squash !== 0) {
     // Отдельной переменной в скрипте объекта быть не может (имя слева — это
     // параметр), поэтому прошлое значение сквоша берём из `state.sizeY`:
-    // sizeY = inherit * (1 + s), значит s_prev = state.sizeY - inherit.
-    // Сравниваем модули: сквош бывает отрицательным, и тогда «рост» цели
-    // означает уменьшение sizeY.
+    // sizeY = база * (1 + s), значит s_prev = state.sizeY - база. Сравниваем
+    // модули: сквош бывает отрицательным, и тогда «рост» цели означает
+    // уменьшение sizeY.
     const value = `mic.speak * ${num(behaviour.squash)}`;
-    const past = `abs(state.sizeY - ${scale})`;
+    const past = `abs(state.sizeY - (${scaledY}))`;
+    const timing = `abs(${value}) * (${scaledY}) > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}`;
+    const ratio = behaviour.scaleX / behaviour.scaleY;
     body.push(
-      `sizeY = ${scale} * (1 + smooth(${value}, abs(${value}) > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}))`,
-      `sizeX = ${scale} * 2 - sizeY`,
+      `sizeY = ${scaledY} * (1 + smooth(${value}, ${timing}))`,
+      // Объём держим вокруг новой базы: растянулись по Y — сжались по X.
+      `sizeX = ${scaledX} * 2 - ${ratio === 1 ? "sizeY" : `sizeY * ${num(ratio)}`}`,
     );
+  } else if (behaviour.scaleX !== 1 || behaviour.scaleY !== 1) {
+    if (behaviour.scaleX !== 1) body.push(`sizeX = ${scaledX}`);
+    if (behaviour.scaleY !== 1) body.push(`sizeY = ${scaledY}`);
   }
 
   const rules: string[] = [];

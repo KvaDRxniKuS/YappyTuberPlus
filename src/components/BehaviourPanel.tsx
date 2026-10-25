@@ -172,7 +172,16 @@ export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelPr
       </section>
 
       <section className="behaviour-section">
-        <div className="section-title"><span><Wind size={13} /> Деформация и подпрыгивание</span></div>
+        <div className="section-title"><span><Wind size={13} /> Размер, деформация и подпрыгивание</span></div>
+        <p className="behaviour-hint">
+          «Размер X/Y» — скаляры к базовому размеру спрайта: цифра прямо в скрипте, поэтому высоту и
+          ширину можно править здесь, не заходя в инспектор. Они умножаются на «Масштаб X/Y» из
+          инспектора и работают вместе со сквошем: растянулись по одной оси — сжались по другой.
+        </p>
+        <Row label="Размер X" hint="скаляр к базовому размеру" unit="×" value={behaviour.scaleX}
+          min={0.05} max={5} step={0.01} onCommit={(scaleX) => patch({ scaleX })} />
+        <Row label="Размер Y" hint="скаляр к базовому размеру" unit="×" value={behaviour.scaleY}
+          min={0.05} max={5} step={0.01} onCommit={(scaleY) => patch({ scaleY })} />
         <Row label="Сквош" hint="минус меняет оси местами" unit="" value={behaviour.squash}
           min={-1} max={1} step={0.01} onCommit={(squash) => patch({ squash })} />
         <Row label="Скорость деформации" unit="мс" value={behaviour.squashIn}

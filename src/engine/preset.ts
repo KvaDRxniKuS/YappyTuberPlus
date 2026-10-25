@@ -356,7 +356,16 @@ export function parentNewObject(
   // «стать родителем» однозначно: два новых спрайта не могут оба быть родителем.
   if (roots.length > 1 && created.length === 1) {
     const parent = created[0].id;
-    return objects.map((object) => (roots.includes(object.id) ? setParent(object, parent) : object));
+    // Общий родитель выделенных: новый объект встаёт внутрь него, а не в корень,
+    // иначе группа выпрыгивает из тела, в котором лежали все выбранные.
+    const parents = new Set(roots.map((id) => objects.find((object) => object.id === id)?.parentId ?? null));
+    const common = parents.size === 1 ? [...parents][0] : null;
+    const nested = objects.map((object) => {
+      if (roots.includes(object.id)) return setParent(object, parent);
+      if (object.id === parent && common) return setParent(object, common);
+      return object;
+    });
+    return nested;
   }
   return objects;
 }
