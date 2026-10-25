@@ -72,6 +72,28 @@ export interface ByeMessage {
   role: "viewer" | "host";
 }
 
+/**
+ * Файл объекта: оверлей просит его у редактора.
+ *
+ * Ссылки `asset:<id>` разрешаются хранилищем webview, но страница оверлея может
+ * жить на другом origin — источник браузера в OBS открывает её со встроенного
+ * сервера приложения. В этом случае IndexedDB редактора недоступна, и файл
+ * приходит по протоколу (один раз на файл, с кэшем на стороне оверлея).
+ */
+export interface AssetRequestMessage {
+  t: "asset-request";
+  sender: string;
+  id: string;
+}
+
+/** Ответ редактора: файл в виде data URL. */
+export interface AssetMessage {
+  t: "asset";
+  sender: string;
+  id: string;
+  data: string;
+}
+
 /** Sent by the optional WebSocket bridge so clients can report transport health. */
 export interface BridgeMessage {
   t: "bridge";
@@ -81,10 +103,12 @@ export interface BridgeMessage {
 
 export type WireMessage =
   | HelloMessage | AnnounceMessage | SceneMessage | ConfigMessage
-  | PoseMessage | FrameMessage | ByeMessage | BridgeMessage;
+  | PoseMessage | FrameMessage | ByeMessage | BridgeMessage
+  | AssetRequestMessage | AssetMessage;
 
 const MESSAGE_TYPES = new Set([
   "hello", "announce", "scene", "config", "pose", "frame", "bye", "bridge",
+  "asset-request", "asset",
 ]);
 
 export function isWireMessage(value: unknown): value is WireMessage {

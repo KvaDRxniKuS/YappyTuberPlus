@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
 import { MediaAssets } from "../render/media";
+import { assetIdsOfPreset, ensureAssetsOfPreset, onAssetsChanged, unresolvedAssetIds } from "../engine/assets";
 import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
 import { bridgeUrlFromLocation, overlayBackground, scenePreset } from "./protocol";
@@ -86,9 +87,37 @@ export function OverlayApp() {
   const { mode: background, color: backgroundColor } = overlayBackground(config, { capture, native: isTauri() });
 
   useEffect(() => {
+    // Оверлей и окно захвата живут на том же origin, что и редактор, поэтому
+    // файлы берутся из общего хранилища webview по ссылкам `asset:<id>`.
+    if (preset) ensureAssetsOfPreset(preset);
     assets.current.sync(preset?.objects ?? []);
     markDirty();
   }, [preset]);
+
+  useEffect(() => onAssetsChanged(() => {
+    if (presetRef.current) assets.current.sync(presetRef.current.objects);
+    loop.current?.request();
+  }), []);
+
+  /**
+   * Файл, которого нет в локальном хранилище, оверлей просит у редактора.
+   *
+   * Так работает источник браузера в OBS: страница приходит со встроенного
+   * сервера приложения, это другой origin, и IndexedDB редактора ей не видна.
+   * Список запросов сбрасывается на новой версии сцены, чтобы потерянный
+   * ответ можно было запросить заново.
+   */
+  const requestedAssets = useRef(new Set<string>());
+  const sceneVersion = snapshot?.scene?.version ?? 0;
+  useEffect(() => { requestedAssets.current.clear(); }, [sceneVersion]);
+  useEffect(() => {
+    if (!preset) return;
+    for (const id of unresolvedAssetIds(assetIdsOfPreset(preset))) {
+      if (requestedAssets.current.has(id)) continue;
+      requestedAssets.current.add(id);
+      clientRef.current?.requestAsset(id);
+    }
+  }, [preset, sceneVersion]);
 
   useEffect(() => assets.current.onChange(() => markDirty()), []);
 

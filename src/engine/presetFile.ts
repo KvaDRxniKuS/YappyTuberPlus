@@ -1,13 +1,19 @@
 import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
+import { externalizePreset, inlineAssets } from "./assets";
 
 /**
  * Работа с пресетом как с файлом на диске.
  *
  * Целевая платформа — приложение Tauri: «Сохранить» перезаписывает текущий
  * файл, «Сохранить как…» открывает нативный диалог выбора директории. Запись
- * и чтение выполняет Rust (`std::fs`), поэтому большие presets с data URL
- * картинок не проходят через localStorage.
+ * и чтение выполняет Rust (`std::fs`).
+ *
+ * В рабочем состоянии пресета картинки и медиа — ссылки `asset:<id>` на
+ * хранилище webview (`src/engine/assets.ts`). На диск файл пишется только
+ * самодостаточным: перед записью ссылки встраиваются обратно в data URL, а при
+ * открытии снова распаковываются в хранилище. Поэтому пресет переносится на
+ * другую машину целиком, а автосохранение в localStorage остаётся маленьким.
  *
  * В браузере (режим разработки) остаётся только скачивание/загрузка файла:
  * специальной браузерной поддержки нет и не планируется.
@@ -59,10 +65,15 @@ async function defaultDirectory(): Promise<string | null> {
   }
 }
 
+/** Текст файла пресета: ссылки на файлы встроены обратно в data URL. */
+export async function presetFileContents(preset: RigPreset): Promise<string> {
+  return JSON.stringify(await inlineAssets(preset), null, 2);
+}
+
 /** Записывает пресет в текущий файл или просит путь, если файла ещё нет. */
 export async function savePreset(preset: RigPreset, path: string | null): Promise<SaveResult> {
-  const contents = JSON.stringify(preset, null, 2);
   if (!isTauri()) return downloadPreset(preset);
+  const contents = await presetFileContents(preset);
   let target = path;
   if (!target) {
     const picked = await pickSavePath(preset);
@@ -78,7 +89,7 @@ export async function savePresetAs(preset: RigPreset): Promise<SaveResult> {
   if (!isTauri()) return downloadPreset(preset);
   const target = await pickSavePath(preset);
   if (!target) throw new Error("Сохранение отменено");
-  await tauriInvoke<void>("preset_write", { path: target, contents: JSON.stringify(preset, null, 2) });
+  await tauriInvoke<void>("preset_write", { path: target, contents: await presetFileContents(preset) });
   return { path: target, backend: "tauri" };
 }
 
@@ -107,7 +118,10 @@ export async function openPresetFile(): Promise<OpenResult> {
   const path = Array.isArray(selected) ? selected[0] : selected;
   if (!path) throw new Error("Открытие отменено");
   const text = await tauriInvoke<string>("preset_read", { path });
-  return { preset: parsePreset(text), path, backend: "tauri" };
+  const parsed = parsePreset(text);
+  // Файлы переезжают в хранилище webview: в редакторе остаются короткие ссылки.
+  const extracted = await externalizePreset(parsed);
+  return { preset: extracted.preset, path, backend: "tauri" };
 }
 
 export function parsePreset(text: string): RigPreset {
@@ -117,8 +131,8 @@ export function parsePreset(text: string): RigPreset {
 }
 
 /** Браузерный запасной путь — только для разработки. */
-export function downloadPreset(preset: RigPreset): SaveResult {
-  const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
+export async function downloadPreset(preset: RigPreset): Promise<SaveResult> {
+  const blob = new Blob([await presetFileContents(preset)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

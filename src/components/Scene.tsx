@@ -11,6 +11,7 @@ import {
   transformPoint, type Affine,
 } from "../render/rigCanvas";
 import { MediaAssets } from "../render/media";
+import { onAssetsChanged } from "../engine/assets";
 import type { TextChannel } from "../render/text";
 import {
   boxFromCorners, boxFromPoints, boxIntersects, polygonIntersectsBox, selectionRoots,
@@ -249,6 +250,12 @@ export function Scene(props: SceneProps) {
   }, [imageKey, props.preset.objects]);
 
   useEffect(() => assets.current.onChange(() => { markDirty(); }), []);
+  // Файлы из хранилища читаются асинхронно: когда картинка появилась,
+  // спрайт нужно поставить в очередь декодирования и перерисовать сцену.
+  useEffect(() => onAssetsChanged(() => {
+    assets.current.sync(propsRef.current.preset.objects);
+    markDirty();
+  }), []);
   useEffect(() => () => mediaAssets.current.dispose(), []);
 
   useEffect(() => {

@@ -3,6 +3,7 @@ import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
 import { frontness, structurePaths } from "../engine/structure";
 import { DEFAULT_MEDIA, MediaAssets } from "./media";
+import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 
 /**
@@ -23,16 +24,27 @@ export class SpriteAssets {
     return () => { this.listeners.delete(listener); };
   }
 
-  /** Starts decoding any image that is not in the cache yet. */
+  /**
+   * Starts decoding any image that is not in the cache yet.
+   *
+   * `object.image` — это либо обычный путь (`/assets/demo/head.png`), либо
+   * `asset:<id>` в хранилище webview. Во втором случае URL появляется только
+   * после чтения файла, поэтому вызов повторяется по событию хранилища.
+   */
   sync(objects: RigObject[]): void {
     for (const object of objects) {
       const source = object.image;
-      if (!source || this.images.has(source)) continue;
-      const image = new Image();
+      if (!source) continue;
+      const url = assetUrl(source);
+      if (!url) continue;
+      const existing = this.images.get(source);
+      if (existing?.dataset.source === url) continue;
+      const image = existing ?? new Image();
       image.decoding = "async";
       image.onload = () => { this.emit(); };
       image.onerror = () => { this.emit(); };
-      image.src = source;
+      image.dataset.source = url;
+      image.src = url;
       this.images.set(source, image);
     }
   }

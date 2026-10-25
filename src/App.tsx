@@ -19,6 +19,7 @@ import {
   uniqueId,
 } from "./engine/preset";
 import { inspectFile } from "./engine/importFile";
+import { assetIdsOfPreset, ensureAssetsOfPreset, externalizePreset, pruneAssets } from "./engine/assets";
 import { textChannel } from "./render/text";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
@@ -122,6 +123,26 @@ export default function App() {
       return JSON.stringify(modules) === JSON.stringify(current.modules) ? current : { ...current, modules };
     });
   }, [library.ready]);
+  /**
+   * Файлы объектов — вне пресета (`src/engine/assets.ts`).
+   *
+   * На старте data URL из сохранённого пресета переезжают в хранилище webview,
+   * а файлы, на которые больше никто не ссылается, удаляются: история отмены
+   * в этот момент пуста, вернуть ссылку на них уже нечем. Так автосохранение в
+   * localStorage остаётся маленьким, а хранилище не растёт вечно.
+   */
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const extracted = await externalizePreset(presetRef.current);
+      if (!active) return;
+      if (extracted.changed) setPreset(extracted.preset);
+      ensureAssetsOfPreset(extracted.preset);
+      await pruneAssets(assetIdsOfPreset(extracted.preset));
+    })();
+    return () => { active = false; };
+  }, []);
+
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
   const selectionRef = useRef(selection);
@@ -697,7 +718,9 @@ export default function App() {
     try {
       const parsed = normalizePreset(JSON.parse(await file.text()));
       if (!parsed) throw new Error("Это не пресет YappyTuberPlus версии 2");
-      applyOpenedPreset(migrateDemoPreset(parsed), null);
+      // Файлы пресета распаковываются в хранилище: редактор работает со ссылками.
+      const extracted = await externalizePreset(migrateDemoPreset(parsed));
+      applyOpenedPreset(extracted.preset, null);
       notify("Пресет загружен из файла");
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Ошибка загрузки пресета");

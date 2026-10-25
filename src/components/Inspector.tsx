@@ -6,6 +6,8 @@ import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
 import { pivotBaseShift } from "../engine/structure";
+import { useAssetUrl } from "../hooks/useAssets";
+import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
 
 interface InspectorProps {
   object: RigObject | null;
@@ -151,6 +153,10 @@ function DeltaField({ label, onApply }: { label: string; onApply: (value: number
 
 export function Inspector(props: InspectorProps) {
   const { object, selection, objects, frame, onChange } = props;
+  // Превью берёт готовый URL из хранилища файлов: ссылка `asset:<id>` читается
+  // асинхронно, поэтому хуки стоят до ранних выходов и вызываются всегда.
+  const preview = useAssetUrl(object?.image);
+  const mediaPreview = useAssetUrl(object?.media?.src);
 
   if (selection.length > 1) return <MultiInspector {...props} />;
 
@@ -197,30 +203,29 @@ export function Inspector(props: InspectorProps) {
    */
   const imageInput = useRef<HTMLInputElement>(null);
   const imageFit = useRef(false);
-  const replaceImage = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const source = typeof reader.result === "string" ? reader.result : "";
-      if (!source) return;
-      const probe = new Image();
-      probe.onload = () => {
-        if (!imageFit.current || !probe.naturalWidth || !probe.naturalHeight) {
-          onChange({ ...object, image: source });
-          return;
-        }
-        const anchor = { x: object.pivot.x * object.width, y: object.pivot.y * object.height };
-        onChange({
-          ...object,
-          image: source,
-          width: probe.naturalWidth,
-          height: probe.naturalHeight,
-          pivot: { x: anchor.x / probe.naturalWidth, y: anchor.y / probe.naturalHeight },
-        });
-      };
-      probe.onerror = () => onChange({ ...object, image: source });
-      probe.src = source;
+  /**
+   * Замена картинки: файл уходит в хранилище webview, а в объекте остаётся
+   * ссылка `asset:<id>`. При недоступном хранилище — data URL, как раньше.
+   */
+  const replaceImage = async (file: File) => {
+    const source = (await storeFile(file)) ?? (await blobToDataUrl(file));
+    const probe = new Image();
+    probe.onload = () => {
+      if (!imageFit.current || !probe.naturalWidth || !probe.naturalHeight) {
+        onChange({ ...object, image: source });
+        return;
+      }
+      const anchor = { x: object.pivot.x * object.width, y: object.pivot.y * object.height };
+      onChange({
+        ...object,
+        image: source,
+        width: probe.naturalWidth,
+        height: probe.naturalHeight,
+        pivot: { x: anchor.x / probe.naturalWidth, y: anchor.y / probe.naturalHeight },
+      });
     };
-    reader.readAsDataURL(file);
+    probe.onerror = () => onChange({ ...object, image: source });
+    probe.src = assetUrl(source) ?? source;
   };
 
   const commitPivot = (next: { x: number; y: number }) => {
@@ -246,10 +251,10 @@ export function Inspector(props: InspectorProps) {
       <div className="inspector-header">
         <div className={`inspector-preview ${object.kind}`}>
           {object.kind === "text" ? <Type size={20} />
-            : object.kind === "media" ? (object.media?.type === "image" && object.media.src
-              ? <img src={object.media.src} alt="" />
+            : object.kind === "media" ? (object.media?.type === "image" && mediaPreview
+              ? <img src={mediaPreview} alt="" />
               : object.media?.type === "audio" ? <Music size={20} /> : <Link2 size={20} />)
-            : object.image ? <img src={object.image} alt="" /> : <Link2 size={20} />}
+            : preview ? <img src={preview} alt="" /> : <Link2 size={20} />}
         </div>
         <div className="inspector-title">
           <input
@@ -313,7 +318,7 @@ export function Inspector(props: InspectorProps) {
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
-                if (file) replaceImage(file);
+                if (file) void replaceImage(file);
               }}
             />
           </div>
@@ -374,14 +379,10 @@ function MediaSection({ object, media, onChange }: {
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const update = (patch: Partial<MediaSpec>) => onChange({ ...object, media: { ...media, ...patch } });
-  const replace = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const src = typeof reader.result === "string" ? reader.result : "";
-      if (!src) return;
-      update({ src, type: mediaTypeOf(file), fileName: file.name });
-    };
-    reader.readAsDataURL(file);
+  /** Замена файла: байты — в хранилище webview, в объекте остаётся ссылка. */
+  const replace = async (file: File) => {
+    const src = (await storeFile(file)) ?? (await blobToDataUrl(file));
+    update({ src, type: mediaTypeOf(file), fileName: file.name });
   };
   return (
     <>
@@ -403,7 +404,7 @@ function MediaSection({ object, media, onChange }: {
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
-            if (file) replace(file);
+            if (file) void replace(file);
           }}
         />
         <div className="property-grid two-columns">

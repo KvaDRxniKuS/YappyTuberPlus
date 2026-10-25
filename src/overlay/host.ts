@@ -1,5 +1,6 @@
 import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
 import { neutralFrame } from "../engine/frame";
+import { assetRef, inlineSource } from "../engine/assets";
 import type { CompositeBus } from "./bus";
 import {
   basesOf, configSignature, OVERLAY_PROTOCOL, poseSignature, structureSignature,
@@ -146,6 +147,17 @@ export class OverlayHost {
       // the scene; otherwise the periodic frame stream is enough.
       if (!known || hello.sceneVersion < this.sceneVersion) this.publishScene();
       if (this.frozen) this.publishNeutral(this.presetRef);
+      return;
+    }
+    if (message.t === "asset-request") {
+      // Файл нужен оверлею на другом origin (источник браузера в OBS): отдаём
+      // его data URL. Свой кэш у оверлея есть, поэтому повторно не шлём.
+      this.registerViewer(message.sender);
+      const id = message.id;
+      if (!id) return;
+      void inlineSource(assetRef(id)).then((data) => {
+        if (data && !this.disposed) this.bus.post({ t: "asset", sender: this.id, id, data });
+      });
       return;
     }
     if (message.t === "bye" && message.role === "viewer") {

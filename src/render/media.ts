@@ -1,4 +1,5 @@
 import type { MediaCue, MediaSpec, RigFrame, RigPreset } from "../types";
+import { assetUrl } from "../engine/assets";
 
 /** Настройки медиа по умолчанию: старые пресеты и новый объект без файла. */
 export const DEFAULT_MEDIA: MediaSpec = {
@@ -30,6 +31,8 @@ interface Voice {
 
 interface Entry {
   spec: MediaSpec;
+  /** Готовый URL файла: `asset:<id>` превращается в `blob:` хранилищем. */
+  source: string | null;
   image: HTMLImageElement | null;
   video: HTMLVideoElement | null;
   voices: Voice[];
@@ -98,6 +101,11 @@ export class MediaAssets {
         else this.pause(entry);
       }
 
+      // Файл мог догрузиться уже после команды «играть»: тогда источник
+      // запускается здесь, иначе звук молчал бы до следующей команды.
+      if (entry.source && entry.desired && spec.type === "audio" && !entry.voices.length) {
+        this.startVoice(entry);
+      }
       this.applySettings(entry);
       this.applyVisibility(entry);
     }
@@ -135,9 +143,16 @@ export class MediaAssets {
   }
 
   private entry(id: string, spec: MediaSpec): Entry {
+    const source = assetUrl(spec.src);
     const existing = this.entries.get(id);
     if (existing && existing.spec.src === spec.src && existing.spec.type === spec.type) {
       existing.spec = spec;
+      // Ссылка на файл разрешилась позже — подключаем источник, не сбрасывая
+      // состояние воспроизведения.
+      if (!existing.source && source) {
+        existing.source = source;
+        this.attach(existing, spec, source);
+      }
       return existing;
     }
     if (existing) {
@@ -146,6 +161,7 @@ export class MediaAssets {
     }
     const entry: Entry = {
       spec,
+      source,
       image: null,
       video: null,
       voices: [],
@@ -156,28 +172,31 @@ export class MediaAssets {
       rate: spec.speed || 1,
       volume: spec.volume ?? 1,
     };
-    if (spec.src) {
-      if (spec.type === "video") {
-        const video = document.createElement("video");
-        video.src = spec.src;
-        video.loop = spec.loop;
-        video.muted = spec.muted;
-        video.playsInline = true;
-        video.preload = "auto";
-        video.volume = entry.volume;
-        entry.video = video;
-      } else if (spec.type === "image") {
-        const image = new Image();
-        image.decoding = "async";
-        image.src = spec.src;
-        entry.image = image;
-      }
-    }
+    if (source) this.attach(entry, spec, source);
     this.entries.set(id, entry);
     // Автозапуск: пробуем сразу. Если браузер требует жест, повторные попытки
     // идут из `applyVisibility` на каждом кадре, пока воспроизведение не начнётся.
     if (spec.autoplay) this.begin(entry, false);
     return entry;
+  }
+
+  /** Создаёт элемент воспроизведения под готовый URL файла. */
+  private attach(entry: Entry, spec: MediaSpec, source: string): void {
+    if (spec.type === "video") {
+      const video = document.createElement("video");
+      video.src = source;
+      video.loop = spec.loop;
+      video.muted = spec.muted;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.volume = entry.volume;
+      entry.video = video;
+    } else if (spec.type === "image") {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = source;
+      entry.image = image;
+    }
   }
 
   private applyCue(entry: Entry, cue: MediaCue): void {
@@ -209,7 +228,7 @@ export class MediaAssets {
   private begin(entry: Entry, restart: boolean): void {
     entry.desired = true;
     const spec = entry.spec;
-    if (!spec.src || spec.type === "image") return;
+    if (!entry.source || spec.type === "image") return;
 
     if (spec.type === "video") {
       const video = entry.video;
@@ -254,8 +273,8 @@ export class MediaAssets {
 
   private startVoice(entry: Entry): void {
     const spec = entry.spec;
-    if (!spec.src) return;
-    const element = new Audio(spec.src);
+    if (!entry.source) return;
+    const element = new Audio(entry.source);
     element.loop = spec.loop;
     element.volume = clamp(entry.volume, 0, 1);
     element.playbackRate = clamp(entry.rate, 0.05, 8);

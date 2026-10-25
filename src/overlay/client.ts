@@ -1,6 +1,7 @@
 import type { BasePose, OverlayConfig, RigFrame } from "../types";
 import type { CompositeBus } from "./bus";
 import type { OverlayScene, WireMessage } from "./protocol";
+import { acceptAssetData } from "../engine/assets";
 
 export type OverlayStatus = "connecting" | "waiting" | "live" | "stale";
 
@@ -87,6 +88,12 @@ export class OverlayClient {
     };
   }
 
+  /** Просит у редактора файл, которого нет в локальном хранилище. */
+  requestAsset(id: string): void {
+    if (this.disposed || !id) return;
+    this.bus.post({ t: "asset-request", sender: this.id, id });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -163,6 +170,11 @@ export class OverlayClient {
         this.frameCount += 1;
         for (const listener of this.frameListeners) listener();
         if (this.status !== "live") this.update("live");
+        break;
+      }
+      case "asset": {
+        // Файл пришёл от редактора: кэш оверлея общий с редактором по ссылке.
+        acceptAssetData(message.id, message.data);
         break;
       }
       default:

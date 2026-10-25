@@ -6,6 +6,25 @@ import {
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
 import { rangeIds, selectionRoots, treeRows } from "../engine/selection";
+import { useAssetUrl } from "../hooks/useAssets";
+
+/**
+ * Миниатюра строки дерева.
+ *
+ * Файл объекта лежит в хранилище webview (`asset:<id>`), поэтому URL берётся
+ * хуком: пока IndexedDB читает блоб, строка показывает значок типа.
+ */
+function TreeThumbnail({ object }: { object: RigObject }) {
+  const preview = useAssetUrl(object.image);
+  const mediaPreview = useAssetUrl(object.media?.src);
+  if (object.kind === "group") return <Folder size={15} />;
+  if (object.kind === "text") return <Type size={15} />;
+  if (object.kind === "media") {
+    if (object.media?.type === "audio") return <FileVideo size={15} />;
+    return mediaPreview ? <img src={mediaPreview} alt="" draggable={false} /> : <Film size={15} />;
+  }
+  return preview ? <img src={preview} alt="" draggable={false} /> : <Box size={15} />;
+}
 
 interface TreePanelProps {
   objects: RigObject[];
@@ -163,11 +182,7 @@ export function TreePanel(props: TreePanelProps) {
                 {hasChildren ? (collapsed.has(object.id) ? <ChevronRight size={13} /> : <ChevronDown size={13} />) : <span />}
               </button>
               <span className={`tree-thumbnail ${object.kind}`}>
-                {object.kind === "group" ? <Folder size={15} />
-                  : object.kind === "text" ? <Type size={15} />
-                  : object.kind === "media"
-                    ? object.media?.type === "audio" ? <FileVideo size={15} /> : object.media?.src ? <img src={object.media.src} alt="" draggable={false} /> : <Film size={15} />
-                  : object.image ? <img src={object.image} alt="" draggable={false} /> : <Box size={15} />}
+                <TreeThumbnail object={object} />
               </span>
               {props.renamingId === object.id
                 ? <TreeRename

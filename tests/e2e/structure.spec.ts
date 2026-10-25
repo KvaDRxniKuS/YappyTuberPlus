@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { orderedSprites } from "../../src/render/rigCanvas";
+import { orderedObjects } from "../../src/render/rigCanvas";
 import { propagateBase } from "../../src/engine/structure";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { BasePose, RigFrame, RigObject } from "../../src/types";
@@ -74,12 +74,20 @@ test("порядок отрисовки: слой из кадра, при рав
     diagnostics: [],
   });
 
+  // Слой-литерал берётся из пресета (иначе порядок отставал бы от правки до
+  // следующего тика), поэтому «слой из кадра» проверяем на формуле.
+  const bodyIndex = preset.objects.findIndex((item) => item.id === "body");
+  preset.objects[bodyIndex] = {
+    ...preset.objects[bodyIndex],
+    script: preset.objects[bodyIndex].script.replace(/^[ \t]*layer[ \t]*=.*$/m, "layer = manual.value"),
+  };
+
   // Дичь: рука получает слой выше головы — рисуется последней.
-  const raised = orderedSprites(preset, frame({ body: 9 }));
+  const raised = orderedObjects(preset, frame({ body: 9 }));
   expect(raised[raised.length - 1].id).toBe("body");
 
   // Равные слои: потомок поверх предка, верхняя строка структуры поверх нижней.
-  const even = orderedSprites(preset, frame(Object.fromEntries(preset.objects.map((item) => [item.id, 0]))));
+  const even = orderedObjects(preset, frame(Object.fromEntries(preset.objects.map((item) => [item.id, 0]))));
   const indexOf = (id: string) => even.findIndex((item) => item.id === id);
   // Верхняя строка структуры — поверх нижней: она рисуется позже.
   expect(indexOf("head")).toBeGreaterThan(indexOf("eye_left"));

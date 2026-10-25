@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import {
-  drawRig, invertAffine, objectMatrix, orderedSprites, transformPoint, type SpriteAssets,
+  drawRig, invertAffine, objectMatrix, orderedObjects, transformPoint, type SpriteAssets,
 } from "../../src/render/rigCanvas";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { ObjectFrame, RigFrame } from "../../src/types";
@@ -52,7 +52,7 @@ test("renderer draws sprites in computed order with base pose and opacity", () =
 
   drawRig(context, preset, frame, assets);
 
-  const sprites = orderedSprites(preset, frame).map((object) => object.id);
+  const sprites = orderedObjects(preset, frame).map((object) => object.id);
   // Порядок считает редактор — слой и структура, — а массив `order` из кадра
   // больше не решает, кто поверх: иначе смена слоя ждала бы перезапуска движка.
   expect(sprites).not.toEqual(order.filter((id) => preset.objects.find((object) => object.id === id)?.kind === "sprite"));

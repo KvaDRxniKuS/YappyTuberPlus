@@ -72,7 +72,14 @@ export function useRigEngine(
     const config = {
       canvas: current.canvas,
       globals: current.globals,
-      objects: current.objects.map((object) => ({ ...object, image: null })),
+      // Ядру не нужны ни картинка, ни файл медиа: оно считает числа. Ссылку на
+      // файл в хранилище всё равно не разобрать в Rust, а base64 туда гонять
+      // незачем — на больших видео это десятки мегабайт на каждую правку.
+      objects: current.objects.map((object) => ({
+        ...object,
+        image: null,
+        media: object.media ? { ...object.media, src: null } : undefined,
+      })),
       // Состояния enum приходят в ядро числами: в скрипте `manual.value == walk`
       // читается по имени, а не по номеру.
       constants: enumConstants(current.modules),
