@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
 import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, readExternalSource } from "../modules/external";
+import { TWITCH_EVENTS, TWITCH_VERIFY, eventRule, selectedEvents } from "../modules/twitch";
 import type { ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
 
@@ -8,6 +9,10 @@ interface ExternalSourceEditorProps {
   module: ModuleInstance;
   /** Состояние соединения: подключён, ждёт, ошибка. */
   status?: ExternalStatus;
+  /** Вход в Twitch: показывает код и страницу активации. */
+  onAuthorize?: () => void;
+  /** Забыть токен Twitch. */
+  onSignOut?: () => void;
   onChange: (source: ExternalSourceConfig, label?: string) => void;
 }
 
@@ -40,6 +45,18 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   };
   const removeRule = (index: number) => {
     patch({ mapping: source.mapping.filter((_, position) => position !== index) }, "Удаление входа источника");
+  };
+  /** Twitch: включение события добавляет его строку в таблицу, снятие — убирает. */
+  const toggleEvent = (type: string, on: boolean) => {
+    if (!on) {
+      patch({ mapping: source.mapping.filter((rule) => rule.event !== type) }, "Событие Twitch выключено");
+      return;
+    }
+    const spec = TWITCH_EVENTS.find((item) => item.type === type);
+    if (!spec) return;
+    // Такой вход мог остаться от прошлой настройки — заменяем, а не дублируем.
+    const mapping = source.mapping.filter((rule) => rule.input !== spec.rule.input);
+    patch({ mapping: [...mapping, eventRule(spec)] }, "Событие Twitch включено");
   };
   const addRule = () => {
     // Имя входа должно быть свободно: дубль молча съел бы строку.
@@ -76,18 +93,47 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           </div>
         </div>
 
-        <div className="module-field" title={info.placeholder}>
-          <span className="module-field-label">Адрес</span>
-          <div className="module-field-value">
-            <input
-              className="module-field-text"
-              value={source.url}
-              spellCheck={false}
-              placeholder={info.placeholder}
-              onChange={(event) => patch({ url: event.target.value }, "Адрес источника")}
-            />
+        {source.transport === "twitch" ? (
+          <>
+            <div className="module-field" title="Client ID приложения Twitch (dev.twitch.tv). Это не секрет: он едет вместе с пресетом.">
+              <span className="module-field-label">Client ID</span>
+              <div className="module-field-value">
+                <input
+                  className="module-field-text"
+                  value={source.clientId ?? ""}
+                  spellCheck={false}
+                  placeholder="abcdef123456…"
+                  onChange={(event) => patch({ clientId: event.target.value.trim() || undefined }, "Client ID Twitch")}
+                />
+              </div>
+            </div>
+            <div className="module-field" title="Логин канала, за событиями которого следим: имя из адреса twitch.tv/имя.">
+              <span className="module-field-label">Канал</span>
+              <div className="module-field-value">
+                <input
+                  className="module-field-text"
+                  value={source.channel ?? ""}
+                  spellCheck={false}
+                  placeholder="yappy"
+                  onChange={(event) => patch({ channel: event.target.value.trim() || undefined }, "Канал Twitch")}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="module-field" title={info.placeholder}>
+            <span className="module-field-label">Адрес</span>
+            <div className="module-field-value">
+              <input
+                className="module-field-text"
+                value={source.url}
+                spellCheck={false}
+                placeholder={info.placeholder}
+                onChange={(event) => patch({ url: event.target.value }, "Адрес источника")}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {source.transport === "http" && (
           <div className="module-field" title="Как часто опрашивать адрес: 100…600000 мс.">
@@ -135,6 +181,46 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           </div>
         </div>
       </div>
+
+      {source.transport === "twitch" && (
+        <div className="twitch-panel">
+          <div className="twitch-auth">
+            {status?.twitch?.state === "authorizing" && status.twitch.userCode ? (
+              <div className="twitch-code">
+                <span className="muted">Код для входа:</span>
+                <b>{status.twitch.userCode}</b>
+                <a href={status.twitch.verificationUri || TWITCH_VERIFY} target="_blank" rel="noreferrer">
+                  {status.twitch.verificationUri || TWITCH_VERIFY}
+                </a>
+              </div>
+            ) : (
+              <div className="twitch-buttons">
+                <button className="button secondary" onClick={() => props.onAuthorize?.()} disabled={!props.onAuthorize || !source.clientId}>
+                  Войти в Twitch
+                </button>
+                <button className="button ghost" onClick={() => props.onSignOut?.()} disabled={!props.onSignOut}>
+                  Выйти
+                </button>
+                {status?.twitch?.login && <span className="muted">вошли как {status.twitch.login}</span>}
+              </div>
+            )}
+          </div>
+
+          <div className="twitch-events">
+            <span className="twitch-events-title">События</span>
+            {TWITCH_EVENTS.map((spec) => {
+              const on = selectedEvents(source).some((item) => item.type === spec.type);
+              return (
+                <label className="twitch-event" key={spec.type} title={`${spec.type} · право ${spec.scope || "не требуется"}`}>
+                  <Switch checked={on} onChange={(next) => toggleEvent(spec.type, next)} title={spec.label} />
+                  <span>{spec.label}</span>
+                  <code>{spec.rule.input}</code>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <p className="module-hint external-hint">{transportHint(source.transport)}</p>
 
@@ -220,6 +306,9 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
 }
 
 function transportHint(transport: ExternalSourceConfig["transport"]): string {
+  if (transport === "twitch") {
+    return "Вход по коду: Twitch покажет страницу активации. Токен хранится в профиле окна, а не в пресете.";
+  }
   if (transport === "ws") return "WebSocket работает и в браузере, и в приложении.";
   if (transport === "osc") return "OSC принимает UDP-пакеты из сети; адрес OSC виден как ключ: $[\"/avatar/parameters/HR\"].";
   if (transport === "sse") return "Сервер событий: каждое событие data: приходит одним пакетом.";
@@ -227,6 +316,7 @@ function transportHint(transport: ExternalSourceConfig["transport"]): string {
 }
 
 function pathHint(transport: ExternalSourceConfig["transport"]): string {
+  if (transport === "twitch") return "Поле события EventSub: $.payload.event.reward.cost";
   if (transport === "osc") return 'Адрес OSC в кавычках: $["/avatar/parameters/HR"]';
   return "Путь в сообщении: $.value, $.data.bpm, $.items[0].n";
 }

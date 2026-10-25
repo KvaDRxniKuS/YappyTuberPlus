@@ -1,0 +1,98 @@
+{
+  "id": "twitch",
+  "title": "Twitch",
+  "description": "События канала: награды за баллы, bits и фолловы. Вход по коду, токен хранится в профиле окна, а не в пресете.",
+  "kind": "external",
+  "audio": false,
+  "inputs": [
+    {
+      "name": "reward",
+      "label": "Награда, баллы",
+      "kind": "level",
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "hint": "Сколько баллов стоил предмет; держится 3 с"
+    },
+    {
+      "name": "cheer",
+      "label": "Bits",
+      "kind": "level",
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "hint": "Сколько bits прислали; держится 2,5 с"
+    },
+    {
+      "name": "follow",
+      "label": "Фоллов",
+      "kind": "flag",
+      "min": 0,
+      "max": 1,
+      "step": 1,
+      "hint": "1 на несколько секунд после нового фоллова"
+    }
+  ],
+  "fields": [],
+  "defaults": {
+    "source": {
+      "transport": "twitch",
+      "url": "",
+      "intervalMs": 1000,
+      "reconnect": true,
+      "clientId": "",
+      "channel": "",
+      "mapping": [
+        {
+          "input": "reward",
+          "path": "$.payload.event.reward.cost",
+          "label": "Награда, баллы",
+          "kind": "level",
+          "min": 0,
+          "max": 1000000,
+          "scale": 1,
+          "offset": 0,
+          "holdMs": 3000,
+          "event": "channel.channel_points_custom_reward_redemption.add",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.channel_points_custom_reward_redemption.add"
+          }
+        },
+        {
+          "input": "cheer",
+          "path": "$.payload.event.bits",
+          "label": "Bits",
+          "kind": "level",
+          "min": 0,
+          "max": 100000,
+          "scale": 1,
+          "offset": 0,
+          "holdMs": 2500,
+          "event": "channel.cheer",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.cheer"
+          }
+        },
+        {
+          "input": "follow",
+          "path": "$.payload.event.followed_at",
+          "label": "Фоллов",
+          "kind": "flag",
+          "min": 0,
+          "max": 1,
+          "scale": 1,
+          "offset": 0,
+          "holdMs": 4000,
+          "fallback": 1,
+          "event": "channel.follow",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.follow"
+          }
+        }
+      ]
+    }
+  }
+}

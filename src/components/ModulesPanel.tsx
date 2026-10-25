@@ -34,6 +34,9 @@ interface ModulesPanelProps extends CalibrationApi {
   focus?: { name: string; nonce: number } | null;
   /** Состояние внешних источников по имени модуля: подключён, ждёт, ошибка. */
   externalStatuses?: Record<string, ExternalStatus>;
+  /** Вход в Twitch и выход из него: токен живёт в профиле окна. */
+  onAuthorizeSource?: (name: string) => void;
+  onSignOutSource?: (name: string) => void;
 }
 
 /**
@@ -293,6 +296,8 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     <ExternalSourceEditor
                       module={module}
                       status={props.externalStatuses?.[module.name]}
+                      onAuthorize={props.onAuthorizeSource ? () => props.onAuthorizeSource?.(module.name) : undefined}
+                      onSignOut={props.onSignOutSource ? () => props.onSignOutSource?.(module.name) : undefined}
                       onChange={(source, label) => patchConfig(module, "source", source, label)}
                     />
                   )}

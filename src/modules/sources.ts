@@ -1,6 +1,7 @@
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
-import { applyMapping, isNativeTransport, readExternalSource } from "./external";
+import { applyMapping, isNativeTransport, isTwitchTransport, readExternalSource } from "./external";
 import { isTauri } from "../engine/presetFile";
+import { TwitchChannel, type TwitchInfo, type TwitchState } from "./twitch";
 
 /**
  * Хост внешних источников.
@@ -27,6 +28,8 @@ export interface ExternalStatus {
   message: string | null;
   /** Сколько пакетов пришло с момента подключения: видно, что канал живой. */
   packets: number;
+  /** Twitch: своё состояние, код входа и имя канала. */
+  twitch?: TwitchInfo;
 }
 
 interface Hold {
@@ -46,6 +49,8 @@ interface Entry {
   closed: boolean;
   /** Транспорт живёт в Rust: останавливать его нужно командой, а не close(). */
   native: boolean;
+  /** Twitch: свой канал с OAuth и подписками вместо обычного сокета. */
+  twitch?: TwitchChannel;
 }
 
 /** Событие из Rust: состояние источника или сырой текст пакета. */
@@ -117,6 +122,18 @@ export class ExternalSourceHost {
     return this.entries.get(name)?.status ?? emptyStatus();
   }
 
+  /** Вход в Twitch: кнопка в карточке модуля. */
+  async authorize(name: string): Promise<TwitchInfo | null> {
+    const entry = this.entries.get(name);
+    if (!entry?.twitch) return null;
+    return entry.twitch.authorize();
+  }
+
+  /** Забыть токен Twitch: он живёт в профиле окна, а не в пресете. */
+  signOut(name: string): void {
+    this.entries.get(name)?.twitch?.signOut();
+  }
+
   /** Состояния всех источников: панель показывает их в карточке модуля. */
   statuses(): Record<string, ExternalStatus> {
     const result: Record<string, ExternalStatus> = {};
@@ -130,6 +147,7 @@ export class ExternalSourceHost {
     entry.closed = true;
     if (entry.retry) clearTimeout(entry.retry);
     entry.retry = null;
+    entry.twitch?.stop();
     if (entry.native) void invokeSource("source_stop", { name }).catch(() => undefined);
     try { entry.socket?.close(); } catch { /* сокет мог уже закрыться */ }
     entry.socket = null;
@@ -144,12 +162,19 @@ export class ExternalSourceHost {
   }
 
   private open(name: string, source: ExternalSourceConfig, key: string): void {
-    const native = isNativeTransport(source.transport);
+    // Twitch — не адрес, а сервис: своего URL у него нет, поэтому проверка
+    // адреса идёт после него, а не до.
+    const twitch = isTwitchTransport(source.transport);
+    const native = isNativeTransport(source.transport) && !twitch;
     const entry: Entry = {
       source, key, socket: null, status: emptyStatus(), values: {}, holds: {},
       retry: null, attempts: 0, closed: false, native,
     };
     this.entries.set(name, entry);
+    if (twitch) {
+      this.startTwitch(entry);
+      return;
+    }
     if (!source.url) {
       entry.status = emptyStatus("idle", "не указан адрес источника");
       return;
@@ -163,6 +188,36 @@ export class ExternalSourceHost {
       return;
     }
     this.connect(entry);
+  }
+
+  /**
+   * Twitch: канал сам ходит в API и держит EventSub. Состояние канала
+   * переводится в общий статус источника, чтобы карточка не знала
+   * подробностей транспорта.
+   */
+  private startTwitch(entry: Entry): void {
+    entry.native = false;
+    const channel = new TwitchChannel(entry.source, {
+      onState: (info) => {
+        if (entry.closed) return;
+        entry.status = {
+          state: twitchState(info.state),
+          message: info.message,
+          packets: entry.status.packets,
+          twitch: info,
+        };
+        if (info.state === "needs-auth" || info.state === "error") {
+          entry.values = {};
+          entry.holds = {};
+        }
+      },
+      onMessage: (text) => {
+        if (entry.closed) return;
+        this.ingest(entry, text);
+      },
+    });
+    entry.twitch = channel;
+    channel.start();
   }
 
   /** Подписка на события Rust: одна на всё приложение. */
@@ -326,6 +381,15 @@ export function sourceConfig(module: ModuleInstance): ExternalSourceConfig {
 /** Правила отображения модуля — короткий доступ для панелей. */
 export function sourceRules(module: ModuleInstance): ExternalSourceRule[] {
   return sourceConfig(module).mapping;
+}
+
+/** Состояние Twitch в терминах общего статуса источника. */
+function twitchState(state: TwitchState): ExternalState {
+  if (state === "live") return "live";
+  if (state === "error") return "error";
+  if (state === "authorizing" || state === "connecting") return "connecting";
+  if (state === "needs-auth") return "idle";
+  return "idle";
 }
 
 function describe(reason: unknown): string {

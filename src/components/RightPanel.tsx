@@ -45,6 +45,9 @@ interface RightPanelProps {
   cancelCalibration: CalibrationApi["cancelCalibration"];
   /** Состояние внешних источников: видно в карточке модуля. */
   externalStatuses?: Record<string, ExternalStatus>;
+  /** Вход в Twitch из карточки внешнего источника. */
+  onAuthorizeSource?: (name: string) => void;
+  onSignOutSource?: (name: string) => void;
 }
 
 type Tab = "behaviour" | "object" | "globals" | "inputs" | "modules";
@@ -104,6 +107,8 @@ export function RightPanel(props: RightPanelProps) {
           onChange={props.onModules}
           focus={focusModule}
           externalStatuses={props.externalStatuses}
+          onAuthorizeSource={props.onAuthorizeSource}
+          onSignOutSource={props.onSignOutSource}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

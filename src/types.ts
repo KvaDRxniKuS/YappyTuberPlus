@@ -121,7 +121,7 @@ export type ModuleKind =
  * `osc` выполняет Rust: только так запросы идут мимо CORS, а UDP вообще доступен
  * лишь из нативного слоя.
  */
-export type ExternalSourceTransport = "ws" | "http" | "sse" | "osc";
+export type ExternalSourceTransport = "ws" | "http" | "sse" | "osc" | "twitch";
 
 /** Правило отображения: поле JSON → вход модуля. */
 export interface ExternalSourceRule {
@@ -137,6 +137,12 @@ export interface ExternalSourceRule {
   offset?: number;
   /** Удержание импульса, мс: события вроде «пришла награда» живут один пакет. */
   holdMs?: number;
+  /** Событие Twitch, из которого пришла строка: по нему включаются подписки. */
+  event?: string;
+  /** Условие: правило срабатывает, только если поле в сообщении совпало. */
+  when?: { path: string; equals?: string; contains?: string };
+  /** Значение, если поля нет или оно не число: «событие пришло» = 1. */
+  fallback?: number;
 }
 
 /** Внешний источник в настройках экземпляра (`config.source`). */
@@ -151,6 +157,10 @@ export interface ExternalSourceConfig {
   reconnect?: boolean;
   /** Пауза между опросами для `http`, мс (100…600000). */
   intervalMs?: number;
+  /** Twitch: Client ID приложения. Не секрет, поэтому живёт в пресете. */
+  clientId?: string;
+  /** Twitch: логин канала, за событиями которого следим. */
+  channel?: string;
 }
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */

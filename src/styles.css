@@ -1261,3 +1261,18 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .external-mapping-row input:focus { outline: none; border-color: #609c8c; }
 .external-add { align-self: flex-start; }
 .external-hint { margin: 0; }
+
+/* ---------- Twitch в карточке внешнего источника ---------- */
+.twitch-panel { display: flex; flex-direction: column; gap: 6px; }
+.twitch-auth { padding: 6px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418; }
+.twitch-buttons { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.twitch-code { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; }
+.twitch-code b {
+  padding: 3px 8px; border: 1px solid #2c353d; border-radius: 4px; background: #171c21;
+  color: #e7f4f0; font: 13px "Cascadia Code", ui-monospace, monospace; letter-spacing: .12em;
+}
+.twitch-code a { color: #7fb8d8; font-size: 11.5px; }
+.twitch-events { display: flex; flex-direction: column; gap: 2px; padding: 6px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418; }
+.twitch-events-title { color: #5d6872; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.twitch-event { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: 11.5px; cursor: pointer; }
+.twitch-event code { color: #7fb8d8; font: 10.5px "Cascadia Code", ui-monospace, monospace; }

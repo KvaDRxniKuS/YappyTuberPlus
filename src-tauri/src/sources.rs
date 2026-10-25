@@ -155,6 +155,57 @@ pub fn source_stop_all(state: State<'_, Sources>) -> Result<(), String> {
     Ok(())
 }
 
+/// Запрос с заголовками и телом: подписка на EventSub, OAuth Twitch, локальные API.
+///
+/// Это не «прокси в интернет»: схемы ограничены http/https, тело и заголовки
+/// задаёт вызывающий код, ответ отдаётся как есть. Подставлять токены в пресет
+/// не нужно — их присылает окно на время запроса.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpRequest {
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+#[tauri::command]
+pub async fn source_request(request: HttpRequest) -> Result<HttpResponse, String> {
+    let url = web_url(request.url.trim())?.trim().to_string();
+    let method = reqwest::Method::from_bytes(request.method.trim().to_uppercase().as_bytes())
+        .map_err(|_| format!("неизвестный метод «{}»", request.method))?;
+    let client = reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| format!("клиент не создан: {error}"))?;
+    let mut builder = client.request(method, url.as_str());
+    for (key, value) in request.headers {
+        builder = builder.header(key, value);
+    }
+    if let Some(body) = request.body {
+        builder = builder.body(body);
+    }
+    let response = builder.send().await.map_err(|error| describe(&error))?;
+    let status = response.status().as_u16();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("чтение ответа: {error}"))?;
+    Ok(HttpResponse {
+        status,
+        body: String::from_utf8_lossy(&bytes).into_owned(),
+    })
+}
+
 fn web_url(url: &str) -> Result<&str, String> {
     if url.starts_with("http://") || url.starts_with("https://") {
         return Ok(url);

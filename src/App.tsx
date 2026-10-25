@@ -859,6 +859,8 @@ export default function App() {
           calibrate={moduleInputs.calibrate}
           cancelCalibration={moduleInputs.cancelCalibration}
           externalStatuses={moduleInputs.externalStatuses}
+          onAuthorizeSource={moduleInputs.authorizeSource}
+          onSignOutSource={moduleInputs.signOutSource}
         /></div>
       </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleInstance } from "../types";
 import { moduleDefinition } from "../modules/registry";
 import { ExternalSourceHost, sourceConfig, type ExternalStatus } from "../modules/sources";
@@ -11,6 +11,10 @@ export interface ExternalInputsApi {
   values: Record<string, Record<string, number>>;
   /** Состояние каждого источника: подключён, ждёт, ошибка. */
   statuses: Record<string, ExternalStatus>;
+  /** Вход в Twitch по коду: кнопка в карточке модуля. */
+  authorize: (name: string) => void;
+  /** Забыть токен Twitch (он живёт в профиле окна). */
+  signOut: (name: string) => void;
 }
 
 /**
@@ -59,7 +63,16 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
 
   useEffect(() => () => hostRef.current?.dispose(), []);
 
-  return { values, statuses };
+  const authorize = useCallback((name: string) => {
+    void hostRef.current?.authorize(name);
+    // Состояние придёт событием канала: панель обновится сама.
+  }, []);
+
+  const signOut = useCallback((name: string) => {
+    hostRef.current?.signOut(name);
+  }, []);
+
+  return { values, statuses, authorize, signOut };
 }
 
 function sameNested(left: Record<string, Record<string, number>>, right: Record<string, Record<string, number>>): boolean {

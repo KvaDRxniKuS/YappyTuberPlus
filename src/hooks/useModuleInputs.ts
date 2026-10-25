@@ -30,6 +30,10 @@ export interface ModuleInputsApi {
   resetPointerHits: () => void;
   /** Состояние внешних источников по имени модуля: подключён, ждёт, ошибка. */
   externalStatuses: Record<string, ExternalStatus>;
+  /** Вход в Twitch: кнопка в карточке модуля. */
+  authorizeSource: (name: string) => void;
+  /** Забыть токен Twitch. */
+  signOutSource: (name: string) => void;
 }
 
 const BLINK_TICK = 33;
@@ -263,6 +267,8 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
     // Стоп анимации: счётчики нажатий клавиш начинаются заново.
     resetPointerHits: pointerInputs.resetHits,
     externalStatuses: externalInputs.statuses,
+    authorizeSource: externalInputs.authorize,
+    signOutSource: externalInputs.signOut,
   };
 }
 

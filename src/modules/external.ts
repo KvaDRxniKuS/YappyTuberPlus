@@ -16,7 +16,7 @@ import type { ModuleInputSpec } from "./registry";
  * доступны только в приложении.
  */
 
-export const EXTERNAL_TRANSPORTS: ExternalSourceConfig["transport"][] = ["ws", "http", "sse", "osc"];
+export const EXTERNAL_TRANSPORTS: ExternalSourceConfig["transport"][] = ["ws", "http", "sse", "osc", "twitch"];
 
 /** Подсказка адреса и поведение транспорта: одна таблица для панели и проверок. */
 export const TRANSPORT_INFO: Record<ExternalSourceConfig["transport"], {
@@ -29,11 +29,18 @@ export const TRANSPORT_INFO: Record<ExternalSourceConfig["transport"], {
   http: { label: "HTTP-опрос", placeholder: "http://127.0.0.1:17802/state", native: true },
   sse: { label: "SSE-поток", placeholder: "http://127.0.0.1:17802/events", native: true },
   osc: { label: "OSC (UDP)", placeholder: "udp://0.0.0.0:9000", native: true },
+  // Twitch — не адрес, а сервис: поля у него свои (Client ID, канал, события).
+  twitch: { label: "Twitch", placeholder: "", native: true },
 };
 
 /** Транспорт выполняет Rust: у него своя нативная часть и своя пауза опроса. */
 export function isNativeTransport(transport: ExternalSourceConfig["transport"]): boolean {
   return transport !== "ws";
+}
+
+/** Twitch ходит в свой API: адрес у него не спрашивают, спрашивают канал. */
+export function isTwitchTransport(transport: ExternalSourceConfig["transport"]): boolean {
+  return transport === "twitch";
 }
 
 /** Типы источника живут в `types.ts` вместе с настройками экземпляра. */
@@ -77,6 +84,18 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
       const path = String(rule.path ?? "").trim();
       if (!input || !path) return null;
       const kind = rule.kind === "db" || rule.kind === "flag" ? rule.kind : "level";
+      // Условие читается только осмысленное: путь обязателен, сравнение — нет.
+      const whenPath = rule.when && typeof rule.when === "object"
+        ? String((rule.when as Record<string, unknown>).path ?? "").trim()
+        : "";
+      const whenRaw = rule.when as Record<string, unknown> | undefined;
+      const when = whenPath
+        ? {
+          path: whenPath,
+          equals: typeof whenRaw?.equals === "string" && whenRaw.equals ? whenRaw.equals : undefined,
+          contains: typeof whenRaw?.contains === "string" && whenRaw.contains ? whenRaw.contains : undefined,
+        }
+        : undefined;
       return {
         input,
         path,
@@ -87,6 +106,9 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
         scale: rule.scale === undefined ? 1 : readNumber(rule.scale, 1),
         offset: rule.offset === undefined ? 0 : readNumber(rule.offset, 0),
         holdMs: rule.holdMs === undefined ? 0 : Math.max(0, readNumber(rule.holdMs, 0)),
+        event: typeof rule.event === "string" && rule.event.trim() ? rule.event.trim() : undefined,
+        when,
+        fallback: rule.fallback === undefined ? undefined : readNumber(rule.fallback, 0),
       };
     })
     .filter((rule): rule is ExternalRule => rule !== null)
@@ -99,6 +121,10 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
     mapping,
     reconnect: source.reconnect !== false,
     intervalMs: Math.min(600_000, Math.max(100, readNumber(source.intervalMs, 1000))),
+    clientId: typeof source.clientId === "string" && source.clientId.trim() ? source.clientId.trim() : undefined,
+    channel: typeof source.channel === "string" && source.channel.trim()
+      ? source.channel.trim().toLowerCase().replace(/^@/, "")
+      : undefined,
   };
 }
 
@@ -179,9 +205,28 @@ export function toNumber(value: unknown): number | null {
   return null;
 }
 
+/**
+ * Подходит ли правило к этому сообщению.
+ *
+ * Условие нужно, когда одно сообщение описывает разные события: у награды есть
+ * `reward.cost`, у рейда — `viewers`. `when` позволяет не смешивать их в одну
+ * строку и не читать «пустое» поле как ноль.
+ */
+export function ruleMatches(rule: ExternalRule, payload: unknown): boolean {
+  if (!rule.when) return true;
+  const raw = readPath(payload, rule.when.path);
+  const text = raw === undefined || raw === null ? "" : String(raw);
+  if (rule.when.equals !== undefined) return text === rule.when.equals;
+  if (rule.when.contains !== undefined) return text.includes(rule.when.contains);
+  return text !== "";
+}
+
 /** Применение правила к значению: множитель, смещение, границы. */
 export function applyRule(rule: ExternalRule, raw: unknown): number | null {
-  const value = toNumber(raw);
+  // Поля нет или оно не число (у фоллова приходит дата) — берём `fallback`:
+  // «событие пришло» само по себе значение.
+  const source = toNumber(raw) === null && rule.fallback !== undefined ? rule.fallback : raw;
+  const value = toNumber(source);
   if (value === null) return null;
   const scaled = value * (rule.scale ?? 1) + (rule.offset ?? 0);
   const min = rule.min;
@@ -196,6 +241,7 @@ export function applyRule(rule: ExternalRule, raw: unknown): number | null {
 export function applyMapping(payload: unknown, mapping: ExternalRule[]): Record<string, number> {
   const values: Record<string, number> = {};
   for (const rule of mapping) {
+    if (!ruleMatches(rule, payload)) continue;
     const value = applyRule(rule, readPath(payload, rule.path));
     if (value !== null) values[rule.input] = value;
   }
