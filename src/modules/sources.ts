@@ -23,6 +23,13 @@ import { TwitchChannel, type TwitchInfo, type TwitchState } from "./twitch";
 
 export type ExternalState = "idle" | "connecting" | "live" | "error" | "unsupported";
 
+/** Строка журнала источника: что пришло, что не разобралось, что сломалось. */
+export interface ExternalLogEntry {
+  at: number;
+  kind: "packet" | "warn" | "error";
+  text: string;
+}
+
 export interface ExternalStatus {
   state: ExternalState;
   message: string | null;
@@ -51,6 +58,8 @@ interface Entry {
   native: boolean;
   /** Twitch: свой канал с OAuth и подписками вместо обычного сокета. */
   twitch?: TwitchChannel;
+  /** Последние события источника: пакеты, предупреждения, ошибки. */
+  log: ExternalLogEntry[];
 }
 
 /** Событие из Rust: состояние источника или сырой текст пакета. */
@@ -59,6 +68,8 @@ type NativePayload =
   | { kind: "text"; name: string; text: string };
 
 const NATIVE_EVENT = "yappy://source";
+/** Сколько строк журнала держим на источник: больше в карточке не прочитать. */
+export const LOG_LIMIT = 20;
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
 
@@ -141,6 +152,60 @@ export class ExternalSourceHost {
     return result;
   }
 
+  /** Журналы всех источников: последние строки для карточки модуля. */
+  logs(): Record<string, ExternalLogEntry[]> {
+    const result: Record<string, ExternalLogEntry[]> = {};
+    for (const [name, entry] of this.entries) result[name] = entry.log;
+    return result;
+  }
+
+  /**
+   * Проверка источника по кнопке: «дозвонились ли и что ответили».
+   *
+   * Проверка ничего не меняет в работе: WebSocket открывается отдельный и сразу
+   * закрывается, нативные транспорты опрашиваются командой Rust, Twitch —
+   * запросом к своему API.
+   */
+  async probe(name: string): Promise<string> {
+    const entry = this.entries.get(name);
+    if (!entry) return "источник не запущен: включите модуль";
+    const source = entry.source;
+    if (isTwitchTransport(source.transport)) {
+      return entry.twitch ? entry.twitch.probe() : "Twitch не запущен: укажите Client ID и канал";
+    }
+    if (!source.url) return "не указан адрес источника";
+    if (source.transport === "ws") {
+      const result = await probeSocket(source.url);
+      this.record(entry, result.ok ? "packet" : "error", `проверка: ${result.text}`);
+      return result.text;
+    }
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const text = await invoke<string>("source_probe", {
+        config: { transport: source.transport, url: source.url },
+      });
+      this.record(entry, "packet", `проверка: ${text}`);
+      return text;
+    } catch (reason) {
+      const raw = describe(reason);
+      // Старая сборка приложения команду не знает: это не ошибка адреса.
+      const text = /not found|unknown command/i.test(raw)
+        ? "проверка появится после пересборки приложения (npm run tauri build)"
+        : raw;
+      this.record(entry, "error", `проверка: ${text}`);
+      return text;
+    }
+  }
+
+  /** Строка журнала. Повторы подряд в пределах секунды схлопываются, чтобы не залить список. */
+  private record(entry: Entry, kind: ExternalLogEntry["kind"], text: string): void {
+    const short = text.length > 160 ? `${text.slice(0, 157)}…` : text;
+    const last = entry.log[0];
+    if (last && last.kind === kind && last.text === short && Date.now() - last.at < 1000) return;
+    entry.log.unshift({ at: Date.now(), kind, text: short });
+    if (entry.log.length > LOG_LIMIT) entry.log.length = LOG_LIMIT;
+  }
+
   close(name: string): void {
     const entry = this.entries.get(name);
     if (!entry) return;
@@ -168,7 +233,7 @@ export class ExternalSourceHost {
     const native = isNativeTransport(source.transport) && !twitch;
     const entry: Entry = {
       source, key, socket: null, status: emptyStatus(), values: {}, holds: {},
-      retry: null, attempts: 0, closed: false, native,
+      retry: null, attempts: 0, closed: false, native, log: [],
     };
     this.entries.set(name, entry);
     if (twitch) {
@@ -288,6 +353,7 @@ export class ExternalSourceHost {
         entry.values = {};
         entry.holds = {};
       }
+      if (state === "error" && payload.message) this.record(entry, "error", payload.message);
       return;
     }
     if (payload.kind === "text") this.ingest(entry, payload.text);
@@ -297,9 +363,20 @@ export class ExternalSourceHost {
   private ingest(entry: Entry, text: string): void {
     if (!text) return;
     let parsed: unknown;
-    try { parsed = JSON.parse(text); } catch { return; }
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Самая частая причина: источник шлёт не JSON (например, OSC-строку).
+      this.record(entry, "warn", `не JSON: ${text.slice(0, 80)}`);
+      return;
+    }
     const mapped = applyMapping(parsed, entry.source.mapping);
-    if (Object.keys(mapped).length === 0) return;
+    if (Object.keys(mapped).length === 0) {
+      // Пакет разобрался, но ни одно правило не сработало: показываем, что искали.
+      const paths = entry.source.mapping.map((rule) => rule.path).join(", ");
+      this.record(entry, "warn", `поля не найдены: ${paths || "таблица отображения пуста"}`);
+      return;
+    }
     const now = Date.now();
     for (const [input, value] of Object.entries(mapped)) {
       const rule = entry.source.mapping.find((item) => item.input === input);
@@ -310,6 +387,7 @@ export class ExternalSourceHost {
       else delete entry.holds[input];
       entry.values[input] = value;
     }
+    this.record(entry, "packet", describeValues(mapped));
     entry.status = { ...entry.status, state: "live", message: null, packets: entry.status.packets + 1 };
   }
 
@@ -341,6 +419,7 @@ export class ExternalSourceHost {
     socket.onerror = () => {
       if (entry.closed) return;
       entry.status = { state: "error", message: "ошибка соединения", packets: entry.status.packets };
+      this.record(entry, "error", "ошибка соединения");
     };
     socket.onclose = () => {
       if (entry.closed) return;
@@ -348,6 +427,7 @@ export class ExternalSourceHost {
       if (entry.status.state !== "error") {
         entry.status = { state: "error", message: "соединение закрыто", packets: entry.status.packets };
       }
+      this.record(entry, "error", entry.source.reconnect === false ? "соединение закрыто" : "соединение закрыто, переподключаюсь");
       // Обрыв — нули, а не «залипшее» последнее значение.
       entry.values = {};
       entry.holds = {};
@@ -390,6 +470,40 @@ function twitchState(state: TwitchState): ExternalState {
   if (state === "authorizing" || state === "connecting") return "connecting";
   if (state === "needs-auth") return "idle";
   return "idle";
+}
+
+/** Значения одной строкой: `hr=72, beat=1` — короче и читаемее JSON. */
+function describeValues(values: Record<string, number>): string {
+  return Object.entries(values)
+    .map(([input, value]) => `${input}=${Number.isInteger(value) ? value : value.toFixed(2)}`)
+    .join(", ");
+}
+
+/**
+ * Проверка WebSocket: открыть отдельный сокет и сразу закрыть.
+ * Ждём не дольше трёх секунд — иначе кнопка «Проверить» висела бы.
+ */
+function probeSocket(url: string): Promise<{ ok: boolean; text: string }> {
+  return new Promise((resolve) => {
+    let socket: WebSocket | null = null;
+    let settled = false;
+    const finish = (ok: boolean, text: string) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      try { socket?.close(); } catch { /* мог уже закрыться */ }
+      resolve({ ok, text });
+    };
+    const timer = window.setTimeout(() => finish(false, "соединение не открылось за 3 с: адрес неверный или мост не запущен"), 3000);
+    try {
+      socket = new WebSocket(url);
+    } catch (reason) {
+      finish(false, `не удалось открыть сокет: ${describe(reason)}`);
+      return;
+    }
+    socket.onopen = () => finish(true, "соединение установлено: адрес верный");
+    socket.onerror = () => finish(false, "сокет не открылся: проверьте адрес, порт и запущен ли мост");
+  });
 }
 
 function describe(reason: unknown): string {

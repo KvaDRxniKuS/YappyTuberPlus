@@ -206,6 +206,50 @@ pub async fn source_request(request: HttpRequest) -> Result<HttpResponse, String
     })
 }
 
+/// Проверка источника без запуска: «дозвонились ли и что ответили».
+///
+/// Нужна кнопкой «Проверить» в карточке модуля: сразу видно, дело в адресе,
+/// в порте или в самом источнике, а не «нет связи» без подробностей.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeConfig {
+    pub transport: String,
+    pub url: String,
+}
+
+#[tauri::command]
+pub async fn source_probe(config: ProbeConfig) -> Result<String, String> {
+    let transport = config.transport.trim().to_ascii_lowercase();
+    match transport.as_str() {
+        "http" | "sse" => {
+            let url = web_url(config.url.trim())?.trim().to_string();
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .connect_timeout(Duration::from_secs(5))
+                .build()
+                .map_err(|error| format!("клиент не создан: {error}"))?;
+            let response = client.get(url.as_str()).send().await.map_err(|error| describe(&error))?;
+            let status = response.status();
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| format!("чтение ответа: {error}"))?;
+            let text = String::from_utf8_lossy(&bytes);
+            let head: String = text.chars().take(120).collect();
+            Ok(format!("ответ {status}, {} байт: {head}", bytes.len()))
+        }
+        "osc" => {
+            let port = osc_port(&config.url).ok_or("укажите порт: udp://0.0.0.0:9000")?;
+            // Пробуем занять порт на мгновение: так видно, свободен ли он.
+            match tokio::net::UdpSocket::bind(("0.0.0.0", port)).await {
+                Ok(_) => Ok(format!("порт {port} свободен: источник сможет слушать")),
+                Err(error) => Err(format!("порт {port} занят: {error}")),
+            }
+        }
+        other => Err(format!("проверка для «{other}» не нужна: соединение держит окно")),
+    }
+}
+
 fn web_url(url: &str) -> Result<&str, String> {
     if url.starts_with("http://") || url.starts_with("https://") {
         return Ok(url);

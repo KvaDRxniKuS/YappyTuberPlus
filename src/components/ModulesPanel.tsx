@@ -18,7 +18,7 @@ import { EnumStatesEditor } from "./EnumStatesEditor";
 import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { ExternalSourceEditor } from "./ExternalSourceEditor";
-import type { ExternalStatus } from "../modules/sources";
+import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
 interface ModulesPanelProps extends CalibrationApi {
@@ -37,6 +37,9 @@ interface ModulesPanelProps extends CalibrationApi {
   /** Вход в Twitch и выход из него: токен живёт в профиле окна. */
   onAuthorizeSource?: (name: string) => void;
   onSignOutSource?: (name: string) => void;
+  /** Журнал источников и проверка соединения. */
+  externalLogs?: Record<string, ExternalLogEntry[]>;
+  onProbeSource?: (name: string) => Promise<string>;
 }
 
 /**
@@ -298,6 +301,8 @@ export function ModulesPanel(props: ModulesPanelProps) {
                       status={props.externalStatuses?.[module.name]}
                       onAuthorize={props.onAuthorizeSource ? () => props.onAuthorizeSource?.(module.name) : undefined}
                       onSignOut={props.onSignOutSource ? () => props.onSignOutSource?.(module.name) : undefined}
+                      logs={props.externalLogs?.[module.name]}
+                      onProbe={props.onProbeSource ? () => props.onProbeSource!(module.name) : undefined}
                       onChange={(source, label) => patchConfig(module, "source", source, label)}
                     />
                   )}

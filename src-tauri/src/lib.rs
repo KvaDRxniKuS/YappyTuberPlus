@@ -87,6 +87,7 @@ pub fn run() {
             overlay_server::overlay_server_url,
             overlay_server::overlay_server_status,
             sources::source_request,
+            sources::source_probe,
             sources::source_start,
             sources::source_stop,
             sources::source_stop_all

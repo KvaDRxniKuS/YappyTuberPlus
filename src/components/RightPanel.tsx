@@ -9,7 +9,7 @@ import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
-import type { ExternalStatus } from "../modules/sources";
+import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import type { ScriptCheck } from "../engine/scripts";
 import { namedTriggers } from "../engine/scripts";
 
@@ -48,6 +48,9 @@ interface RightPanelProps {
   /** Вход в Twitch из карточки внешнего источника. */
   onAuthorizeSource?: (name: string) => void;
   onSignOutSource?: (name: string) => void;
+  /** Журнал источников и проверка соединения. */
+  externalLogs?: Record<string, ExternalLogEntry[]>;
+  onProbeSource?: (name: string) => Promise<string>;
 }
 
 type Tab = "behaviour" | "object" | "globals" | "inputs" | "modules";
@@ -109,6 +112,8 @@ export function RightPanel(props: RightPanelProps) {
           externalStatuses={props.externalStatuses}
           onAuthorizeSource={props.onAuthorizeSource}
           onSignOutSource={props.onSignOutSource}
+          externalLogs={props.externalLogs}
+          onProbeSource={props.onProbeSource}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

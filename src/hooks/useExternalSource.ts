@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleInstance } from "../types";
 import { moduleDefinition } from "../modules/registry";
-import { ExternalSourceHost, sourceConfig, type ExternalStatus } from "../modules/sources";
+import {
+  ExternalSourceHost, sourceConfig, type ExternalLogEntry, type ExternalStatus,
+} from "../modules/sources";
 
 /** Кадр значений: 30 раз в секунду хватает, а поток пакетов не превращается в поток перерисовок. */
 const TICK = 33;
@@ -11,6 +13,10 @@ export interface ExternalInputsApi {
   values: Record<string, Record<string, number>>;
   /** Состояние каждого источника: подключён, ждёт, ошибка. */
   statuses: Record<string, ExternalStatus>;
+  /** Последние строки журнала: что пришло и что не разобралось. */
+  logs: Record<string, ExternalLogEntry[]>;
+  /** Проверка источника по кнопке: возвращает текст результата. */
+  probe: (name: string) => Promise<string>;
   /** Вход в Twitch по коду: кнопка в карточке модуля. */
   authorize: (name: string) => void;
   /** Забыть токен Twitch (он живёт в профиле окна). */
@@ -30,6 +36,7 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
   if (!hostRef.current) hostRef.current = new ExternalSourceHost();
   const [values, setValues] = useState<Record<string, Record<string, number>>>({});
   const [statuses, setStatuses] = useState<Record<string, ExternalStatus>>({});
+  const [logs, setLogs] = useState<Record<string, ExternalLogEntry[]>>({});
 
   const active = useMemo(
     () => modules.filter((module) => module.enabled && moduleDefinition(module.type).kind === "external"),
@@ -46,6 +53,7 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
     if (active.length === 0) {
       setValues({});
       setStatuses({});
+      setLogs({});
       return;
     }
     const tick = () => {
@@ -54,6 +62,8 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
       setValues((current) => sameNested(current, nextValues) ? current : nextValues);
       const nextStatuses = host.statuses();
       setStatuses((current) => sameStatuses(current, nextStatuses) ? current : nextStatuses);
+      const nextLogs = host.logs();
+      setLogs((current) => sameLogs(current, nextLogs) ? current : nextLogs);
     };
     tick();
     const timer = window.setInterval(tick, TICK);
@@ -72,7 +82,17 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
     hostRef.current?.signOut(name);
   }, []);
 
-  return { values, statuses, authorize, signOut };
+  const probe = useCallback(async (name: string) => {
+    const host = hostRef.current;
+    if (!host) return "источник не запущен";
+    const text = await host.probe(name);
+    // Сразу подтягиваем журнал: иначе результат проверки виден только в подсказке.
+    setLogs(host.logs());
+    setStatuses(host.statuses());
+    return text;
+  }, []);
+
+  return { values, statuses, logs, probe, authorize, signOut };
 }
 
 function sameNested(left: Record<string, Record<string, number>>, right: Record<string, Record<string, number>>): boolean {
@@ -85,6 +105,21 @@ function sameNested(left: Record<string, Record<string, number>>, right: Record<
     const keys = Object.keys(a);
     if (keys.length !== Object.keys(b).length) return false;
     return keys.every((key) => a[key] === b[key]);
+  });
+}
+
+function sameLogs(
+  left: Record<string, ExternalLogEntry[]>,
+  right: Record<string, ExternalLogEntry[]>,
+): boolean {
+  const names = Object.keys(left);
+  if (names.length !== Object.keys(right).length) return false;
+  return names.every((name) => {
+    const a = left[name];
+    const b = right[name];
+    if (!b || a.length !== b.length) return false;
+    // Сравниваем по времени и тексту: сами массивы пересоздаются каждый тик.
+    return a.every((item, index) => item.at === b[index].at && item.text === b[index].text);
   });
 }
 

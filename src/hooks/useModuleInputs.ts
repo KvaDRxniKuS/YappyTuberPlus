@@ -5,7 +5,7 @@ import { inputRange, moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey, isPointerKind } from "../modules/values";
 import { usePointerInputs } from "./usePointerInputs";
 import { useExternalSource } from "./useExternalSource";
-import type { ExternalStatus } from "../modules/sources";
+import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 
 export interface ModuleInputsApi {
   /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
@@ -34,6 +34,10 @@ export interface ModuleInputsApi {
   authorizeSource: (name: string) => void;
   /** Забыть токен Twitch. */
   signOutSource: (name: string) => void;
+  /** Последние строки журнала источников: что пришло и что не разобралось. */
+  externalLogs: Record<string, ExternalLogEntry[]>;
+  /** Проверка источника по кнопке «Проверить». */
+  probeSource: (name: string) => Promise<string>;
 }
 
 const BLINK_TICK = 33;
@@ -269,6 +273,8 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
     externalStatuses: externalInputs.statuses,
     authorizeSource: externalInputs.authorize,
     signOutSource: externalInputs.signOut,
+    externalLogs: externalInputs.logs,
+    probeSource: externalInputs.probe,
   };
 }
 

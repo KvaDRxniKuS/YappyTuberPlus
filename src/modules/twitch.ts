@@ -393,6 +393,28 @@ export class TwitchChannel {
     return this.setState({ state: "error", message: "код входа истёк, начните заново" });
   }
 
+  /**
+   * Проверка по кнопке: Client ID, канал и токен — по шагам, чтобы было видно,
+   * какой именно шаг не прошёл. Сеть не трогаем, пока не заполнены поля.
+   */
+  async probe(): Promise<string> {
+    const clientId = this.source.clientId ?? "";
+    if (!clientId) return "не указан Client ID приложения Twitch";
+    if (!this.source.channel) return "не указан канал";
+    if (!isTauri()) return "проверка доступна в приложении: в браузере запросы к API блокирует CORS";
+    const token = this.token ?? readTwitchToken(clientId);
+    if (!token) return "нет токена: нажмите «Войти в Twitch»";
+    this.token = token;
+    try {
+      const fresh = await this.freshToken();
+      this.broadcasterId = null;
+      const id = await this.resolveBroadcaster(fresh);
+      return `канал «${this.token?.login ?? this.source.channel}» найден, ID ${id}`;
+    } catch (reason) {
+      return describe(reason);
+    }
+  }
+
   /** Забыть токен: следующее подключение попросит войти заново. */
   signOut(): void {
     clearTwitchToken(this.source.clientId ?? "");

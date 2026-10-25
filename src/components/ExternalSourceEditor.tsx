@@ -1,8 +1,9 @@
-import { Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Activity, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
 import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, readExternalSource } from "../modules/external";
 import { TWITCH_EVENTS, TWITCH_VERIFY, eventRule, selectedEvents } from "../modules/twitch";
-import type { ExternalStatus } from "../modules/sources";
+import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
 
 interface ExternalSourceEditorProps {
@@ -13,6 +14,10 @@ interface ExternalSourceEditorProps {
   onAuthorize?: () => void;
   /** Забыть токен Twitch. */
   onSignOut?: () => void;
+  /** Последние строки журнала: что пришло и что не разобралось. */
+  logs?: ExternalLogEntry[];
+  /** Проверка соединения по кнопке. */
+  onProbe?: () => Promise<string>;
   onChange: (source: ExternalSourceConfig, label?: string) => void;
 }
 
@@ -35,6 +40,19 @@ const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
 export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   const source = readExternalSource(props.module.config as Record<string, unknown>);
   const status = props.status;
+  // Результат проверки живёт здесь: он не часть пресета и не должен в него попадать.
+  const [check, setCheck] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const runProbe = async () => {
+    if (!props.onProbe) return;
+    setChecking(true);
+    try {
+      setCheck(await props.onProbe());
+    } finally {
+      setChecking(false);
+    }
+  };
   const info = TRANSPORT_INFO[source.transport];
   const patch = (change: Partial<ExternalSourceConfig>, label?: string) => {
     props.onChange({ ...source, ...change }, label);
@@ -76,7 +94,37 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
         <b>{STATUS_LABEL[status?.state ?? "idle"]}</b>
         {status?.state === "live" && <span className="muted">{status.packets} пакетов</span>}
         {status?.message && <span className="external-status-message">{status.message}</span>}
+        {props.onProbe && (
+          <button
+            className="button ghost external-probe"
+            onClick={() => void runProbe()}
+            disabled={checking}
+            title="Проверить адрес, не меняя работу источника"
+          >
+            <Activity size={11} /> {checking ? "…" : "Проверить"}
+          </button>
+        )}
       </div>
+
+      {check && <p className={`external-check ${/не |нет |ошиб|занят|неверн/i.test(check) ? "bad" : "ok"}`}>{check}</p>}
+
+      {props.logs && props.logs.length > 0 && (
+        <div className="external-log">
+          <button className={`external-log-toggle ${logOpen ? "open" : ""}`} onClick={() => setLogOpen(!logOpen)}>
+            <ChevronDown size={11} /> Журнал <b>{props.logs.length}</b>
+          </button>
+          {logOpen && (
+            <ol>
+              {props.logs.map((entry, index) => (
+                <li className={entry.kind} key={`${entry.at}-${index}`}>
+                  <span className="external-log-time">{new Date(entry.at).toLocaleTimeString("ru-RU")}</span>
+                  <span className="external-log-text">{entry.text}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
 
       <div className="module-fields">
         <div className="module-field" title="Как соединяться с источником: WebSocket работает и в браузере, остальные транспорты — только в приложении.">

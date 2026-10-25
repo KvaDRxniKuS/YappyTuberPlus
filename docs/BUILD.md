@@ -116,6 +116,34 @@ rustup target add wasm32-unknown-unknown # ядро рига собираетс�
 Если сборка запускается с `--locked`, добавьте в неё `cargo update -p reqwest` или
 уберите флаг: интернет нужен только на этом шаге.
 
+### Если Rust не собирается: разбор частых ошибок
+
+Нативный слой с внешними источниками (`src-tauri/src/sources.rs`) добавляет `reqwest` и
+`tokio`. Первая сборка после обновления поэтому дольше обычного и требует интернета.
+Разбор по тексту ошибки:
+
+| Что видно в консоли | Причина | Что делать |
+|---|---|---|
+| `failed to select a version for the requirement 'reqwest'` | `Cargo.lock` от старой версии | `cd src-tauri && cargo update -p reqwest` (или удалить `src-tauri/Cargo.lock` и собрать заново) |
+| `failed to get '...' as a dependency ... network` | нет интернета или блокирует прокси | подключиться и повторить: `cd src-tauri && cargo fetch` |
+| `error[E0433]: failed to resolve: use of undeclared crate or module 'reqwest'` | правка `Cargo.toml` не попала в сборку | проверить, что `reqwest` и `tokio` стоят в секции `[dependencies]`, затем `cargo clean -p yappytuberplus` |
+| `error[E0599]: no method named 'chunk'` | не включена фича `stream` у `reqwest` | в `Cargo.toml` должно быть `features = ["rustls-tls", "charset", "stream"]` |
+| `error: linking with 'cc' failed` / `openssl` | включён системный TLS | мы используем `rustls-tls`: проверить, что `default-features = false` не потерялось |
+| `Command source_probe not found` в приложении | запущена старая сборка | `npm run tauri build` заново: команда появилась в этом обновлении |
+| `cannot find attribute 'tauri::command'` на `sources.rs` | не обновился `tauri` | `cd src-tauri && cargo update -p tauri` |
+
+Что делать **после первой успешной** сборки: закоммитить `src-tauri/Cargo.lock` — тогда
+остальным не понадобится сеть на разрешение версий.
+
+Если Rust пока не собирается, а работать нужно сейчас: запустите
+`start-yappytuber.bat --app` без Rust — приложение откроется в браузерном окне. В нём
+живут WebSocket-источники (пульс через `pulse-bridge.bat`, свои мосты) и все модули с
+клавиатурой и мышью. Не работают только `http`/`sse`/`osc` и Twitch — им нужен нативный
+слой.
+
+**Что прислать, если не собралось:** строку с `error[E…]`/`error:` и 5–10 строк под ней,
+плюс версию Rust (`rustc --version`). По такому куску видно причину без гадания.
+
 ## 3. Сборка
 
 ### Проверка в нативном окне

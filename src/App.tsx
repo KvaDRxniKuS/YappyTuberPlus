@@ -861,6 +861,8 @@ export default function App() {
           externalStatuses={moduleInputs.externalStatuses}
           onAuthorizeSource={moduleInputs.authorizeSource}
           onSignOutSource={moduleInputs.signOutSource}
+          externalLogs={moduleInputs.externalLogs}
+          onProbeSource={moduleInputs.probeSource}
         /></div>
       </div>
 
