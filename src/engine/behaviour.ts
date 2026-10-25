@@ -506,6 +506,60 @@ function stripManaged(text: string, params: readonly string[]): string {
   return kept.join("\n").replace(/^\n+/, "").replace(/\s+$/, "");
 }
 
+/**
+ * Покачивание включает само себя: задали амплитуду — частота становится 1 Гц,
+ * задали частоту — амплитуда берёт значение по умолчанию. Обнулить можно любым
+ * из двух полей. Правка идёт через `patch`, поэтому «обнулить» не включает
+ * обратно.
+ */
+export function coupleWiggle(behaviour: Behaviour, patch: Partial<Behaviour>): void {
+  const couple = (
+    amplitudeKey: "wiggleXAmp" | "wiggleYAmp" | "wiggleRotAmp",
+    frequencyKey: "wiggleXFreq" | "wiggleYFreq" | "wiggleRotFreq",
+    defaultAmplitude: number,
+  ) => {
+    if (patch[amplitudeKey] !== undefined && behaviour[amplitudeKey] > 0 && behaviour[frequencyKey] === 0) {
+      behaviour[frequencyKey] = 1;
+    }
+    if (patch[frequencyKey] !== undefined && behaviour[frequencyKey] > 0 && behaviour[amplitudeKey] === 0) {
+      behaviour[amplitudeKey] = defaultAmplitude;
+    }
+  };
+  couple("wiggleXAmp", "wiggleXFreq", 8);
+  couple("wiggleYAmp", "wiggleYFreq", 8);
+  couple("wiggleRotAmp", "wiggleRotFreq", 10);
+}
+
+/**
+ * Один и тот же патч поведения для нескольких объектов. Значения по умолчанию
+ * для показа берутся у основного, но каждому объекту пишется только тронутое
+ * поле — остальные его настройки сохраняются. Ключ результата — id объекта.
+ */
+export function writeBehaviourFor(
+  targets: RigObject[],
+  primary: RigObject,
+  patch: Partial<Behaviour>,
+): Record<string, string> {
+  const shown = readBehaviour(primary.script);
+  const scripts: Record<string, string> = {};
+  for (const target of targets) {
+    const current = target.id === primary.id ? shown : readBehaviour(target.script);
+    const merged: Behaviour = { ...current, ...patch };
+    coupleWiggle(merged, patch);
+    scripts[target.id] = writeBehaviour(target.script, merged, target).script;
+  }
+  return scripts;
+}
+
+/** Сброс поведения у всего выделения: блок из каждого скрипта удаляется. */
+export function resetBehaviourFor(targets: RigObject[]): Record<string, string> {
+  const scripts: Record<string, string> = {};
+  for (const target of targets) {
+    scripts[target.id] = writeBehaviour(target.script, DEFAULT_BEHAVIOUR, target).script;
+  }
+  return scripts;
+}
+
 export interface BehaviourWrite {
   script: string;
   /** Параметры, которые теперь задаёт блок: их присваивания убраны из хвоста. */

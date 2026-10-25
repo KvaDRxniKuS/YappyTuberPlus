@@ -28,8 +28,10 @@ interface RightPanelProps {
   devices: DeviceOption[];
   audioError: string | null;
   onObjectScript: (script: string) => void;
-  /** Пресет поведения: пишет блок формул в скрипт выбранного объекта. */
-  onBehaviour: (script: string) => void;
+  /** Пресет поведения: пишет блоки формул в скрипты выделенных объектов. */
+  onBehaviour: (scripts: Record<string, string>) => void;
+  /** Выделение целиком: поведение правится сразу у всех. */
+  selectedObjects: RigObject[];
   onGlobalScript: (script: string) => void;
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
@@ -68,7 +70,11 @@ export function RightPanel(props: RightPanelProps) {
       </div>
 
       {tab === "behaviour" ? (
-        <BehaviourPanel object={props.selected} onChange={props.onBehaviour} />
+        <BehaviourPanel
+          object={props.selected}
+          selection={props.selectedObjects}
+          onChange={props.onBehaviour}
+        />
       ) : tab === "modules" ? (
         <ModulesPanel
           modules={props.modules}

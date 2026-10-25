@@ -2,20 +2,19 @@ import { useMemo, useState } from "react";
 import { RotateCw, Spline, Waves, Wind, X } from "lucide-react";
 import type { RigObject } from "../types";
 import {
-  DEFAULT_BEHAVIOUR, heavyAngle, readBehaviour, writeBehaviour, type Behaviour, type VisibilityRule,
+  DEFAULT_BEHAVIOUR, heavyAngle, readBehaviour, resetBehaviourFor, writeBehaviourFor,
+  type Behaviour, type VisibilityRule,
 } from "../engine/behaviour";
 import { Switch } from "./Switch";
 
 interface BehaviourPanelProps {
+  /** Основной объект: по нему показаны значения. */
   object: RigObject | null;
-  onChange: (script: string) => void;
+  /** Всё выделение: правка уходит каждому, у кого поле своё — сохраняется. */
+  selection?: RigObject[];
+  onChange: (scripts: Record<string, string>) => void;
 }
 
-/**
- * Строка ползунка со значением, которое можно вписать руками: клик по числу
- * открывает ввод. Пока поле в фокусе, показываем черновик — так можно набрать
- * «0.05» и не потерять точку.
- */
 function Row({ label, hint, value, min, max, step, unit, onCommit }: {
   label: string;
   hint?: string;
@@ -102,43 +101,28 @@ function StateRow({ label, value, onChange, titles }: {
  * переписывает блок в скрипте объекта, поэтому вкладка «Объект» всегда
  * показывает, что именно считается.
  */
-export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
+export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelProps) {
   const behaviour = useMemo(
     () => (object ? readBehaviour(object.script) : { ...DEFAULT_BEHAVIOUR }),
     [object?.script],
   );
 
-  if (!object) {
-    return <div className="empty-state behaviour-empty"><Spline size={24} /><p>Выберите объект: пресет поведения настраивается для каждого объекта отдельно</p></div>;
+  // Кому пишем правку: всё выделение. Значения в панели — по основному объекту,
+  // у остальных меняется только то поле, которое тронули, остальное своё.
+  const targets = useMemo(
+    () => (selection && selection.length ? selection : object ? [object] : []),
+    [selection, object],
+  );
+
+  if (!object || !targets.length) {
+    return <div className="empty-state behaviour-empty"><Spline size={24} /><p>Выберите объект или несколько: пресет поведения пишется в скрипт каждого</p></div>;
   }
 
-  /**
-   * Покачивание — самостоятельный генератор, а не добавка к «Повороту при речи».
-   * Поэтому правка одного числа включает его сама: задали амплитуду — частота
-   * становится 1 Гц, задали частоту — амплитуда берёт значение по умолчанию.
-   * Обнулить покачивание по-прежнему можно любым из двух полей.
-   */
   const patch = (next: Partial<Behaviour>) => {
-    if (!object) return;
-    const merged: Behaviour = { ...behaviour, ...next };
-    const couple = (
-      amplitudeKey: "wiggleXAmp" | "wiggleYAmp" | "wiggleRotAmp",
-      frequencyKey: "wiggleXFreq" | "wiggleYFreq" | "wiggleRotFreq",
-      defaultAmplitude: number,
-    ) => {
-      if (next[amplitudeKey] !== undefined && merged[amplitudeKey] > 0 && merged[frequencyKey] === 0) {
-        merged[frequencyKey] = 1;
-      }
-      if (next[frequencyKey] !== undefined && merged[frequencyKey] > 0 && merged[amplitudeKey] === 0) {
-        merged[amplitudeKey] = defaultAmplitude;
-      }
-    };
-    couple("wiggleXAmp", "wiggleXFreq", 8);
-    couple("wiggleYAmp", "wiggleYFreq", 8);
-    couple("wiggleRotAmp", "wiggleRotFreq", 10);
-    const written = writeBehaviour(object.script, merged, object);
-    onChange(written.script);
+    onChange(writeBehaviourFor(targets, object, next));
   };
+
+  const reset = () => onChange(resetBehaviourFor(targets));
 
   const heavy = heavyAngle(object.pivot);
 
@@ -147,12 +131,14 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
       <div className="behaviour-head">
         <div>
           <span className="eyebrow">ПРЕСЕТ ПОВЕДЕНИЯ</span>
-          <b>{object.name}</b>
+          <b>{object.name}{targets.length > 1 && <small> + ещё {targets.length - 1}</small>}</b>
         </div>
         <button
           className="icon-button"
-          title="Сбросить поведение: блок из скрипта удалится"
-          onClick={() => onChange(writeBehaviour(object.script, DEFAULT_BEHAVIOUR, object).script)}
+          title={targets.length > 1
+            ? `Сбросить поведение у всех выделенных (${targets.length}): блоки из скриптов удалятся`
+            : "Сбросить поведение: блок из скрипта удалится"}
+          onClick={reset}
         >
           <X size={16} />
         </button>
@@ -160,6 +146,10 @@ export function BehaviourPanel({ object, onChange }: BehaviourPanelProps) {
       <p className="behaviour-note">
         Ползунки превращаются в формулы — они лежат блоком в начале скрипта на вкладке «Объект».
         Любое число можно вписать руками: клик по значению справа.
+        {targets.length > 1 && <>
+          {" "}<b>Правка применяется ко всем выделенным</b>: значения показаны по «{object.name}»,
+          у остальных меняется только тронутое поле, их собственные настройки остаются.
+        </>}
       </p>
 
       <section className="behaviour-section">

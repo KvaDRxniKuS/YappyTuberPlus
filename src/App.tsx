@@ -390,6 +390,23 @@ export default function App() {
     }, options);
   }, [commit]);
 
+  /**
+   * Правка пресета поведения сразу у нескольких объектов: один шаг истории на
+   * всех, чтобы Ctrl+Z возвращал всю пачку, а не по одному объекту.
+   */
+  const updateScripts = useCallback((scripts: Record<string, string>) => {
+    const ids = Object.keys(scripts);
+    if (!ids.length) return;
+    commit((current) => ({
+      ...current,
+      objects: current.objects.map((object) => (
+        scripts[object.id] === undefined || scripts[object.id] === object.script
+          ? object
+          : { ...object, script: scripts[object.id] }
+      )),
+    }), { label: ids.length > 1 ? `Поведение · ${ids.length} объектов` : "Поведение", coalesce: "behaviour" });
+  }, [commit]);
+
   /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
   const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
     const current = presetRef.current;
@@ -804,7 +821,8 @@ export default function App() {
           devices={moduleInputs.devices}
           audioError={moduleInputs.error}
           onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
-          onBehaviour={(script) => { if (selected) updateObject({ ...selected, script }, { label: "Поведение", coalesce: "behaviour" }); }}
+          selectedObjects={selectedObjects}
+          onBehaviour={updateScripts}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
