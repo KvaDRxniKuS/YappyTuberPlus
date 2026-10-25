@@ -521,6 +521,21 @@ export default function App() {
   }, [commit]);
 
   /**
+   * Настройки текста из вкладки «Поведение»: шрифт, оформление и источник строки.
+   * Один шаг истории на всю пачку — Ctrl+Z возвращает все объекты сразу.
+   */
+  const updateTextObjects = useCallback((next: RigObject[]) => {
+    if (!next.length) return;
+    commit((current) => {
+      const byId = new Map(next.map((object) => [object.id, object]));
+      return {
+        ...current,
+        objects: current.objects.map((object) => byId.get(object.id) ?? object),
+      };
+    }, { label: next.length > 1 ? `Текст · ${next.length} объектов` : "Текст", coalesce: "text-settings" });
+  }, [commit]);
+
+  /**
    * Правка пресета поведения сразу у нескольких объектов: один шаг истории на
    * всех, чтобы Ctrl+Z возвращал всю пачку, а не по одному объекту.
    */
@@ -1042,6 +1057,7 @@ export default function App() {
           onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
+          onText={updateTextObjects}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}

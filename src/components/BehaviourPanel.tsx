@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { RotateCw, Spline, Waves, Wind, X } from "lucide-react";
-import type { RigObject } from "../types";
+import type { RigObject, TextSpec } from "../types";
+import { normalizeText } from "../engine/preset";
+import { hasQuotedPlaceholder, quotePlaceholders, unquotePlaceholders } from "../render/text";
 import {
   DEFAULT_BEHAVIOUR, heavyAngle, readBehaviour, resetBehaviourFor, writeBehaviourFor,
   type Behaviour, type VisibilityRule,
@@ -13,6 +15,8 @@ interface BehaviourPanelProps {
   /** Всё выделение: правка уходит каждому, у кого поле своё — сохраняется. */
   selection?: RigObject[];
   onChange: (scripts: Record<string, string>) => void;
+  /** Правка свойств текста: шрифт, размер, оформление и источник строки. */
+  onText?: (objects: RigObject[]) => void;
 }
 
 function Row({ label, hint, value, min, max, step, unit, onCommit }: {
@@ -99,12 +103,126 @@ function StateRow({ label, value, onChange, titles }: {
   );
 }
 
+/** Компактное числовое поле: значение применяется по Enter или уходу фокуса. */
+function TextNumber({ label, value, min, max, step, suffix, onCommit }: {
+  label: string; value: number; min: number; max: number; step: number;
+  suffix?: string; onCommit: (value: number) => void;
+}) {
+  return (
+    <label className="number-field">
+      <span className="number-label">{label}</span>
+      <div>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={Number(value.toFixed(3))}
+          onChange={(event) => {
+            const parsed = Number(event.target.value.replace(",", "."));
+            if (Number.isFinite(parsed)) onCommit(Math.min(max, Math.max(min, parsed)));
+          }}
+        />
+        {suffix && <small>{suffix}</small>}
+      </div>
+    </label>
+  );
+}
+
+/**
+ * Текст объекта: источник строки и оформление.
+ *
+ * Источник — шаблон `{модуль.поле}`: по умолчанию ссылка читается (подставляется
+ * сообщение из модуля). Если нужно показать саму ссылку текстом, её экранируют
+ * одинарными кавычками — `'{twitch.chat.message}'`; кнопка делает это сама.
+ */
+function TextSettings({ spec, onPatch }: {
+  spec: TextSpec;
+  onPatch: (patch: Partial<TextSpec>) => void;
+}) {
+  const quoted = hasQuotedPlaceholder(spec.template);
+  return (
+    <>
+      <div className="section-title"><span>Текст</span><small>ИСТОЧНИК И ОФОРМЛЕНИЕ</small></div>
+      <p className="behaviour-hint">
+        Свой текст пишется как есть. Ссылка вида <b>{"{twitch.chat.message}"}</b> читается из
+        модуля: подставляется последнее сообщение, <b>{"{twitch.chat.user}"}</b> — автор.
+        Чтобы ссылка была видна <b>текстом</b>, а не значением, оберните её в одинарные
+        кавычки — <b>{"'{twitch.chat.message}'"}</b>. Скрипт объекта сильнее этой строки:
+        <b> {'text = "…"'} </b> заменяет её целиком.
+      </p>
+      <label className="text-property">
+        <span>{quoted ? "Текст (ссылка показана текстом)" : "Текст или ссылка"}</span>
+        <textarea
+          rows={3}
+          value={spec.template}
+          placeholder="{twitch.chat.user}: {twitch.chat.message}"
+          onChange={(event) => onPatch({ template: event.target.value })}
+        />
+      </label>
+      <button
+        className="button secondary behaviour-text-source"
+        title={quoted
+          ? "Снять кавычки: ссылка снова будет читаться из модуля"
+          : "Обернуть ссылки в кавычки: на экране будет сам текст {…}, а не значение"}
+        onClick={() => onPatch({
+          template: quoted ? unquotePlaceholders(spec.template) : quotePlaceholders(spec.template),
+        })}
+      >
+        {quoted ? "Читать значение ссылки" : "Показать ссылку текстом"}
+      </button>
+      <div className="property-grid two-columns">
+        <TextNumber label="Размер" value={spec.size} min={4} max={400} step={2} suffix="px"
+          onCommit={(size) => onPatch({ size })} />
+        <TextNumber label="Межстрочный" value={spec.lineHeight} min={0.5} max={3} step={0.1} suffix="×"
+          onCommit={(lineHeight) => onPatch({ lineHeight })} />
+      </div>
+      <div className="property-grid two-columns">
+        <label className="number-field">
+          <span className="number-label">Шрифт</span>
+          <div><input value={spec.font} onChange={(event) => onPatch({ font: event.target.value })} /></div>
+        </label>
+        <label className="number-field">
+          <span className="number-label">Цвет</span>
+          <div><input type="color" value={spec.color} onChange={(event) => onPatch({ color: event.target.value })} /></div>
+        </label>
+      </div>
+      <label className="select-property">
+        <span>Выравнивание</span>
+        <select value={spec.align} onChange={(event) => onPatch({ align: event.target.value as TextSpec["align"] })}>
+          <option value="left">по левому краю</option>
+          <option value="center">по центру</option>
+          <option value="right">по правому краю</option>
+        </select>
+      </label>
+      <div className="behaviour-flags">
+        <label className="check-line">
+          <input type="checkbox" checked={spec.bold} onChange={(event) => onPatch({ bold: event.target.checked })} />
+          <span>Полужирный</span>
+        </label>
+        <label className="check-line">
+          <input type="checkbox" checked={spec.italic} onChange={(event) => onPatch({ italic: event.target.checked })} />
+          <span>Курсив</span>
+        </label>
+      </div>
+      <div className="property-grid two-columns">
+        <TextNumber label="Обводка" value={spec.strokeWidth} min={0} max={24} step={1} suffix="px"
+          onCommit={(strokeWidth) => onPatch({ strokeWidth })} />
+        <label className="number-field">
+          <span className="number-label">Цвет обводки</span>
+          <div><input type="color" value={spec.strokeColor} onChange={(event) => onPatch({ strokeColor: event.target.value })} /></div>
+        </label>
+      </div>
+    </>
+  );
+}
+
 /**
  * Пресет поведения в духе PNGTuber: ползунки вместо формул. Каждое изменение
  * переписывает блок в скрипте объекта, поэтому вкладка «Объект» всегда
  * показывает, что именно считается.
  */
-export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelProps) {
+export function BehaviourPanel({ object, selection, onChange, onText }: BehaviourPanelProps) {
   const behaviour = useMemo(
     () => (object ? readBehaviour(object.script) : { ...DEFAULT_BEHAVIOUR }),
     [object?.script],
@@ -154,6 +272,23 @@ export function BehaviourPanel({ object, selection, onChange }: BehaviourPanelPr
           у остальных меняется только тронутое поле, их собственные настройки остаются.
         </>}
       </p>
+
+      {object.kind === "text" && (
+        <section className="behaviour-section behaviour-text-section">
+          <TextSettings
+            spec={normalizeText(object.text)}
+            onPatch={(patch) => {
+              if (!onText) return;
+              // Правка уходит всем выделенным текстовым объектам: у спрайтов
+              // текста нет, их не трогаем.
+              const updates = targets
+                .filter((item) => item.kind === "text")
+                .map((item) => ({ ...item, text: { ...normalizeText(item.text), ...patch } }));
+              if (updates.length) onText(updates);
+            }}
+          />
+        </section>
+      )}
 
       <section className="behaviour-section">
         <div className="section-title"><span><Waves size={13} /> Реакция</span></div>

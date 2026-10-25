@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from "react";
 import { ChevronRight } from "lucide-react";
 import { basicSetup } from "codemirror";
 import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
@@ -89,6 +89,69 @@ const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" |
   { id: "text", title: "текст" },
 ];
 
+/**
+ * MIME перетаскиваемого блока. Свой тип нужен, чтобы редактор не путал блок из
+ * шпаргалки с файлом, который бросили на окно (файл — это импорт объекта).
+ */
+const SNIPPET_MIME = "application/x-yappy-snippet";
+
+/**
+ * Готовые блоки событий для шпаргалки: скелет, тело пишет автор.
+ *
+ * Перетаскиваются в скрипт мышкой и вставляются кликом — так событие не надо
+ * вспоминать по памяти, а `on start {}` не превращается в пустой блок.
+ */
+const EVENT_BLOCKS: Array<{ code: string; note: string }> = [
+  { code: "on start {\n  \n}", note: "первый кадр после запуска и после «Стоп»" },
+  { code: "on mouse.left.down {\n  \n}", note: "нажатие: вход перешёл из 0 в 1" },
+  { code: "on mouse.left.up {\n  \n}", note: "отпускание: вход вернулся в 0" },
+  { code: "on mic.talking.change {\n  \n}", note: "значение изменилось с прошлого кадра" },
+  { code: "on mouse.left.hold(0.5) {\n  \n}", note: "держать дольше 0,5 с — один раз за удержание" },
+  { code: "on mouse.left.relax(0.6) {\n  \n}", note: "отпущено дольше 0,6 с — один раз за отпускание" },
+];
+
+/** Объявление своего события: живёт только в глобальном скрипте. */
+const TRIGGER_BLOCK = "trigger kick = mouse.left.down\n";
+
+/** Перетаскивание блока: кладём и свой MIME, и обычный текст — на всякий случай. */
+function startBlockDrag(event: DragEvent, code: string): void {
+  event.dataTransfer.setData(SNIPPET_MIME, code);
+  event.dataTransfer.setData("text/plain", code);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+/**
+ * Бросок блока в редактор. CodeMirror отдаёт координаты, поэтому блок встаёт
+ * ровно туда, где отпустили мышь, а не в конец скрипта.
+ */
+const dropSnippet = EditorView.domEventHandlers({
+  dragover(event) {
+    const transfer = event.dataTransfer;
+    if (!transfer || !Array.from(transfer.types).includes(SNIPPET_MIME)) return false;
+    event.preventDefault();
+    transfer.dropEffect = "copy";
+    return true;
+  },
+  drop(event, editor) {
+    const transfer = event.dataTransfer;
+    if (!transfer) return false;
+    const snippet = transfer.getData(SNIPPET_MIME);
+    if (!snippet) return false;
+    event.preventDefault();
+    const at = editor.posAtCoords({ x: event.clientX, y: event.clientY })
+      ?? editor.state.selection.main.head;
+    // Блок встаёт отдельной строкой: в середине строки код сломался бы.
+    const line = editor.state.doc.lineAt(at);
+    const insert = (line.text.trim() ? "\n" : "") + snippet;
+    editor.dispatch({ changes: { from: at, insert }, selection: { anchor: at + insert.length } });
+    editor.focus();
+    return true;
+  },
+});
+
+/** Высота открытой шпаргалки: запоминается, чтобы окно не прыгало между сессиями. */
+const HELP_HEIGHT_KEY = "yappytuberplus.cheatsheet.height.v1";
+
 /** Подчёркивание места ошибки: диапазон приходит из ядра вместе с сообщением. */
 const errorEffect = StateEffect.define<{ from: number; to: number } | null>();
 
@@ -146,6 +209,18 @@ export function ScriptEditor({
   const [errorText, setErrorText] = useState("");
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
+  // Высота шпаргалки: её тянут за верхний край и запоминают между сессиями.
+  const [helpHeight, setHelpHeight] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem(HELP_HEIGHT_KEY));
+      return Number.isFinite(stored) && stored >= 90 ? stored : 190;
+    } catch {
+      return 190;
+    }
+  });
+  const helpHeightRef = useRef(helpHeight);
+  helpHeightRef.current = helpHeight;
+  const helpDrag = useRef<{ y: number; height: number } | null>(null);
   const { favorites, toggle: toggleFavorite } = useFavorites();
   // Старые закладки могли указывать на удалённую функцию — показываем только живые.
   const pinned = favorites.filter((name) => SIGNATURES[name] !== undefined);
@@ -299,6 +374,7 @@ export function ScriptEditor({
         syntaxHighlighting(highlight),
         errorField,
         autocompletion({ override: [completion], activateOnTyping: true }),
+        dropSnippet,
         Prec.highest(keymap.of([{ key: "Mod-s", run: () => { applyNow(); return true; } }])),
         EditorView.updateListener.of((update) => {
           if (update.docChanged || update.selectionSet) readHint(update.state);
@@ -348,6 +424,51 @@ export function ScriptEditor({
     runCheckRef.current(value);
   }, [value]);
 
+  /**
+   * Вставка готового блока (клик по шпаргалке — то же, что бросок мышью).
+   *
+   * Блок встаёт отдельной строкой, а каретка — в пустую строку внутри `{ … }`:
+   * сразу видно, где писать тело.
+   */
+  const insertSnippet = (code: string) => {
+    const editor = view.current;
+    if (!editor) return;
+    const range = editor.state.selection.main;
+    const line = editor.state.doc.lineAt(range.from);
+    const text = (line.text.trim() ? "\n" : "") + code;
+    const body = text.indexOf("\n  \n");
+    const anchor = range.from + (body >= 0 ? body + 3 : text.length);
+    editor.dispatch({
+      changes: { from: range.from, to: range.to, insert: text },
+      selection: { anchor },
+    });
+    editor.focus();
+  };
+
+  /** Тянуть за верхний край шпаргалки: предел считается от окна, а не по числу. */
+  const startHelpResize = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    helpDrag.current = { y: event.clientY, height: helpHeightRef.current };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveHelpResize = (event: PointerEvent<HTMLDivElement>) => {
+    const state = helpDrag.current;
+    if (!state) return;
+    const limit = Math.max(160, window.innerHeight * 0.6);
+    setHelpHeight(Math.min(limit, Math.max(90, state.height - (event.clientY - state.y))));
+  };
+
+  const endHelpResize = () => {
+    if (!helpDrag.current) return;
+    helpDrag.current = null;
+    try {
+      localStorage.setItem(HELP_HEIGHT_KEY, String(Math.round(helpHeightRef.current)));
+    } catch {
+      // Приватный режим: высота просто не запомнится.
+    }
+  };
+
   // Клик по функции вставляет её в позицию курсора и ставит каретку в скобки:
   // подсказка ниже сразу показывает ожидаемые аргументы.
   const insert = (name: string) => {
@@ -390,42 +511,91 @@ export function ScriptEditor({
           <span>Шпаргалка и функции</span>
           <small>{GROUPS.map((group) => group.title).join(" · ")}</small>
         </button>
-        {helpOpen && <>
-          <div className="editor-hint">
-            <span><b>on mouse.left.down</b> {"{ x = 200 }"}</span>
-            <span><b>trigger kick = mouse.left.down</b>, потом <b>{"on kick { … }"}</b></span>
-            <span><b>on start</b> — первый кадр · <b>hold(0.5)</b> кадром позже фронта</span>
-            <span>команды — строкой в блоке: <b>{"on start { play() }"}</b>, <b>{"seek(2.5)"}</b>, <b>{"play(\"дождь\")"}</b></span>
-            <span>текст — переменная объекта: <b>{'text = "привет"'}</b>, в событии переопределяет до стопа; число в текст — <b>{"text(mic.db)"}</b>, склейка — <b>{'text = "db " + text(mic.db)'}</b></span>
-          </div>
-          <div className="function-chips">
-            {GROUPS.map((group) => (
-              <div className="function-chip-group" key={group.id}>
-                <span className="function-chip-title">{group.title}</span>
-                {Object.entries(SIGNATURES)
-                  .filter(([, entry]) => entry.group === group.id)
-                  .map(([name]) => {
-                    const fav = favorites.includes(name);
-                    return (
-                      <span className={`function-chip ${fav ? "fav" : ""}`} key={name}>
-                        <button
-                          className="chip-star"
-                          title={fav ? "Убрать из избранных" : "В избранные: команда всегда будет под рукой"}
-                          aria-pressed={fav}
-                          onClick={() => toggleFavorite(name)}
-                        >
-                          ★
-                        </button>
-                        <button className="chip-insert" title={SIGNATURES[name].summary} onClick={() => insert(name)}>
-                          {signatureOf(name)}
-                        </button>
-                      </span>
-                    );
-                  })}
+        {helpOpen && (
+          <div className="editor-help-body" style={{ height: helpHeight }}>
+            <div
+              className="editor-help-resize"
+              title="Тяните, чтобы изменить высоту шпаргалки"
+              onPointerDown={startHelpResize}
+              onPointerMove={moveHelpResize}
+              onPointerUp={endHelpResize}
+              onPointerCancel={endHelpResize}
+            />
+            <div className="help-events">
+              <span className="help-events-title">События · перетащите в скрипт или кликните</span>
+              <div className="help-event-list">
+                {EVENT_BLOCKS.map((block) => (
+                  <button
+                    key={block.code}
+                    className="help-event"
+                    draggable
+                    title={`${block.note}. Перетащите в скрипт или кликните — блок встанет на месте курсора`}
+                    onDragStart={(event) => startBlockDrag(event, block.code)}
+                    onClick={() => insertSnippet(block.code)}
+                  >
+                    <code>{block.code.split("\n")[0].trim()}</code>
+                    <small>{block.note}</small>
+                  </button>
+                ))}
+                <button
+                  className="help-event"
+                  draggable
+                  title="Объявление события живёт в глобальном скрипте; дальше пишут on kick { … }"
+                  onDragStart={(event) => startBlockDrag(event, TRIGGER_BLOCK)}
+                  onClick={() => insertSnippet(TRIGGER_BLOCK)}
+                >
+                  <code>trigger kick = mouse.left.down</code>
+                  <small>своё имя события: объявляется в глобальном скрипте</small>
+                </button>
               </div>
-            ))}
+            </div>
+            <div className="editor-hint">
+              <span><b>{"on <вход>.<тип> { … }"}</b> — условие, тело пишет автор</span>
+              <span><b>down</b> 0 → 1 · <b>up</b> 1 → 0 · <b>change</b> любое изменение</span>
+              <span><b>hold(0.5)</b> / <b>relax(0.5)</b> — секунды, срабатывают кадром позже фронта</span>
+              <span><b>on start</b> — первый кадр и после «Стоп»</span>
+              <span>команды — отдельной строкой: <b>{"on start { play() }"}</b>, <b>seek(2.5)</b>, <b>{'play("дождь")'}</b></span>
+              <span>чужой объект: <b>{'label.text = "…"'}</b>, <b>{'text("label", "…")'}</b></span>
+              <span>текст — переменная: <b>{'text = "привет"'}</b> — база, в событии переопределяет до «Стопа»</span>
+              <span>число в текст: <b>text = text(mic.db)</b>, склейка — <b>{'text = "db " + text(mic.db)'}</b></span>
+              <span>текст всегда в кавычках: <b>{'text("привет")'}</b>; кириллица без кавычек — ошибка разбора</span>
+            </div>
+            <div className="function-chips">
+              {GROUPS.map((group) => (
+                <div className="function-chip-group" key={group.id}>
+                  <span className="function-chip-title">{group.title}</span>
+                  {Object.entries(SIGNATURES)
+                    .filter(([, entry]) => entry.group === group.id)
+                    .map(([name]) => {
+                      const fav = favorites.includes(name);
+                      return (
+                        <span className={`function-chip ${fav ? "fav" : ""}`} key={name}>
+                          <button
+                            className="chip-insert"
+                            draggable
+                            title={`${SIGNATURES[name].summary}. Клик — вставить вызов, можно перетащить в скрипт`}
+                            onDragStart={(event) => startBlockDrag(event, `${name}()`)}
+                            onClick={() => insert(name)}
+                          >
+                            {signatureOf(name)}
+                          </button>
+                          <button
+                            className="chip-star"
+                            title={fav ? "Убрать из избранных" : "В избранные: функция всегда под рукой"}
+                            aria-label={`${fav ? "Убрать из избранных" : "В избранные"}: ${name}`}
+                            aria-pressed={fav}
+                            onClick={() => toggleFavorite(name)}
+                          >
+                            ★
+                          </button>
+                        </span>
+                      );
+                    })}
+                </div>
+              ))}
+            </div>
           </div>
-        </>}
+        )}
       </div>
     </>
   );

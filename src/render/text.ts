@@ -75,15 +75,41 @@ export function resolveTemplate(template: string, channel?: TextChannel): string
   });
 }
 
-/** Итоговый текст объекта: значение из скрипта (`text = …`) важнее шаблона. */
+/** Есть ли в шаблоне экранированная подстановка: `'{модуль.поле}'`. */
+export function hasQuotedPlaceholder(template: string): boolean {
+  return /'\{[^{}]+\}'/.test(template);
+}
+
+/**
+ * `{путь}` → `'{путь}'`: ссылка показывается текстом, а не читается из модуля.
+ * Так шаблон можно показать зрителю как пример, не подставляя значение.
+ */
+export function quotePlaceholders(template: string): string {
+  return template.replace(SCAN, (match, raw?: string) => (raw === undefined ? match : `'{${raw}}'`));
+}
+
+/** Обратное к `quotePlaceholders`: снимает одинарные кавычки у подстановок. */
+export function unquotePlaceholders(template: string): string {
+  return template.replace(/'\{([^{}]*)\}'/g, "{$1}");
+}
+
+/**
+ * Итоговый текст объекта: значение из скрипта (`text = …`) важнее шаблона.
+ *
+ * Подстановки чата работают и в скриптовой строке — `text = "{twitch.chat.user}"`,
+ * — поэтому итог всегда проходит через `resolveTemplate`. Скобки буквально
+ * показываются в одинарных кавычках: `text = "'{twitch.chat.user}'"`.
+ */
 export function textContent(
   object: RigObject,
   frame: RigFrame | null,
   channel?: TextChannel,
 ): string {
   const override = frame?.texts?.[object.id];
-  if (typeof override === "string") return override;
-  return resolveTemplate((object.text ?? DEFAULT_TEXT).template, channel);
+  const template = typeof override === "string"
+    ? override
+    : (object.text ?? DEFAULT_TEXT).template;
+  return resolveTemplate(template, channel);
 }
 
 export function textFont(spec: TextSpec): string {

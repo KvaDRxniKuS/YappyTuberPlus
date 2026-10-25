@@ -32,6 +32,8 @@ interface RightPanelProps {
   onObjectScript: (script: string) => void;
   /** Пресет поведения: пишет блоки формул в скрипты выделенных объектов. */
   onBehaviour: (scripts: Record<string, string>) => void;
+  /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
+  onText: (objects: RigObject[]) => void;
   /** Выделение целиком: поведение правится сразу у всех. */
   selectedObjects: RigObject[];
   onGlobalScript: (script: string) => void;
@@ -103,6 +105,7 @@ export function RightPanel(props: RightPanelProps) {
           object={props.selected}
           selection={props.selectedObjects}
           onChange={props.onBehaviour}
+          onText={props.onText}
         />
       ) : tab === "modules" ? (
         <ModulesPanel

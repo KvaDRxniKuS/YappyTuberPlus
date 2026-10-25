@@ -1031,6 +1031,25 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
                         body_lines.push((line_number, column, text.to_string()));
                     }
                     closed = true;
+                    // После закрывающей скобки на той же строке ничего не пишется:
+                    // иначе `on start {} text("…")` молча терялся, и человек видел
+                    // «ни ошибки, ни результата».
+                    let rest_after = &after_open[close + 1..];
+                    let tail = rest_after.trim_start();
+                    if !tail.is_empty() {
+                        let offset = prefix_len
+                            + open
+                            + 1
+                            + close
+                            + 1
+                            + (rest_after.len() - tail.len());
+                        return Err(ScriptError::new(
+                            line_number,
+                            column + offset,
+                            tail.trim_end().len(),
+                            "после '}' блока события ничего не пишется: каждое действие — отдельной строкой",
+                        ));
+                    }
                 }
                 None => {
                     let text = after_open.trim();
@@ -1293,6 +1312,20 @@ mod tests {
     fn command_outside_event_is_an_error() {
         let error = parse_script("play()").unwrap_err();
         assert!(error.message.contains("внутри блока события"));
+    }
+
+    #[test]
+    fn text_after_event_block_is_reported() {
+        // `on start {} text("…")` раньше молча терялся: человек видел «ни ошибки,
+        // ни результата». Теперь это ошибка с местом.
+        let error = parse_script("on start {} text(\"привет\")").unwrap_err();
+        assert!(error.message.contains("после '}'"));
+        assert_eq!(error.line, 1);
+
+        // Комментарий после блока — обычное дело, он не ошибка.
+        assert!(parse_script("on start {} // пусто").is_ok());
+        // Тело в одну строку по-прежнему работает.
+        assert!(parse_script("on start { a = 1 }").is_ok());
     }
 
     #[test]

@@ -264,6 +264,10 @@ export function useRigEngine(
         const target = neutral.objects[object.id];
         if (values && target) neutral.objects[object.id] = { ...target, visible: values.visible };
       }
+      // Текст скрипта тоже замораживается вместе с кадром: иначе объект мигнул
+      // бы шаблоном. Базовое значение вернёт «Продолжить» — ядро снимает
+      // переопределение по reset_clock.
+      neutral.texts = { ...live.texts };
     }
     frameRef.current = neutral;
     setSnapshot(neutral);

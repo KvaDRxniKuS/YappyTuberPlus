@@ -288,7 +288,21 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .editor-help-toggle svg { flex: none; transition: transform .15s; }
 .editor-help.open .editor-help-toggle svg { transform: rotate(90deg); }
 .editor-help-toggle small { margin-left: auto; color: #4f5963; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.editor-hint { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 5px 10px 6px; border-top: 1px solid #262b32; background: #1b1e23; color: #6f7a85; font-size: 11px; }
+/* Тело шпаргалки: своя высота, тянут за верхний край; всё содержимое прокручивается. */
+.editor-help-body { position: relative; overflow: auto; border-top: 1px solid #262b32; }
+.editor-help-resize { position: sticky; top: 0; z-index: 2; height: 7px; cursor: ns-resize; background: linear-gradient(#262c33, #1b1e23); touch-action: none; }
+.editor-help-resize::after { content: ""; display: block; width: 42px; height: 2px; margin: 2px auto 0; border-radius: 2px; background: #3b424b; }
+.editor-help-resize:hover::after { background: #5a656f; }
+/* Блоки событий: их перетаскивают в скрипт или вставляют кликом. */
+.help-events { padding: 6px 10px 8px; border-top: 1px solid #262b32; }
+.help-events-title { display: block; margin-bottom: 5px; color: #5d6873; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+.help-event-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.help-event { display: flex; flex-direction: column; gap: 2px; max-width: 240px; padding: 4px 7px; border: 1px solid #2d343c; border-radius: 4px; background: #21262c; text-align: left; cursor: grab; }
+.help-event:hover { border-color: #3d4a54; background: #262d34; }
+.help-event:active { cursor: grabbing; }
+.help-event code { color: #9fc3d8; font-family: 'JetBrains Mono', monospace; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.help-event small { color: #6f7a85; font-size: 10px; line-height: 1.25; }
+.editor-hint { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; border-top: 1px solid #262b32; background: #1b1e23; color: #6f7a85; font-size: 11px; }
 .editor-hint b { color: #93b0c8; font-weight: 500; font-family: monospace; }
 .runtime-panel { flex: none; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: #1b1e23; border-top: 1px solid #262b32; }
 .runtime-panel.open { flex: 0 1 auto; max-height: 45%; }
@@ -323,13 +337,19 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .favorite-title { flex: none; color: #d9b26a; font-size: 10px; letter-spacing: .4px; text-transform: uppercase; }
 .favorite-commands code { flex: none; padding: 2px 5px; border-radius: 3px; background: #2b3239; color: #b9d4e3; font-size: 10px; white-space: nowrap; cursor: pointer; }
 .favorite-commands code:hover { background: #35414a; color: #eaf4f8; }
-.function-chips { max-height: 124px; overflow: auto; padding: 6px 10px 8px; border-top: 1px solid #262b32; background: #1b1e23; }
-.function-chip { display: inline-flex; align-items: center; gap: 1px; }
-.chip-star { width: 12px; padding: 0; color: #454e57; font-size: 11px; line-height: 1; }
-.chip-star:hover { color: #d9b26a; }
-.function-chip.fav .chip-star { color: #e0b86a; }
-.chip-insert { padding: 2px 5px; border-radius: 3px; background: #252a30; color: #7f9aa6; font-family: monospace; font-size: 10px; }
-.chip-insert:hover { background: #2f3941; color: #a8d3c8; }
+.function-chips { padding: 6px 10px 8px; border-top: 1px solid #262b32; background: #1b1e23; }
+/* Чип — одна «таблетка»: слева вызов, справа его звёздочка. Поэтому звезда
+   читается как часть функции, а не как разделитель между ними. */
+.function-chip { display: inline-flex; align-items: stretch; border-radius: 4px; background: #252a30; overflow: hidden; }
+.function-chip:hover { background: #2b3239; }
+.function-chip.fav { background: #2e2a20; }
+.chip-insert { padding: 2px 6px; border: 0; background: none; color: #7f9aa6; font-family: monospace; font-size: 10px; cursor: grab; }
+.chip-insert:hover { color: #a8d3c8; }
+.chip-insert:active { cursor: grabbing; }
+.chip-star { width: 17px; padding: 0; border: 0; border-left: 1px solid #ffffff12; background: none; color: #6c6a5f; font-size: 10px; line-height: 1; opacity: .5; cursor: pointer; }
+.function-chip:hover .chip-star, .chip-star:focus-visible { opacity: 1; }
+.chip-star:hover { color: #e0b86a; }
+.function-chip.fav .chip-star { opacity: 1; color: #e0b86a; }
 .function-chip-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 4px; }
 .function-chip-title { width: 100%; color: #5d6873; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
 .function-chips code { padding: 2px 5px; border-radius: 3px; background: #252a30; color: #7f9aa6; font-size: 10px; cursor: pointer; }
@@ -345,6 +365,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .behaviour-section .section-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: #adb6bf; font-size: 11.5px; font-weight: 650; }
 .behaviour-section .section-title span { display: flex; align-items: center; gap: 6px; }
 .behaviour-hint { margin: 0 0 8px; color: #6b7681; font-size: 10.5px; line-height: 1.45; }
+/* Настройки текста во вкладке «Поведение»: те же поля, что в инспекторе. */
+.behaviour-text-section .text-property { margin-bottom: 6px; }
+.behaviour-text-source { width: 100%; margin-bottom: 8px; }
+.behaviour-flags { display: flex; gap: 16px; }
+.behaviour-flags .check-line { margin-top: 6px; }
 .behaviour-row { margin-bottom: 7px; }
 .behaviour-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
 .behaviour-row-head span { color: #85909a; font-size: 11px; }
