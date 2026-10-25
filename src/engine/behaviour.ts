@@ -163,15 +163,17 @@ function springParams(strength: number): { frequency: number; damping: number } 
 }
 
 /**
- * Физика поворота: «плавность» — это среда, в которой качается мотор.
- * 0 — свободный маятник (резкий и долго качается), 1 — вязко (тянет медленно
- * и быстро успокаивается).
+ * Физика поворота — свободный маятник. Затухание почти нулевое и **не**
+ * зависит от ползунка: тело, которое толкнули, качается само, а останавливает
+ * его только «Сглаживание поворота» (оно стоит после пружины и съедает
+ * амплитуду) или пределы. «Плавность» задаёт частоту: 0 — резкий, звонкий
+ * мотор (4.2 Гц), 1 — тягучий и медленный (1 Гц).
  */
 function physSpringParams(smoothness: number): { frequency: number; damping: number } {
   const viscosity = Math.min(1, Math.max(0, smoothness));
   return {
     frequency: 4.2 - 3.2 * viscosity,
-    damping: 0.14 + 0.56 * viscosity,
+    damping: 0.02,
   };
 }
 
@@ -368,11 +370,11 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   if (physical || rotFilter || deviation.length) {
     let expression: string;
     if (physical) {
-      // «Физика» — это мотор: пружина тянет «тяжёлую» сторону к углу
-      // physRotation. Речь на угол не давит постоянно, а толкает мотор
-      // импульсом, поэтому объект качается вокруг положения покоя и
-      // успокаивается — это и есть свободное вращение вокруг пивота. Пределы
-      // ограничивают размах вокруг покоя, пивот задаёт плечо.
+      // «Физика» — это мотор с почти нулевым затуханием: пружина тянет
+      // «тяжёлую» сторону к углу physRotation, но качается вокруг покоя сама.
+      // Речь не давит на угол постоянно, а толкает импульсом — тело получает
+      // удар и дальше болтается по инерции, пока его не остановит сглаживание
+      // поворота (или предел). Пивот задаёт плечо.
       const aim = behaviour.physRotation! - heavy! - object.base.rotation;
       const { frequency, damping } = physSpringParams(behaviour.physSmooth);
       const parentSpace = behaviour.physSpace === "parent" && hasParent;
@@ -384,7 +386,12 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       // Импульс: быстрый фронт минус медленный спад. Постоянной силы нет, так
       // что мотор возвращает объект к покою, а толчок задаёт качание.
       const kick = `max(smooth(mic.speak, 60) - smooth(mic.speak, ${num(behaviour.dragImpulse)}), 0)`;
-      const impulse = drag ? `${kick} * ${dragAmount}` : null;
+      // Импульс не должен быть сильнее сустава: иначе размах гарантированно
+      // больше допуска, и объект залипает на упоре, перескакивая с одной
+      // стороны на другую. Поэтому угол толчка зажимается пределом.
+      const reach = limits ? Math.min(behaviour.dragAngle, Math.max(limitLeft, limitRight)) : behaviour.dragAngle;
+      const impulseAngle = `${num(reach)} * ${dragDirection()}`;
+      const impulse = drag ? `${kick} * ${impulseAngle}` : null;
       const push = [impulse, wiggleRot].filter(Boolean).join(" + ");
       const inner = `spring(${rest}${push ? ` + ${push}` : ""}, ${num(frequency)}, ${num(damping)})`;
       expression = limits
