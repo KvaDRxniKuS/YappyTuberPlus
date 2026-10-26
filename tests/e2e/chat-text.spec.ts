@@ -88,6 +88,8 @@ test("настройки текста переживают чтение конф
     authorPath: "$.payload.event.chatter_user_name",
     input: "chat",
     history: 12,
+    // Срок хранения приезжает вместе с количеством: память чата — два числа.
+    retainSeconds: 300,
     showAuthor: true,
   });
   // Мусор в истории зажимается в 1…100, а не ломает модуль.
