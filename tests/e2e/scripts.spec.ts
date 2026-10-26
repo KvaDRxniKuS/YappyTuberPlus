@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
-  appendSnippet, describeIssues, eventNameFor, eventNames, eventSnippet, freeEventName,
-  issueName, issueSpans, issueTarget, nameSpans, scopeTitle,
+  appendSnippet, describeIssues, diagnosticName, diagnosticPlace, eventNameFor, eventNames,
+  eventSnippet, freeEventName, issueName, issueSpans, issueTarget, nameSpans, scopeTitle,
 } from "../../src/engine/scripts";
 
 /**
@@ -176,4 +176,29 @@ test("переход везёт имя с собой", () => {
     [{ line: 1, column: 1, length: 5, message: "м", related: { scope: "globals", line: 3 }, name: "clap" }],
     "head",
   )).toEqual({ scope: "globals", line: 3, name: "clap" });
+});
+
+test("диагностика кадра называет область и строку", () => {
+  const scopes = ["globals", "head", "arm"];
+  // Обе формы, которые пишет ядро: со строкой и без.
+  expect(diagnosticPlace("глобальные (строка 7): x = 2 — неизвестное имя", scopes))
+    .toEqual({ scope: "globals", line: 7 });
+  expect(diagnosticPlace("head (строка 3): в блоке события нельзя присвоить 'play'", scopes))
+    .toEqual({ scope: "head", line: 3 });
+  expect(diagnosticPlace("arm: параметр 'rotation' есть только у медиа-объекта", scopes))
+    .toEqual({ scope: "arm", line: null });
+  // Не область: `вызов 'clap'` — это часть сообщения, а не объект.
+  expect(diagnosticPlace("вызов 'clap': вложенность больше 8", scopes)).toBeNull();
+  expect(diagnosticPlace("рекурсия вызова: a → b", scopes)).toBeNull();
+  // Объект, которого нет в сцене, переходом не считается.
+  expect(diagnosticPlace("leg: неизвестное имя", scopes)).toBeNull();
+});
+
+test("имя из диагностики — для подсветки вхождений", () => {
+  expect(diagnosticName("head (строка 3): событие 'clap' уже объявлено в строке 1")).toBe("clap");
+  expect(diagnosticName("глобальные: переменная события 'loud' занята")).toBe("loud");
+  // Без кавычек имени нет: подсвечивать нечего.
+  expect(diagnosticName("head (строка 3): не число")).toBeNull();
+  // Имена только латиницей, как в скрипте: «'привет'» — это строка, а не имя.
+  expect(diagnosticName("text = 'привет'")).toBeNull();
 });

@@ -11,7 +11,9 @@ import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
 import type { ScriptCheck, ScriptScope } from "../engine/scripts";
-import { eventNames } from "../engine/scripts";
+import {
+  diagnosticName, diagnosticPlace, eventNames, scopeTitle,
+} from "../engine/scripts";
 
 interface RightPanelProps {
   selected: RigObject | null;
@@ -89,6 +91,9 @@ export function RightPanel(props: RightPanelProps) {
     return () => window.clearTimeout(timer);
   }, [focusModule]);
   const editorValue = tab === "globals" ? props.globalScript : props.selected?.script || "";
+  // Области, о которых может говорить диагностика: `глобальные` и объекты.
+  // Список сверяется с сообщением, поэтому «вызов 'clap'» за объект не сойдёт.
+  const scopes = ["globals", ...props.objects.map((object) => object.id)];
   // Подписи входов — для подсказки события: `on twitch.chat.change` показывает,
   // что это «Сообщений». Считаются один раз на рендер панели.
   const inputLabels = Object.fromEntries(
@@ -118,7 +123,8 @@ export function RightPanel(props: RightPanelProps) {
       props.onSelectObject?.(scope);
       setTab("object");
     }
-    setReveal({ scope, line, nonce: Date.now(), name });
+    // Без номера строки переходим только в область: подсвечивать нечего.
+    if (line > 0) setReveal({ scope, line, nonce: Date.now(), name });
   };
   // Проверка видит соседние области: конфликт имён — это всегда две строки,
   // своя и чужая. `scope` пустой у глобального скрипта: тогда ядро смотрит,
@@ -221,7 +227,31 @@ export function RightPanel(props: RightPanelProps) {
           {(props.engineError || props.frame?.diagnostics.length) ? (
             <div className="runtime-diagnostics">
               {props.engineError && <div className="diagnostic error"><CircleAlert size={14} /><span>{props.engineError}</span></div>}
-              {props.frame?.diagnostics.map((message, index) => <div className="diagnostic" key={`${index}-${message}`}><CircleAlert size={13} /><span>{message}</span></div>)}
+              {props.frame?.diagnostics.map((message, index) => {
+                // Диагностика кадра — тоже ошибка в конкретной строке: переход
+                // к ней экономит поиск объекта руками.
+                const place = diagnosticPlace(message, scopes);
+                const name = diagnosticName(message);
+                return (
+                  <div className="diagnostic" key={`${index}-${message}`}>
+                    <CircleAlert size={13} />
+                    <span>{message}</span>
+                    {place && (
+                      <button
+                        type="button"
+                        className="diagnostic-jump"
+                        title={place.line
+                          ? `Показать ${scopeTitle(place.scope)}, строка ${place.line}`
+                          : `Открыть ${scopeTitle(place.scope)}`}
+                        onClick={() => openIssue(place.scope, place.line ?? 0, name ?? undefined)}
+                      >
+                        <ChevronRight size={11} />
+                        {scopeTitle(place.scope)}{place.line ? `:${place.line}` : ""}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
           {valuesOpen && (

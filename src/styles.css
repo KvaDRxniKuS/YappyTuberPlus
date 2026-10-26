@@ -317,6 +317,9 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .runtime-value span { color: #75818b; font-family: monospace; font-size: 10px; }
 .runtime-value b { color: #b1bcc5; font-family: monospace; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .diagnostic { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 5px; padding: 6px 7px; border-radius: 4px; background: #ddb77d0a; color: var(--warning); font-size: 10px; line-height: 1.4; }
+/* Переход к месту из диагностики кадра: сообщение называет строку, клик ведёт. */
+.diagnostic-jump { flex: none; display: inline-flex; align-items: center; gap: 1px; margin-left: auto; padding: 1px 5px; border: 1px solid #4d4330; border-radius: 3px; background: #2a251b; color: #d9c294; font-family: monospace; font-size: 9.5px; white-space: nowrap; cursor: pointer; }
+.diagnostic-jump:hover { border-color: #6d5c3d; background: #352d20; color: #f0dcb4; }
 .diagnostic.error { background: #df8d910c; color: var(--danger); }
 .diagnostic svg { flex: none; margin-top: 1px; }
 .script-error-line {

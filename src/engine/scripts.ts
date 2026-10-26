@@ -170,6 +170,40 @@ export function scopeTitle(scope: string): string {
   return scope === "globals" ? "globals.rig" : `${scope}.rig`;
 }
 
+/** Место, о котором говорит диагностика кадра. */
+export interface DiagnosticPlace {
+  scope: string;
+  /** Строка, если ядро её назвало; иначе `null` — только область. */
+  line: number | null;
+}
+
+/**
+ * Где искать то, о чём ругается диагностика кадра.
+ *
+ * Ядро пишет сообщения в двух формах: `область (строка N): текст` и
+ * `область: текст`. Область — `глобальные` или id объекта, поэтому она
+ * сверяется со списком известных: иначе `вызов 'clap': …` приняли бы за объект
+ * с именем «вызов».
+ */
+export function diagnosticPlace(message: string, scopes: string[]): DiagnosticPlace | null {
+  const match = /^\s*(\S+?)(?:\s*\(строка (\d+)\))?:/.exec(message);
+  if (!match) return null;
+  const scope = match[1] === "глобальные" ? "globals" : match[1];
+  if (!scopes.includes(scope)) return null;
+  return { scope, line: match[2] ? Number(match[2]) : null };
+}
+
+/**
+ * Имя из сообщения — для подсветки всех вхождений после перехода.
+ *
+ * Ядро называет спорное имя в кавычках: `событие 'clap'`, `переменная события
+ * 'loud'`, `вызов 'clap'`. Берём первое такое имя в одинарных кавычках.
+ */
+export function diagnosticName(message: string): string | null {
+  const match = /'([A-Za-z_][A-Za-z0-9_]*)'/.exec(message);
+  return match ? match[1] : null;
+}
+
 /** Сообщение под редактором: первое место и сколько ещё таких же. */
 export function describeIssues(issues: ScriptIssueInfo[]): string {
   if (issues.length === 0) return "";
