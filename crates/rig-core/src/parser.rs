@@ -1638,7 +1638,10 @@ mod tests {
 
     #[test]
     fn foreign_assignment_parses() {
-        let script = parse_script("head.rotation = 15\non mouse.left.down { head.x = 5 }").unwrap();
+        let script = parse_script(
+            "head.rotation = 15\nevent press() { mouse.left.up }\non press { head.x = 5 }",
+        )
+        .unwrap();
         assert!(matches!(
             &script.assignments[0].0,
             AssignTarget::Foreign { object, param } if object == "head" && param == "rotation"

@@ -1224,12 +1224,15 @@ impl Rig {
         let bindings = self.bind_params(&params, &values, &context);
         let saved = std::mem::replace(&mut self.bindings, bindings);
         for index in 0..self.events.len() {
-            if let CompiledSource::Named(target) = self.events[index].source {
-                if target == call.target {
-                    let snapshot = self.bindings.clone();
-                    self.run_handler(index, snapshot, depth + 1);
-                }
+            let target = match &self.events[index].source {
+                CompiledSource::Named(target) => *target,
+                CompiledSource::Start => continue,
+            };
+            if target != call.target {
+                continue;
             }
+            let snapshot = self.bindings.clone();
+            self.run_handler(index, snapshot, depth + 1);
         }
         self.bindings = saved;
     }
