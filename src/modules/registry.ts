@@ -1,7 +1,7 @@
 import type { ModuleConfig, ModuleInstance, ModuleKind } from "../types";
 
 /** Тип поля настроек: из него панель рисует контрол без ручного кода. */
-export type ModuleFieldType = "number" | "flag" | "select" | "device";
+export type ModuleFieldType = "number" | "flag" | "select" | "device" | "monitor";
 
 export interface ModuleFieldOption {
   value: string;
@@ -98,7 +98,9 @@ function normalizeField(raw: unknown): ModuleField | null {
   const field = raw as Record<string, unknown>;
   const key = typeof field.key === "string" ? field.key.trim() : "";
   if (!key) return null;
-  const type = field.type === "flag" || field.type === "select" || field.type === "device" ? field.type : "number";
+  const type = field.type === "flag" || field.type === "select" || field.type === "device" || field.type === "monitor"
+    ? field.type
+    : "number";
   const options = Array.isArray(field.options)
     ? field.options
       .map((option) => {

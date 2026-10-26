@@ -184,14 +184,23 @@ export function ensureAssets(sources: Iterable<string | null | undefined>): void
   }
 }
 
+/** Файлы одного объекта: картинка, медиа и картинка-маска. */
+function sourcesOf(object: RigObject): Array<string | null> {
+  return [
+    object.image,
+    object.media?.src ?? null,
+    object.mask?.kind === "file" ? object.mask.file : null,
+  ];
+}
+
 /** Все файлы, на которые ссылается пресет. */
 export function assetIdsOfPreset(preset: RigPreset): Set<string> {
   const ids = new Set<string>();
   for (const object of preset.objects) {
-    const image = assetIdOf(object.image);
-    if (image) ids.add(image);
-    const media = assetIdOf(object.media?.src);
-    if (media) ids.add(media);
+    for (const source of sourcesOf(object)) {
+      const id = assetIdOf(source);
+      if (id) ids.add(id);
+    }
   }
   return ids;
 }
@@ -215,8 +224,7 @@ export async function ensureAssetsOfPresetSettled(preset: RigPreset): Promise<st
   if (!lost.size) return [];
   const owners: string[] = [];
   for (const object of preset.objects) {
-    const sources = [object.image, object.media?.src];
-    if (sources.some((source) => { const id = assetIdOf(source); return !!id && lost.has(id); })) {
+    if (sourcesOf(object).some((source) => { const id = assetIdOf(source); return !!id && lost.has(id); })) {
       owners.push(object.name);
     }
   }
@@ -553,6 +561,11 @@ export async function extractAssets(preset: RigPreset): Promise<{ preset: RigPre
       );
       if (ref) { next = { ...next, media: { ...next.media, src: ref } }; changed = true; }
     }
+    // Картинка-маска — такой же файл: в пресете остаётся ссылка, не data URL.
+    if (next.mask?.kind === "file" && next.mask.file && isDataUrl(next.mask.file)) {
+      const ref = await storeBlob(dataUrlToBlob(next.mask.file), `${next.id}-mask.${extensionOf(next.mask.file)}`);
+      if (ref) { next = { ...next, mask: { ...next.mask, file: ref } }; changed = true; }
+    }
     objects.push(next);
   }
   return changed ? { preset: { ...preset, objects }, changed } : { preset, changed };
@@ -618,6 +631,11 @@ export async function inlineAssets(preset: RigPreset): Promise<{ preset: RigPres
       const source = await inlineSource(next.media.src);
       if (source) { next = { ...next, media: { ...next.media, src: source } }; changed = true; }
       else missing.push(`${object.name} (${next.media.fileName || "файл"})`);
+    }
+    if (next.mask?.kind === "file" && next.mask.file && isAssetRef(next.mask.file)) {
+      const source = await inlineSource(next.mask.file);
+      if (source) { next = { ...next, mask: { ...next.mask, file: source } }; changed = true; }
+      else missing.push(`${object.name} (маска)`);
     }
     objects.push(next);
   }

@@ -14,7 +14,7 @@ import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { FilesDialog } from "./components/FilesDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeSprite, makeText,
+  baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeShape, makeSprite, makeText,
   normalizeModules, normalizeOverlay, normalizePreset, parentNewObject, setParent, setScriptValue,
   uniqueId,
 } from "./engine/preset";
@@ -46,7 +46,7 @@ import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
-  type ModuleInstance, type RigObject, type RigPreset,
+  type ModuleInstance, type RigObject, type RigPreset, type Vec2,
 } from "./types";
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
@@ -123,6 +123,11 @@ export default function App() {
   const [layout, setLayout] = useState<EditorLayout>(loadLayout);
   const [paused, setPaused] = useState(false);
   const [tool, setTool] = useState<SceneTool>("move");
+  /**
+   * Перо: контур фигуры, который сейчас рисуется на сцене. Состояние живёт
+   * здесь, потому что его видят двое — сцена (клики) и инспектор (кнопка).
+   */
+  const [pen, setPen] = useState<{ objectId: string; itemId: string } | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
   /** Пресет, ждущий решения по модулям при открытии. */
@@ -695,6 +700,33 @@ export default function App() {
     setSelection([id]);
   };
 
+  /**
+   * Объект-фигура: контуры, которые можно двигать и анимировать, и которыми
+   * маскируются другие объекты. Рамка — 320×220, чтобы перо сразу было где
+   * развернуться.
+   */
+  const addShape = () => {
+    const current = presetRef.current;
+    const id = uniqueId(current.objects, "shape");
+    const spot = groupSpot(current, selectionRef.current);
+    const object = makeShape(id, "Новая фигура", 320, 220, spot.x, spot.y);
+    const objects = parentNewObject([...current.objects, object], [object], selectionRef.current);
+    commit({ ...current, objects }, { label: "Новая фигура" });
+    setSelection([id]);
+  };
+
+  /** Перо на сцене: точки контура правятся без отдельной истории на каждую. */
+  const penPoints = useCallback((objectId: string, itemId: string, points: Vec2[]) => {
+    const current = presetRef.current;
+    const object = current.objects.find((item) => item.id === objectId);
+    if (!object?.shape) return;
+    const items = object.shape.items.map((item) => (item.id === itemId ? { ...item, points } : item));
+    updateObject(
+      { ...object, shape: { ...object.shape, items } },
+      { label: "Контур фигуры", coalesce: "pen" },
+    );
+  }, [updateObject]);
+
   /** Удаление всей выборки: дети удалённых переезжают к ближайшему живому предку. */
   const deleteSelected = () => {
     const current = presetRef.current;
@@ -716,6 +748,10 @@ export default function App() {
       let updated = object.parentId && doomed.has(object.parentId)
         ? setParent(object, replacementOf.get(object.parentId) ?? null)
         : object;
+      // Маска на удалённую фигуру — ссылка в пустоту: объект снова виден целиком.
+      if (updated.mask?.kind === "shape" && doomed.has(updated.mask.shapeId)) {
+        updated = { ...updated, mask: undefined };
+      }
       let script = updated.script;
       for (const [removed, replacement] of replacementOf) {
         if (!replacement || !script.includes(removed)) continue;
@@ -749,6 +785,12 @@ export default function App() {
         name: `${object.name} · копия`,
         base: { ...object.base },
         pivot: { ...object.pivot },
+        // Контуры и точки маски копируются вглубь: правка копии не должна
+        // менять оригинал.
+        shape: object.shape
+          ? { ...object.shape, items: object.shape.items.map((item) => ({ ...item, points: [...item.points] })) }
+          : undefined,
+        mask: object.mask ? { ...object.mask, points: [...object.mask.points] } : undefined,
       };
       pool = [...pool, copy];
       created.push({ source: object, copy });
@@ -948,6 +990,7 @@ export default function App() {
           onRenameCancel={() => setRenameId(null)}
           onImport={() => fileInput.current?.click()}
           onAddText={addText}
+          onAddShape={addShape}
           onAddGroup={() => {
             const current = presetRef.current;
             const id = uniqueId(current.objects, "group");
@@ -1020,6 +1063,8 @@ export default function App() {
               }));
             }}
             onPivot={pivotObject}
+            pen={pen}
+            onPenPoints={penPoints}
           />
           <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
           <Inspector
@@ -1037,6 +1082,8 @@ export default function App() {
             onVisible={setSelectedVisible}
             onDelete={deleteSelected}
             onDuplicate={duplicateSelected}
+            pen={pen}
+            onPen={setPen}
           />
         </main>
 
@@ -1055,6 +1102,7 @@ export default function App() {
           manual={moduleInputs.manual}
           auto={moduleInputs.auto}
           devices={moduleInputs.devices}
+          monitors={moduleInputs.monitors}
           audioError={moduleInputs.error}
           onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
           selectedObjects={selectedObjects}

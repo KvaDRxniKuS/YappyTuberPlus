@@ -1445,3 +1445,19 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .number-field input[type="color"] {
   width: 100%; height: 22px; padding: 0 2px; border: 0; background: transparent; cursor: pointer;
 }
+
+/* ---------- Фигуры и маски ---------- */
+.icon-button.active { color: var(--accent); background: #82d5c112; }
+.shape-list { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.shape-row { display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 7px; border: 1px solid transparent; border-radius: 5px; background: #ffffff05; }
+.shape-row.active { border-color: var(--accent-dim); background: #6bc0aa14; }
+.shape-kind { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c3ccd4; font-size: 11.5px; }
+.shape-row.active .shape-kind { color: #e3eeeb; }
+.shape-summary { flex: none; color: var(--faint); font-family: monospace; font-size: 10px; }
+.shape-row .icon-button { width: 22px; height: 22px; }
+.color-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.color-row label { display: flex; flex-direction: column; gap: 4px; color: #9aa5b0; font-size: 11px; }
+.color-row input[type="color"] { width: 100%; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: #1b2026; }
+.mask-points { width: 100%; min-height: 54px; margin-top: 6px; padding: 6px 7px; resize: vertical; border: 1px solid var(--border); border-radius: 5px; background: #12161a; color: #dfe7ee; font-family: monospace; font-size: 11px; }
+.mask-points:focus { outline: none; border-color: var(--accent-dim); }
+.mask-preview { display: block; max-width: 100%; max-height: 84px; margin-top: 6px; border-radius: 5px; background: #12161a; object-fit: contain; }

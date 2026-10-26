@@ -3,7 +3,7 @@ import {
   BoxSelect, CircleDot, Crosshair, Focus, Grid3X3, Hand, LassoSelect,
   LocateFixed, MousePointer2, Scan, ZoomIn, ZoomOut,
 } from "lucide-react";
-import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset } from "../types";
+import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, spriteBounds } from "../render/bounds";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
+import { nearestPoint } from "../render/shape";
 
 export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso";
 
@@ -37,6 +38,12 @@ interface SceneProps {
   pivots: GuideMode;
   /** Текст из модулей: подстановки `{twitch.chat.message}` в текстовых объектах. */
   texts?: TextChannel;
+  /**
+   * Перо: контур, который сейчас рисуется. Клик по сцене ставит точку, готовая
+   * точка хватается и переносится — как в графическом редакторе.
+   */
+  pen?: { objectId: string; itemId: string } | null;
+  onPenPoints?: (objectId: string, itemId: string, points: Vec2[]) => void;
   /** Файлы, брошенные на сцену: тип объекта определится по файлу. */
   onDropFiles?: (files: FileList) => void;
   onTool: (tool: SceneTool) => void;
@@ -70,7 +77,16 @@ type Interaction =
     }
   | { type: "pan"; startX: number; startY: number; camera: Camera }
   | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
+  /** Перо: тянем точку контура с номером `index`. */
+  | { type: "pen"; objectId: string; itemId: string; index: number }
   | null;
+
+/** Мировые координаты → координаты рамки объекта: там живут контуры фигуры. */
+function shapePoint(object: RigObject, frame: RigFrame | null, point: Point): Point {
+  const values = frame?.objects[object.id] || staticValues(object);
+  const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
+  return { x: local.x + object.pivot.x * object.width, y: local.y + object.pivot.y * object.height };
+}
 
 /** Поля вокруг артборда под размытую тень. */
 const ARTBOARD_PAD = 40;
@@ -166,6 +182,7 @@ export function Scene(props: SceneProps) {
     });
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
+    if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom);
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
 
     ctx.strokeStyle = "#454d57";
@@ -260,7 +277,7 @@ export function Scene(props: SceneProps) {
 
   useEffect(() => {
     markDirty();
-  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts]);
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -427,6 +444,24 @@ export function Scene(props: SceneProps) {
               return;
             }
             const point = scenePoint(event);
+            if (current.pen) {
+              const object = current.preset.objects.find((item) => item.id === current.pen!.objectId);
+              const item = object?.shape?.items.find((entry) => entry.id === current.pen!.itemId);
+              if (object && item) {
+                const local = shapePoint(object, current.frameRef.current, point);
+                // Готовую точку хватаем, новую ставим в конец: перо ведёт себя
+                // как обычный инструмент, а не «очистить и начать заново».
+                const index = nearestPoint(item.points, local, 12 / camera.current.zoom);
+                if (index >= 0) {
+                  interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index };
+                  return;
+                }
+                const next = [...item.points, { x: roundPoint(local.x), y: roundPoint(local.y) }];
+                current.onPenPoints?.(object.id, item.id, next);
+                interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index: next.length - 1 };
+                return;
+              }
+            }
             if (current.tool === "pivot" && current.primaryId) {
               const object = current.preset.objects.find((item) => item.id === current.primaryId);
               // Пивот объекта — это его база: точка переезжает под курсор, а
@@ -529,6 +564,16 @@ export function Scene(props: SceneProps) {
               markDirty();
               return;
             }
+            if (current.type === "pen") {
+              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
+              const item = object?.shape?.items.find((entry) => entry.id === current.itemId);
+              if (!object || !item) return;
+              const local = shapePoint(object, propsRef.current.frameRef.current, scenePoint(event));
+              propsRef.current.onPenPoints?.(object.id, item.id, item.points.map((point, index) => (
+                index === current.index ? { x: roundPoint(local.x), y: roundPoint(local.y) } : point
+              )));
+              return;
+            }
             const point = scenePoint(event);
             if (Math.hypot(point.x - current.start.x, point.y - current.start.y) > 2) current.moved = true;
             let delta = { x: point.x - current.start.x, y: point.y - current.start.y };
@@ -622,6 +667,43 @@ const TOOL_HINT: Record<SceneTool, string> = {
 };
 
 /** Объект считается выделенным, если выделен он сам или любой его предок. */
+/**
+ * Точки контура, который правит перо.
+ *
+ * Без них непонятно, где кончается линия и что можно потянуть: сама фигура
+ * рисуется обычной заливкой.
+ */
+function drawPen(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  pen: { objectId: string; itemId: string },
+  zoom: number,
+): void {
+  const object = preset.objects.find((item) => item.id === pen.objectId);
+  const item = object?.shape?.items.find((entry) => entry.id === pen.itemId);
+  if (!object || !item) return;
+  const values = frame?.objects[object.id] || staticValues(object);
+  const matrix = objectMatrix(object, values);
+  const left = -object.pivot.x * object.width;
+  const top = -object.pivot.y * object.height;
+  const radius = 4 / zoom;
+  for (const point of item.points) {
+    const world = transformPoint(matrix, left + point.x, top + point.y);
+    ctx.beginPath();
+    ctx.arc(world.x, world.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = "#14171b";
+    ctx.fill();
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.strokeStyle = "#e4bd7c";
+    ctx.stroke();
+  }
+}
+
+function roundPoint(value: number): number {
+  return Number(value.toFixed(1));
+}
+
 function isSelectedTree(preset: RigPreset, objectId: string, selectedIds: string[]): boolean {
   if (!selectedIds.length) return false;
   const selected = new Set(selectedIds);

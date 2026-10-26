@@ -16,11 +16,49 @@ export interface KeySample {
   hits: number;
 }
 
-export interface MouseSample {
-  /** Позиция курсора по сцене: 0…1. */
+/**
+ * Прямоугольник экрана.
+ *
+ * Единицы — пиксели одного пространства: в нативном окне это физические пиксели
+ * монитора (их отдаёт системный хук), в браузере — CSS-пиксели. `scale` —
+ * масштаб монитора, чтобы показать пользователю привычные логические пиксели
+ * (1920×1080 при масштабе 125 % — это 2400 физических).
+ */
+export interface ScreenRect {
   x: number;
   y: number;
-  /** Смещение за кадр: −1…1. */
+  width: number;
+  height: number;
+  scale: number;
+}
+
+/** Монитор в том же пространстве, что и окно: по нему модуль читает курсор. */
+export interface ScreenMonitor extends ScreenRect {
+  index: number;
+  name: string;
+  primary: boolean;
+}
+
+/** Геометрия экрана на момент кадра: окно, мониторы и видимая сцена. */
+export interface ScreenSpace {
+  window: ScreenRect;
+  monitors: ScreenMonitor[];
+  scene: ScreenRect | null;
+}
+
+/** Область, относительно которой модуль мыши читает курсор. */
+export type MouseSpace = "window" | "monitor" | "scene";
+
+export interface MouseSample {
+  /**
+   * Курсор в пикселях экрана: от левого-верхнего угла монитора.
+   *
+   * Модуль сам решает, от чего считать: от окна, от выбранного монитора или от
+   * сцены (`mouseArea`). Здесь всегда одно и то же — абсолютное место на экране.
+   */
+  screenX: number;
+  screenY: number;
+  /** Смещение за кадр в пикселях экрана. */
   dx: number;
   dy: number;
   left: number;
@@ -34,11 +72,13 @@ export interface MouseSample {
 export interface PointerFrame {
   keys: Record<string, KeySample>;
   mouse: MouseSample;
+  /** Окно, мониторы и сцена: без них модуль не знает, от чего считать пиксели. */
+  screen?: ScreenSpace;
 }
 
 export const EMPTY_POINTER: PointerFrame = {
   keys: {},
-  mouse: { x: 0.5, y: 0.5, dx: 0, dy: 0, left: 0, right: 0, wheel: 0, buttons: {} },
+  mouse: { screenX: 0, screenY: 0, dx: 0, dy: 0, left: 0, right: 0, wheel: 0, buttons: {} },
 };
 
 interface KeyState {
@@ -53,7 +93,12 @@ const WHEEL_STEP = 100;
 
 export class PointerState {
   private keys = new Map<string, KeyState>();
-  private position = { x: 0.5, y: 0.5 };
+  private position = { x: 0, y: 0 };
+  /**
+   * Было ли уже движение. Первый замер только запоминает место: иначе первый
+   * кадр получал бы смещение от нуля координат, то есть рывок на весь экран.
+   */
+  private primed = false;
   private pending = { dx: 0, dy: 0, wheel: 0 };
   /** Состояние кнопок по имени: `left`, `right`, `middle`, `back`, `forward`… */
   private buttons = new Map<string, boolean>();
@@ -73,9 +118,14 @@ export class PointerState {
     this.keys.set(code, current);
   }
 
+  /** Курсор пришёл в пикселях экрана: смещение считается в тех же пикселях. */
   move(x: number, y: number): void {
-    this.pending.dx += x - this.position.x;
-    this.pending.dy += y - this.position.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (this.primed) {
+      this.pending.dx += x - this.position.x;
+      this.pending.dy += y - this.position.y;
+    }
+    this.primed = true;
     this.position = { x, y };
   }
 
@@ -119,10 +169,12 @@ export class PointerState {
       extras[name] = down ? 1 : 0;
     }
     const mouse: MouseSample = {
-      x: clamp01(this.position.x),
-      y: clamp01(this.position.y),
-      dx: clamp(this.pending.dx, -1, 1),
-      dy: clamp(this.pending.dy, -1, 1),
+      screenX: this.position.x,
+      screenY: this.position.y,
+      // Смещение — пиксели за кадр. Предел нужен только от мусора в событиях:
+      // за один кадр курсор не проходит больше пары экранов.
+      dx: clamp(this.pending.dx, -10000, 10000),
+      dy: clamp(this.pending.dy, -10000, 10000),
       left: this.buttons.get("left") ? 1 : 0,
       right: this.buttons.get("right") ? 1 : 0,
       wheel: clamp(this.pending.wheel / WHEEL_STEP, -1, 1),
@@ -210,11 +262,64 @@ export function uniqueKeyName(keys: Array<{ name: string }>, base: string): stri
   return `${clean}_${index}`;
 }
 
-/** Число мыши по имени входа: обычные поля мыши плюс дополнительные кнопки. */
-export function mouseValue(mouse: MouseSample | undefined, name: string): number {
+/** Область, относительно которой модуль читает курсор. */
+export function mouseSpaceOf(config: Record<string, unknown> | undefined): MouseSpace {
+  const space = config?.space;
+  if (space === "window" || space === "scene") return space;
+  // По умолчанию — монитор: весь экран, а не только окно приложения.
+  return "monitor";
+}
+
+/**
+ * Прямоугольник, от которого считается позиция.
+ *
+ * Монитор выбирается по номеру из настроек модуля; если такого нет — берётся
+ * основной, иначе первый. Без геометрии экрана считать не от чего: `null`.
+ */
+export function mouseArea(
+  space: MouseSpace,
+  monitorIndex: number,
+  screen: ScreenSpace | undefined,
+): ScreenRect | null {
+  if (!screen) return null;
+  if (space === "window") return screen.window;
+  if (space === "scene") return screen.scene ?? screen.window;
+  const monitors = screen.monitors;
+  if (!monitors.length) return screen.window;
+  const wanted = monitors.find((monitor) => monitor.index === monitorIndex);
+  const primary = monitors.find((monitor) => monitor.primary);
+  return wanted ?? primary ?? monitors[0];
+}
+
+/** Доли 0…1 внутри области: край области — 0 или 1. */
+function fraction(value: number, start: number, size: number): number {
+  if (!Number.isFinite(size) || size <= 0) return 0;
+  return clamp01((value - start) / size);
+}
+
+/** Пиксели внутри области — в логических пикселях монитора (как в настройках Windows). */
+function offset(value: number, start: number, scale: number): number {
+  const clean = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return (value - start) / clean;
+}
+
+/**
+ * Число мыши по имени входа.
+ *
+ * `x`/`y` — доли 0…1 внутри области, `px`/`py` — пиксели внутри неё,
+ * `dx`/`dy` — смещение за кадр в пикселях. Без области остаются только
+ * кнопки: координаты не к чему привязать.
+ */
+export function mouseValue(
+  mouse: MouseSample | undefined,
+  name: string,
+  area: ScreenRect | null = null,
+): number {
   if (!mouse) return 0;
-  if (name === "x") return mouse.x;
-  if (name === "y") return mouse.y;
+  if (name === "x" && area) return fraction(mouse.screenX, area.x, area.width);
+  if (name === "y" && area) return fraction(mouse.screenY, area.y, area.height);
+  if (name === "px" && area) return offset(mouse.screenX, area.x, area.scale);
+  if (name === "py" && area) return offset(mouse.screenY, area.y, area.scale);
   if (name === "dx") return mouse.dx;
   if (name === "dy") return mouse.dy;
   if (name === "left") return mouse.left;
@@ -222,6 +327,20 @@ export function mouseValue(mouse: MouseSample | undefined, name: string): number
   if (name === "wheel") return mouse.wheel;
   // Дополнительные кнопки живут в карте: СКМ тоже приходит туда.
   return mouse.buttons?.[name] ?? 0;
+}
+
+/** Вариант выбора монитора в настройках модуля. */
+export interface MonitorOption {
+  /** Номер монитора строкой: он и лежит в настройках. */
+  id: string;
+  label: string;
+}
+
+/** Подпись монитора для настроек модуля: номер, размер и «основной». */
+export function monitorLabel(monitor: ScreenMonitor): string {
+  const width = Math.round(monitor.width / (monitor.scale || 1));
+  const height = Math.round(monitor.height / (monitor.scale || 1));
+  return `Монитор ${monitor.index + 1} · ${width}×${height}${monitor.primary ? " · основной" : ""}`;
 }
 
 /** Имя кнопки мыши из `MouseEvent.button`: 3 и 4 — боковые кнопки. */

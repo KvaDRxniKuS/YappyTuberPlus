@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FileImage, FileVideo, Film,
-  Folder, FolderPlus, Import, Plus, Trash2, Type,
+  Folder, FolderPlus, Import, Plus, Shapes, Trash2, Type,
 } from "lucide-react";
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
@@ -19,6 +19,7 @@ function TreeThumbnail({ object }: { object: RigObject }) {
   const mediaPreview = useAssetUrl(object.media?.src);
   if (object.kind === "group") return <Folder size={15} />;
   if (object.kind === "text") return <Type size={15} />;
+  if (object.kind === "shape") return <Shapes size={15} />;
   if (object.kind === "media") {
     if (object.media?.type === "audio") return <FileVideo size={15} />;
     return mediaPreview ? <img src={mediaPreview} alt="" draggable={false} /> : <Film size={15} />;
@@ -42,6 +43,8 @@ interface TreePanelProps {
   onAddGroup: () => void;
   /** Текстовый объект: шаблон с подстановками из чата. */
   onAddText: () => void;
+  /** Объект-фигура: контуры для заливки и маски. */
+  onAddShape: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
   onToggleVisibility: (id: string) => void;
@@ -53,11 +56,28 @@ interface TreePanelProps {
 
 type DropTarget = { id: string; position: "before" | "after" | "inside" } | null;
 
+/** Свой тип переноса: по нему строка понимает, что тащат объект, а не файл. */
+const OBJECT_MIME = "text/yappy-object";
+
 export function TreePanel(props: TreePanelProps) {
   const { objects, selectedIds, primaryId } = props;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [drop, setDrop] = useState<DropTarget>(null);
+  // Те же значения в ref: `drop` переключается на каждом движении мыши, а
+  // `onDrop` обязан видеть последнюю зону, даже если React не успел
+  // перерисовать строку. Без этого перетаскивание в структуре срабатывало как
+  // «внутрь группы» вместо «перед/после строки».
+  const dragRef = useRef<string[]>([]);
+  const dropRef = useRef<DropTarget>(null);
+  const setDrag = (ids: string[]) => {
+    dragRef.current = ids;
+    setDragIds(ids);
+  };
+  const setDropTarget = (next: DropTarget) => {
+    dropRef.current = next;
+    setDrop(next);
+  };
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const rows = useMemo(() => treeRows(objects, collapsed), [objects, collapsed]);
@@ -90,11 +110,20 @@ export function TreePanel(props: TreePanelProps) {
         <button onClick={props.onAddText} title="Текст с подстановками из чата">
           <Type size={14} /> Текст
         </button>
+        <button onClick={props.onAddShape} title="Фигура: прямоугольник, эллипс или перо — и маска для других объектов">
+          <Shapes size={14} /> Фигура
+        </button>
       </div>
 
       <div
         className="object-tree"
-        onDragLeave={() => setDrop(null)}
+        // Уход из дерева гасит подсветку, но переход между строками — нет:
+        // dragleave прилетает и от детей, и раньше подсветка мигала.
+        onDragLeave={(event) => {
+          const next = event.relatedTarget as Node | null;
+          if (next && event.currentTarget.contains(next)) return;
+          setDropTarget(null);
+        }}
         onClick={(event) => { if (event.target === event.currentTarget) props.onSelect(null); }}
       >
         {rows.map(({ object, depth }) => {
@@ -122,30 +151,36 @@ export function TreePanel(props: TreePanelProps) {
               draggable={props.renamingId !== object.id}
               onDragStart={(event) => {
                 const ids = selectedSet.has(object.id) ? selectionRoots(objects, selectedIds) : [object.id];
-                setDragIds(ids);
+                setDrag(ids);
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/yappy-object", object.id);
               }}
-              onDragEnd={() => { setDragIds([]); setDrop(null); }}
+              onDragEnd={() => { setDrag([]); setDropTarget(null); }}
               onDragOver={(event) => {
-                if (!dragIds.length || invalidDrop) return;
+                // Тип в dataTransfer — второй признак: состояние могло не дойти,
+                // если строка перерисовалась между началом переноса и наведением.
+                const ours = dragRef.current.length > 0 || Array.from(event.dataTransfer.types).includes(OBJECT_MIME);
+                if (!ours || invalidDrop) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
                 const rect = event.currentTarget.getBoundingClientRect();
                 const ratio = rect.height ? (event.clientY - rect.top) / rect.height : 0.5;
                 // Верхняя и нижняя четверти строки — вставка рядом, середина — внутрь.
                 const position = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "inside";
-                if (drop?.id !== object.id || drop.position !== position) setDrop({ id: object.id, position });
+                const current = dropRef.current;
+                if (current?.id !== object.id || current.position !== position) setDropTarget({ id: object.id, position });
               }}
               onDrop={(event) => {
                 event.preventDefault();
-                const position = drop?.id === object.id ? drop.position : "inside";
-                if (dragIds.length && !invalidDrop) {
-                  if (position === "inside") props.onReparent(dragIds, object.id);
-                  else props.onReorder(dragIds, object.id, position);
+                const ids = dragRef.current;
+                const target = dropRef.current;
+                const position = target?.id === object.id ? target.position : "inside";
+                if (ids.length && !invalidDrop) {
+                  if (position === "inside") props.onReparent(ids, object.id);
+                  else props.onReorder(ids, object.id, position);
                 }
-                setDragIds([]);
-                setDrop(null);
+                setDrag([]);
+                setDropTarget(null);
               }}
               onClick={(event) => {
                 if (event.ctrlKey || event.metaKey) { props.onToggleSelect(object.id); return; }
@@ -198,11 +233,16 @@ export function TreePanel(props: TreePanelProps) {
         })}
         <div
           className={`root-drop-zone ${drop?.id === "root" ? "drop-target" : ""}`}
-          onDragOver={(event) => { if (dragIds.length) { event.preventDefault(); setDrop({ id: "root", position: "inside" }); } }}
+          onDragOver={(event) => {
+            if (!dragRef.current.length) return;
+            event.preventDefault();
+            setDropTarget({ id: "root", position: "inside" });
+          }}
           onDrop={(event) => {
             event.preventDefault();
-            props.onReparent(dragIds, null);
-            setDragIds([]); setDrop(null);
+            const ids = dragRef.current;
+            if (ids.length) props.onReparent(ids, null);
+            setDrag([]); setDropTarget(null);
           }}
         >
           Перетащите сюда, чтобы открепить

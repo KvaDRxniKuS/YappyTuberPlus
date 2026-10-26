@@ -5,6 +5,8 @@ import { frontness, structurePaths } from "../engine/structure";
 import { DEFAULT_MEDIA, MediaAssets } from "./media";
 import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
+import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
+import type { MaskSpec, ShapeSpec } from "../types";
 
 /**
  * Shared Canvas 2D renderer. The editor scene and the OBS overlay use the same
@@ -32,8 +34,12 @@ export class SpriteAssets {
    * после чтения файла, поэтому вызов повторяется по событию хранилища.
    */
   sync(objects: RigObject[]): void {
+    const sources: Array<string | null> = [];
     for (const object of objects) {
-      const source = object.image;
+      // Маска-файл рисуется через тот же спрайтовый кэш: она тоже картинка.
+      sources.push(object.image, object.mask?.kind === "file" ? object.mask.file : null);
+    }
+    for (const source of sources) {
       if (!source) continue;
       const url = assetUrl(source);
       if (!url) continue;
@@ -193,48 +199,208 @@ export function drawRig(
     const matrix = objectMatrix(object, values);
     const left = -object.pivot.x * object.width;
     const top = -object.pivot.y * object.height;
+    const alpha = ghost ? opacity * ghostAlpha : opacity;
+    // Маска работает через отдельный холст: объект рисуется в него, маска
+    // вырезается композитом, и только потом результат ложится на сцену.
+    // Маску на маску не ставим: у фигуры её контуры и есть видимость.
+    if (object.kind !== "group" && object.kind !== "shape" && object.mask && maskReady(object.mask, preset, assets)) {
+      drawMasked(ctx, preset, frame, assets, options, object, matrix, left, top, alpha);
+      continue;
+    }
     ctx.save();
     ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
-    ctx.globalAlpha = ghost ? opacity * ghostAlpha : opacity;
-    if (object.kind === "text") {
-      drawTextObject(ctx, object, textContent(object, frame, options.texts));
+    ctx.globalAlpha = alpha;
+    if (object.kind === "shape") {
+      // Контуры живут в координатах рамки объекта: пивот и поворот те же, что
+      // у спрайта, поэтому фигура — обычный объект сцены.
+      ctx.translate(left, top);
+      drawShapeObject(ctx, object);
       ctx.restore();
       continue;
     }
-    if (object.kind === "media") {
-      const spec = object.media ?? DEFAULT_MEDIA;
-      const video = spec.type === "video" ? options.media?.video(object.id) : null;
-      const picture = video ?? (spec.type === "image" ? options.media?.image(object.id) : null);
-      const width = spec.type === "video" && video
-        ? object.width || video.videoWidth
-        : object.width;
-      const height = spec.type === "video" && video
-        ? object.height || video.videoHeight
-        : object.height;
-      const boxLeft = -object.pivot.x * width;
-      const boxTop = -object.pivot.y * height;
-      if (picture) {
-        ctx.drawImage(picture, boxLeft, boxTop, width, height);
-      } else if (options.placeholders) {
-        // Звук и ещё не загруженное видео: в редакторе видно место объекта,
-        // в оверлее ничего не рисуется.
-        drawMediaPlaceholder(ctx, spec.type, object, spec.fileName, left, top, 1 / zoom);
-      }
-      ctx.restore();
-      continue;
-    }
-    const image = assets.get(object.image);
-    if (image?.complete && image.naturalWidth > 0) {
-      ctx.drawImage(image, left, top, object.width, object.height);
-    } else if (options.placeholders) {
-      ctx.fillStyle = "#505965";
-      ctx.fillRect(left, top, object.width, object.height);
-      ctx.strokeStyle = "#8994a1";
-      ctx.lineWidth = 1 / zoom;
-      ctx.strokeRect(left, top, object.width, object.height);
-    }
+    drawObjectContent(ctx, object, frame, assets, options, zoom);
     ctx.restore();
   }
+}
+
+/** Содержимое объекта: картинка, медиа или текст. Трансформа уже применена. */
+function drawObjectContent(
+  ctx: CanvasRenderingContext2D,
+  object: RigObject,
+  frame: RigFrame | null,
+  assets: SpriteAssets,
+  options: DrawRigOptions,
+  zoom: number,
+): void {
+  const left = -object.pivot.x * object.width;
+  const top = -object.pivot.y * object.height;
+  if (object.kind === "text") {
+    drawTextObject(ctx, object, textContent(object, frame, options.texts));
+    return;
+  }
+  if (object.kind === "media") {
+    const spec = object.media ?? DEFAULT_MEDIA;
+    const video = spec.type === "video" ? options.media?.video(object.id) : null;
+    const picture = video ?? (spec.type === "image" ? options.media?.image(object.id) : null);
+    const width = spec.type === "video" && video
+      ? object.width || video.videoWidth
+      : object.width;
+    const height = spec.type === "video" && video
+      ? object.height || video.videoHeight
+      : object.height;
+    const boxLeft = -object.pivot.x * width;
+    const boxTop = -object.pivot.y * height;
+    if (picture) {
+      ctx.drawImage(picture, boxLeft, boxTop, width, height);
+    } else if (options.placeholders) {
+      // Звук и ещё не загруженное видео: в редакторе видно место объекта,
+      // в оверлее ничего не рисуется.
+      drawMediaPlaceholder(ctx, spec.type, object, spec.fileName, left, top, 1 / zoom);
+    }
+    return;
+  }
+  const image = assets.get(object.image);
+  if (image?.complete && image.naturalWidth > 0) {
+    ctx.drawImage(image, left, top, object.width, object.height);
+  } else if (options.placeholders) {
+    ctx.fillStyle = "#505965";
+    ctx.fillRect(left, top, object.width, object.height);
+    ctx.strokeStyle = "#8994a1";
+    ctx.lineWidth = 1 / zoom;
+    ctx.strokeRect(left, top, object.width, object.height);
+  }
+}
+
+/** Фигура: заливка и обводка каждого контура. */
+export function drawShapeObject(ctx: CanvasRenderingContext2D, object: RigObject): void {
+  const spec: ShapeSpec = object.shape ?? defaultShape(object.width, object.height);
+  if (!spec.draw) return;
+  for (const item of spec.items) {
+    ctx.beginPath();
+    traceItem(ctx, item);
+    if (spec.fill) {
+      ctx.fillStyle = spec.fill;
+      ctx.fill();
+    }
+    if (spec.strokeWidth > 0 && spec.stroke) {
+      ctx.strokeStyle = spec.stroke;
+      ctx.lineWidth = spec.strokeWidth;
+      ctx.stroke();
+    }
+  }
+}
+
+/**
+ * Можно ли применить маску.
+ *
+ * Иначе маска без содержимого (нет фигуры, файла или точек) стёрла бы объект
+ * целиком, и «пропал спрайт» выглядело бы как поломка пресета.
+ */
+function maskReady(mask: MaskSpec, preset: RigPreset, assets: SpriteAssets): boolean {
+  if (mask.kind === "shape") return preset.objects.some((item) => item.kind === "shape" && item.id === mask.shapeId);
+  if (mask.kind === "file") return !!mask.file && !!assets.get(mask.file);
+  return mask.points.length >= 3;
+}
+
+/** Отдельный холст для маски: переиспользуется между кадрами и объектами. */
+let maskCanvas: HTMLCanvasElement | null = null;
+
+function maskLayer(main: HTMLCanvasElement): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (typeof document === "undefined") return null;
+  if (!maskCanvas) maskCanvas = document.createElement("canvas");
+  if (maskCanvas.width !== main.width || maskCanvas.height !== main.height) {
+    maskCanvas.width = main.width;
+    maskCanvas.height = main.height;
+  }
+  const ctx = maskCanvas.getContext("2d");
+  return ctx ? { canvas: maskCanvas, ctx } : null;
+}
+
+/** Объект с маской: содержимое на отдельный холст, вырезание, композит. */
+function drawMasked(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  assets: SpriteAssets,
+  options: DrawRigOptions,
+  object: RigObject,
+  matrix: Affine,
+  left: number,
+  top: number,
+  alpha: number,
+): void {
+  const layer = maskLayer(ctx.canvas);
+  if (!layer) return;
+  const { canvas, ctx: layerCtx } = layer;
+  // Трансформация главного холста включает камеру и масштаб экрана: у
+  // отдельного холста она должна быть точно такой же, иначе маска не совпадёт
+  // с объектом.
+  const transform = ctx.getTransform();
+  layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+  layerCtx.clearRect(0, 0, canvas.width, canvas.height);
+  layerCtx.setTransform(transform);
+  layerCtx.save();
+  layerCtx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+  layerCtx.globalAlpha = alpha;
+  drawObjectContent(layerCtx, object, frame, assets, options, options.lineScale ?? 1);
+  layerCtx.restore();
+
+  layerCtx.save();
+  layerCtx.setTransform(transform);
+  layerCtx.globalCompositeOperation = object.mask?.invert ? "destination-out" : "destination-in";
+  const feather = object.mask?.feather ?? 0;
+  if (feather > 0) layerCtx.filter = `blur(${feather}px)`;
+  paintMask(layerCtx, preset, frame, assets, object, object.mask!, matrix, left, top);
+  layerCtx.restore();
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(canvas, 0, 0);
+  ctx.restore();
+}
+
+/** Нарисовать саму маску белым: видимость решает её альфа. */
+function paintMask(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  assets: SpriteAssets,
+  object: RigObject,
+  mask: MaskSpec,
+  matrix: Affine,
+  left: number,
+  top: number,
+): void {
+  ctx.fillStyle = "#fff";
+  if (mask.kind === "shape") {
+    const shape = preset.objects.find((item) => item.kind === "shape" && item.id === mask.shapeId);
+    if (!shape) return;
+    const values = frame?.objects[shape.id] || staticValues(shape);
+    const shapeMatrix = objectMatrix(shape, values);
+    // Фигура может быть скрыта и анимирована: маска берёт её текущее место.
+    ctx.transform(shapeMatrix.a, shapeMatrix.b, shapeMatrix.c, shapeMatrix.d, shapeMatrix.e, shapeMatrix.f);
+    ctx.translate(-shape.pivot.x * shape.width, -shape.pivot.y * shape.height);
+    ctx.beginPath();
+    traceShape(ctx, shape.shape ?? defaultShape(shape.width, shape.height));
+    // evenodd: внутренний контур становится дыркой — так удобнее делать рамки.
+    ctx.fill("evenodd");
+    return;
+  }
+  if (mask.kind === "file") {
+    const image = mask.file ? assets.get(mask.file) : null;
+    if (!image) return;
+    ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+    ctx.translate(left, top);
+    // Картинка-маска растягивается по рамке объекта: альфа решает, что видно.
+    ctx.drawImage(image, 0, 0, object.width, object.height);
+    return;
+  }
+  if (mask.points.length < 3) return;
+  ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+  ctx.translate(left, top);
+  ctx.beginPath();
+  tracePath(ctx, mask.points, false, true);
+  ctx.fill();
 }
 
 /** Заглушка медиа-объекта в редакторе: звук не видно, но найти его надо. */

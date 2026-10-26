@@ -4,6 +4,7 @@ import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOp
 import { inputRange, moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey, inputMeta, inputTexts, isPointerKind } from "../modules/values";
 import { usePointerInputs } from "./usePointerInputs";
+import type { MonitorOption } from "../modules/pointer";
 import { useExternalSource } from "./useExternalSource";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
 
@@ -20,6 +21,8 @@ export interface ModuleInputsApi {
   /** Значения авто-модулей (моргание по таймеру). */
   auto: Record<string, number>;
   devices: DeviceOption[];
+  /** Мониторы для модуля мыши: номер и подпись. */
+  monitors: MonitorOption[];
   /** Звук запущен: есть хотя бы один включённый микрофонный модуль. */
   active: boolean;
   error: string | null;
@@ -277,7 +280,8 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   }), [modules, audio, manual, auto, pointer, externalInputs.values, externalInputs.texts, libraryVersion]);
 
   return {
-    inputs, marks: externalInputs.marks, audio, manual, auto, devices, active, error, contextState,
+    inputs, marks: externalInputs.marks,
+    audio, manual, auto, devices, monitors: pointerInputs.monitors, active, error, contextState,
     start, stop, setManual, refreshDevices, calibrate, cancelCalibration,
     // Стоп анимации: счётчики нажатий клавиш начинаются заново.
     resetPointerHits: pointerInputs.resetHits,

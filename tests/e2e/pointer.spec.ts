@@ -5,7 +5,8 @@ import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefiniti
 import { composeValues, instanceInputs } from "../../src/modules/values";
 import { normalizeModules } from "../../src/engine/preset";
 import {
-  PointerState, keyInputName, keyLabel, keyboardKeys, uniqueKeyName, type PointerFrame,
+  PointerState, keyInputName, keyLabel, keyboardKeys, mouseArea, mouseSpaceOf, mouseValue,
+  monitorLabel, uniqueKeyName, type PointerFrame, type ScreenSpace,
 } from "../../src/modules/pointer";
 import type { KeyboardKey, ModuleInstance } from "../../src/types";
 
@@ -42,17 +43,22 @@ test("нажатие считается один раз, автоповтор н
 
 test("движение мыши копится между кадрами и сбрасывается", () => {
   const state = new PointerState();
-  state.move(0.2, 0.8);
-  state.move(0.3, 0.6);
+  // Первый замер только запоминает место: смещения от нуля координат быть не должно.
+  state.move(200, 800);
   const first = state.snapshot(0);
-  expect(first.mouse.x).toBeCloseTo(0.3, 6);
-  expect(first.mouse.y).toBeCloseTo(0.6, 6);
-  // Стартовая позиция — центр (0.5, 0.5), дальше два сдвига суммируются.
-  expect(first.mouse.dx).toBeCloseTo(-0.2, 6);
-  expect(first.mouse.dy).toBeCloseTo(0.1, 6);
-  const second = state.snapshot(33);
-  expect(second.mouse.dx).toBe(0);
-  expect(second.mouse.dy).toBe(0);
+  expect(first.mouse.screenX).toBe(200);
+  expect(first.mouse.screenY).toBe(800);
+  expect(first.mouse.dx).toBe(0);
+  expect(first.mouse.dy).toBe(0);
+  // Дальше смещение — пиксели экрана: 30 − 20 = +10, 60 − 80 = −20.
+  state.move(230, 780);
+  const moved = state.snapshot(33);
+  expect(moved.mouse.screenX).toBe(230);
+  expect(moved.mouse.dx).toBe(30);
+  expect(moved.mouse.dy).toBe(-20);
+  const idle = state.snapshot(66);
+  expect(idle.mouse.dx).toBe(0);
+  expect(idle.mouse.dy).toBe(0);
 });
 
 test("колесо нормируется и обрезается, кнопки отпускаются по blur", () => {
@@ -67,11 +73,11 @@ test("колесо нормируется и обрезается, кнопки 
   const released = state.snapshot(0);
   expect(released.mouse.left).toBe(0);
   expect(released.mouse.right).toBe(0);
-  // Координаты всегда в пределах сцены.
-  state.move(2, -1);
-  const clamped = state.snapshot(0);
-  expect(clamped.mouse.x).toBe(1);
-  expect(clamped.mouse.y).toBe(0);
+  // Место на экране не обрезается: курсор бывает и за границей окна.
+  state.move(2600, -40);
+  const far = state.snapshot(0);
+  expect(far.mouse.screenX).toBe(2600);
+  expect(far.mouse.screenY).toBe(-40);
 });
 
 test("имена и подписи клавиш", () => {
@@ -129,33 +135,93 @@ test("модуль одной клавиши отдаёт down, hold и hits", (
   expect(none["other.down"]).toBe(0);
 });
 
+/**
+ * Экран для тестов: окно 800×600 в точке (100, 50), монитор 1920×1080,
+ * курсор в точке (500, 350). В физических пикселях монитора масштаб 1.
+ */
+function screen(overrides: Partial<ScreenSpace> = {}): ScreenSpace {
+  return {
+    window: { x: 100, y: 50, width: 800, height: 600, scale: 1 },
+    monitors: [
+      { index: 0, name: "Основной", x: 0, y: 0, width: 1920, height: 1080, scale: 1, primary: true },
+      { index: 1, name: "Второй", x: 1920, y: 0, width: 1280, height: 1024, scale: 1, primary: false },
+    ],
+    scene: { x: 300, y: 150, width: 400, height: 400, scale: 1 },
+    ...overrides,
+  };
+}
+
 test("мышь: позиция, смещение, кнопки и колесо как входы", () => {
+  // По умолчанию модуль смотрит на монитор: (500, 350) из 1920×1080.
   const mouse = module("cursor", "mouse");
   const frame: PointerFrame = {
     keys: {},
-    mouse: { x: 0.25, y: 0.5, dx: -0.1, dy: 0.2, left: 1, right: 0, wheel: 0.5 },
+    mouse: { screenX: 500, screenY: 350, dx: -10, dy: 20, left: 1, right: 0, wheel: 0.5 },
+    screen: screen(),
   };
   const values = composeValues([mouse], { audio: {}, manual: {}, auto: {}, pointer: frame });
-  expect(values["cursor.x"]).toBe(0.25);
-  expect(values["cursor.dx"]).toBe(-0.1);
+  expect(values["cursor.x"]).toBeCloseTo(500 / 1920, 6);
+  expect(values["cursor.y"]).toBeCloseTo(350 / 1080, 6);
+  // Пиксели внутри области — то же место, но без деления на размер.
+  expect(values["cursor.px"]).toBe(500);
+  expect(values["cursor.py"]).toBe(350);
+  // Смещение — пиксели за кадр, а не доли.
+  expect(values["cursor.dx"]).toBe(-10);
+  expect(values["cursor.dy"]).toBe(20);
   expect(values["cursor.left"]).toBe(1);
   expect(values["cursor.wheel"]).toBe(0.5);
+});
+
+test("мышь: область чтения — окно, монитор и сцена", () => {
+  const frame: PointerFrame = {
+    keys: {},
+    mouse: { screenX: 500, screenY: 350, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 },
+    screen: screen(),
+  };
+  const inWindow = module("inwindow", "mouse", { space: "window" });
+  const inScene = module("inscene", "mouse", { space: "scene" });
+  const onSecond = module("second", "mouse", { space: "monitor", monitor: "1" });
+  const values = composeValues([inWindow, inScene, onSecond], { audio: {}, manual: {}, auto: {}, pointer: frame });
+  // Окно начинается в (100, 50) и имеет размер 800×600.
+  expect(values["inwindow.x"]).toBeCloseTo(400 / 800, 6);
+  expect(values["inwindow.y"]).toBeCloseTo(300 / 600, 6);
+  expect(values["inwindow.px"]).toBe(400);
+  // Сцена начинается в (300, 150) и имеет размер 400×400.
+  expect(values["inscene.x"]).toBeCloseTo(200 / 400, 6);
+  expect(values["inscene.py"]).toBe(200);
+  // Второй монитор начинается с x = 1920: курсор левее него — отрицательные пиксели.
+  expect(values["second.px"]).toBe(500 - 1920);
+  expect(values["second.x"]).toBe(0);
+});
+
+test("мышь: без геометрии экрана координаты нулевые, кнопки работают", () => {
+  const mouse = module("cursor", "mouse");
+  const frame: PointerFrame = {
+    keys: {},
+    mouse: { screenX: 500, screenY: 350, dx: 4, dy: 0, left: 1, right: 0, wheel: 0 },
+  };
+  const values = composeValues([mouse], { audio: {}, manual: {}, auto: {}, pointer: frame });
+  expect(values["cursor.x"]).toBe(0);
+  expect(values["cursor.px"]).toBe(0);
+  expect(values["cursor.left"]).toBe(1);
+  expect(values["cursor.dx"]).toBe(4);
 });
 
 test("мышь: инверсия Y — свойство экземпляра", () => {
   const frame: PointerFrame = {
     keys: {},
-    mouse: { x: 0.25, y: 0.1, dx: -0.1, dy: 0.2, left: 0, right: 0, wheel: 0 },
+    mouse: { screenX: 480, screenY: 108, dx: 0, dy: 20, left: 0, right: 0, wheel: 0 },
+    screen: { ...screen(), scene: null, window: { x: 0, y: 0, width: 1920, height: 1080, scale: 1 } },
   };
-  const plain = module("plain", "mouse");
-  const flipped = module("flipped", "mouse", { invertY: true });
+  const plain = module("plain", "mouse", { space: "window" });
+  const flipped = module("flipped", "mouse", { space: "window", invertY: true });
   const values = composeValues([plain, flipped], { audio: {}, manual: {}, auto: {}, pointer: frame });
-  expect(values["plain.y"]).toBe(0.1);
-  expect(values["plain.dy"]).toBe(0.2);
+  expect(values["plain.y"]).toBeCloseTo(0.1, 6);
+  expect(values["plain.dy"]).toBe(20);
   expect(values["flipped.y"]).toBeCloseTo(0.9, 6);
-  expect(values["flipped.dy"]).toBeCloseTo(-0.2, 6);
+  expect(values["flipped.dy"]).toBe(-20);
   // Инверсия не трогает X.
-  expect(values["flipped.x"]).toBe(0.25);
+  expect(values["flipped.x"]).toBeCloseTo(0.25, 6);
 });
 
 test("бинда нет: модуль key отдаёт нули, пустая строка переживает загрузку", () => {
@@ -195,7 +261,7 @@ test("пресет сохраняет клавиши и код клавиши", 
 });
 
 function emptyMouse() {
-  return { x: 0.5, y: 0.5, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 };
+  return { screenX: 0, screenY: 0, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 };
 }
 
 test("стоп обнуляет счётчики hits, но не состояние клавиши", () => {

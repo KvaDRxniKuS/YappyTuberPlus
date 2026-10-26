@@ -29,7 +29,7 @@ export interface BasePose {
  * `media` и `text` — дочерние виды спрайта: у них те же параметры позы, пивот,
  * родитель и скрипт, но вместо картинки — файл воспроизведения или текст.
  */
-export type ObjectKind = "sprite" | "group" | "media" | "text";
+export type ObjectKind = "sprite" | "group" | "media" | "text" | "shape";
 
 /** Что делать, если событие активировало звук повторно, пока он ещё играет. */
 export type MediaRepeat = "restart" | "fade" | "overlay" | "finish";
@@ -90,6 +90,67 @@ export interface TextSpec {
   lineHeight: number;
 }
 
+/** Вид контура в объекте-фигуре. */
+export type ShapeItemKind = "rect" | "ellipse" | "path";
+
+/**
+ * Один контур фигуры.
+ *
+ * Координаты — в собственных координатах объекта: левый верхний угол его
+ * рамки — (0, 0), правый нижний — (`width`, `height`). Пивот, поворот и масштаб
+ * действуют на фигуру так же, как на спрайт, поэтому она ведёт себя как
+ * обычный объект сцены.
+ */
+export interface ShapeItem {
+  id: string;
+  kind: ShapeItemKind;
+  /** Прямоугольник и эллипс: рамка. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Перо: точки контура. */
+  points: Vec2[];
+  /** Перо: сглаженная кривая (Catmull-Rom) вместо ломаной. */
+  smooth: boolean;
+  /** Перо: замкнуть контур в кольцо. */
+  closed: boolean;
+}
+
+/** Фигуры объекта `kind: "shape"`: набор контуров плюс цвет заливки и обводки. */
+export interface ShapeSpec {
+  items: ShapeItem[];
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  /** Рисовать фигуру в сцене; на маску это не влияет. */
+  draw: boolean;
+}
+
+/** Откуда берётся маска объекта. */
+export type MaskKind = "shape" | "points" | "file";
+
+/**
+ * Маска объекта: что из него видно.
+ *
+ * `shape` — контуры другого объекта-фигуры (он живёт в сцене, его можно
+ * двигать и анимировать скриптом); `points` — многоугольник в координатах
+ * самого объекта; `file` — картинка, альфа которой решает, что видно.
+ */
+export interface MaskSpec {
+  kind: MaskKind;
+  /** Объект-фигура, чьи контуры и есть маска. */
+  shapeId: string;
+  /** Набор точек в координатах объекта (0…ширина, 0…высота). */
+  points: Vec2[];
+  /** Файл-маска в хранилище (`asset:<id>`) или обычный путь. */
+  file: string | null;
+  /** Показать то, что снаружи контура. */
+  invert: boolean;
+  /** Мягкий край контура в пикселях: 0 — резкий. */
+  feather: number;
+}
+
 export interface RigObject {
   id: string;
   name: string;
@@ -110,6 +171,10 @@ export interface RigObject {
   media?: MediaSpec;
   /** Настройки текста: есть только у `kind: "text"`. */
   text?: TextSpec;
+  /** Фигуры: есть только у `kind: "shape"`. */
+  shape?: ShapeSpec;
+  /** Маска видимости: у любого объекта, кроме группы. */
+  mask?: MaskSpec;
 }
 
 export interface RuntimeConfig {

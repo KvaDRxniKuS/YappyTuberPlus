@@ -5,11 +5,12 @@ import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type MediaRepeat,
   type MediaSpec, type ModuleConfig,
   type ModuleInstance,
-  type MouseButton, type ObjectKind, type OverlayConfig, type RigObject, type RigPreset, type TextSpec,
+  type MouseButton, type ObjectKind, type OverlayConfig, type RigObject, type RigPreset, type ShapeSpec, type TextSpec,
   type VisemeEntry,
 } from "../types";
 import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
+import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { enumConstants, sanitizeStateName, uniqueStateName } from "../modules/manual";
@@ -133,6 +134,26 @@ export function makeGroup(id: string, name: string, x = 500, y = 300): RigObject
   };
 }
 
+/**
+ * Объект-фигура: контуры, которые видно в сцене и которыми можно маскировать
+ * другие объекты. Рамка — размер фигуры, пивот работает как у спрайта.
+ */
+export function makeShape(
+  id: string,
+  name: string,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  shape?: Partial<ShapeSpec>,
+): RigObject {
+  return {
+    id, name, kind: "shape", enabled: true, image: null, parentId: null,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE, x, y }, width, height,
+    script: rootScript(), shape: { ...defaultShape(width, height), ...shape },
+  };
+}
+
 export function uniqueId(objects: RigObject[], preferred: string): string {
   const safe = preferred.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") || "object";
   if (!objects.some((object) => object.id === safe)) return safe;
@@ -237,7 +258,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
     objects: preset.objects.map((object) => {
-      const kind: ObjectKind = object.kind === "group" || object.kind === "media" || object.kind === "text"
+      const kind: ObjectKind = object.kind === "group" || object.kind === "media" || object.kind === "text" || object.kind === "shape"
         ? object.kind
         : "sprite";
       return {
@@ -253,6 +274,10 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // копит мусор от смены вида и остаётся читаемым в JSON.
         media: kind === "media" ? normalizeMedia(object.media) : undefined,
         text: kind === "text" ? normalizeText(object.text) : undefined,
+        shape: kind === "shape" ? normalizeShape(object.shape, object.width || 240, object.height || 160) : undefined,
+        // Маска — свойство любого объекта: одна фигура может вырезать сразу
+        // несколько спрайтов, поэтому ссылка живёт на объекте, а не в фигуре.
+        mask: normalizeMask(object.mask),
       };
     }),
     globals: preset.globals || "",

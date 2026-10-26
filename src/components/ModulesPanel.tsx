@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
 import type { DeviceOption } from "../modules/audio";
+import type { MonitorOption } from "../modules/pointer";
 import {
   fieldVisible, inputRange, moduleDefaults, moduleDefinition, refreshLibrary,
   type ModuleDefinition, type ModuleField,
@@ -25,6 +26,8 @@ import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 interface ModulesPanelProps extends CalibrationApi {
   modules: ModuleInstance[];
   devices: DeviceOption[];
+  /** Мониторы для модуля мыши: у каждого свой номер и размер. */
+  monitors?: MonitorOption[];
   error: string | null;
   onChange: (modules: ModuleInstance[], label?: string) => void;
   /**
@@ -361,6 +364,7 @@ export function ModulesPanel(props: ModulesPanelProps) {
                               field={field}
                               module={module}
                               devices={props.devices}
+                              monitors={props.monitors ?? []}
                               onValue={(value, label) => {
                                 // Переключение Manual в «Состояния» сразу даёт
                                 // список: пустой enum в панели не с чем сравнивать.
@@ -474,6 +478,7 @@ function FieldControl(props: {
   field: ModuleField;
   module: ModuleInstance;
   devices: DeviceOption[];
+  monitors: MonitorOption[];
   onValue: (value: number | string | boolean, label?: string) => void;
 }) {
   const { field, module } = props;
@@ -498,6 +503,27 @@ function FieldControl(props: {
           <option value="default">Системный по умолчанию</option>
           {props.devices.map((device) => (
             <option key={device.id} value={device.id}>{device.label}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (field.type === "monitor") {
+    // Список живой: монитор могли отключить или поменять масштаб. Если номер
+    // из настроек исчез, выбираем первый — модуль продолжает работать.
+    const list = props.monitors;
+    const current = typeof value === "string" ? value : "";
+    const exists = list.some((monitor) => monitor.id === current);
+    return (
+      <div className="module-device">
+        <select
+          value={exists ? current : (list[0]?.id ?? "")}
+          onChange={(event) => props.onValue(event.target.value, field.label)}
+        >
+          {list.length === 0 && <option value="">Монитор не найден</option>}
+          {list.map((monitor) => (
+            <option key={monitor.id} value={monitor.id}>{monitor.label}</option>
           ))}
         </select>
       </div>

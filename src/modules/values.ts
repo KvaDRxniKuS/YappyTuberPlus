@@ -11,7 +11,8 @@ import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./exte
 import { textInputOf } from "./sources";
 import type { ExternalTextLine } from "./sources";
 import {
-  keyboardKeys, keyLabel, mouseButtonLabel, mouseButtons, mouseValue, type PointerFrame,
+  keyboardKeys, keyLabel, mouseArea, mouseButtonLabel, mouseButtons, mouseSpaceOf, mouseValue,
+  type PointerFrame,
 } from "./pointer";
 
 /** Полное имя входа: `mic.talking`. Именно так оно пишется в скрипте. */
@@ -161,12 +162,18 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
 
     if (definition.kind === "mouse") {
       const mouse = sources.pointer?.mouse;
-      // Инверсия Y — свойство экземпляра: у одного модуля курсор «как в 2D»,
+      // Область чтения — свойство экземпляра: один модуль смотрит на весь
+      // монитор, другой на окно приложения, третий на сцену. Пиксели экрана
+      // одни и те же, меняется только начало отсчёта.
+      const space = mouseSpaceOf(module.config);
+      const monitorIndex = Number(module.config.monitor ?? 0);
+      const area = mouseArea(space, Number.isFinite(monitorIndex) ? monitorIndex : 0, sources.pointer?.screen);
+      // Инверсия Y — тоже свойство экземпляра: у одного модуля курсор «как в 2D»,
       // у другого «как в 3D», и оба живут в одном пресете.
       const invertY = module.config.invertY === true;
       for (const spec of specs) {
         if (!inputEnabled(module, spec.name)) continue;
-        let value = mouseValue(mouse, spec.name);
+        let value = mouseValue(mouse, spec.name, area);
         if (invertY && spec.name === "y") value = 1 - value;
         else if (invertY && spec.name === "dy") value = -value;
         values[inputKey(module, spec.name)] = Number.isFinite(value) ? value : 0;

@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, RotateCcw, Type } from "lucide-react";
-import type { BasePose, MediaRepeat, MediaSpec, RigFrame, RigObject, TextSpec } from "../types";
+import {
+  ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, PenTool,
+  RotateCcw, Shapes, Trash2, Type,
+} from "lucide-react";
+import type {
+  BasePose, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
+  ShapeItemKind, ShapeSpec, TextSpec,
+} from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
 import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
+import {
+  defaultMask, defaultShape, formatPoints, makeItem, parsePoints, uniqueItemId,
+} from "../render/shape";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
 import { pivotBaseShift } from "../engine/structure";
@@ -26,6 +35,9 @@ interface InspectorProps {
   onVisible: (visible: number) => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  /** Перо: какой контур фигуры рисуется на сцене. */
+  pen?: { objectId: string; itemId: string } | null;
+  onPen?: (pen: { objectId: string; itemId: string } | null) => void;
 }
 
 const STEP_KEY = "yappytuber.inspector-steps";
@@ -245,7 +257,9 @@ export function Inspector(props: InspectorProps) {
   };
 
   const commitPivot = (next: { x: number; y: number }) => {
-    if (object.kind === "sprite") {
+    // Фигура устроена как спрайт: контуры рисуются со сдвигом −pivot × размер,
+    // поэтому пивот двигает базу ровно так же.
+    if (object.kind === "sprite" || object.kind === "shape") {
       // Картинка спрайта рисуется со сдвигом −pivot × размер, поэтому база
       // уезжает на M · Δpivot · размер: пивот переезжает, картинка стоит.
       const shift = pivotBaseShift(object, dynamic, next);
@@ -267,6 +281,7 @@ export function Inspector(props: InspectorProps) {
       <div className="inspector-header">
         <div className={`inspector-preview ${object.kind}`}>
           {object.kind === "text" ? <Type size={20} />
+            : object.kind === "shape" ? <Shapes size={20} />
             : object.kind === "media" ? (object.media?.type === "image" && mediaPreview
               ? <img src={mediaPreview} alt="" />
               : object.media?.type === "audio" ? <Music size={20} /> : <Link2 size={20} />)
@@ -280,6 +295,7 @@ export function Inspector(props: InspectorProps) {
           />
           <span>
             {object.id} · {object.kind === "group" ? "группа"
+              : object.kind === "shape" ? `фигура · контуров ${object.shape?.items.length ?? 0}`
               : object.kind === "text" ? "текст"
               : object.kind === "media" ? `медиа · ${object.media?.type === "video" ? "видео" : object.media?.type === "audio" ? "звук" : "картинка"}`
               : `${object.width}×${object.height}`}
@@ -355,6 +371,20 @@ export function Inspector(props: InspectorProps) {
             text={object.text ?? normalizeText(undefined)}
             onChange={onChange}
           />
+        )}
+
+        {object.kind === "shape" && (
+          <ShapeSection
+            object={object}
+            shape={object.shape ?? defaultShape(object.width, object.height)}
+            pen={props.pen ?? null}
+            onPen={props.onPen}
+            onChange={onChange}
+          />
+        )}
+
+        {object.kind !== "group" && object.kind !== "shape" && (
+          <MaskSection object={object} mask={object.mask} objects={objects} onChange={onChange} />
         )}
 
         <div className="property-section compact-section">
@@ -487,6 +517,312 @@ function MediaSection({ object, media, onChange }: {
   );
 }
 
+const SHAPE_KINDS: Array<{ kind: ShapeItemKind; label: string }> = [
+  { kind: "rect", label: "Прямоугольник" },
+  { kind: "ellipse", label: "Эллипс" },
+  { kind: "path", label: "Перо" },
+];
+
+const SHAPE_KIND_LABEL: Record<ShapeItemKind, string> = {
+  rect: "прямоугольник",
+  ellipse: "эллипс",
+  path: "перо",
+};
+
+/**
+ * Фигуры объекта.
+ *
+ * Контуры рисуются в координатах рамки объекта, поэтому у них те же поворот,
+ * масштаб и пивот, что у спрайта. Перо правится на сцене: клик ставит точку,
+ * готовая точка тянется мышью.
+ */
+function ShapeSection({ object, shape, pen, onPen, onChange }: {
+  object: RigObject;
+  shape: ShapeSpec;
+  pen: { objectId: string; itemId: string } | null;
+  onPen?: (pen: { objectId: string; itemId: string } | null) => void;
+  onChange: (object: RigObject) => void;
+}) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const update = (patch: Partial<ShapeSpec>) => onChange({ ...object, shape: { ...shape, ...patch } });
+  const active = shape.items.find((item) => item.id === activeId) ?? shape.items[0] ?? null;
+  const updateItem = (id: string, patch: Partial<ShapeItem>) => update({
+    items: shape.items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+  });
+  const penHere = pen && pen.objectId === object.id && pen.itemId === active?.id ? pen : null;
+
+  const add = (kind: ShapeItemKind) => {
+    const item = makeItem(shape, kind, object.width, object.height);
+    // Перо начинается пустым: точки появятся кликами по сцене.
+    const fresh: ShapeItem = kind === "path"
+      ? { ...item, id: uniqueItemId(shape, kind), points: [], closed: false, smooth: true }
+      : item;
+    update({ items: [...shape.items, fresh] });
+    setActiveId(fresh.id);
+    if (kind === "path") onPen?.({ objectId: object.id, itemId: fresh.id });
+  };
+
+  const remove = (id: string) => {
+    update({ items: shape.items.filter((item) => item.id !== id) });
+    if (pen?.itemId === id) onPen?.(null);
+  };
+
+  return (
+    <div className="property-section compact-section">
+      <div className="section-title"><span>Фигуры</span><small>КОНТУРЫ</small></div>
+
+      <div className="shape-list">
+        {shape.items.length === 0 && <p className="behaviour-hint">Контуров нет: добавьте прямоугольник, эллипс или перо.</p>}
+        {shape.items.map((item) => {
+          const activeRow = active?.id === item.id;
+          const drawing = pen?.objectId === object.id && pen.itemId === item.id;
+          return (
+            <div className={`shape-row ${activeRow ? "active" : ""}`} key={item.id}>
+              <button className="shape-kind" title="Выбрать контур" onClick={() => setActiveId(item.id)}>
+                {SHAPE_KIND_LABEL[item.kind]}
+              </button>
+              <span className="shape-summary">
+                {item.kind === "path"
+                  ? `${item.points.length} точек`
+                  : `${Math.round(item.width)}×${Math.round(item.height)}`}
+              </span>
+              {item.kind === "path" && (
+                <button
+                  className={`icon-button ${drawing ? "active" : ""}`}
+                  title={drawing ? "Закончить рисовать" : "Рисовать контур на сцене: клик ставит точку, точка тянется мышью"}
+                  onClick={() => onPen?.(drawing ? null : { objectId: object.id, itemId: item.id })}
+                >
+                  <PenTool size={13} />
+                </button>
+              )}
+              <button className="icon-button danger" title="Удалить контур" onClick={() => remove(item.id)}>
+                <Trash2 size={13} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="image-actions">
+        {SHAPE_KINDS.map((entry) => (
+          <button key={entry.kind} className="button secondary" onClick={() => add(entry.kind)}>
+            + {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {active && active.kind !== "path" && (
+        <div className="property-grid">
+          <NumberField label="X" value={active.x} step={1} onCommit={(x) => updateItem(active.id, { x })} />
+          <NumberField label="Y" value={active.y} step={1} onCommit={(y) => updateItem(active.id, { y })} />
+          <NumberField label="Ширина" value={active.width} step={1} onCommit={(width) => updateItem(active.id, { width })} />
+          <NumberField label="Высота" value={active.height} step={1} onCommit={(height) => updateItem(active.id, { height })} />
+        </div>
+      )}
+
+      {active && active.kind === "path" && (
+        <>
+          <label className="check-line">
+            <input type="checkbox" checked={active.smooth} onChange={(event) => updateItem(active.id, { smooth: event.target.checked })} />
+            <span>Кривая: линия сглаживается через точки</span>
+          </label>
+          <label className="check-line">
+            <input type="checkbox" checked={active.closed} onChange={(event) => updateItem(active.id, { closed: event.target.checked })} />
+            <span>Замкнуть контур</span>
+          </label>
+          <div className="image-actions">
+            <button className="button secondary" onClick={() => onPen?.(penHere ? null : { objectId: object.id, itemId: active.id })}>
+              <PenTool size={13} /> {penHere ? "Закончить перо" : "Рисовать пером"}
+            </button>
+            <button
+              className="button secondary"
+              disabled={!active.points.length}
+              title="Убрать последнюю точку"
+              onClick={() => updateItem(active.id, { points: active.points.slice(0, -1) })}
+            >
+              Убрать точку
+            </button>
+            <button
+              className="button secondary"
+              disabled={!active.points.length}
+              title="Очистить контур целиком"
+              onClick={() => updateItem(active.id, { points: [] })}
+            >
+              Очистить
+            </button>
+          </div>
+        </>
+      )}
+
+      <label className="check-line">
+        <input type="checkbox" checked={shape.draw} onChange={(event) => update({ draw: event.target.checked })} />
+        <span>Рисовать фигуру в сцене</span>
+      </label>
+      <div className="color-row">
+        <label>
+          <span>Заливка</span>
+          <input type="color" value={shape.fill} onChange={(event) => update({ fill: event.target.value })} />
+        </label>
+        <label>
+          <span>Обводка</span>
+          <input type="color" value={shape.stroke} onChange={(event) => update({ stroke: event.target.value })} />
+        </label>
+      </div>
+      <NumberField label="Толщина обводки" value={shape.strokeWidth} step={1} onCommit={(strokeWidth) => update({ strokeWidth: Math.max(0, strokeWidth) })} />
+      <p className="behaviour-hint">
+        Фигура — обычный объект сцены: её можно двигать, масштабировать и анимировать
+        скриптом. Маску берут контуры, поэтому саму фигуру можно спрятать глазом —
+        вырезать она продолжит.
+      </p>
+    </div>
+  );
+}
+
+const MASK_KINDS: Array<{ kind: MaskKind | "none"; label: string }> = [
+  { kind: "none", label: "Нет маски" },
+  { kind: "shape", label: "Фигура в сцене" },
+  { kind: "points", label: "Набор точек" },
+  { kind: "file", label: "Файл-маска" },
+];
+
+/**
+ * Маска объекта.
+ *
+ * Три источника — контуры фигуры, многоугольник из чисел и картинка. Внутри
+ * контура объект виден, снаружи нет; «вывернуть» меняет это местами.
+ */
+function MaskSection({ object, mask, objects, onChange }: {
+  object: RigObject;
+  mask: MaskSpec | undefined;
+  objects: RigObject[];
+  onChange: (object: RigObject) => void;
+}) {
+  const shapes = objects.filter((item) => item.kind === "shape" && item.id !== object.id);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const preview = useAssetUrl(mask?.kind === "file" ? mask.file : null);
+  const [draft, setDraft] = useState(() => formatPoints(mask?.points ?? []));
+  const [focused, setFocused] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Пока поле в фокусе, текст не переписываем: иначе курсор прыгал бы на
+  // каждый коммит.
+  useEffect(() => { if (!focused) setDraft(formatPoints(mask?.points ?? [])); }, [mask?.points, focused]);
+
+  const update = (patch: Partial<MaskSpec>) => {
+    onChange({ ...object, mask: { ...defaultMask(), ...mask, ...patch } });
+  };
+  const setKind = (kind: MaskKind | "none") => {
+    if (kind === "none") {
+      onChange({ ...object, mask: undefined });
+      return;
+    }
+    const base = mask ?? defaultMask();
+    update({ kind, shapeId: base.shapeId || shapes[0]?.id || "" });
+  };
+
+  const commitPoints = () => {
+    const points = parsePoints(draft);
+    setDraft(formatPoints(points));
+    update({ points });
+  };
+
+  const replaceFile = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setError(`«${file.name}» — не картинка: маской может быть только изображение.`);
+      return;
+    }
+    setError(null);
+    const source = (await storeFile(file)) ?? (await blobToDataUrl(file));
+    update({ file: source });
+  };
+
+  const kind = mask?.kind ?? "none";
+  return (
+    <div className="property-section compact-section">
+      <div className="section-title"><span>Маска</span><small>ЧТО ВИДНО</small></div>
+      <label className="select-property">
+        <span>Источник</span>
+        <select value={kind} onChange={(event) => setKind(event.target.value as MaskKind | "none")}>
+          {MASK_KINDS.map((entry) => <option key={entry.kind} value={entry.kind}>{entry.label}</option>)}
+        </select>
+      </label>
+
+      {kind === "shape" && (
+        <>
+          <label className="select-property">
+            <span>Фигура</span>
+            <select value={mask?.shapeId ?? ""} onChange={(event) => update({ shapeId: event.target.value })}>
+              <option value="">— выберите фигуру —</option>
+              {shapes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          {shapes.length === 0 && (
+            <p className="behaviour-hint">В сцене нет ни одного объекта-фигуры: добавьте его кнопкой «Фигура» в структуре.</p>
+          )}
+        </>
+      )}
+
+      {kind === "points" && (
+        <>
+          <textarea
+            className="mask-points"
+            value={draft}
+            spellCheck={false}
+            placeholder="10,20; 120,20; 120,140"
+            title="Точки многоугольника в координатах объекта: «x,y; x,y…». Enter — применить"
+            onChange={(event) => setDraft(event.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => { setFocused(false); commitPoints(); }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.blur(); }
+            }}
+          />
+          <p className="behaviour-hint">
+            Координаты — в рамке объекта: (0, 0) — левый верхний угол, дальше
+            ширина и высота объекта. Меньше трёх точек — маска выключена.
+          </p>
+        </>
+      )}
+
+      {kind === "file" && (
+        <>
+          <div className="image-actions">
+            <button className="button secondary" onClick={() => fileInput.current?.click()}>
+              <ImageUp size={14} /> {mask?.file ? "Заменить картинку" : "Выбрать картинку"}
+            </button>
+          </div>
+          {preview && <img className="mask-preview" src={preview} alt="" />}
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/avif,.png,.jpg,.jpeg,.webp,.avif"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void replaceFile(file);
+            }}
+          />
+          <p className="behaviour-hint">
+            Видно там, где у картинки есть альфа: белое и непрозрачное — видно,
+            прозрачное — нет. Картинка растягивается по рамке объекта.
+          </p>
+        </>
+      )}
+
+      {kind !== "none" && (
+        <>
+          <label className="check-line">
+            <input type="checkbox" checked={mask?.invert === true} onChange={(event) => update({ invert: event.target.checked })} />
+            <span>Вывернуть: показать то, что снаружи</span>
+          </label>
+          <NumberField label="Мягкий край" value={mask?.feather ?? 0} step={1} suffix="px" onCommit={(feather) => update({ feather: Math.max(0, feather) })} />
+        </>
+      )}
+      {error && <p className="inline-error">{error}</p>}
+    </div>
+  );
+}
+
 /** Текстовый объект: шаблон, шрифт и подстановки из чата. */
 function TextSection({ object, text, onChange }: {
   object: RigObject;
@@ -586,7 +922,7 @@ function MultiInspector(props: InspectorProps) {
               >
                 <span className={`multi-dot ${item.kind}`} />
                 <span className="multi-name">{item.name}</span>
-                <i>{item.kind === "group" ? "группа" : `${item.width}×${item.height}`}</i>
+                <i>{item.kind === "group" ? "группа" : item.kind === "shape" ? "фигура" : `${item.width}×${item.height}`}</i>
               </button>
             ))}
           </div>

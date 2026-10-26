@@ -7,6 +7,7 @@ import { enumConstants } from "../modules/manual";
 import { InputsPanel } from "./InputsPanel";
 import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
+import type { MonitorOption } from "../modules/pointer";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
@@ -30,6 +31,8 @@ interface RightPanelProps {
   manual: Record<string, number>;
   auto: Record<string, number>;
   devices: DeviceOption[];
+  /** Мониторы для модуля мыши. */
+  monitors?: MonitorOption[];
   audioError: string | null;
   onObjectScript: (script: string) => void;
   /** Пресет поведения: пишет блоки формул в скрипты выделенных объектов. */
@@ -157,6 +160,7 @@ export function RightPanel(props: RightPanelProps) {
         <ModulesPanel
           modules={props.modules}
           devices={props.devices}
+          monitors={props.monitors}
           error={props.audioError}
           onChange={props.onModules}
           focus={focusModule}

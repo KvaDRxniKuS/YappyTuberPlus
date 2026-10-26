@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EMPTY_POINTER, PointerState, mouseButtonFromIndex, type PointerFrame } from "../modules/pointer";
+import {
+  EMPTY_POINTER, PointerState, monitorLabel, mouseButtonFromIndex,
+  type MonitorOption, type PointerFrame, type ScreenMonitor, type ScreenRect, type ScreenSpace,
+} from "../modules/pointer";
 import { isTauri } from "../engine/presetFile";
 
 /** Кадр значений: 30 раз в секунду хватает, а React не перегружаем. */
 const TICK = 33;
-/** Позиция окна нужна для глобальных координат и меняется редко. */
+/** Позиция окна и мониторы нужны для координат и меняются редко. */
 const ORIGIN_REFRESH = 600;
 const POINTER_EVENT = "yappy://pointer";
 
@@ -19,21 +22,148 @@ interface PointerPayload {
   dy?: number;
 }
 
+const EMPTY_RECT: ScreenRect = { x: 0, y: 0, width: 0, height: 0, scale: 1 };
+
 /**
  * Клавиатура и мышь как входы модулей.
  *
- * В браузере события приходят с `window` (работают, пока окно в фокусе). В
- * нативном окне их шлёт глобальный хук Rust (`rdev`), поэтому клавиши ловятся
- * даже когда окно свёрнуто. Логика значений одна и та же — `PointerState`.
+ * Здесь же живёт геометрия экрана: положение окна, список мониторов и место
+ * сцены. Модуль мыши сам выбирает, от чего считать курсор — от окна, от
+ * выбранного монитора или от сцены, — но координаты всегда приходят
+ * абсолютными пикселями экрана.
+ *
+ * В браузере события идут с `window` (работают, пока окно в фокусе). В нативном
+ * окне их шлёт глобальный хук Rust (`rdev`) в физических пикселях монитора,
+ * поэтому клавиши ловятся даже когда окно свёрнуто. Логика значений одна и та
+ * же — `PointerState`.
  *
  * Пока фокус в поле ввода, клавиши игнорируются: иначе набор текста в скрипте
  * дёргал бы риг.
  */
-export function usePointerInputs(active: boolean): { frame: PointerFrame; resetHits: () => void } {
+export function usePointerInputs(active: boolean): {
+  frame: PointerFrame;
+  resetHits: () => void;
+  /** Мониторы для настроек модуля: номер и подпись. */
+  monitors: MonitorOption[];
+} {
   const [frame, setFrame] = useState<PointerFrame>(EMPTY_POINTER);
-  const stateRef = useRef<PointerState>(new PointerState());
-  const originRef = useRef({ x: 0, y: 0, scale: 1 });
+  const [monitors, setMonitors] = useState<MonitorOption[]>([]);
+  const stateRef = useRef(new PointerState());
+  const screenRef = useRef<ScreenSpace>({ window: EMPTY_RECT, monitors: [], scene: null });
 
+  /** Геометрия экрана на текущий момент: сцена пересчитывается из DOM. */
+  const screenNow = useCallback((): ScreenSpace => {
+    const base = screenRef.current;
+    const element = document.querySelector<HTMLElement>("[data-scene]");
+    let scene: ScreenRect | null = null;
+    if (element) {
+      const rect = element.getBoundingClientRect();
+      const scale = base.window.scale || 1;
+      // DOM живёт в CSS-пикселях, окно и мониторы — в пикселях экрана.
+      scene = {
+        x: base.window.x + rect.left * scale,
+        y: base.window.y + rect.top * scale,
+        width: rect.width * scale,
+        height: rect.height * scale,
+        scale,
+      };
+    }
+    return { window: base.window, monitors: base.monitors, scene };
+  }, []);
+
+  // --- геометрия экрана: окно, мониторы, место сцены -------------------------
+  useEffect(() => {
+    let disposed = false;
+    const apply = (window: ScreenRect, list: ScreenMonitor[]) => {
+      if (disposed) return;
+      screenRef.current = { window, monitors: list, scene: screenRef.current.scene };
+      setMonitors((current) => {
+        const next = list.map((monitor) => ({ id: String(monitor.index), label: monitorLabel(monitor) }));
+        if (current.length === next.length && current.every((item, index) => item.id === next[index].id && item.label === next[index].label)) {
+          return current;
+        }
+        return next;
+      });
+    };
+
+    if (isTauri()) {
+      const refresh = async () => {
+        try {
+          const api = await import("@tauri-apps/api/window");
+          const win = api.getCurrentWindow();
+          const [position, size, scale, list] = await Promise.all([
+            win.innerPosition(), win.innerSize(), win.scaleFactor(), api.availableMonitors(),
+          ]);
+          // Основной монитор помечаем отдельно: по нему выбирается область,
+          // если номер из настроек модуля больше не существует.
+          let primary: { x: number; y: number } | null = null;
+          try {
+            const monitor = await api.primaryMonitor();
+            primary = monitor ? { x: monitor.position.x, y: monitor.position.y } : null;
+          } catch {
+            primary = null;
+          }
+          apply(
+            { x: position.x, y: position.y, width: size.width, height: size.height, scale: scale || 1 },
+            list.map((monitor, index) => ({
+              index,
+              name: monitor.name || `Монитор ${index + 1}`,
+              x: monitor.position.x,
+              y: monitor.position.y,
+              width: monitor.size.width,
+              height: monitor.size.height,
+              scale: monitor.scaleFactor || 1,
+              primary: !!primary && primary.x === monitor.position.x && primary.y === monitor.position.y,
+            })),
+          );
+        } catch {
+          /* окно ещё не готово — попробуем на следующем тике */
+        }
+      };
+      void refresh();
+      const timer = window.setInterval(() => void refresh(), ORIGIN_REFRESH);
+      window.addEventListener("focus", refresh);
+      window.addEventListener("resize", refresh);
+      return () => {
+        disposed = true;
+        window.clearInterval(timer);
+        window.removeEventListener("focus", refresh);
+        window.removeEventListener("resize", refresh);
+      };
+    }
+
+    // Браузер: окно браузера и весь экран. Мониторов в браузере не перечислить,
+    // поэтому экран один — для разработки этого достаточно.
+    const refresh = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const border = Math.max(0, (window.outerWidth - width) / 2);
+      const chrome = Math.max(0, window.outerHeight - height - border);
+      apply(
+        { x: window.screenX + border, y: window.screenY + chrome, width, height, scale: 1 },
+        [{
+          index: 0,
+          name: "Экран",
+          x: 0,
+          y: 0,
+          width: window.screen.width,
+          height: window.screen.height,
+          scale: 1,
+          primary: true,
+        }],
+      );
+    };
+    refresh();
+    window.addEventListener("resize", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      disposed = true;
+      window.removeEventListener("resize", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
+  // --- значения кадра --------------------------------------------------------
   useEffect(() => {
     if (!active) return;
     const state = stateRef.current;
@@ -47,12 +177,21 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
   useEffect(() => {
     if (!active) return;
     const state = stateRef.current;
+    let lastScreen = "";
     const timer = window.setInterval(() => {
       const next = state.snapshot();
-      setFrame((current) => (samePointer(current, next) ? current : next));
+      const screen = screenNow();
+      const key = `${screen.window.x},${screen.window.y},${screen.window.width},${screen.window.height},${screen.scene?.x ?? 0},${screen.scene?.y ?? 0},${screen.scene?.width ?? 0},${screen.scene?.height ?? 0},${screen.monitors.length}`;
+      const screenChanged = key !== lastScreen;
+      lastScreen = key;
+      setFrame((current) => {
+        const merged: PointerFrame = { ...next, screen };
+        if (!screenChanged && samePointer(current, merged)) return current;
+        return merged;
+      });
     }, TICK);
     return () => window.clearInterval(timer);
-  }, [active]);
+  }, [active, screenNow]);
 
   useEffect(() => {
     if (!active) return;
@@ -65,17 +204,15 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
       state.key(code, down);
     };
     const onButton = (button: string, down: boolean) => state.button(button, down);
-    const onMove = (x: number, y: number) => {
-      const point = scenePoint(x, y);
-      state.move(point.x, point.y);
-    };
+    // Курсор приходит в пикселях экрана: область чтения выбирает модуль.
+    const onMove = (x: number, y: number) => state.move(x, y);
     const onWheel = (delta: number) => state.wheel(delta);
     const onBlur = () => state.releaseAll();
 
     if (!isTauri()) {
       const keyDown = (event: KeyboardEvent) => onKey(event.code, true);
       const keyUp = (event: KeyboardEvent) => onKey(event.code, false);
-      const mouseMove = (event: MouseEvent) => onMove(event.clientX, event.clientY);
+      const mouseMove = (event: MouseEvent) => onMove(event.screenX, event.screenY);
       const mouseDown = (event: MouseEvent) => onButton(mouseButtonFromIndex(event.button), true);
       const mouseUp = (event: MouseEvent) => onButton(mouseButtonFromIndex(event.button), false);
       const wheel = (event: WheelEvent) => onWheel(event.deltaY);
@@ -100,18 +237,6 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
     // --- нативное окно: события от глобального хука -------------------------
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    let originTimer = 0;
-
-    const refreshOrigin = async () => {
-      try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        const win = getCurrentWindow();
-        const [position, scale] = await Promise.all([win.innerPosition(), win.scaleFactor()]);
-        if (!disposed) originRef.current = { x: position.x, y: position.y, scale: scale || 1 };
-      } catch {
-        /* окно ещё не готово — попробуем на следующем тике */
-      }
-    };
 
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
@@ -122,23 +247,19 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
         else if (payload.kind === "button" && typeof payload.button === "string") onButton(payload.button, payload.down === true);
         else if (payload.kind === "wheel" && typeof payload.dy === "number") onWheel(payload.dy);
         else if (payload.kind === "move" && typeof payload.x === "number" && typeof payload.y === "number") {
-          // Хук даёт физические пиксели экрана: переводим в CSS-координаты окна.
-          const { x, y, scale } = originRef.current;
-          onMove((payload.x - x) / scale, (payload.y - y) / scale);
+          // Хук уже даёт физические пиксели экрана — это то, что нужно модулю.
+          onMove(payload.x, payload.y);
         }
       });
       if (disposed) stop();
       else unlisten = stop;
     })();
 
-    void refreshOrigin();
-    originTimer = window.setInterval(() => void refreshOrigin(), ORIGIN_REFRESH);
     window.addEventListener("blur", onBlur);
 
     return () => {
       disposed = true;
       if (unlisten) unlisten();
-      window.clearInterval(originTimer);
       window.removeEventListener("blur", onBlur);
     };
   }, [active]);
@@ -152,7 +273,7 @@ export function usePointerInputs(active: boolean): { frame: PointerFrame; resetH
     }));
   }, []);
 
-  return { frame, resetHits };
+  return { frame, resetHits, monitors };
 }
 
 /**
@@ -204,16 +325,6 @@ export function useMouseButtonCapture(active: boolean, onCapture: (button: strin
   }, [active]);
 }
 
-/** Курсор в долях сцены: 0…1 по видимой области сцены. */
-function scenePoint(clientX: number, clientY: number): { x: number; y: number } {
-  const rect = document.querySelector<HTMLElement>("[data-scene]")?.getBoundingClientRect();
-  const left = rect?.left ?? 0;
-  const top = rect?.top ?? 0;
-  const width = rect?.width || window.innerWidth || 1;
-  const height = rect?.height || window.innerHeight || 1;
-  return { x: (clientX - left) / width, y: (clientY - top) / height };
-}
-
 function isTyping(): boolean {
   const element = document.activeElement as HTMLElement | null;
   if (!element) return false;
@@ -221,12 +332,21 @@ function isTyping(): boolean {
   return element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.tagName === "SELECT";
 }
 
+function sameRect(left: ScreenRect | null, right: ScreenRect | null): boolean {
+  if (!left || !right) return left === right;
+  return left.x === right.x && left.y === right.y && left.width === right.width
+    && left.height === right.height && left.scale === right.scale;
+}
+
 function samePointer(left: PointerFrame, right: PointerFrame): boolean {
   const mouse = left.mouse;
   const next = right.mouse;
-  if (mouse.x !== next.x || mouse.y !== next.y) return false;
+  if (mouse.screenX !== next.screenX || mouse.screenY !== next.screenY) return false;
   if (mouse.dx !== next.dx || mouse.dy !== next.dy) return false;
   if (mouse.left !== next.left || mouse.right !== next.right || mouse.wheel !== next.wheel) return false;
+  if (!sameRect(left.screen?.window ?? null, right.screen?.window ?? null)) return false;
+  if (!sameRect(left.screen?.scene ?? null, right.screen?.scene ?? null)) return false;
+  if ((left.screen?.monitors.length ?? 0) !== (right.screen?.monitors.length ?? 0)) return false;
   const leftKeys = Object.keys(left.keys);
   const rightKeys = Object.keys(right.keys);
   if (leftKeys.length !== rightKeys.length) return false;
