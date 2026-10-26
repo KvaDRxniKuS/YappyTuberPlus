@@ -3010,6 +3010,9 @@ fn script_issues(
                         label, decl.line, decl.name, other.line
                     ),
                     "related": { "scope": "globals", "line": other.line },
+                    // Имя везём отдельно: редактор подсвечивает все его вхождения
+                    // в тексте — объявление, подписку и вызовы.
+                    "name": decl.name,
                 }));
             }
         } else {
@@ -3027,6 +3030,7 @@ fn script_issues(
                         decl.line, decl.name, object.id, other.line
                     ),
                     "related": { "scope": object.id, "line": other.line },
+                    "name": decl.name,
                 }));
             }
         }
@@ -3054,6 +3058,7 @@ fn script_issues(
                 "length": length,
                 "message": message,
                 "related": related.map(|line| json!({ "scope": own_scope, "line": line })),
+                "name": name,
             }));
         }
     }
@@ -3084,6 +3089,7 @@ fn script_issues(
                     label, block.line, name, object.id
                 ),
                 "related": { "scope": object.id, "line": other.line },
+                "name": name,
             }));
             break;
         }
@@ -4035,6 +4041,8 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("уже объявлено глобально"));
+        // Имя — для подсветки всех вхождений: в редакторе их бывает несколько.
+        assert_eq!(issues[0]["name"], "clap");
 
         // Обратная сторона: глобальное имя заняли в объекте — видно и оттуда.
         let issues = script_issues(
@@ -4062,6 +4070,8 @@ mod tests {
         assert_eq!(issues[0]["line"], 2);
         assert_eq!(issues[0]["related"]["scope"], "head");
         assert_eq!(issues[0]["related"]["line"], 1);
+        // Спорное имя — переменная события, а не имя события.
+        assert_eq!(issues[0]["name"], "x");
     }
 
     #[test]

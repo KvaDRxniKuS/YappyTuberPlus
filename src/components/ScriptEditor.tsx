@@ -8,8 +8,8 @@ import { autocompletion, snippet, type CompletionContext, type CompletionResult 
 import { tags } from "@lezer/highlight";
 import type { ScriptIssueInfo } from "../types";
 import {
-  describeIssues, eventNames, freeEventName, issueSpans, issueTarget, scopeTitle,
-  type ErrorSpan, type ScriptCheck, type ScriptScope,
+  describeIssues, eventNames, freeEventName, issueName, issueSpans, issueTarget, nameSpans,
+  scopeTitle, type ErrorSpan, type ScriptCheck, type ScriptScope,
 } from "../engine/scripts";
 import {
   FUNCTION_NAMES, INPUT_FIELDS, SIGNATURES, hintAt, signatureAt, signatureLine, signatureOf,
@@ -207,8 +207,10 @@ const hintField = StateField.define<string>({
  * Строка, к которой вернулись по клику на ошибку в другом скрипте.
  *
  * Подсветка временная: она отвечает на вопрос «куда я попал», а не ругается.
+ * Красится не строка, а **все вхождения имени**: спор идёт об имени, и видеть
+ * надо объявление, подписку и вызовы сразу.
  */
-const revealEffect = StateEffect.define<{ from: number; to: number } | null>();
+const revealEffect = StateEffect.define<ErrorSpan[] | null>();
 
 const revealField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -217,7 +219,37 @@ const revealField = StateField.define<DecorationSet>({
     for (const effect of transaction.effects) {
       if (!effect.is(revealEffect)) continue;
       next = effect.value
-        ? Decoration.set([Decoration.mark({ class: "cm-script-reveal" }).range(effect.value.from, effect.value.to)])
+        ? Decoration.set(
+          effect.value.map((span) => Decoration.mark({ class: "cm-script-reveal" }).range(span.from, span.to)),
+          true,
+        )
+        : Decoration.none;
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/**
+ * Все вхождения спорного имени — пока ошибка не исправлена.
+ *
+ * Отличается от `reveal` намеренно: переход горит пару секунд, а имя остаётся
+ * подсвеченным, пока конфликт есть. Так видно, где ещё используется имя, из-за
+ * которого скрипт не собирается.
+ */
+const nameEffect = StateEffect.define<ErrorSpan[] | null>();
+
+const nameField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, transaction) {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(nameEffect)) continue;
+      next = effect.value
+        ? Decoration.set(
+          effect.value.map((span) => Decoration.mark({ class: "cm-script-name" }).range(span.from, span.to)),
+          true,
+        )
         : Decoration.none;
     }
     return next;
@@ -266,9 +298,9 @@ interface ScriptEditorProps {
    * Номер нужен, чтобы повторный клик по той же ошибке снова подсветил строку:
    * одинаковые значения пропсов не вызывают эффект.
    */
-  reveal?: { line: number; nonce: number };
+  reveal?: { line: number; nonce: number; name?: string };
   /** Клик по ошибке в другом скрипте: переключить область и встать на строку. */
-  onOpenIssue?: (scope: string, line: number) => void;
+  onOpenIssue?: (scope: string, line: number, name?: string) => void;
   onCheck?: ScriptCheck;
   onApply: (value: string) => void;
 }
@@ -350,9 +382,17 @@ export function ScriptEditor({
       void check(source, scope).then((next) => {
         const current = view.current;
         if (!current || current.state.doc.toString() !== source) return;
-        const spans = issueSpans(current.state.doc.toString(), next, scope.scope ?? "globals");
+        const text = current.state.doc.toString();
+        const spans = issueSpans(text, next, scope.scope ?? "globals");
+        const name = issueName(next);
+        const occurrences = name ? nameSpans(text, name) : [];
         setIssues(next);
-        current.dispatch({ effects: errorEffect.of(spans.length > 0 ? spans : null) });
+        current.dispatch({
+          effects: [
+            errorEffect.of(spans.length > 0 ? spans : null),
+            nameEffect.of(occurrences.length > 0 ? occurrences : null),
+          ],
+        });
       }).catch(() => { /* ядро без `check` — просто без подсветки */ });
     };
     runCheckRef.current = runCheck;
@@ -554,6 +594,7 @@ export function ScriptEditor({
           ".cm-script-error": { textDecoration: "underline wavy #e08b8b" },
           ".cm-script-related": { textDecoration: "underline wavy #d3ad6a" },
           ".cm-script-reveal": { backgroundColor: "#8ad8c622", outline: "1px solid #8ad8c655" },
+          ".cm-script-name": { backgroundColor: "#d8a4bd1f", borderRadius: "2px" },
           ".cm-script-hint": {
             padding: "3px 8px",
             background: "#232b31",
@@ -606,11 +647,17 @@ export function ScriptEditor({
     const line = reveal?.line;
     if (!editor || !line) return;
     const target = editor.state.doc.line(Math.min(Math.max(line, 1), editor.state.doc.lines));
+    // Имя важнее строки: подсвечиваем все его вхождения, а строку только
+    // показываем — по ней ставится каретка и прокрутка.
+    const name = reveal?.name ?? "";
+    const spans = nameSpans(editor.state.doc.toString(), name);
     editor.dispatch({
       selection: { anchor: target.from },
       effects: [
         EditorView.scrollIntoView(target.from, { y: "center" }),
-        revealEffect.of({ from: target.from, to: target.to }),
+        revealEffect.of(spans.length > 0
+          ? spans
+          : [{ from: target.from, to: target.to, related: true }]),
       ],
     });
     editor.focus();
@@ -697,8 +744,8 @@ export function ScriptEditor({
             <button
               type="button"
               className="script-error-jump"
-              title={`Показать второе объявление: ${jumpTitle}, строка ${jump.line}. Область переключится, строка подсветится`}
-              onClick={() => onOpenIssue?.(jump.scope, jump.line)}
+              title={`Показать второе объявление: ${jumpTitle}, строка ${jump.line}. Область переключится, имя подсветится во всех местах`}
+              onClick={() => onOpenIssue?.(jump.scope, jump.line, jump.name)}
             >
               <ChevronRight size={11} /> {jumpTitle}:{jump.line}
             </button>

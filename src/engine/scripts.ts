@@ -64,6 +64,33 @@ export function appendSnippet(script: string, snippet: string): string {
   return base ? `${base}\n\n${block}\n` : `${block}\n`;
 }
 
+/**
+ * Все вхождения имени целым словом.
+ *
+ * Имя события живёт в трёх местах — объявление `event`, подписка `on`, вызов
+ * `call`, — и при конфликте важно видеть их все: спор идёт не о строке, а об
+ * имени. Границы слова проверяются вручную: `\b` в JavaScript считает словом
+ * `[A-Za-z0-9_]`, а кириллица в именах не участвует, но точка в `<вход>.up`
+ * ломала бы поиск в другом направлении.
+ */
+export function nameSpans(source: string, name: string): ErrorSpan[] {
+  if (!name) return [];
+  const spans: ErrorSpan[] = [];
+  const word = /[A-Za-z0-9_]/;
+  let from = source.indexOf(name);
+  while (from !== -1) {
+    const before = from > 0 ? source[from - 1] : "";
+    const after = source[from + name.length] ?? "";
+    // Точка с любой стороны — это путь входа (`mouse.left`), а не имя: события
+    // и переменные пишутся отдельным словом, поэтому такие совпадения не наши.
+    const startsWord = before === "" || (!word.test(before) && before !== ".");
+    const endsWord = after === "" || (!word.test(after) && after !== ".");
+    if (startsWord && endsWord) spans.push({ from, to: from + name.length, related: true });
+    from = source.indexOf(name, from + 1);
+  }
+  return spans;
+}
+
 /** Место ошибки в смещениях текста: `related` — вторая декларация. */
 export interface ErrorSpan {
   from: number;
@@ -116,11 +143,24 @@ export function issueSpans(
 export function issueTarget(
   issues: ScriptIssueInfo[],
   ownScope: string,
-): { scope: string; line: number } | null {
+): { scope: string; line: number; name?: string } | null {
   for (const issue of issues) {
     if (issue.related && issue.related.scope !== ownScope) {
-      return { scope: issue.related.scope, line: issue.related.line };
+      return { scope: issue.related.scope, line: issue.related.line, name: issue.name };
     }
+  }
+  return null;
+}
+
+/**
+ * Имя, о котором спорит проверка: первое найденное.
+ *
+ * Нужно и без перехода: обе декларации могут лежать в одном скрипте, и тогда
+ * полезно видеть все вхождения имени — от объявления до вызовов.
+ */
+export function issueName(issues: ScriptIssueInfo[]): string | null {
+  for (const issue of issues) {
+    if (issue.name) return issue.name;
   }
   return null;
 }

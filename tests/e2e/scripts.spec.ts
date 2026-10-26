@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   appendSnippet, describeIssues, eventNameFor, eventNames, eventSnippet, freeEventName,
-  issueSpans, issueTarget, scopeTitle,
+  issueName, issueSpans, issueTarget, nameSpans, scopeTitle,
 } from "../../src/engine/scripts";
 
 /**
@@ -135,4 +135,45 @@ test("клик по ошибке ведёт ко второму объявлен
 test("область называется как файл", () => {
   expect(scopeTitle("globals")).toBe("globals.rig");
   expect(scopeTitle("head")).toBe("head.rig");
+});
+
+test("все вхождения имени находятся целиком словом", () => {
+  const source = [
+    "event clap() { mouse.left.up }",
+    "on clap {",
+    "  call clap()",
+    "}",
+    "// clap в комментарии тоже",
+    "clapper = 1",
+  ].join("\n");
+  const found = nameSpans(source, "clap").map((span) => source.slice(span.from, span.to));
+  // `clapper` не считается: имя должно быть отдельным словом.
+  expect(found).toEqual(["clap", "clap", "clap", "clap"]);
+  // Пустое имя не ищется: иначе подсветился бы весь текст.
+  expect(nameSpans(source, "")).toEqual([]);
+});
+
+test("имя не находится внутри пути входа", () => {
+  // Событие назвали как модуль: `mouse` в `mouse.left.up` — это путь, а не имя,
+  // поэтому подсвечивается только объявление.
+  const source = "x = mouse.left.up\nevent mouse() { mouse.right.up }";
+  const found = nameSpans(source, "mouse").map((span) => source.slice(span.from, span.to));
+  expect(found).toEqual(["mouse"]);
+  // Похожее имя с точкой впереди — другое имя.
+  expect(nameSpans("twitch.clap > 0", "clap")).toEqual([]);
+});
+
+test("имя для подсветки берётся из первой ошибки, где оно есть", () => {
+  expect(issueName([{ line: 1, column: 1, length: 3, message: "м" }])).toBeNull();
+  expect(issueName([
+    { line: 1, column: 1, length: 3, message: "разбор" },
+    { line: 2, column: 1, length: 3, message: "конфликт", name: "clap" },
+  ])).toBe("clap");
+});
+
+test("переход везёт имя с собой", () => {
+  expect(issueTarget(
+    [{ line: 1, column: 1, length: 5, message: "м", related: { scope: "globals", line: 3 }, name: "clap" }],
+    "head",
+  )).toEqual({ scope: "globals", line: 3, name: "clap" });
 });

@@ -97,7 +97,9 @@ export function RightPanel(props: RightPanelProps) {
   const editorKey = tab === "globals" ? "globals" : props.selected?.id || "empty";
   // Куда перейти по клику на ошибку: область и строку. `nonce` нужен, чтобы
   // повторный клик по той же строке снова подсветил её, а не промолчал.
-  const [reveal, setReveal] = useState<{ scope: string; line: number; nonce: number } | null>(null);
+  const [reveal, setReveal] = useState<{
+    scope: string; line: number; nonce: number; name?: string;
+  } | null>(null);
   // Переход — событие, а не состояние: после показа строку снимаем, чтобы
   // возвращение на эту вкладку через минуту не подсвечивало её снова.
   useEffect(() => {
@@ -105,7 +107,9 @@ export function RightPanel(props: RightPanelProps) {
     const timer = window.setTimeout(() => setReveal(null), 2000);
     return () => window.clearTimeout(timer);
   }, [reveal]);
-  const openIssue = (scope: string, line: number) => {
+  // Имя едет вместе с переходом: в чужом скрипте подсвечиваются все его
+  // вхождения — от объявления до вызовов.
+  const openIssue = (scope: string, line: number, name?: string) => {
     // `globals` — глобальный скрипт, остальное — id объекта. Сначала переключаем
     // область, потом просим редактор прокрутиться: он уже будет с нужным текстом.
     if (scope === "globals") {
@@ -114,7 +118,7 @@ export function RightPanel(props: RightPanelProps) {
       props.onSelectObject?.(scope);
       setTab("object");
     }
-    setReveal({ scope, line, nonce: Date.now() });
+    setReveal({ scope, line, nonce: Date.now(), name });
   };
   // Проверка видит соседние области: конфликт имён — это всегда две строки,
   // своя и чужая. `scope` пустой у глобального скрипта: тогда ядро смотрит,

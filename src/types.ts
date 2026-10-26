@@ -175,6 +175,8 @@ export interface ScriptIssueLink {
 /** Ошибка скрипта со вторым местом: `scriptIssues` из ответа `check`. */
 export interface ScriptIssueInfo extends ScriptErrorInfo {
   related?: ScriptIssueLink | null;
+  /** Спорное имя события или переменной: по нему ищутся все вхождения. */
+  name?: string;
 }
 
 /** Команда воспроизведения, которую ядро отдало медиа-объекту. */
