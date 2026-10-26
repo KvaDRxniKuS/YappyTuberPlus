@@ -5,7 +5,8 @@ import { Switch } from "./Switch";
 import {
   applyCaptureWindow, applyOverlayWindow, captureWindowOpen,
   closeCaptureWindow, closeOverlayWindow, isTauri, openCaptureWindow,
-  openOverlayWindow, overlayServerUrl, overlaySize, overlayUrl, type CanvasSize,
+  openOverlayWindow, overlayServerStatus, overlayServerUrl, overlaySize, overlayUrl,
+  type CanvasSize,
 } from "../overlay/window";
 
 interface OverlayDialogProps {
@@ -43,7 +44,23 @@ export function OverlayDialog(props: OverlayDialogProps) {
   // Встроенный сервер приложения: тот же релей и та же страница, но без
   // отдельного процесса Node. В браузере сервера нет — остаётся ссылка через мост.
   const [serverUrl, setServerUrl] = useState<string | null>(null);
-  useEffect(() => { void overlayServerUrl().then(setServerUrl); }, []);
+  // Сколько сокетов держит релей: редактор всегда один, источник OBS добавляет
+  // второй. Число в строке состояния отделяет «OBS не подключился» от
+  // «подключился, но кадры не доходят».
+  const [relayClients, setRelayClients] = useState<number | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    const read = () => {
+      void overlayServerStatus().then((status) => {
+        if (disposed) return;
+        setServerUrl(status?.url ?? null);
+        setRelayClients(status?.running ? status.clients : null);
+      });
+    };
+    read();
+    const timer = window.setInterval(read, 3000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, []);
 
   // Два разных адреса, и путать их нельзя:
   //  • `windowUrl` — страница приложения для нативного окна оверлея. Только
@@ -137,7 +154,18 @@ export function OverlayDialog(props: OverlayDialogProps) {
           <span className="overlay-state-dot" />
           <b>{props.viewers.length ? `Подключено оверлеев: ${props.viewers.length}` : "Оверлей не подключён"}</b>
           <span>транспорт: {props.transport}</span>
-          {props.bridgeUrl && <span>{props.bridgeReady ? "WS-мост активен" : "WS-мост не отвечает"}</span>}
+          {props.bridgeUrl && (
+            <span title={props.bridgeUrl}>
+              {props.bridgeReady ? "мост активен" : "мост не отвечает"} · {props.bridgeUrl.replace(/^wss?:\/\//, "")}
+            </span>
+          )}
+          {relayClients !== null && <span>через сервер: {relayClients}</span>}
+          {isTauri() && !serverUrl && (
+            <span className="overlay-state-warn">
+              встроенный сервер не запустился — источник браузера в OBS не получит кадры
+              (порт 17800 занят?)
+            </span>
+          )}
         </div>
 
         <div className="dialog-body">
@@ -223,7 +251,7 @@ export function OverlayDialog(props: OverlayDialogProps) {
               <input className="overlay-url" value={obsUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
             </div>
             <p className="dialog-note">
-              Окно оверлея открывается из приложения ({windowUrl.includes("tauri") ? "свой адрес приложения" : "адрес редактора"}),
+              Окно оверлея открывается {isTauri() ? "на своём адресе приложения" : "на адресе редактора"},
               а по ссылке для OBS страницу отдаёт встроенный сервер — этот адрес нужен только источнику браузера.
             </p>
           </section>
@@ -253,7 +281,7 @@ export function OverlayDialog(props: OverlayDialogProps) {
             <ol className="overlay-steps">
               <li><b>Прозрачное окно.</b> Нажмите «Открыть оверлей» и добавьте в OBS источник «Захват окна» → YappyTuberPlus Overlay. Окно без рамки, с прозрачным фоном и без тени.</li>
               <li><b>Окно захвата.</b> Если «Захват окна» с прозрачного оверлея не работает, нажмите «Открыть окно захвата» и выберите в OBS окно «YappyTuberPlus — окно захвата».</li>
-              <li><b>Источник браузера.</b> Запустите <code>npm run overlay:bridge</code>, откройте в OBS «Источник браузера» и вставьте ссылку выше. Мост передаёт кадры в другой процесс.</li>
+              <li><b>Источник браузера.</b> Откройте в OBS «Источник браузера» и вставьте ссылку выше: страницу и релей отдаёт встроенный сервер приложения. В браузерной разработке вместо него — <code>npm run overlay:bridge</code>.</li>
               <li><b>Проверка.</b> Включите «Служебную рамку», чтобы видеть статус, FPS и границы холста; перед эфиром выключите её.</li>
             </ol>
           </section>

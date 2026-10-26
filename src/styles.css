@@ -468,6 +468,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .overlay-state span { font-variant-numeric: tabular-nums; }
 .overlay-state-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 8px #ddb77d44; }
 .overlay-state.live .overlay-state-dot { background: var(--accent); box-shadow: 0 0 8px #82d5c155; }
+.overlay-state-warn { color: #d8a06b; }
 .dialog-body { min-height: 0; overflow: auto; padding: 4px 15px 16px; }
 .dialog-section { padding: 13px 0; border-bottom: 1px solid #2a2f35; }
 .dialog-section:last-child { border-bottom: 0; }

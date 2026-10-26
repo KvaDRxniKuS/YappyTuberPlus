@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { RigFrame, RigPreset } from "../types";
 import { createOverlayBus, type CompositeBus } from "../overlay/bus";
 import { OverlayHost } from "../overlay/host";
-import { bridgeUrlFromLocation } from "../overlay/protocol";
+import { overlayBridgeUrl } from "../overlay/window";
 
 export interface OverlayHostState {
   /** Frame sink that the engine loop calls after every produced frame. */
@@ -15,14 +15,19 @@ export interface OverlayHostState {
   setFrozen: (frozen: boolean, preset?: RigPreset) => void;
 }
 
-function transportOptions() {
+/**
+ * Какие транспорты поднимать. Адрес релея приходит снаружи: в окне приложения
+ * его знает встроенный сервер, а не `location` (см. `overlayBridgeUrl`).
+ */
+function transportOptions(bridgeUrl: string | null) {
   const params = new URLSearchParams(window.location.search);
   const transport = params.get("transport");
+  const allowed = transport !== "tauri" && transport !== "broadcast";
   return {
     broadcast: transport !== "ws" && transport !== "tauri",
     tauri: transport !== "ws" && transport !== "broadcast",
-    websocket: transport !== "tauri" && transport !== "broadcast",
-    bridgeUrl: bridgeUrlFromLocation(window.location.search, window.location),
+    websocket: allowed && !!bridgeUrl,
+    bridgeUrl,
   };
 }
 
@@ -37,6 +42,7 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
   const [viewers, setViewers] = useState<string[]>([]);
   const [transport, setTransport] = useState("подключение…");
   const [bridgeReady, setBridgeReady] = useState(false);
+  const [bridgeUrl, setBridgeUrl] = useState<string | null>(null);
   const sinkRef = useRef<((frame: RigFrame) => void) | null>(null);
   const frozenRef = useRef(false);
   const hostRef = useRef<OverlayHost | null>(null);
@@ -44,14 +50,16 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
   const presetRef = useRef(preset);
   presetRef.current = preset;
 
-  const bridgeUrl = useMemo(
-    () => bridgeUrlFromLocation(window.location.search, window.location),
-    [],
-  );
-
   useEffect(() => {
     let disposed = false;
-    void createOverlayBus(transportOptions()).then((bus) => {
+    void (async () => {
+      // В приложении адрес релея отдаёт встроенный сервер, поэтому порядок
+      // такой: сначала адрес, потом транспорт. Угаданный `tauri.localhost`
+      // давал вечное «мост не отвечает» и ноль оверлеев.
+      const bridge = await overlayBridgeUrl();
+      if (disposed) return;
+      setBridgeUrl(bridge);
+      const bus = await createOverlayBus(transportOptions(bridge));
       if (disposed) {
         bus.close();
         return;
@@ -68,7 +76,7 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
       sinkRef.current = (frame) => host.pushFrame(frame);
       setTransport(bus.label);
       setBridgeReady(bus.parts.some((part) => part.kind === "websocket" && part.ready));
-    });
+    })();
 
     const poll = window.setInterval(() => {
       const bus = busRef.current;

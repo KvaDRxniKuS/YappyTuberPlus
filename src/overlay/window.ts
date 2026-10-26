@@ -1,4 +1,5 @@
 import type { OverlayConfig } from "../types";
+import { bridgeUrlFromLocation } from "./protocol";
 
 export const OVERLAY_LABEL = "rig-overlay";
 /** Отдельное окно для программ записи: его выбирают как источник «Захват окна». */
@@ -64,6 +65,75 @@ export async function overlayServerUrl(): Promise<string | null> {
     const { invoke } = await import("@tauri-apps/api/core");
     const url = await invoke<string | null>("overlay_server_url");
     return url || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Состояние встроенного сервера: жив ли, где сборка, сколько клиентов. */
+export interface OverlayServerStatus {
+  running: boolean;
+  url: string | null;
+  webRoot: string | null;
+  clients: number;
+  connections: number;
+}
+
+export async function overlayServerStatus(): Promise<OverlayServerStatus | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const status = await invoke<Partial<OverlayServerStatus>>("overlay_server_status");
+    return {
+      running: !!status.running,
+      url: status.url ?? null,
+      webRoot: status.webRoot ?? null,
+      clients: Number(status.clients ?? 0),
+      connections: Number(status.connections ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Адрес релея, к которому подключается эта страница.
+ *
+ * Три случая, и путать их нельзя:
+ *  • `?bridge=` — адрес задан руками (страница OBS, отладка);
+ *  • окно приложения — релей у встроенного сервера, его адрес знает Rust
+ *    (`overlay_server_url`). Угаданный из `location` адрес (`tauri.localhost`)
+ *    не работает: там нет ни релея, ни сокета;
+ *  • обычный браузер — тот же origin, `/overlay-ws` (в разработке его
+ *    проксирует Vite на `npm run overlay:bridge`).
+ */
+export async function overlayBridgeUrl(search?: string): Promise<string | null> {
+  const query = search ?? (typeof window === "undefined" ? "" : window.location.search);
+  const explicit = new URLSearchParams(query).get("bridge");
+  if (explicit) return explicit;
+  const transport = new URLSearchParams(query).get("transport");
+  if (transport === "broadcast" || transport === "tauri") return null;
+  if (!isTauri()) return bridgeUrlFromLocation(query, window.location);
+  const url = await overlayServerUrl();
+  return url ? relayUrlFromServer(url) : null;
+}
+
+/**
+ * Адрес релея по адресу страницы встроенного сервера.
+ *
+ * `http://127.0.0.1:17800/overlay.html` → `ws://127.0.0.1:17800/overlay-ws`.
+ * `0.0.0.0` — адрес прослушивания, а не подключения, поэтому он меняется на
+ * `127.0.0.1`: иначе редактор стучался бы в адрес, до которого нет маршрута.
+ */
+export function relayUrlFromServer(serverUrl: string): string | null {
+  try {
+    const relay = new URL(serverUrl);
+    relay.protocol = relay.protocol === "https:" ? "wss:" : "ws:";
+    if (relay.hostname === "0.0.0.0") relay.hostname = "127.0.0.1";
+    relay.pathname = "/overlay-ws";
+    relay.search = "";
+    relay.hash = "";
+    return relay.toString();
   } catch {
     return null;
   }

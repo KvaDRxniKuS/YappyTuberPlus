@@ -218,6 +218,33 @@ export function overlayBackground(
   return { mode, color: null };
 }
 
+/**
+ * Страница живёт внутри окна приложения (Tauri), а не на обычном сайте.
+ *
+ * На Windows нативная сборка отдаёт страницу с `http://tauri.localhost`, в
+ * Linux/macOS — с `tauri://localhost`; адреса `ipc.localhost` и `asset.localhost`
+ * тоже принадлежат приложению. Ни у одного из них нет моста `/overlay-ws`:
+ * релей живёт на встроенном сервере (по умолчанию `127.0.0.1:17800`). Раньше
+ * адрес моста угадывался из `location`, и редактор в приложении стучался в
+ * `ws://tauri.localhost/overlay-ws` — отсюда «Оверлей не подключён» и
+ * «WS-мост не отвечает» при живом встроенном сервере.
+ */
+export function isAppOrigin(location: Location | URL | null): boolean {
+  if (!location) return false;
+  const protocol = location.protocol;
+  if (protocol !== "http:" && protocol !== "https:") return true;
+  const host = location.hostname;
+  return host === "tauri.localhost" || host === "tauri.local"
+    || host === "ipc.localhost" || host === "asset.localhost";
+}
+
+/**
+ * Адрес моста из параметров страницы.
+ *
+ * Явный `?bridge=` важнее всего. `transport=broadcast|tauri` выключает мост,
+ * как и окно приложения: там мост берётся у встроенного сервера
+ * (`overlayBridgeUrl` в `window.ts`), а не угадывается по адресу страницы.
+ */
 export function bridgeUrlFromLocation(search: string, location: Location | URL | null): string | null {
   const params = new URLSearchParams(search);
   const explicit = params.get("bridge");
@@ -227,5 +254,6 @@ export function bridgeUrlFromLocation(search: string, location: Location | URL |
   if (!location) return null;
   const protocol = location.protocol;
   if (protocol !== "http:" && protocol !== "https:") return null;
+  if (isAppOrigin(location)) return null;
   return `${protocol === "https:" ? "wss:" : "ws:"}//${location.host}/overlay-ws`;
 }

@@ -5,17 +5,17 @@ import { MediaAssets } from "../render/media";
 import { assetIdsOfPreset, ensureAssetsOfPreset, onAssetsChanged, unresolvedAssetIds } from "../engine/assets";
 import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
-import { bridgeUrlFromLocation, overlayBackground, scenePreset } from "./protocol";
-import { isTauri } from "./window";
+import { overlayBackground, scenePreset } from "./protocol";
+import { isTauri, overlayBridgeUrl } from "./window";
 import { createOnDemandLoop } from "../engine/frameSignal";
 
-function transportOptions(params: URLSearchParams) {
+function transportOptions(params: URLSearchParams, bridgeUrl: string | null) {
   const transport = params.get("transport");
   return {
     broadcast: transport !== "ws" && transport !== "tauri",
     tauri: transport !== "ws" && transport !== "broadcast",
-    websocket: transport !== "tauri" && transport !== "broadcast",
-    bridgeUrl: bridgeUrlFromLocation(params.toString(), window.location),
+    websocket: transport !== "tauri" && transport !== "broadcast" && !!bridgeUrl,
+    bridgeUrl,
   };
 }
 
@@ -53,7 +53,13 @@ export function OverlayApp() {
   useEffect(() => {
     let disposed = false;
     let client: OverlayClient | null = null;
-    void createOverlayBus(transportOptions(params)).then((bus) => {
+    void (async () => {
+      // Страница из окна приложения не угадывает адрес релея: он у встроенного
+      // сервера приложения. В браузере и в источнике OBS адрес выводится из
+      // `location` — там мост живёт на том же хосте.
+      const bridge = await overlayBridgeUrl(params.toString());
+      if (disposed) return;
+      const bus = await createOverlayBus(transportOptions(params, bridge));
       if (disposed) { bus.close(); return; }
       client = new OverlayClient(bus, {});
       clientRef.current = client;
@@ -64,7 +70,7 @@ export function OverlayApp() {
       client.subscribeFrames(() => loop.current?.request());
       client.start();
       setSnapshot(client.snapshot());
-    });
+    })();
     const onUnload = () => client?.dispose();
     window.addEventListener("beforeunload", onUnload);
     return () => {
