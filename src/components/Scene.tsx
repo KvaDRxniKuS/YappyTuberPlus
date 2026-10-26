@@ -22,7 +22,7 @@ import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
 import { nearestPoint } from "../render/shape";
 import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
-  warpCornerHandles, warpFrameHandles, warpFrameQuad, warpQuad, warpEnabled,
+  warpGrabAt, warpHandlesAt, warpQuad, warpEnabled,
 } from "../render/warp";
 
 export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso" | "warp";
@@ -531,7 +531,7 @@ export function Scene(props: SceneProps) {
                 const matrix = objectMatrix(object, values);
                 const left = -object.pivot.x * object.width;
                 const top = -object.pivot.y * object.height;
-                const grab = warpGrab(object, values, left, top, matrix, camera.current.zoom, point);
+                const grab = warpGrabAt(object, values, left, top, matrix, camera.current.zoom, point);
                 if (grab) {
                   // Первое движение в режиме включает деформацию: иначе ручки
                   // не меняли бы картинку, и это выглядело бы поломкой.
@@ -834,64 +834,6 @@ function hiddenIds(preset: RigPreset): Set<string> {
 const WARP_COLOR = "#e0834a";
 const WARP_CORNER_COLOR = "#f0c36b";
 
-/**
- * Точки ручек деформации в координатах сцены.
- *
- * `frame` — зона (прямоугольник, который гнём), `corners` — сами углы картинки
- * после деформации, `rotation` — ручка поворота над верхней стороной зоны.
- */
-function warpSceneHandles(object: RigObject, values: RigFrame["objects"][string], left: number, top: number, matrix: Affine, zoom: number) {
-  const spec = object.warp ?? defaultWarp();
-  const at = (point: Vec2) => transformPoint(matrix, left + point.x, top + point.y);
-  const zoneLocal = warpFrameQuad({ ...object, warp: spec });
-  const zone = zoneLocal.map(at);
-  const center = at({
-    x: zoneLocal.reduce((sum, point) => sum + point.x, 0) / 4,
-    y: zoneLocal.reduce((sum, point) => sum + point.y, 0) / 4,
-  });
-  // Ручка поворота стоит над серединой верхней стороны, в осях зоны.
-  const middle = { x: (zoneLocal[0].x + zoneLocal[1].x) / 2, y: (zoneLocal[0].y + zoneLocal[1].y) / 2 };
-  const angle = (spec.frame.rotation * Math.PI) / 180;
-  const rotation = at({ x: middle.x + Math.sin(angle) * (18 / zoom), y: middle.y - Math.cos(angle) * (18 / zoom) });
-  return {
-    spec,
-    zone,
-    center,
-    rotation,
-    frameHandles: warpFrameHandles({ ...object, warp: spec }).map((handle) => ({ ...handle, point: at(handle.point) })),
-    corners: warpCornerHandles({ ...object, warp: spec }, values).map((handle) => ({ ...handle, point: at(handle.point) })),
-  };
-}
-
-/** Что схватила мышь в спецрежиме: ручку зоны, угол картинки или поворот. */
-type WarpGrab =
-  | { kind: "corner"; corner: WarpCorner }
-  | { kind: "handle"; handle: string }
-  | { kind: "rotation"; center: Point; angle: number }
-  | { kind: "move" }
-  | null;
-
-function warpGrab(object: RigObject, values: RigFrame["objects"][string], left: number, top: number, matrix: Affine, zoom: number, point: Point): WarpGrab {
-  const handles = warpSceneHandles(object, values, left, top, matrix, zoom);
-  const near = (target: Point, radius: number) => Math.hypot(target.x - point.x, target.y - point.y) <= radius;
-  const cornerRadius = 9 / zoom;
-  for (const handle of handles.corners) {
-    if (near(handle.point, cornerRadius)) return { kind: "corner", corner: handle.corner };
-  }
-  if (near(handles.rotation, cornerRadius)) {
-    return {
-      kind: "rotation",
-      center: handles.center,
-      angle: Math.atan2(point.y - handles.center.y, point.x - handles.center.x),
-    };
-  }
-  for (const handle of handles.frameHandles) {
-    if (near(handle.point, 7 / zoom)) return { kind: "handle", handle: handle.name };
-  }
-  if (pointInQuad(point, handles.zone)) return { kind: "move" };
-  return null;
-}
-
 /** Отрисовка спецрежима: зона деформации и её углы. */
 function drawWarpOverlay(
   ctx: CanvasRenderingContext2D,
@@ -908,7 +850,7 @@ function drawWarpOverlay(
   const matrix = objectMatrix(object, values);
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
-  const handles = warpSceneHandles(object, values, left, top, matrix, zoom);
+  const handles = warpHandlesAt(object, values, left, top, matrix, zoom);
   const size = 5 / zoom;
 
   ctx.save();

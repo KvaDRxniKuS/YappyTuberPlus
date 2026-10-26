@@ -778,7 +778,7 @@ function WarpSection({ object, warp, onChange }: {
  * Маска объекта.
  *
  * Три источника — контуры фигуры, многоугольник из чисел и картинка. Внутри
- * контура объект виден, снаружи нет; «вывернуть» меняет это местами.
+ * контура объект виден, снаружи нет; «инвертировать» меняет это местами.
  */
 function MaskSection({ object, mask, objects, onChange }: {
   object: RigObject;
@@ -902,7 +902,7 @@ function MaskSection({ object, mask, objects, onChange }: {
         <>
           <label className="check-line">
             <input type="checkbox" checked={mask?.invert === true} onChange={(event) => update({ invert: event.target.checked })} />
-            <span>Вывернуть: показать то, что снаружи</span>
+            <span>Инвертировать: показать то, что снаружи</span>
           </label>
           <NumberField label="Мягкий край" value={mask?.feather ?? 0} step={1} suffix="px" onCommit={(feather) => update({ feather: Math.max(0, feather) })} />
         </>

@@ -1,3 +1,4 @@
+import type { Affine } from "./rigCanvas";
 import type { ObjectFrame, ParamName, RigObject, Vec2, WarpCorner, WarpFrame, WarpSpec } from "../types";
 
 /**
@@ -119,14 +120,18 @@ export function warpFrameQuad(object: RigObject): Vec2[] {
 /**
  * Смещения углов в процентах зоны.
  *
- * Формула скрипта важнее статики: если в кадре есть `warpTLx`, берём его.
- * Так угол можно анимировать, а пресет без скрипта остаётся статичным.
+ * Параметр скрипта **добавляется** к настройке из инспектора. Иначе нельзя:
+ * ядро отдаёт значение каждого параметра в каждом кадре, поэтому «прочитать
+ * `warpTLx`» всегда даёт число — и статическая настройка молча перестала бы
+ * работать, как только ядро узнало про эти параметры. Сложение же читается
+ * естественно: «инспектор задаёт форму, скрипт её раскачивает».
  */
 export function warpOffsets(object: RigObject, values?: ObjectFrame | null): Record<WarpCorner, Vec2> {
   const spec = object.warp ?? defaultWarp();
   const read = (corner: WarpCorner, axis: "x" | "y"): number => {
     const live = values?.[paramName(corner, axis)];
-    return Number.isFinite(live as number) ? (live as number) : spec.corners[corner][axis];
+    const base = spec.corners[corner][axis];
+    return Number.isFinite(live as number) ? base + (live as number) : base;
   };
   return {
     tl: { x: read("tl", "x"), y: read("tl", "y") },
@@ -398,4 +403,86 @@ export function moveWarpCorner(spec: WarpSpec, corner: WarpCorner, object: RigOb
       [corner]: { x: clampValue(current.x + unitX), y: clampValue(current.y + unitY) },
     },
   };
+}
+
+/**
+ * Ручки деформации в координатах сцены: зона, её стороны, углы картинки и
+ * поворот. Живёт здесь, а не в `Scene.tsx`, чтобы геометрию можно было
+ * проверить тестом без браузера.
+ */
+export function warpHandlesAt(
+  object: RigObject,
+  values: ObjectFrame | null | undefined,
+  left: number,
+  top: number,
+  matrix: Affine,
+  zoom: number,
+) {
+  const spec = object.warp ?? defaultWarp();
+  const at = (point: Vec2) => ({
+    x: matrix.a * (left + point.x) + matrix.c * (top + point.y) + matrix.e,
+    y: matrix.b * (left + point.x) + matrix.d * (top + point.y) + matrix.f,
+  });
+  const zoneLocal = warpFrameQuad({ ...object, warp: spec });
+  const zone = zoneLocal.map(at);
+  const center = at({
+    x: zoneLocal.reduce((sum, point) => sum + point.x, 0) / 4,
+    y: zoneLocal.reduce((sum, point) => sum + point.y, 0) / 4,
+  });
+  // Ручка поворота стоит над серединой верхней стороны в осях зоны.
+  const middle = { x: (zoneLocal[0].x + zoneLocal[1].x) / 2, y: (zoneLocal[0].y + zoneLocal[1].y) / 2 };
+  const angle = (spec.frame.rotation * Math.PI) / 180;
+  // Смещение в экранных пикселях делим на зум, а не на масштаб объекта:
+  // иначе у мелкого спрайта ручка прилипала бы к рамке.
+  const lift = 18 / (zoom || 1);
+  const rotation = at({ x: middle.x + Math.sin(angle) * lift, y: middle.y - Math.cos(angle) * lift });
+  return {
+    spec,
+    zone,
+    center,
+    rotation,
+    frameHandles: warpFrameHandles({ ...object, warp: spec }).map((handle) => ({ ...handle, point: at(handle.point) })),
+    corners: warpCornerHandles({ ...object, warp: spec }, values).map((handle) => ({ ...handle, point: at(handle.point) })),
+  };
+}
+
+/** Что схватила мышь в спецрежиме: ручку зоны, угол картинки, поворот или тело. */
+export type WarpGrab =
+  | { kind: "corner"; corner: WarpCorner }
+  | { kind: "handle"; handle: string }
+  | { kind: "rotation"; center: Vec2; angle: number }
+  | { kind: "move" }
+  | null;
+
+/**
+ * Поиск ручки под курсором. Сначала углы картинки (они важнее), потом
+ * поворот, потом стороны зоны, и только затем — тело зоны.
+ */
+export function warpGrabAt(
+  object: RigObject,
+  values: ObjectFrame | null | undefined,
+  left: number,
+  top: number,
+  matrix: Affine,
+  zoom: number,
+  point: Vec2,
+): WarpGrab {
+  const handles = warpHandlesAt(object, values, left, top, matrix, zoom);
+  const near = (target: Vec2, radius: number) => Math.hypot(target.x - point.x, target.y - point.y) <= radius;
+  const cornerRadius = 9 / (zoom || 1);
+  for (const handle of handles.corners) {
+    if (near(handle.point, cornerRadius)) return { kind: "corner", corner: handle.corner };
+  }
+  if (near(handles.rotation, cornerRadius)) {
+    return {
+      kind: "rotation",
+      center: handles.center,
+      angle: Math.atan2(point.y - handles.center.y, point.x - handles.center.x),
+    };
+  }
+  for (const handle of handles.frameHandles) {
+    if (near(handle.point, 7 / (zoom || 1))) return { kind: "handle", handle: handle.name };
+  }
+  if (pointInQuad(point, handles.zone)) return { kind: "move" };
+  return null;
 }

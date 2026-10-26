@@ -3,7 +3,7 @@ import type { RigObject } from "../../src/types";
 import { DEFAULT_BASE } from "../../src/types";
 import {
   affineFromTriangles, defaultWarp, moveWarpCorner, moveWarpFrame, normalizeWarp, pointInQuad,
-  resizeWarpFrame, rotateWarpFrame, warpMoved, warpQuad,
+  resizeWarpFrame, rotateWarpFrame, warpGrabAt, warpHandlesAt, warpMoved, warpQuad,
 } from "../../src/render/warp";
 
 /** Простой спрайт 200×100: углы деформации считаются в его координатах. */
@@ -51,18 +51,21 @@ test("деформация: зона считается в долях карти
   expect(warpMoved(object)).toBe(true);
 });
 
-test("деформация: формула скрипта важнее статики, без кадра — статика", () => {
+test("деформация: параметр скрипта добавляется к настройке инспектора", () => {
   const warp = defaultWarp();
   warp.enabled = true;
   warp.corners.bl = { x: 10, y: 0 };
   const object = sprite({ warp });
-  // В кадре есть параметр угла — берём его.
-  const values = { ...DEFAULT_BASE, warpBLx: 40, warpBLy: -50 } as never;
-  // 40 % ширины зоны (200 px) — это 80 px от левого края.
-  expect(round(warpQuad(object, values as never)[3].x)).toBe(80);
-  expect(round(warpQuad(object, values as never)[3].y)).toBe(50);
-  // Кадр без параметров (старое ядро) — статические настройки.
+  // Статика одна: 10 % ширины зоны (200 px) — это 20 px.
   expect(round(warpQuad(object, null)[3].x)).toBe(20);
+  // Скрипт раскачивает угол: 10 % + 40 % = 50 % → 100 px.
+  const values = { ...DEFAULT_BASE, warpBLx: 40, warpBLy: -50 } as never;
+  expect(round(warpQuad(object, values as never)[3].x)).toBe(100);
+  expect(round(warpQuad(object, values as never)[3].y)).toBe(50);
+  // Кадр без параметров (старое ядро) ничего не ломает.
+  const plain = { ...DEFAULT_BASE } as never;
+  expect(round(warpQuad(object, plain as never)[3].x)).toBe(20);
+  expect(round(warpQuad(object, plain as never)[3].y)).toBe(100);
 });
 
 test("деформация: точка внутри четырёхугольника и снаружи", () => {
@@ -140,4 +143,54 @@ test("деформация: аффинное преобразование по �
   expect(apply({ x: 0, y: 10 })).toEqual({ x: 9, y: 17 });
   // Вырожденный треугольник: преобразования нет, рендер просто пропустит кусок.
   expect(affineFromTriangles([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }], [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }])).toBeNull();
+});
+
+/** Матрица без поворота и масштаба: координаты содержимого = координаты сцены. */
+const IDENTITY = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+test("деформация: ручки ловятся мышью — углы, поворот, тело зоны", () => {
+  const object = sprite({ pivot: { x: 0, y: 0 }, warp: { ...defaultWarp(), enabled: true } });
+  const values = { ...DEFAULT_BASE } as never;
+  const handles = warpHandlesAt(object, values, 0, 0, IDENTITY, 1);
+  // Ручка поворота — над серединой верхней стороны, на 18 экранных пикселей.
+  expect(round(handles.rotation.x)).toBe(100);
+  expect(round(handles.rotation.y)).toBe(-18);
+
+  // Угол картинки: тянем за правый нижний.
+  const corner = warpGrabAt(object, values, 0, 0, IDENTITY, 1, { x: 198, y: 98 });
+  expect(corner).toEqual({ kind: "corner", corner: "br" });
+
+  // Тело зоны: внутри — перетаскивание целиком.
+  expect(warpGrabAt(object, values, 0, 0, IDENTITY, 1, { x: 100, y: 50 })).toEqual({ kind: "move" });
+
+  // Ручка размера: середина правой стороны.
+  const side = warpGrabAt(object, values, 0, 0, IDENTITY, 1, { x: 200, y: 50 });
+  expect(side).toEqual({ kind: "handle", handle: "right" });
+
+  // Мимо — ничего не хватаем, клик уходит дальше по сцене.
+  expect(warpGrabAt(object, values, 0, 0, IDENTITY, 1, { x: 400, y: 400 })).toBeNull();
+
+  // Зум учитывается: на 2× радиусы ручек вдвое меньше, а тело зоны ловится.
+  expect(warpGrabAt(object, values, 0, 0, IDENTITY, 2, { x: 190, y: 60 })).toEqual({ kind: "move" });
+  expect(warpGrabAt(object, values, 0, 0, IDENTITY, 1, { x: 190, y: 60 })).toEqual({ kind: "move" });
+});
+
+test("деформация: ручка поворота едет вместе с поворотом зоны", () => {
+  const warp = { ...defaultWarp(), enabled: true };
+  warp.frame = { ...warp.frame, rotation: 90 };
+  const object = sprite({ pivot: { x: 0, y: 0 }, warp });
+  const handles = warpHandlesAt(object, null, 0, 0, IDENTITY, 1);
+  // Зона повернулась: её «верхняя» сторона стала правой, ручка ушла вправо
+  // от середины этой стороны — на 18 пикселей наружу.
+  expect(round(handles.rotation.x)).toBe(168);
+  expect(round(handles.rotation.y)).toBe(50);
+});
+
+test("деформация: поворот зоны считается от центра, а не от угла", () => {
+  const object = sprite({ pivot: { x: 0, y: 0 }, warp: { ...defaultWarp(), enabled: true } });
+  const grab = warpGrabAt(object, null, 0, 0, IDENTITY, 1, { x: 100, y: -18 });
+  expect(grab?.kind).toBe("rotation");
+  if (grab?.kind !== "rotation") return;
+  expect(round(grab.center.x)).toBe(100);
+  expect(round(grab.center.y)).toBe(50);
 });

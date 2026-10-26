@@ -189,8 +189,15 @@ test("неизвестный шаблон не теряет настройки, 
   ]);
   expect(modules[0].type).toBe("future-module");
   expect(modules[0].source).toBe("live");
-  // Калибровки и свои звуки переживают открытие пресета.
-  expect(modules[0].config.visemes).toEqual(visemes);
+  // Калибровки переживают открытие пресета: эталон на месте и приведён к
+  // единичной длине — так виземы сравниваются по форме спектра, а не по
+  // громкости записи (см. `unitVector` в `src/modules/viseme.ts`).
+  const kept = modules[0].config.visemes as { name: string; label: string; templates: number[][] }[];
+  expect(kept).toHaveLength(1);
+  expect(kept[0].name).toBe("o_umlaut");
+  expect(kept[0].label).toBe("ö");
+  expect(kept[0].templates[0]).toHaveLength(32);
+  expect(Math.hypot(...kept[0].templates[0])).toBeCloseTo(1, 9);
   expect(modules[0].config.gain).toBe(2);
 });
 

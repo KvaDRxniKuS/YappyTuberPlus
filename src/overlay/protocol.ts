@@ -150,6 +150,20 @@ export function structureSignature(preset: RigPreset): string {
       object.text ? [object.text.template, object.text.font, object.text.size, object.text.color,
         object.text.align, object.text.bold, object.text.italic, object.text.strokeColor,
         object.text.strokeWidth, object.text.lineHeight] : null,
+      // Глаз в структуре: без этого оверлей держал бы старую видимость, пока
+      // не изменится что-то ещё — «в редакторе слой есть, в OBS его нет».
+      object.enabled !== false,
+      // Фигуры, маски и деформация — тоже часть сцены. Раньше они в подпись не
+      // попадали, и правка маски/контура до OBS не доезжала вовсе.
+      object.shape ? [
+        object.shape.draw, object.shape.fill, object.shape.stroke, object.shape.strokeWidth,
+        object.shape.items,
+      ] : null,
+      object.mask ? [
+        object.mask.kind, object.mask.shapeId, object.mask.points, imageId(object.mask.file),
+        object.mask.invert, object.mask.feather,
+      ] : null,
+      object.warp ? [object.warp.enabled, object.warp.frame, object.warp.corners] : null,
     ]),
   });
 }
