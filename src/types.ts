@@ -160,6 +160,23 @@ export interface ScriptErrorInfo {
   message: string;
 }
 
+/**
+ * Второе место той же ошибки: та же декларация видна и там.
+ *
+ * Конфликт имён всегда про две строки — свою и чужую. Свой скрипт редактор
+ * подчёркивает, а на чужой показывает дорогу: `globals` или id объекта.
+ */
+export interface ScriptIssueLink {
+  /** `globals` — глобальный скрипт, иначе id объекта. */
+  scope: string;
+  line: number;
+}
+
+/** Ошибка скрипта со вторым местом: `scriptIssues` из ответа `check`. */
+export interface ScriptIssueInfo extends ScriptErrorInfo {
+  related?: ScriptIssueLink | null;
+}
+
 /** Команда воспроизведения, которую ядро отдало медиа-объекту. */
 export interface MediaCue {
   /** Растёт на каждую команду: по нему видно, что команда новая. */

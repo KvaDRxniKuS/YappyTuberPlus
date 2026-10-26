@@ -10,7 +10,7 @@ import { ModulesPanel } from "./ModulesPanel";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
-import type { ScriptCheck } from "../engine/scripts";
+import type { ScriptCheck, ScriptScope } from "../engine/scripts";
 import { eventNames } from "../engine/scripts";
 
 interface RightPanelProps {
@@ -93,6 +93,14 @@ export function RightPanel(props: RightPanelProps) {
     props.modules.flatMap((module) => moduleInputKeys(module).map((item) => [item.key, item.spec.label])),
   );
   const editorKey = tab === "globals" ? "globals" : props.selected?.id || "empty";
+  // Проверка видит соседние области: конфликт имён — это всегда две строки,
+  // своя и чужая. `scope` пустой у глобального скрипта: тогда ядро смотрит,
+  // не заняли ли глобальное имя в скриптах объектов.
+  const checkScope: ScriptScope = {
+    ...(tab === "globals" || !props.selected ? {} : { scope: props.selected.id }),
+    globals: props.globalScript,
+    objects: props.objects.map((object) => ({ id: object.id, script: object.script })),
+  };
   const dynamic = props.selected ? props.frame?.objects[props.selected.id] : null;
 
   return (
@@ -165,6 +173,7 @@ export function RightPanel(props: RightPanelProps) {
               ...eventNames(editorValue),
             ])]}
             constants={Object.keys(enumConstants(props.modules))}
+            checkScope={checkScope}
             onCheck={props.checkScript}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}

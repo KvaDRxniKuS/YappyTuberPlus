@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { appendSnippet, eventNameFor, eventNames, eventSnippet } from "../../src/engine/scripts";
+import {
+  appendSnippet, describeIssues, eventNameFor, eventNames, eventSnippet, freeEventName,
+  issueSpans,
+} from "../../src/engine/scripts";
 
 /**
  * Блоки событий из панели «Входы».
@@ -54,4 +57,57 @@ test("блок без объявления события дописываетс
   expect(appendSnippet("a = 0", "on start {\n  a = 1\n}")).toBe(
     "a = 0\n\non start {\n  a = 1\n}\n",
   );
+});
+
+test("занятое имя освобождается и для блока из шпаргалки", () => {
+  // Шпаргалка вставляет блок в позицию курсора, а не в конец: имя проверяется
+  // по всему тексту, а не по соседней строке.
+  const snippet = eventSnippet("click", "mouse.left.up");
+  expect(freeEventName("", snippet)).toBe(snippet);
+  const taken = appendSnippet("a = 0", snippet);
+  const second = freeEventName(taken, snippet);
+  expect(second).toContain("event click_2() { mouse.left.up }");
+  expect(second).toContain("on click_2 {");
+  // Чужой текст не переписывается: в нём остаётся первый блок как есть.
+  expect(second).not.toContain("event click()");
+});
+
+test("подсветка конфликта имён ставится на обе строки", () => {
+  // Своя строка — точным диапазоном из ядра, вторая — целиком и только если она
+  // в этом же тексте: чужой скрипт редактор не показывает.
+  const source = "event clap() { mouse.left.up }\nx = 5\nevent boom(x = 1) { mouse.right.up }";
+  const spans = issueSpans(
+    source,
+    [
+      { line: 1, column: 1, length: 12, message: "первое", related: { scope: "head", line: 2 } },
+      { line: 3, column: 1, length: 5, message: "второе", related: { scope: "globals", line: 1 } },
+    ],
+    "head",
+  );
+  // Сверяем не числа, а текст: смещения зависят от длины строк, а смысл — нет.
+  expect(spans.map((span) => source.slice(span.from, span.to))).toEqual([
+    "event clap()",
+    // Строка 2 (`x = 5`) — вторая декларация: она в этом же скрипте.
+    "x = 5",
+    "event",
+  ]);
+  expect(spans.map((span) => span.related)).toEqual([false, true, false]);
+});
+
+test("второе объявление в другом скрипте здесь не подчёркивается", () => {
+  const spans = issueSpans(
+    "event clap() { mouse.left.up }",
+    [{ line: 1, column: 1, length: 30, message: "занято", related: { scope: "globals", line: 4 } }],
+    "head",
+  );
+  expect(spans).toEqual([{ from: 0, to: 30, related: false }]);
+});
+
+test("сообщение под редактором называет первое место и считает остальные", () => {
+  expect(describeIssues([])).toBe("");
+  expect(describeIssues([{ line: 1, column: 1, length: 3, message: "одна" }])).toBe("одна");
+  expect(describeIssues([
+    { line: 1, column: 1, length: 3, message: "одна" },
+    { line: 2, column: 1, length: 3, message: "две" },
+  ])).toBe("одна · ещё 1");
 });

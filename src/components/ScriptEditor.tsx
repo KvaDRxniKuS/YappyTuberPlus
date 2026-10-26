@@ -6,8 +6,11 @@ import { Decoration, EditorView, keymap, showTooltip, type DecorationSet } from 
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { autocompletion, snippet, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { tags } from "@lezer/highlight";
-import type { ScriptErrorInfo } from "../types";
-import { eventNames, type ScriptCheck } from "../engine/scripts";
+import type { ScriptIssueInfo } from "../types";
+import {
+  describeIssues, eventNames, freeEventName, issueSpans,
+  type ErrorSpan, type ScriptCheck, type ScriptScope,
+} from "../engine/scripts";
 import {
   FUNCTION_NAMES, INPUT_FIELDS, SIGNATURES, hintAt, signatureAt, signatureLine, signatureOf,
 } from "../engine/signatures";
@@ -87,25 +90,30 @@ const EVENT_BLOCKS: Array<{ code: string; note: string }> = [
     note: "нажатие: сигнал вырос; тело пишет автор",
   },
   {
-    code: "event speak() { mic.talking > 0.2 in 500 }\non speak {\n  \n}",
-    note: "речь дольше 0,5 с: длительность даёт оператор in",
+    code: "event speak (loud = mic.loudness ; 5000) { mic.talking > 0.2 in 500 }\n"
+      + "on speak {\n  mouth.open = loud > 0.5\n}",
+    note: "переменные события и пауза: loud — снимок на момент срабатывания",
   },
   {
     code: "event silence() { !(mic.talking > 0.2) in 600 }\non silence {\n  \n}",
-    note: "тишина дольше 0,6 с: отрицание условия вместо relax",
+    note: "тишина дольше 0,6 с: отрицание вместо relax",
   },
   {
-    code: "event chat() { twitch.chat.count(5) > 10 }\non chat {\n  \n}",
-    note: "активность входа: сколько событий за 5 секунд",
+    code: "event burst() { mouse.left.count(5) > 10 }\non burst {\n  \n}",
+    note: "активность любого входа: сколько событий за 5 секунд",
   },
   {
-    code: "event kick() { mouse.left.up }\non kick {\n  call kick()\n}",
-    note: "своё имя события и прямой вызов обработчика",
+    code: "event reward() { twitch.reward.sum(10) >= 80 }\non reward {\n  \n}",
+    note: "вес событий: сумма бит наград за 10 секунд",
+  },
+  {
+    code: "on start {\n  call click(0.9)\n}",
+    note: "call — обработчик сразу, пауза cd не мешает",
   },
 ];
 
-/** Заготовка объявления события: имя подставляет автор. */
-const EVENT_DECLARATION = "event имя() { mouse.left.up }\n";
+/** Заготовка объявления события: имя и условие подставляет автор. */
+const EVENT_DECLARATION = "event имя(переменные ; пауза) { условие }\non имя {\n  \n}\n";
 
 /** Перетаскивание блока: кладём и свой MIME, и обычный текст — на всякий случай. */
 function startBlockDrag(event: DragEvent, code: string): void {
@@ -129,9 +137,10 @@ const dropSnippet = EditorView.domEventHandlers({
   drop(event, editor) {
     const transfer = event.dataTransfer;
     if (!transfer) return false;
-    const snippet = transfer.getData(SNIPPET_MIME);
-    if (!snippet) return false;
+    const raw = transfer.getData(SNIPPET_MIME);
+    if (!raw) return false;
     event.preventDefault();
+    const snippet = freeEventName(editor.state.doc.toString(), raw);
     const at = editor.posAtCoords({ x: event.clientX, y: event.clientY })
       ?? editor.state.selection.main.head;
     // Блок встаёт отдельной строкой: в середине строки код сломался бы.
@@ -146,8 +155,14 @@ const dropSnippet = EditorView.domEventHandlers({
 /** Высота открытой шпаргалки: запоминается, чтобы окно не прыгало между сессиями. */
 const HELP_HEIGHT_KEY = "yappytuberplus.cheatsheet.height.v1";
 
-/** Подчёркивание места ошибки: диапазон приходит из ядра вместе с сообщением. */
-const errorEffect = StateEffect.define<{ from: number; to: number } | null>();
+/**
+ * Подчёркивание мест ошибки.
+ *
+ * Конфликт имён — это всегда две декларации, поэтому подсветка не одна:
+ * `related` отмечает вторую (чужую) строку другим цветом. Если она в другом
+ * скрипте, здесь подчёркивать нечего — о ней скажет сообщение под редактором.
+ */
+const errorEffect = StateEffect.define<ErrorSpan[] | null>();
 
 const errorField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -156,7 +171,13 @@ const errorField = StateField.define<DecorationSet>({
     for (const effect of transaction.effects) {
       if (!effect.is(errorEffect)) continue;
       next = effect.value
-        ? Decoration.set([Decoration.mark({ class: "cm-script-error" }).range(effect.value.from, effect.value.to)])
+        ? Decoration.set(
+          effect.value.map((range) => Decoration.mark({
+            class: range.related ? "cm-script-related" : "cm-script-error",
+          }).range(range.from, range.to)),
+          // Порядок важен для CodeMirror: диапазоны идут по тексту.
+          true,
+        )
         : Decoration.none;
     }
     return next;
@@ -198,16 +219,6 @@ const hintTooltip = showTooltip.compute([hintField], (state) => {
   };
 });
 
-/** Строка и столбец ошибки в смещения документа. */
-function errorRange(state: EditorState, error: ScriptErrorInfo | null): { from: number; to: number } | null {
-  if (!error) return null;
-  const line = state.doc.line(Math.min(Math.max(error.line, 1), state.doc.lines));
-  const from = Math.min(line.from + Math.max(error.column - 1, 0), line.to);
-  const to = Math.min(from + Math.max(error.length, 1), state.doc.length);
-  if (to <= from) return null;
-  return { from, to };
-}
-
 interface ScriptEditorProps {
   value: string;
   objectIds: string[];
@@ -220,13 +231,20 @@ interface ScriptEditorProps {
   events?: string[];
   /** Константы модулей: состояния enum (`walk`, `mode_walk`). */
   constants?: string[];
+  /**
+   * Что проверять: чей это скрипт и как устроены соседние области.
+   *
+   * Без соседей ядро не увидит конфликт имён — а он всегда про две строки:
+   * «объявлено глобально» и «глобальное имя заняли в объекте».
+   */
+  checkScope?: ScriptScope;
   onCheck?: ScriptCheck;
   onApply: (value: string) => void;
 }
 
 export function ScriptEditor({
   value, objectIds, globals, moduleInputs = [], moduleInputLabels = {}, events = [],
-  constants = [], onCheck, onApply,
+  constants = [], checkScope, onCheck, onApply,
 }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -238,6 +256,10 @@ export function ScriptEditor({
   const completionData = useRef({ objectIds, globals, moduleInputs, events, constants });
   const hintData = useRef({ moduleInputs, moduleInputLabels, events });
   hintData.current = { moduleInputs, moduleInputLabels, events };
+  // Соседние области читаются в момент проверки: правка глобального скрипта
+  // должна снимать ошибку в скрипте объекта без пересоздания редактора.
+  const checkData = useRef<ScriptScope>(checkScope ?? { globals: "", objects: [] });
+  checkData.current = checkScope ?? { globals: "", objects: [] };
   const [errorText, setErrorText] = useState("");
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
@@ -293,11 +315,13 @@ export function ScriptEditor({
       const editor = view.current;
       const check = checkRef.current;
       if (!editor || !check) return;
-      void check(source).then((error) => {
+      const scope = checkData.current;
+      void check(source, scope).then((issues) => {
         const current = view.current;
         if (!current || current.state.doc.toString() !== source) return;
-        setErrorText(error?.message ?? "");
-        current.dispatch({ effects: errorEffect.of(errorRange(current.state, error)) });
+        const spans = issueSpans(current.state.doc.toString(), issues, scope.scope ?? "globals");
+        setErrorText(describeIssues(issues));
+        current.dispatch({ effects: errorEffect.of(spans.length > 0 ? spans : null) });
       }).catch(() => { /* ядро без `check` — просто без подсветки */ });
     };
     runCheckRef.current = runCheck;
@@ -497,6 +521,7 @@ export function ScriptEditor({
           ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "#6eb8a834 !important" },
           ".cm-cursor": { borderLeftColor: "#8ad8c6" },
           ".cm-script-error": { textDecoration: "underline wavy #e08b8b" },
+          ".cm-script-related": { textDecoration: "underline wavy #d3ad6a" },
           ".cm-script-hint": {
             padding: "3px 8px",
             background: "#232b31",
@@ -543,9 +568,11 @@ export function ScriptEditor({
    * Блок встаёт отдельной строкой, а каретка — в пустую строку внутри `{ … }`:
    * сразу видно, где писать тело.
    */
-  const insertSnippet = (code: string) => {
+  const insertSnippet = (raw: string) => {
     const editor = view.current;
     if (!editor) return;
+    // Второй блок того же события получит `_2`: иначе ядро ответит «уже объявлено».
+    const code = freeEventName(editor.state.doc.toString(), raw);
     const range = editor.state.selection.main;
     const line = editor.state.doc.lineAt(range.from);
     const text = (line.text.trim() ? "\n" : "") + code;
@@ -661,6 +688,8 @@ export function ScriptEditor({
             <div className="editor-hint">
               <span><b>{"event имя(переменные ; пауза) { условие }"}</b> — условие пишет автор</span>
               <span><b>on имя {"{ … }"}</b> — действия; <b>on start</b> — первый кадр и после «Стоп»</span>
+              <span>событие из глобального скрипта видно всем; локальное — только своему объекту</span>
+              <span>переменные события — живые в условии и снимок в <b>on</b>; имя параметра объекта занимать нельзя</span>
               <span><b>in</b> — длительность: <b>mic.talking &gt; 0.2 in 500</b>, <b>in 0.5s</b></span>
               <span><b>.up</b> вырос · <b>.down</b> упал · <b>.change</b> отличается от прошлого кадра</span>
               <span>активность входа (любого): <b>mouse.left.count(5)</b> · <b>twitch.chat.sum(5)</b> · <b>avg(5)</b></span>

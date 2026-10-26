@@ -3,6 +3,7 @@ import type { InputMark, InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
+import type { ScriptScope } from "./scripts";
 import { neutralFrame, prepareFrame } from "./frame";
 import { enumConstants } from "../modules/manual";
 import { frameProduced } from "./frameSignal";
@@ -329,16 +330,29 @@ export function useRigEngine(
   }, []);
 
   /**
-   * Проверка одного скрипта: возвращает место ошибки разбора или `null`.
+   * Проверка скрипта: возвращает места ошибок (пусто — всё в порядке).
+   *
+   * Рядом с текстом ядру отдают соседние области — только так видно конфликт
+   * имён: «событие объявлено глобально» и «глобальное имя заняли в объекте».
    * Старое ядро не знает запрос `check` — тогда подсветки просто нет.
    */
-  const checkScript = useCallback(async (source: string) => {
-    if (!backend) return null;
+  const checkScript = useCallback(async (source: string, scope?: ScriptScope) => {
+    if (!backend) return [];
     try {
-      const response = await backend.call({ op: "check", source });
-      return response.ok ? response.scriptError ?? null : null;
+      const response = await backend.call({
+        op: "check",
+        source,
+        globals: scope?.globals ?? "",
+        scope: scope?.scope,
+        objects: scope?.objects ?? [],
+      });
+      if (!response.ok) return [];
+      // Старое ядро отвечает только `scriptError` — тогда подсветка одна, без
+      // второго места. Новое — списком `scriptIssues`.
+      if (response.scriptIssues) return response.scriptIssues;
+      return response.scriptError ? [response.scriptError] : [];
     } catch {
-      return null;
+      return [];
     }
   }, [backend]);
 

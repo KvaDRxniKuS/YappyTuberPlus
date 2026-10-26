@@ -743,7 +743,11 @@ pub struct Script {
     pub definitions: Vec<EventDecl>,
 }
 
-fn valid_identifier(text: &str) -> bool {
+/// Имя по правилам скрипта: буква или `_`, дальше буквы, цифры и `_`.
+///
+/// Нужно не только разбору: ядро проверяет имена и в подсказках редактора
+/// (`assignment_lines` в `runtime.rs`), поэтому функция видна всему крейту.
+pub(crate) fn valid_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     match chars.next() {
         // Первая буква не может быть цифрой: `1abc` — не имя.

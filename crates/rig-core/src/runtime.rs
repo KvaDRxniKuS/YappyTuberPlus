@@ -2926,6 +2926,15 @@ enum Request {
     /// Разбор одного скрипта: редактор подсвечивает место ошибки.
     Check {
         source: String,
+        /// Текст глобального скрипта: по нему видно, занято ли имя события.
+        #[serde(default)]
+        globals: String,
+        /// Чей скрипт проверяем: пусто — глобальный, иначе id объекта.
+        #[serde(default)]
+        scope: Option<String>,
+        /// Скрипты объектов: глобальное имя не должно повторяться и в них.
+        #[serde(default)]
+        objects: Vec<CheckObject>,
     },
     Tick {
         handle: u32,
@@ -2947,6 +2956,183 @@ enum Request {
     Dispose {
         handle: u32,
     },
+}
+
+/// Скрипт объекта для проверки конфликтов имён.
+#[derive(Debug, Deserialize)]
+struct CheckObject {
+    id: String,
+    #[serde(default)]
+    script: String,
+}
+
+/// Ошибки скрипта с местом: редактор подчёркивает их сам.
+///
+/// Проверка повторяет правила сборки ровно настолько, насколько нужно для
+/// подсветки: разбор, занятое имя события (в своей области и в соседней) и
+/// переменная события, занятая параметром объекта. Сборка остаётся источником
+/// истины: что здесь не поймано, всё равно попадёт в диагностику кадра.
+fn script_issues(
+    source: &str,
+    globals: &str,
+    objects: &[CheckObject],
+    scope: Option<&str>,
+) -> Vec<JsonValue> {
+    let mut issues: Vec<JsonValue> = Vec::new();
+    let script = match parse_script(source) {
+        Ok(script) => script,
+        // Разбор не прошёл — остальное проверять не на чем.
+        Err(error) => {
+            return vec![json!({
+                "line": error.line,
+                "column": error.column,
+                "length": error.length,
+                "message": error.message,
+            })];
+        }
+    };
+    let label = scope.unwrap_or("глобальные");
+    let own_scope = scope.unwrap_or("globals");
+    let global_defs = parse_script(globals).map(|it| it.definitions).unwrap_or_default();
+    let assigned = assignment_lines(source);
+    for decl in &script.definitions {
+        let length = line_length(source, decl.line);
+        if scope.is_some() {
+            // Локальное имя не должно повторять глобальное: подписка `on` стала
+            // бы двусмысленной. Подсвечиваем обе строки — свою и глобальную.
+            if let Some(other) = global_defs.iter().find(|item| item.name == decl.name) {
+                issues.push(json!({
+                    "line": decl.line,
+                    "column": 1,
+                    "length": length,
+                    "message": format!(
+                        "{} (строка {}): событие '{}' уже объявлено глобально в строке {} — имя занято",
+                        label, decl.line, decl.name, other.line
+                    ),
+                    "related": { "scope": "globals", "line": other.line },
+                }));
+            }
+        } else {
+            // Смотрим с другой стороны: глобальное имя заняли в скрипте объекта.
+            for object in objects {
+                let Ok(other_script) = parse_script(&object.script) else { continue };
+                let Some(other) = other_script.definitions.iter().find(|item| item.name == decl.name)
+                else { continue };
+                issues.push(json!({
+                    "line": decl.line,
+                    "column": 1,
+                    "length": length,
+                    "message": format!(
+                        "глобальные (строка {}): событие '{}' объявлено и в скрипте объекта '{}' (строка {}) — имя занято",
+                        decl.line, decl.name, object.id, other.line
+                    ),
+                    "related": { "scope": object.id, "line": other.line },
+                }));
+            }
+        }
+        // Переменная события не может занимать имя параметра объекта: параметры —
+        // те же переменные. Если ниже в этом же скрипте задана формула — вот она,
+        // вторая декларация, её и подсвечиваем.
+        for (name, _) in &decl.params {
+            if !reserved_binding(name) {
+                continue;
+            }
+            let related = assigned.get(name).copied();
+            let message = match related {
+                Some(line) => format!(
+                    "{} (строка {}): переменная события '{}' занята — в строке {} задан параметр объекта",
+                    label, decl.line, name, line
+                ),
+                None => format!(
+                    "{} (строка {}): переменная события '{}' занята — это параметр объекта или встроенное имя",
+                    label, decl.line, name
+                ),
+            };
+            issues.push(json!({
+                "line": decl.line,
+                "column": 1,
+                "length": length,
+                "message": message,
+                "related": related.map(|line| json!({ "scope": own_scope, "line": line })),
+            }));
+        }
+    }
+    // Подписка на событие чужого объекта: имя объявлено, но не в этой области —
+    // вторая строка существует, и её тоже надо показать.
+    let local_names: Vec<&str> = script.definitions.iter().map(|item| item.name.as_str()).collect();
+    for block in &script.events {
+        let EventSource::Named(name) = &block.source else { continue };
+        if local_names.iter().any(|own| *own == name.as_str())
+            || global_defs.iter().any(|item| item.name == *name)
+        {
+            continue;
+        }
+        for object in objects {
+            if scope == Some(object.id.as_str()) {
+                continue;
+            }
+            let Ok(other_script) = parse_script(&object.script) else { continue };
+            let Some(other) = other_script.definitions.iter().find(|item| item.name == *name) else {
+                continue;
+            };
+            issues.push(json!({
+                "line": block.line,
+                "column": 1,
+                "length": line_length(source, block.line),
+                "message": format!(
+                    "{} (строка {}): событие '{}' объявлено в скрипте объекта '{}' и здесь не видно",
+                    label, block.line, name, object.id
+                ),
+                "related": { "scope": object.id, "line": other.line },
+            }));
+            break;
+        }
+    }
+    // По порядку в тексте: подсветка идёт сверху вниз, как читают скрипт.
+    issues.sort_by_key(|issue| issue["line"].as_u64().unwrap_or(0));
+    issues
+}
+
+/// Длина строки в символах: подсветка целой строки.
+fn line_length(source: &str, line: usize) -> usize {
+    source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .map(|text| text.chars().count())
+        .unwrap_or(0)
+        .max(1)
+}
+
+/// Строки, где имени присваивается значение: `x = …`.
+///
+/// Нужны, чтобы при конфликте «переменная события занята» показать вторую
+/// декларацию: формулу параметра в том же скрипте.
+fn assignment_lines(source: &str) -> HashMap<String, usize> {
+    let mut result = HashMap::new();
+    // Считаем только верхний уровень: запись внутри `{ … }` — действие события,
+    // а не декларация, хотя выглядит так же.
+    let mut depth = 0i32;
+    for (index, text) in source.lines().enumerate() {
+        let trimmed = text.trim();
+        if depth == 0 && !trimmed.starts_with("//") && !trimmed.is_empty() {
+            if let Some((left, _)) = trimmed.split_once('=') {
+                // `==`, `>=`, `<=`, `!=`, `+=` — сравнение или сокращённая запись, не имя.
+                let last = left.chars().last();
+                if !matches!(last, Some('=' | '>' | '<' | '!' | '+' | '-' | '*' | '/')) {
+                    let name = left.trim();
+                    if crate::parser::valid_identifier(name) {
+                        result.entry(name.to_string()).or_insert(index + 1);
+                    }
+                }
+            }
+        }
+        depth += text.matches('{').count() as i32;
+        depth -= text.matches('}').count() as i32;
+        if depth < 0 {
+            depth = 0;
+        }
+    }
+    result
 }
 
 impl RuntimeStore {
@@ -2977,18 +3163,14 @@ impl RuntimeStore {
                 Ok(_) => json!({"ok": true, "diagnostics": []}),
                 Err(error) => json!({"ok": false, "error": error}),
             },
-            Request::Check { source } => match parse_script(&source) {
-                Ok(_) => json!({"ok": true, "scriptError": JsonValue::Null}),
-                Err(error) => json!({
-                    "ok": true,
-                    "scriptError": {
-                        "line": error.line,
-                        "column": error.column,
-                        "length": error.length,
-                        "message": error.message,
-                    },
-                }),
-            },
+            Request::Check { source, globals, scope, objects } => {
+                let issues = script_issues(&source, &globals, &objects, scope.as_deref());
+                // `scriptError` — первая ошибка: старый редактор знал только её,
+                // поэтому ответ остаётся совместимым, а `scriptIssues` везёт все
+                // места сразу — подсветка бывает не одна.
+                let first = issues.first().cloned().unwrap_or(JsonValue::Null);
+                json!({"ok": true, "scriptError": first, "scriptIssues": issues})
+            }
             Request::Tick {
                 handle,
                 now,
@@ -3826,6 +4008,107 @@ mod tests {
         assert_eq!(after.objects["o"]["x"], 0.0);
         // Пустая история — это ноль, а не «у входа нет поля».
         assert!(after.diagnostics.is_empty(), "{:?}", after.diagnostics);
+    }
+
+    /// Один объект для проверки конфликтов имён в подсказках редактора.
+    fn checked(id: &str, script: &str) -> CheckObject {
+        CheckObject {
+            id: id.into(),
+            script: script.into(),
+        }
+    }
+
+    #[test]
+    fn check_points_at_both_event_declarations() {
+        // Локальное имя повторяет глобальное: подсвечиваем свою строку и глобальную.
+        let issues = script_issues(
+            "event clap() { mouse.right.up }",
+            "event clap() { mouse.left.up }",
+            &[],
+            Some("head"),
+        );
+        assert_eq!(issues.len(), 1, "{:?}", issues);
+        assert_eq!(issues[0]["line"], 1);
+        assert_eq!(issues[0]["related"]["scope"], "globals");
+        assert_eq!(issues[0]["related"]["line"], 1);
+        assert!(issues[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("уже объявлено глобально"));
+
+        // Обратная сторона: глобальное имя заняли в объекте — видно и оттуда.
+        let issues = script_issues(
+            "event clap() { mouse.left.up }",
+            "",
+            &[checked("head", "event clap() { mouse.right.up }")],
+            None,
+        );
+        assert_eq!(issues.len(), 1, "{:?}", issues);
+        assert_eq!(issues[0]["related"]["scope"], "head");
+        assert!(issues[0]["message"].as_str().unwrap().contains("head"));
+    }
+
+    #[test]
+    fn check_points_at_the_shadowed_parameter() {
+        // Переменная события не может занимать имя параметра: вторая декларация
+        // здесь — формула `x = …` строкой ниже.
+        let issues = script_issues(
+            "x = 5\nevent boom(x = 1) { mouse.left.up }",
+            "",
+            &[],
+            Some("head"),
+        );
+        assert_eq!(issues.len(), 1, "{:?}", issues);
+        assert_eq!(issues[0]["line"], 2);
+        assert_eq!(issues[0]["related"]["scope"], "head");
+        assert_eq!(issues[0]["related"]["line"], 1);
+    }
+
+    #[test]
+    fn check_ignores_actions_inside_event_body() {
+        // Запись внутри `on` — действие, а не декларация: второй декларации нет,
+        // и `related` быть не должно, иначе подсветка указала бы не туда.
+        let issues = script_issues(
+            "event boom(x = 1) { mouse.left.up }\non boom { x = 2 }",
+            "",
+            &[],
+            Some("head"),
+        );
+        assert_eq!(issues.len(), 1, "{:?}", issues);
+        assert!(issues[0]["related"].is_null(), "{:?}", issues);
+    }
+
+    #[test]
+    fn check_reports_parse_error_alone() {
+        let issues = script_issues("event {", "", &[], None);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].get("related").is_none());
+        assert_eq!(issues[0]["line"], 1);
+    }
+
+    #[test]
+    fn check_sees_event_of_another_object() {
+        // `on` на событие чужого объекта: имя существует, но отсюда не видно.
+        let issues = script_issues(
+            "on boom { x = 1 }",
+            "",
+            &[checked("head", "event boom() { mouse.left.up }")],
+            Some("body"),
+        );
+        assert_eq!(issues.len(), 1, "{:?}", issues);
+        assert_eq!(issues[0]["related"]["scope"], "head");
+        assert!(issues[0]["message"].as_str().unwrap().contains("не видно"));
+    }
+
+    #[test]
+    fn check_is_silent_when_names_are_free() {
+        let issues = script_issues(
+            "event click() { mouse.left.up }\non click { x = 1 }",
+            "event boom() { mouse.right.up }",
+            &[checked("head", "event clap() { mouse.wheel > 0 }")],
+            Some("body"),
+        );
+        assert!(issues.is_empty(), "{:?}", issues);
     }
 
     #[test]

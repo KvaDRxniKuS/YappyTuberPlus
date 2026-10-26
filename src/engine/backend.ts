@@ -6,8 +6,10 @@ export interface EngineResponse {
   frame?: import("../types").RigFrame;
   error?: string;
   diagnostics?: string[];
-  /** Ответ `check`: ошибка разбора скрипта или `null`, если всё разбирается. */
+  /** Ответ `check`: первая ошибка скрипта или `null`, если всё разбирается. */
   scriptError?: import("../types").ScriptErrorInfo | null;
+  /** Ответ `check`: все ошибки с местом и вторым объявлением, если оно есть. */
+  scriptIssues?: import("../types").ScriptIssueInfo[];
 }
 
 export interface EngineBackend {
