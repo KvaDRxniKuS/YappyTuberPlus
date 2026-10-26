@@ -3,7 +3,7 @@ import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, SlidersHorizo
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
-import { enumConstants } from "../modules/manual";
+import { moduleConstants } from "../modules/presets";
 import { InputsPanel } from "./InputsPanel";
 import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
@@ -155,6 +155,7 @@ export function RightPanel(props: RightPanelProps) {
           selection={props.selectedObjects}
           onChange={props.onBehaviour}
           onText={props.onText}
+          modules={props.modules}
         />
       ) : tab === "modules" ? (
         <ModulesPanel
@@ -209,7 +210,7 @@ export function RightPanel(props: RightPanelProps) {
               ...eventNames(props.globalScript),
               ...eventNames(editorValue),
             ])]}
-            constants={Object.keys(enumConstants(props.modules))}
+            constants={Object.keys(moduleConstants(props.modules))}
             checkScope={checkScope}
             onCheck={props.checkScript}
             reveal={reveal?.scope === editorKey ? reveal : undefined}

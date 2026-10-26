@@ -1,5 +1,6 @@
-import type { RigObject, RigPreset } from "../types";
+import type { ObjectFrame, RigObject, RigPreset } from "../types";
 import { type Affine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
+import { warpEnabled, warpQuad } from "./warp";
 
 export interface Point { x: number; y: number }
 
@@ -13,6 +14,23 @@ export function spriteBounds(object: RigObject, matrix: Affine): Point[] {
     transformPoint(matrix, left + object.width, top + object.height),
     transformPoint(matrix, left, top + object.height),
   ];
+}
+
+/**
+ * Контур объекта с учётом деформации.
+ *
+ * Деформированный спрайт занимает не прямоугольник, а четырёхугольник:
+ * рамка выделения и клики должны идти по нему, иначе угол картинки ловил бы
+ * мышь там, где картинки уже нет.
+ */
+export function objectOutline(object: RigObject, values: ObjectFrame, matrix?: Affine): Point[] {
+  if (!warpEnabled(object) || object.kind === "group" || object.kind === "shape") {
+    return spriteBounds(object, matrix ?? objectMatrix(object, values));
+  }
+  const transform = matrix ?? objectMatrix(object, values);
+  const left = -object.pivot.x * object.width;
+  const top = -object.pivot.y * object.height;
+  return warpQuad(object, values).map((point) => transformPoint(transform, left + point.x, top + point.y));
 }
 
 /** Базовые границы группы: объединение базовых рамок всех её потомков-спрайтов. */
@@ -31,7 +49,7 @@ export function groupBounds(preset: { objects: RigObject[] }, groupId: string): 
   const points: Point[] = [];
   for (const object of preset.objects) {
     if (object.kind === "group" || !ids.has(object.id)) continue;
-    points.push(...spriteBounds(object, objectMatrix(object, staticValues(object))));
+    points.push(...objectOutline(object, staticValues(object)));
   }
   if (points.length === 0) {
     const group = preset.objects.find((object) => object.id === groupId);

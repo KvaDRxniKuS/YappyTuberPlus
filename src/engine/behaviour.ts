@@ -17,6 +17,23 @@ import type { RigObject, Vec2 } from "../types";
 
 export type VisibilityRule = "none" | "open" | "closed";
 
+/**
+ * Видимость по пресетам: объект показывается только при выбранных пресетах
+ * или, наоборот, при всех, кроме них.
+ *
+ * `variable` и `module` — снимок настроек на момент правки: генератору нужно
+ * написать формулу `preset == presets_1_summer`, а списка модулей у него нет.
+ */
+export interface PresetRule {
+  /** Имя модуля пресетов: по нему панель находит список пресетов. */
+  module: string;
+  /** Переменная пресета в скрипте. */
+  variable: string;
+  mode: "only" | "except";
+  /** Имена пресетов; в скрипте — полные константы `<модуль>_<имя>`. */
+  names: string[];
+}
+
 /** Координаты, в которых физика поворота держит «тяжёлую» сторону. */
 export type PhysSpace = "world" | "parent";
 
@@ -95,6 +112,8 @@ export interface Behaviour {
   physSmooth: number;
   /** Сила мотора физики: резкость (частота) пружины, 0 — мягко, 1 — резко. */
   physForce: number;
+  /** Условия видимости по пресетам одежды и эмоций. */
+  presets: PresetRule[];
 }
 
 export const DEFAULT_BEHAVIOUR: Behaviour = {
@@ -132,6 +151,7 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   physSpace: "world",
   physSmooth: 0.4,
   physForce: 0.4,
+  presets: [],
 };
 
 const START = "// ── поведение: вкладка «Поведение» ──";
@@ -259,6 +279,19 @@ export function readBehaviour(script: string): Behaviour {
       merged.physSmooth = clampNumber(merged.physSmooth, 0, 1, 0.4);
       merged.bounceOnce = merged.bounceOnce === true;
       merged.dragInRange = merged.dragInRange === true;
+      // Пресеты: битые записи (старые пресеты, ручная правка JSON) отбрасываем,
+      // иначе генератор написал бы в скрипт бессмысленное условие.
+      merged.presets = Array.isArray(source.presets)
+        ? (source.presets as PresetRule[]).filter((rule) => (
+          !!rule && typeof rule.module === "string" && typeof rule.variable === "string"
+          && (rule.mode === "only" || rule.mode === "except") && Array.isArray(rule.names)
+        )).map((rule) => ({
+          module: rule.module,
+          variable: rule.variable,
+          mode: rule.mode,
+          names: rule.names.filter((name) => typeof name === "string" && !!name),
+        }))
+        : [];
       return merged;
     } catch {
       break;
@@ -491,6 +524,15 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   if (behaviour.mouth === "closed") rules.push(`${talking} ? 0 : 1`);
   if (behaviour.eye === "open") rules.push("1 - auto.blink");
   if (behaviour.eye === "closed") rules.push("auto.blink");
+  // Пресеты: «виден только при» и «виден при всех, кроме». Пустой список —
+  // это «без ограничения», поэтому условие не пишется вовсе: иначе объект
+  // исчез бы у всех, кто просто добавил пресеты.
+  for (const presets of behaviour.presets) {
+    if (!presets.names.length) continue;
+    const terms = presets.names.map((name) => `${presets.variable} == ${presets.module}_${name}`);
+    const condition = terms.join(" or ");
+    rules.push(presets.mode === "only" ? `(${condition} ? 1 : 0)` : `(${condition} ? 0 : 1)`);
+  }
   if (rules.length) body.push(`visible = ${rules.map((rule) => `(${rule})`).join(" * ")}`);
 
   if (!body.length) return "";

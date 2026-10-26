@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
-  BoxSelect, CircleDot, Crosshair, Focus, Grid3X3, Hand, LassoSelect,
-  LocateFixed, MousePointer2, Scan, ZoomIn, ZoomOut,
+  BoxSelect, CircleDot, Crosshair, Focus, Frame, Grid3X3, Hand, LassoSelect,
+  LocateFixed, MousePointer2, RotateCw, Scan, ZoomIn, ZoomOut,
 } from "lucide-react";
-import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
+import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
 import { GUIDE_LABEL } from "../types";
-import { groupBounds, spriteBounds } from "../render/bounds";
+import { groupBounds, objectOutline } from "../render/bounds";
 import {
   drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
@@ -20,8 +20,12 @@ import {
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
 import { nearestPoint } from "../render/shape";
+import {
+  defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
+  warpCornerHandles, warpFrameHandles, warpFrameQuad, warpQuad, warpEnabled,
+} from "../render/warp";
 
-export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso";
+export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso" | "warp";
 
 export type SelectMode = "replace" | "toggle" | "add";
 
@@ -61,6 +65,8 @@ interface SceneProps {
    * координатах (пивот объекта и есть его `base`), картинка при этом не едет.
    */
   onPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
+  /** Деформация из спецрежима: углы и зона правятся прямо в сцене. */
+  onWarp: (id: string, warp: WarpSpec) => void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
@@ -79,6 +85,10 @@ type Interaction =
   | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
   /** Перо: тянем точку контура с номером `index`. */
   | { type: "pen"; objectId: string; itemId: string; index: number }
+  /** Деформация: тянем ручку зоны (`tl`, `top`, `move`…) или угол картинки. */
+  | { type: "warpFrame"; objectId: string; handle: string; start: Point; initial: WarpSpec }
+  | { type: "warpCorner"; objectId: string; corner: WarpCorner; start: Point; initial: WarpSpec }
+  | { type: "warpRotate"; objectId: string; center: Point; start: number; initial: WarpSpec }
   | null;
 
 /** Мировые координаты → координаты рамки объекта: там живут контуры фигуры. */
@@ -182,6 +192,7 @@ export function Scene(props: SceneProps) {
     });
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
+    if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId);
     if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom);
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
 
@@ -342,6 +353,13 @@ export function Scene(props: SceneProps) {
       const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;
+      if (warpEnabled(object)) {
+        // Деформированный спрайт — четырёхугольник: угол, который уехал,
+        // больше не должен ловить мышь, а вытянутый — наоборот.
+        const content = { x: local.x - left, y: local.y - top };
+        if (pointInQuad(content, warpQuad(object, values))) return object;
+        continue;
+      }
       if (local.x >= left && local.x <= left + object.width && local.y >= top && local.y <= top + object.height) return object;
     }
     return null;
@@ -358,7 +376,7 @@ export function Scene(props: SceneProps) {
     const result: { id: string; box: Box; corners: Point[] }[] = [];
     for (const object of current.preset.objects) {
       const corners = object.kind !== "group"
-        ? spriteBounds(object, objectMatrix(object, staticValues(object)))
+        ? objectOutline(object, staticValues(object))
         : groupBounds(current.preset, object.id);
       if (!corners) continue;
       const screen = corners.map((point) => ({ x: x + point.x * zoom, y: y + point.y * zoom }));
@@ -395,6 +413,12 @@ export function Scene(props: SceneProps) {
           <button className={props.tool === "marquee" ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => props.onTool("marquee")}><BoxSelect size={15} /></button>
           <button className={props.tool === "lasso" ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => props.onTool("lasso")}><LassoSelect size={15} /></button>
           <button className={props.tool === "pivot" ? "active" : ""} title="Пивот (P)" onClick={() => props.onTool("pivot")}><Crosshair size={15} /></button>
+          <button
+            className={props.tool === "warp" ? "active" : ""}
+            title="Границы текстуры (T) · углы деформации и рамка зоны"
+            disabled={!props.primaryId}
+            onClick={() => props.onTool("warp")}
+          ><Frame size={15} /></button>
           <button className={props.tool === "pan" ? "active" : ""} title="Панорамирование (Space)" onClick={() => props.onTool("pan")}><Hand size={15} /></button>
           <span className="tool-separator" />
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
@@ -500,6 +524,32 @@ export function Scene(props: SceneProps) {
                 return;
               }
             }
+            if (current.tool === "warp" && current.primaryId) {
+              const object = current.preset.objects.find((item) => item.id === current.primaryId);
+              if (object && object.kind !== "group" && object.kind !== "text") {
+                const values = current.frameRef.current?.objects[object.id] || staticValues(object);
+                const matrix = objectMatrix(object, values);
+                const left = -object.pivot.x * object.width;
+                const top = -object.pivot.y * object.height;
+                const grab = warpGrab(object, values, left, top, matrix, camera.current.zoom, point);
+                if (grab) {
+                  // Первое движение в режиме включает деформацию: иначе ручки
+                  // не меняли бы картинку, и это выглядело бы поломкой.
+                  const initial = { ...(object.warp ?? defaultWarp()), enabled: true };
+                  current.onDragStart();
+                  if (grab.kind === "corner") {
+                    interaction.current = { type: "warpCorner", objectId: object.id, corner: grab.corner, start: point, initial };
+                  } else if (grab.kind === "handle") {
+                    interaction.current = { type: "warpFrame", objectId: object.id, handle: grab.handle, start: point, initial };
+                  } else if (grab.kind === "rotation") {
+                    interaction.current = { type: "warpRotate", objectId: object.id, center: grab.center, start: grab.angle, initial };
+                  } else {
+                    interaction.current = { type: "warpFrame", objectId: object.id, handle: "move", start: point, initial };
+                  }
+                  return;
+                }
+              }
+            }
             if (current.tool === "marquee" || current.tool === "lasso") {
               const screen = screenPoint(event);
               const shape = current.tool === "lasso" ? "lasso" : "rect";
@@ -575,6 +625,38 @@ export function Scene(props: SceneProps) {
               propsRef.current.onPenPoints?.(object.id, item.id, item.points.map((point, index) => (
                 index === current.index ? { x: roundPoint(local.x), y: roundPoint(local.y) } : point
               )));
+              return;
+            }
+            if (current.type === "warpCorner" || current.type === "warpFrame" || current.type === "warpRotate") {
+              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
+              if (!object) return;
+              const values = propsRef.current.frameRef.current?.objects[object.id] || staticValues(object);
+              const point = scenePoint(event);
+              if (current.type === "warpRotate") {
+                const angle = Math.atan2(point.y - current.center.y, point.x - current.center.x);
+                const degrees = ((angle - current.start) * 180) / Math.PI;
+                propsRef.current.onWarp(object.id, rotateWarpFrame(current.initial, event.shiftKey ? Math.round(degrees / 15) * 15 : degrees));
+                return;
+              }
+              // Экранное смещение переводим в координаты картинки: объект может
+              // быть повёрнут и отмасштабирован, а ручки живут в его осях.
+              const matrix = objectMatrix(object, values);
+              const left = -object.pivot.x * object.width;
+              const top = -object.pivot.y * object.height;
+              const toContent = (at: Point) => {
+                const local = transformPoint(invertAffine(matrix), at.x, at.y);
+                return { x: local.x - left, y: local.y - top };
+              };
+              const from = toContent(current.start);
+              const to = toContent(point);
+              const dx = to.x - from.x;
+              const dy = to.y - from.y;
+              const next = current.type === "warpCorner"
+                ? moveWarpCorner(current.initial, current.corner, object, dx, dy)
+                : current.handle === "move"
+                  ? moveWarpFrame(current.initial, object, dx, dy)
+                  : resizeWarpFrame(current.initial, current.handle, object, dx, dy);
+              propsRef.current.onWarp(object.id, next);
               return;
             }
             const point = scenePoint(event);
@@ -667,6 +749,7 @@ const TOOL_HINT: Record<SceneTool, string> = {
   lasso: "Обведите объекты; Shift — добавить к выборке",
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
+  warp: "Тяните углы картинки и рамку зоны; Shift на повороте — шаг 15°",
 };
 
 /** Объект считается выделенным, если выделен он сам или любой его предок. */
@@ -747,6 +830,141 @@ function hiddenIds(preset: RigPreset): Set<string> {
 }
 
 /** Пунктирные рамки скрытых объектов, пока активен инструмент выделения. */
+/** Цвет спецрежима «Границы текстуры»: зона и её углы. */
+const WARP_COLOR = "#e0834a";
+const WARP_CORNER_COLOR = "#f0c36b";
+
+/**
+ * Точки ручек деформации в координатах сцены.
+ *
+ * `frame` — зона (прямоугольник, который гнём), `corners` — сами углы картинки
+ * после деформации, `rotation` — ручка поворота над верхней стороной зоны.
+ */
+function warpSceneHandles(object: RigObject, values: RigFrame["objects"][string], left: number, top: number, matrix: Affine, zoom: number) {
+  const spec = object.warp ?? defaultWarp();
+  const at = (point: Vec2) => transformPoint(matrix, left + point.x, top + point.y);
+  const zoneLocal = warpFrameQuad({ ...object, warp: spec });
+  const zone = zoneLocal.map(at);
+  const center = at({
+    x: zoneLocal.reduce((sum, point) => sum + point.x, 0) / 4,
+    y: zoneLocal.reduce((sum, point) => sum + point.y, 0) / 4,
+  });
+  // Ручка поворота стоит над серединой верхней стороны, в осях зоны.
+  const middle = { x: (zoneLocal[0].x + zoneLocal[1].x) / 2, y: (zoneLocal[0].y + zoneLocal[1].y) / 2 };
+  const angle = (spec.frame.rotation * Math.PI) / 180;
+  const rotation = at({ x: middle.x + Math.sin(angle) * (18 / zoom), y: middle.y - Math.cos(angle) * (18 / zoom) });
+  return {
+    spec,
+    zone,
+    center,
+    rotation,
+    frameHandles: warpFrameHandles({ ...object, warp: spec }).map((handle) => ({ ...handle, point: at(handle.point) })),
+    corners: warpCornerHandles({ ...object, warp: spec }, values).map((handle) => ({ ...handle, point: at(handle.point) })),
+  };
+}
+
+/** Что схватила мышь в спецрежиме: ручку зоны, угол картинки или поворот. */
+type WarpGrab =
+  | { kind: "corner"; corner: WarpCorner }
+  | { kind: "handle"; handle: string }
+  | { kind: "rotation"; center: Point; angle: number }
+  | { kind: "move" }
+  | null;
+
+function warpGrab(object: RigObject, values: RigFrame["objects"][string], left: number, top: number, matrix: Affine, zoom: number, point: Point): WarpGrab {
+  const handles = warpSceneHandles(object, values, left, top, matrix, zoom);
+  const near = (target: Point, radius: number) => Math.hypot(target.x - point.x, target.y - point.y) <= radius;
+  const cornerRadius = 9 / zoom;
+  for (const handle of handles.corners) {
+    if (near(handle.point, cornerRadius)) return { kind: "corner", corner: handle.corner };
+  }
+  if (near(handles.rotation, cornerRadius)) {
+    return {
+      kind: "rotation",
+      center: handles.center,
+      angle: Math.atan2(point.y - handles.center.y, point.x - handles.center.x),
+    };
+  }
+  for (const handle of handles.frameHandles) {
+    if (near(handle.point, 7 / zoom)) return { kind: "handle", handle: handle.name };
+  }
+  if (pointInQuad(point, handles.zone)) return { kind: "move" };
+  return null;
+}
+
+/** Отрисовка спецрежима: зона деформации и её углы. */
+function drawWarpOverlay(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  zoom: number,
+  primaryId: string | null,
+) {
+  if (!primaryId) return;
+  const object = preset.objects.find((item) => item.id === primaryId);
+  if (!object || object.kind === "group") return;
+  if (object.kind === "text") return;
+  const values = frame?.objects[object.id] || staticValues(object);
+  const matrix = objectMatrix(object, values);
+  const left = -object.pivot.x * object.width;
+  const top = -object.pivot.y * object.height;
+  const handles = warpSceneHandles(object, values, left, top, matrix, zoom);
+  const size = 5 / zoom;
+
+  ctx.save();
+  // Четырёхугольник картинки: видно, что именно получилось.
+  ctx.strokeStyle = WARP_COLOR;
+  ctx.lineWidth = 1.4 / zoom;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  handles.corners.forEach((handle, index) => (index === 0 ? ctx.moveTo(handle.point.x, handle.point.y) : ctx.lineTo(handle.point.x, handle.point.y)));
+  ctx.closePath();
+  ctx.stroke();
+
+  // Зона, которую гнём: пунктир плюс лёгкая заливка, чтобы отличать её от углов.
+  ctx.fillStyle = "rgba(224, 131, 74, 0.10)";
+  ctx.beginPath();
+  handles.zone.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+  ctx.closePath();
+  ctx.fill();
+  ctx.setLineDash([6 / zoom, 4 / zoom]);
+  ctx.lineWidth = 1 / zoom;
+  ctx.stroke();
+
+  // Стороны зоны: квадратные ручки размера.
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#1b2026";
+  for (const handle of handles.frameHandles) {
+    ctx.beginPath();
+    ctx.rect(handle.point.x - size, handle.point.y - size, size * 2, size * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Поворот зоны: кружок с точкой на ножке.
+  ctx.beginPath();
+  ctx.moveTo(handles.zone[0].x, handles.zone[0].y);
+  ctx.lineTo(handles.zone[1].x, handles.zone[1].y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo((handles.zone[0].x + handles.zone[1].x) / 2, (handles.zone[0].y + handles.zone[1].y) / 2);
+  ctx.lineTo(handles.rotation.x, handles.rotation.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(handles.rotation.x, handles.rotation.y, size + 1 / zoom, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Углы картинки — то, ради чего режим и существует.
+  ctx.fillStyle = WARP_CORNER_COLOR;
+  for (const handle of handles.corners) {
+    ctx.beginPath();
+    ctx.arc(handle.point.x, handle.point.y, size + 1 / zoom, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawHiddenOutlines(ctx: CanvasRenderingContext2D, preset: RigPreset, zoom: number) {
   const hidden = hiddenIds(preset);
   if (!hidden.size) return;
@@ -759,7 +977,7 @@ function drawHiddenOutlines(ctx: CanvasRenderingContext2D, preset: RigPreset, zo
     const object = preset.objects.find((item) => item.id === id);
     if (!object) continue;
     const corners = object.kind !== "group"
-      ? spriteBounds(object, objectMatrix(object, staticValues(object)))
+      ? objectOutline(object, staticValues(object))
       : groupBounds(preset, object.id);
     if (!corners) continue;
     ctx.beginPath();
@@ -792,7 +1010,7 @@ function drawGuides(
       if (bounds === "all" && !visible(object.id)) continue;
       const values = frame?.objects[object.id] || staticValues(object);
       const corners = object.kind !== "group"
-        ? spriteBounds(object, objectMatrix(object, values))
+        ? objectOutline(object, values)
         : groupBounds(preset, object.id);
       if (!corners) continue;
       ctx.strokeStyle = selected ? BOUNDS_SELECTED : BOUNDS_COLOR;
@@ -854,7 +1072,7 @@ function drawSelection(
     if (!object) continue;
     const values = frame?.objects[object.id] || staticValues(object);
     const corners = object.kind !== "group"
-      ? spriteBounds(object, objectMatrix(object, values))
+      ? objectOutline(object, values)
       : groupBounds(preset, object.id);
     if (!corners) continue;
     const primary = object.id === primaryId;

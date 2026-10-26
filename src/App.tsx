@@ -46,7 +46,7 @@ import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
-  type ModuleInstance, type RigObject, type RigPreset, type Vec2,
+  type ModuleInstance, type RigObject, type RigPreset, type Vec2, type WarpSpec,
 } from "./types";
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
@@ -504,6 +504,7 @@ export default function App() {
       else if (!command && event.code === "KeyM") setTool("marquee");
       else if (!command && event.code === "KeyL") setTool("lasso");
       else if (!command && event.code === "KeyP") setTool("pivot");
+      else if (!command && event.code === "KeyT") setTool("warp");
       else if (!command && event.code === "KeyK") {
         event.preventDefault();
         if (event.shiftKey) stopTimeline(); else togglePause();
@@ -572,6 +573,18 @@ export default function App() {
       objects: repivot(current.objects, id, base, pivot, (objectId) => frame?.objects[objectId] ?? null),
     }), { label: "Пивот" });
   }, [commit, engine.snapshot]);
+
+  /**
+   * Деформация из сцены. Отдельную запись истории не создаёт: снимок для
+   * отмены кладёт начало перетаскивания (`onDragStart`), и весь жест целиком
+   * откатывается одним Ctrl+Z.
+   */
+  const warpObject = useCallback((id: string, warp: WarpSpec) => {
+    setPreset((current) => ({
+      ...current,
+      objects: current.objects.map((object) => (object.id === id ? { ...object, warp } : object)),
+    }));
+  }, [setPreset]);
 
   const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
     const current = presetRef.current;
@@ -791,6 +804,13 @@ export default function App() {
           ? { ...object.shape, items: object.shape.items.map((item) => ({ ...item, points: [...item.points] })) }
           : undefined,
         mask: object.mask ? { ...object.mask, points: [...object.mask.points] } : undefined,
+        // Зона и углы деформации — тоже вглубь: копия должна гнуться отдельно.
+        warp: object.warp
+          ? { ...object.warp, frame: { ...object.warp.frame }, corners: {
+            tl: { ...object.warp.corners.tl }, tr: { ...object.warp.corners.tr },
+            br: { ...object.warp.corners.br }, bl: { ...object.warp.corners.bl },
+          } }
+          : undefined,
       };
       pool = [...pool, copy];
       created.push({ source: object, copy });
@@ -1063,6 +1083,7 @@ export default function App() {
               }));
             }}
             onPivot={pivotObject}
+            onWarp={warpObject}
             pen={pen}
             onPenPoints={penPoints}
           />

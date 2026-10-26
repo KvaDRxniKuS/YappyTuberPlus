@@ -106,6 +106,9 @@ export function InputsPanel(props: InputsPanelProps) {
         // Внешний источник приходит готовыми числами: показывать их из ручных
         // ползунков нельзя — получились бы нули при живом источнике.
         const external = definition.kind === "external";
+        // Пресеты: значения приходят из выбранного пресета и наград, а не из
+        // ползунков — иначе панель показывала бы мёртвые ручки.
+        const presets = definition.kind === "presets";
         const specs = instanceInputs(module);
         return (
           <section className={`module-group ${module.enabled ? "" : "disabled"}`} key={module.name}>
@@ -223,7 +226,7 @@ export function InputsPanel(props: InputsPanelProps) {
                     step={range.step}
                     mode={enumMode
                       ? spec.name === "value" ? "enum" : "state"
-                      : live || auto || pointer || external ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
+                      : live || auto || pointer || external || presets ? "read" : module.config.mode === "flag" && definition.kind === "manual" ? "flag" : "slider"}
                     states={enumMode ? enumStates(module) : undefined}
                     stateIndex={enumMode ? stateIndex(module, props.inputs.values[inputKey(module, "value")]) : undefined}
                     reason={!module.enabled ? "модуль выключен" : !on ? "вход выключен" : null}

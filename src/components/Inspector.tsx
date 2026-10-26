@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import type {
   BasePose, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
-  ShapeItemKind, ShapeSpec, TextSpec,
+  ShapeItemKind, ShapeSpec, TextSpec, Vec2, WarpCorner, WarpFrame, WarpSpec,
 } from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
 import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
@@ -14,6 +14,7 @@ import {
 } from "../render/shape";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
+import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT, defaultWarp } from "../render/warp";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
 import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
@@ -383,6 +384,10 @@ export function Inspector(props: InspectorProps) {
           />
         )}
 
+        {(object.kind === "sprite" || object.kind === "media") && (
+          <WarpSection object={object} warp={object.warp} onChange={onChange} />
+        )}
+
         {object.kind !== "group" && object.kind !== "shape" && (
           <MaskSection object={object} mask={object.mask} objects={objects} onChange={onChange} />
         )}
@@ -684,6 +689,90 @@ const MASK_KINDS: Array<{ kind: MaskKind | "none"; label: string }> = [
   { kind: "points", label: "Набор точек" },
   { kind: "file", label: "Файл-маска" },
 ];
+
+/**
+ * Деформация крайних точек.
+ *
+ * Зона — прямоугольник внутри картинки: его можно повернуть и сузить, чтобы
+ * гнуть не всю картинку, а нужный кусок. Углы задаются процентами размера
+ * зоны, поэтому при смене размера объекта перспектива остаётся такой же.
+ */
+function WarpSection({ object, warp, onChange }: {
+  object: RigObject;
+  warp: WarpSpec | undefined;
+  onChange: (object: RigObject) => void;
+}) {
+  const spec = warp ?? defaultWarp();
+  const update = (patch: Partial<WarpSpec>) => onChange({ ...object, warp: { ...spec, ...patch } });
+  const setFrame = (patch: Partial<WarpFrame>) => update({ frame: { ...spec.frame, ...patch } });
+  const setCorner = (corner: WarpCorner, patch: Partial<Vec2>) => update({
+    corners: { ...spec.corners, [corner]: { ...spec.corners[corner], ...patch } },
+  });
+  // Доли картинки показываем процентами: так числа читаются без калькулятора.
+  const percent = (value: number) => Math.round(value * 1000) / 10;
+  const fromPercent = (value: number) => Math.round((value / 100) * 10000) / 10000;
+  const reset = () => onChange({ ...object, warp: { ...defaultWarp(), enabled: spec.enabled } });
+
+  return (
+    <div className="property-section compact-section">
+      <div className="section-title">
+        <span>Деформация</span>
+        <small>{spec.enabled ? "ПЕРСПЕКТИВА" : "ВЫКЛ"}</small>
+      </div>
+      <label className="check-line">
+        <input type="checkbox" checked={spec.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
+        <span>Гнуть крайние точки</span>
+      </label>
+
+      {spec.enabled && (
+        <>
+          <div className="section-title"><span>Зона деформации</span><small>% КАРТИНКИ</small></div>
+          <div className="property-grid two-columns">
+            <NumberField label="Зона X" value={percent(spec.frame.x)} step={1} suffix="%" onCommit={(value) => setFrame({ x: fromPercent(value) })} />
+            <NumberField label="Зона Y" value={percent(spec.frame.y)} step={1} suffix="%" onCommit={(value) => setFrame({ y: fromPercent(value) })} />
+            <NumberField label="Ширина" value={percent(spec.frame.width)} step={1} suffix="%" onCommit={(value) => setFrame({ width: Math.max(0.01, fromPercent(value)) })} />
+            <NumberField label="Высота" value={percent(spec.frame.height)} step={1} suffix="%" onCommit={(value) => setFrame({ height: Math.max(0.01, fromPercent(value)) })} />
+            <NumberField label="Поворот" value={Math.round(spec.frame.rotation * 10) / 10} step={1} suffix="°" onCommit={(rotation) => setFrame({ rotation })} />
+          </div>
+          <p className="behaviour-hint">
+            Зона — часть картинки, которую гнём: остальное остаётся ровным.
+            Границы удобнее править в сцене: инструмент «Границы текстуры» (T).
+          </p>
+
+          <div className="section-title"><span>Углы</span><small>% ЗОНЫ</small></div>
+          <div className="property-grid two-columns">
+            {WARP_CORNERS.map((corner) => (
+              <div key={corner} className="warp-corner">
+                <span className="warp-corner-label">{WARP_CORNER_LABEL[corner]}</span>
+                <NumberField
+                  label={`${corner.toUpperCase()} X`}
+                  value={Math.round(spec.corners[corner].x * 10) / 10}
+                  step={1}
+                  suffix="%"
+                  onCommit={(x) => setCorner(corner, { x: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, x)) })}
+                />
+                <NumberField
+                  label={`${corner.toUpperCase()} Y`}
+                  value={Math.round(spec.corners[corner].y * 10) / 10}
+                  step={1}
+                  suffix="%"
+                  onCommit={(y) => setCorner(corner, { y: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, y)) })}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="image-actions">
+            <button className="button secondary" onClick={reset}><RotateCcw size={14} /> Сбросить углы</button>
+          </div>
+          <p className="behaviour-hint">
+            Углы можно анимировать: параметры `warpTLx`, `warpTLy`, `warpTRx`…
+            читаются в скрипте объекта так же, как `x` или `rotation`.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 /**
  * Маска объекта.

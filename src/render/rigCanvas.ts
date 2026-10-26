@@ -6,6 +6,7 @@ import { DEFAULT_MEDIA, MediaAssets } from "./media";
 import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
+import { drawWarpedImage, warpEnabled } from "./warp";
 import type { MaskSpec, ShapeSpec } from "../types";
 
 /**
@@ -250,7 +251,14 @@ function drawObjectContent(
       : object.height;
     const boxLeft = -object.pivot.x * width;
     const boxTop = -object.pivot.y * height;
-    if (picture) {
+    if (picture && warpEnabled(object)) {
+      // Деформация считается в координатах картинки: переносим начало туда,
+      // где у медиа-объекта начинается его рамка.
+      ctx.save();
+      ctx.translate(boxLeft, boxTop);
+      drawWarpedImage(ctx, picture, object, width, height, frame?.objects[object.id]);
+      ctx.restore();
+    } else if (picture) {
       ctx.drawImage(picture, boxLeft, boxTop, width, height);
     } else if (options.placeholders) {
       // Звук и ещё не загруженное видео: в редакторе видно место объекта,
@@ -261,7 +269,14 @@ function drawObjectContent(
   }
   const image = assets.get(object.image);
   if (image?.complete && image.naturalWidth > 0) {
-    ctx.drawImage(image, left, top, object.width, object.height);
+    if (warpEnabled(object)) {
+      ctx.save();
+      ctx.translate(left, top);
+      drawWarpedImage(ctx, image, object, object.width, object.height, frame?.objects[object.id]);
+      ctx.restore();
+    } else {
+      ctx.drawImage(image, left, top, object.width, object.height);
+    }
   } else if (options.placeholders) {
     ctx.fillStyle = "#505965";
     ctx.fillRect(left, top, object.width, object.height);

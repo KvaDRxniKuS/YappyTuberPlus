@@ -19,6 +19,7 @@ import { EnumStatesEditor } from "./EnumStatesEditor";
 import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { ExternalSourceEditor } from "./ExternalSourceEditor";
+import { PresetsEditor } from "./PresetsEditor";
 import { NumberField } from "./NumberField";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
@@ -308,6 +309,14 @@ export function ModulesPanel(props: ModulesPanelProps) {
                       logs={props.externalLogs?.[module.name]}
                       onProbe={props.onProbeSource ? () => props.onProbeSource!(module.name) : undefined}
                       onChange={(source, label) => patchConfig(module, "source", source, label)}
+                    />
+                  )}
+
+                  {definition.kind === "presets" && (
+                    <PresetsEditor
+                      module={module}
+                      modules={props.modules}
+                      onPatch={(config, label) => patch(module.name, { config: { ...module.config, ...config } }, label)}
                     />
                   )}
 

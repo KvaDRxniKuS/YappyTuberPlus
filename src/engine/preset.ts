@@ -11,9 +11,11 @@ import {
 import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
+import { normalizeWarp } from "../render/warp";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
-import { enumConstants, sanitizeStateName, uniqueStateName } from "../modules/manual";
+import { sanitizeStateName, uniqueStateName } from "../modules/manual";
+import { moduleConstants, presetGlobals } from "../modules/presets";
 import { keyInputName, mouseButtons, uniqueButtonName, uniqueKeyName } from "../modules/pointer";
 
 export function descendantIds(objects: RigObject[], id: string): Set<string> {
@@ -278,6 +280,8 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // Маска — свойство любого объекта: одна фигура может вырезать сразу
         // несколько спрайтов, поэтому ссылка живёт на объекте, а не в фигуре.
         mask: normalizeMask(object.mask),
+        // Деформация крайних точек: без поля объект рисуется как обычно.
+        warp: normalizeWarp(object.warp),
       };
     }),
     globals: preset.globals || "",
@@ -398,6 +402,39 @@ function normalizeMouseButtons(raw: unknown): MouseButton[] {
   return buttons;
 }
 
+/**
+ * Настройки модуля пресетов: список, имя переменной, награды.
+ *
+ * Массив пресетов и списки префиксов не влезают в общую нормализацию полей
+ * (она хранит только скаляры и объявленные поля), поэтому идут отдельно.
+ */
+function normalizePresetsConfig(raw: unknown): ModuleConfig {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const entries: EnumState[] = [];
+  for (const item of Array.isArray(source.presets) ? source.presets : []) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const label = typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 24) : "";
+    const name = uniqueStateName(entries, sanitizeStateName(
+      typeof entry.name === "string" && entry.name ? entry.name : label,
+    ));
+    entries.push({ name, label: label || name });
+  }
+  const strings = (value: unknown): string[] => Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && !!item.trim()).map((item) => item.trim())
+    : [];
+  const rewardModules = strings(source.rewardModules);
+  const rewardPrefixes = strings(source.rewardPrefixes);
+  return {
+    presets: entries.length ? entries : [{ name: "summer", label: "Лето" }, { name: "winter", label: "Зима" }],
+    variable: typeof source.variable === "string" ? source.variable : undefined,
+    rewardSearch: source.rewardSearch === true,
+    ...(rewardModules.length ? { rewardModules } : {}),
+    ...(rewardPrefixes.length ? { rewardPrefixes } : {}),
+    preview: typeof source.preview === "number" && Number.isFinite(source.preview) ? source.preview : -1,
+  };
+}
+
 /** Приводит список модулей к известным шаблонам; неизвестные остаются как есть. */
 export function normalizeModules(value: unknown): ModuleInstance[] {
   if (!Array.isArray(value)) return [];
@@ -433,8 +470,13 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const buttons = definition.kind === "mouse" || Array.isArray(rawConfig.buttons)
       ? normalizeMouseButtons(item.config)
       : null;
+    const presetConfig = definition.kind === "presets" || Array.isArray(rawConfig.presets)
+      ? normalizePresetsConfig(item.config)
+      : null;
     const knownInputs = states
       ? ["value", ...states.map((entry) => entry.name)]
+      : presetConfig
+      ? ["value", ...(presetConfig.presets as EnumState[]).map((entry) => entry.name)]
       : visemes
       ? visemes.map((entry) => entry.name)
       : keys
@@ -461,6 +503,7 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
         ...(states ? { states } : {}),
         ...(keys ? { keys } : {}),
         ...(buttons ? { buttons } : {}),
+        ...(presetConfig ? presetConfig : {}),
         // Код клавиши — не поле шаблона, но он обязан пережить любую загрузку.
         // Пустая строка — это осознанный «бинда нет», её тоже сохраняем.
         ...(typeof rawConfig.code === "string" ? { code: rawConfig.code.trim() } : {}),
@@ -500,10 +543,12 @@ export function baseUpdates(preset: RigPreset) {
 export function engineStructure(preset: RigPreset): string {
   return JSON.stringify({
     canvas: preset.canvas,
-    globals: preset.globals,
-    // Имена состояний enum — часть «контракта» скрипта: переименование
-    // состояния пересоздаёт движок, иначе ядро держало бы старые константы.
-    constants: enumConstants(preset.modules),
+    // Глобальный скрипт с управляемыми блоками пресетов: события «награда →
+    // пресет» модуль пишет сам, пользователь их не набирает.
+    globals: presetGlobals(preset.modules, preset.globals),
+    // Имена состояний enum и пресетов — часть «контракта» скрипта:
+    // переименование пересоздаёт движок, иначе ядро держало бы старые константы.
+    constants: moduleConstants(preset.modules),
     objects: preset.objects.map(({ id, kind, parentId, script, width, height, media }) => ({
       id, kind, parentId, script, width, height,
       // Ядру нужны только стартовые значения: с чего начать и как громко.

@@ -81,7 +81,7 @@ const FALLBACK: ModuleDefinition = {
 };
 
 /** Порядок карточек в палитре: сначала источники сигнала, потом ручные. */
-const ORDER = ["loudness", "viseme", "keyboard", "key", "mouse", "external", "autoblink", "manual"];
+const ORDER = ["loudness", "viseme", "keyboard", "key", "mouse", "external", "presets", "autoblink", "manual"];
 
 const library = new Map<string, ModuleDefinition>();
 const listeners = new Set<() => void>();
@@ -177,7 +177,7 @@ export function normalizeDefinition(raw: unknown): ModuleDefinition | null {
   const fields = Array.isArray(source.fields)
     ? source.fields.map(normalizeField).filter((field): field is ModuleField => field !== null)
     : [];
-  const known: ModuleKind[] = ["loudness", "manual", "autoblink", "viseme", "keyboard", "key", "mouse", "external"];
+  const known: ModuleKind[] = ["loudness", "manual", "autoblink", "viseme", "keyboard", "key", "mouse", "external", "presets"];
   const kind = known.includes(source.kind as ModuleKind) ? (source.kind as ModuleKind) : "manual";
   return {
     id,

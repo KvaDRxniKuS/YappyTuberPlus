@@ -6,7 +6,14 @@ export type ParamName =
   /** Медиа: множитель скорости воспроизведения. */
   | "speed"
   /** Медиа: множитель громкости 0..1. */
-  | "volume";
+  | "volume"
+  /**
+   * Деформация: смещение угла в процентах от размера зоны (левый верхний —
+   * `warpTL`, дальше по часовой). Числа те же, что в инспекторе, поэтому
+   * угол можно двигать формулой и ловить событиями.
+   */
+  | "warpTLx" | "warpTLy" | "warpTRx" | "warpTRy"
+  | "warpBRx" | "warpBRy" | "warpBLx" | "warpBLy";
 
 export interface Vec2 { x: number; y: number }
 
@@ -151,6 +158,41 @@ export interface MaskSpec {
   feather: number;
 }
 
+/** Четыре угла деформации: порядок по часовой стрелке от левого верхнего. */
+export type WarpCorner = "tl" | "tr" | "br" | "bl";
+
+/**
+ * Зона деформации внутри картинки: прямоугольник в её долях плюс поворот.
+ *
+ * Доли, а не пиксели: при замене картинки на такую же по смыслу зона остаётся
+ * на месте, а размер зоны пересчитывается вместе с размером объекта.
+ */
+export interface WarpFrame {
+  /** Левый верхний угол зоны, доли ширины и высоты картинки (0…1). */
+  x: number;
+  y: number;
+  /** Размер зоны, доли картинки: 1 — вся картинка. */
+  width: number;
+  height: number;
+  /** Поворот зоны вокруг её центра, градусы. */
+  rotation: number;
+}
+
+/**
+ * Деформация крайних точек: картинка растягивается в четырёхугольник.
+ *
+ * Никаких сеток и атласов: пользователь двигает четыре угла прямоугольника,
+ * а рендер рисует картинку двумя треугольниками — этого достаточно, чтобы
+ * получить перспективу. `frame` задаёт, какую часть картинки гнуть: остальное
+ * остаётся ровным.
+ */
+export interface WarpSpec {
+  enabled: boolean;
+  frame: WarpFrame;
+  /** Смещения углов в процентах размера зоны: −100…100 по каждой оси. */
+  corners: Record<WarpCorner, Vec2>;
+}
+
 export interface RigObject {
   id: string;
   name: string;
@@ -175,6 +217,8 @@ export interface RigObject {
   shape?: ShapeSpec;
   /** Маска видимости: у любого объекта, кроме группы. */
   mask?: MaskSpec;
+  /** Деформация крайних точек: есть у спрайта и медиа-картинки. */
+  warp?: WarpSpec;
 }
 
 export interface RuntimeConfig {
@@ -335,7 +379,9 @@ export interface InputMeta {
 export type ModuleKind =
   | "loudness" | "manual" | "autoblink" | "viseme" | "keyboard" | "key" | "mouse"
   /** Значения из сети: WebSocket (и позже HTTP/OSC) по таблице отображения. */
-  | "external";
+  | "external"
+  /** Пресеты одежды и эмоций: список, переменная и события из наград. */
+  | "presets";
 
 /**
  * Транспорт внешнего источника.
@@ -495,6 +541,7 @@ export interface ModuleConfig {
   gate?: number;
   [key: string]:
     | number | string | boolean
+    | string[]
     | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[]
     | ExternalSourceConfig
     | undefined;

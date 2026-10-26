@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
-import { RotateCw, Spline, Waves, Wind, X } from "lucide-react";
-import type { RigObject, TextSpec } from "../types";
+import { Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
+import type { ModuleInstance, RigObject, TextSpec } from "../types";
 import { normalizeText } from "../engine/preset";
 import { hasQuotedPlaceholder, quotePlaceholders, unquotePlaceholders } from "../render/text";
 import {
   DEFAULT_BEHAVIOUR, heavyAngle, readBehaviour, resetBehaviourFor, writeBehaviourFor,
-  type Behaviour, type VisibilityRule,
+  type Behaviour, type PresetRule, type VisibilityRule,
 } from "../engine/behaviour";
+import { presetEntries, presetModules, presetVariable } from "../modules/presets";
 import { Switch } from "./Switch";
 
 interface BehaviourPanelProps {
@@ -17,6 +18,8 @@ interface BehaviourPanelProps {
   onChange: (scripts: Record<string, string>) => void;
   /** Правка свойств текста: шрифт, размер, оформление и источник строки. */
   onText?: (objects: RigObject[]) => void;
+  /** Модули пресета: из них вкладка берёт список пресетов одежды и эмоций. */
+  modules?: ModuleInstance[];
 }
 
 function Row({ label, hint, value, min, max, step, unit, onCommit }: {
@@ -222,7 +225,7 @@ function TextSettings({ spec, onPatch }: {
  * переписывает блок в скрипте объекта, поэтому вкладка «Объект» всегда
  * показывает, что именно считается.
  */
-export function BehaviourPanel({ object, selection, onChange, onText }: BehaviourPanelProps) {
+export function BehaviourPanel({ object, selection, onChange, onText, modules }: BehaviourPanelProps) {
   const behaviour = useMemo(
     () => (object ? readBehaviour(object.script) : { ...DEFAULT_BEHAVIOUR }),
     [object?.script],
@@ -531,6 +534,111 @@ export function BehaviourPanel({ object, selection, onChange, onText }: Behaviou
             </>
           )}
       </section>
+
+      <PresetSection behaviour={behaviour} modules={modules ?? []} onPatch={patch} />
     </div>
+  );
+}
+
+/**
+ * Видимость по пресетам: объект выбирает, при каких образах он нужен.
+ *
+ * Это не отдельный язык: генератор дописывает множитель в ту же строку
+ * `visible`, что и рот с глазом, поэтому условия спокойно работают вместе.
+ */
+function PresetSection({ behaviour, modules, onPatch }: {
+  behaviour: Behaviour;
+  modules: ModuleInstance[];
+  onPatch: (patch: Partial<Behaviour>) => void;
+}) {
+  const available = presetModules(modules);
+  if (!available.length) return null;
+  const rules = behaviour.presets;
+  const write = (next: PresetRule[]) => onPatch({ presets: next });
+  const entriesOf = (moduleName: string) => {
+    const module = available.find((entry) => entry.name === moduleName);
+    return module ? presetEntries(module) : [];
+  };
+
+  return (
+    <section className="behaviour-section">
+      <div className="section-title"><span><Shirt size={13} /> Пресеты</span></div>
+      <p className="behaviour-hint">
+        Отметьте пресеты, при которых объект нужен: «только при» показывает его на выбранных
+        образах, «кроме» — на всех остальных. Пресеты заводятся во вкладке «Модули», там же
+        их можно включить наградой Twitch.
+      </p>
+
+      {rules.map((rule, index) => {
+        const entries = entriesOf(rule.module);
+        const selected = new Set(rule.names);
+        return (
+          <div className="preset-rule" key={`${rule.module}-${index}`}>
+            <div className="preset-rule-head">
+              <select
+                value={rule.module}
+                title="Модуль пресетов"
+                onChange={(event) => {
+                  const module = available.find((entry) => entry.name === event.target.value);
+                  if (!module) return;
+                  write(rules.map((item, position) => position === index
+                    ? { ...item, module: module.name, variable: presetVariable(module), names: [] }
+                    : item));
+                }}
+              >
+                {available.map((module) => <option key={module.name} value={module.name}>{module.name}</option>)}
+              </select>
+              <button
+                className="icon-button danger"
+                title="Убрать условие"
+                onClick={() => write(rules.filter((_, position) => position !== index))}
+              ><Trash2 size={13} /></button>
+            </div>
+
+            <div className="segmented small dense">
+              <button
+                className={rule.mode === "only" ? "active" : ""}
+                title="Объект виден только на выбранных пресетах"
+                onClick={() => write(rules.map((item, position) => position === index ? { ...item, mode: "only" } : item))}
+              >только при</button>
+              <button
+                className={rule.mode === "except" ? "active" : ""}
+                title="Объект виден на всех пресетах, кроме выбранных"
+                onClick={() => write(rules.map((item, position) => position === index ? { ...item, mode: "except" } : item))}
+              >кроме</button>
+            </div>
+
+            <div className="preset-rule-list">
+              {entries.map((entry) => (
+                <label className="check-line" key={entry.name}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(entry.name)}
+                    onChange={(event) => {
+                      const names = event.target.checked
+                        ? [...rule.names, entry.name]
+                        : rule.names.filter((name) => name !== entry.name);
+                      write(rules.map((item, position) => position === index ? { ...item, names } : item));
+                    }}
+                  />
+                  <span>{entry.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      <button
+        className="button secondary"
+        title="Добавить условие видимости по пресетам"
+        onClick={() => {
+          const module = available[0];
+          write([...rules, { module: module.name, variable: presetVariable(module), mode: "only", names: [] }]);
+        }}
+      >
+        <Plus size={14} /> Условие по пресетам
+      </button>
+    </section>
   );
 }

@@ -53,7 +53,11 @@ const highlight = HighlightStyle.define([
   { tag: tags.punctuation, color: "#8a929c" },
 ]);
 
-const PARAMETERS = ["x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer"];
+const PARAMETERS = [
+  "x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer",
+  // Деформация: углы в процентах размера зоны (см. «Деформация» в инспекторе).
+  "warpTLx", "warpTLy", "warpTRx", "warpTRy", "warpBRx", "warpBRy", "warpBLx", "warpBLy",
+];
 // `text` — строковый параметр текстового объекта: база в скрипте объекта
 // (`text = "привет"`), переопределение — в блоке события. Отдельно от чисел,
 // потому что кадр отдаёт его строкой, а не числом.

@@ -180,10 +180,19 @@ pub enum Param {
     Speed,
     /// Медиа: множитель громкости 0..1.
     Volume,
+    /// Деформация: смещение угла в процентах размера зоны (−100..100).
+    WarpTLx,
+    WarpTLy,
+    WarpTRx,
+    WarpTRy,
+    WarpBRx,
+    WarpBRy,
+    WarpBLx,
+    WarpBLy,
 }
 
 impl Param {
-    pub const ALL: [Param; 13] = [
+    pub const ALL: [Param; 21] = [
         Param::X,
         Param::Y,
         Param::Rotation,
@@ -197,6 +206,14 @@ impl Param {
         Param::Play,
         Param::Speed,
         Param::Volume,
+        Param::WarpTLx,
+        Param::WarpTLy,
+        Param::WarpTRx,
+        Param::WarpTRy,
+        Param::WarpBRx,
+        Param::WarpBRy,
+        Param::WarpBLx,
+        Param::WarpBLy,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -214,6 +231,14 @@ impl Param {
             Param::Play => "play",
             Param::Speed => "speed",
             Param::Volume => "volume",
+            Param::WarpTLx => "warpTLx",
+            Param::WarpTLy => "warpTLy",
+            Param::WarpTRx => "warpTRx",
+            Param::WarpTRy => "warpTRy",
+            Param::WarpBRx => "warpBRx",
+            Param::WarpBRy => "warpBRy",
+            Param::WarpBLx => "warpBLx",
+            Param::WarpBLy => "warpBLy",
         }
     }
 
@@ -239,6 +264,15 @@ impl Param {
             "play" => Param::Play,
             "speed" | "rate" => Param::Speed,
             "volume" | "gain" => Param::Volume,
+            // Углы деформации: те же имена, что в инспекторе вкладки «Объект».
+            "warpTLx" => Param::WarpTLx,
+            "warpTLy" => Param::WarpTLy,
+            "warpTRx" => Param::WarpTRx,
+            "warpTRy" => Param::WarpTRy,
+            "warpBRx" => Param::WarpBRx,
+            "warpBRy" => Param::WarpBRy,
+            "warpBLx" => Param::WarpBLx,
+            "warpBLy" => Param::WarpBLy,
             _ => return None,
         })
     }

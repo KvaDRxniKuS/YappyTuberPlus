@@ -5,7 +5,7 @@ import { getEngineBackend, type EngineBackend, type EngineResponse } from "./bac
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import type { ScriptScope } from "./scripts";
 import { neutralFrame, prepareFrame } from "./frame";
-import { enumConstants } from "../modules/manual";
+import { moduleConstants, presetGlobals } from "../modules/presets";
 import { frameProduced } from "./frameSignal";
 import type { TextChannel } from "../render/text";
 
@@ -116,7 +116,9 @@ export function useRigEngine(
     // чужие объекты разбирает и исполняет сам движок.
     const config = {
       canvas: current.canvas,
-      globals: current.globals,
+      // Пресеты: к авторскому глобальному скрипту добавляются события модулей
+      // («награда → пресет»). Пишет их модуль, в скрипте пользователя их нет.
+      globals: presetGlobals(current.modules, current.globals),
       // Ядру не нужны ни картинка, ни файл медиа: оно считает числа. Ссылку на
       // файл в хранилище всё равно не разобрать в Rust, а base64 туда гонять
       // незачем — на больших видео это десятки мегабайт на каждую правку.
@@ -127,7 +129,7 @@ export function useRigEngine(
       })),
       // Состояния enum приходят в ядро числами: в скрипте `manual.value == walk`
       // читается по имени, а не по номеру.
-      constants: enumConstants(current.modules),
+      constants: moduleConstants(current.modules),
     };
     backend.call({ op: "create", config }).then(async (response) => {
       if (!response.ok || response.handle === undefined) {

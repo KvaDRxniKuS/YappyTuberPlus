@@ -1,0 +1,22 @@
+{
+  "id": "presets",
+  "title": "Пресеты",
+  "description": "Одежда и эмоции: список пресетов, переменная и автоматические события из наград. Пользователь пишет только названия — код модуль делает сам.",
+  "kind": "presets",
+  "audio": false,
+  "inputs": [
+    { "name": "value", "label": "Пресет", "kind": "level", "min": -1, "max": 1, "step": 1 }
+  ],
+  "fields": [],
+  "defaults": {
+    "presets": [
+      { "name": "summer", "label": "Лето" },
+      { "name": "winter", "label": "Зима" }
+    ],
+    "variable": "preset",
+    "rewardSearch": true,
+    "rewardModules": ["twitch"],
+    "rewardPrefixes": ["redeem"],
+    "preview": -1
+  }
+}

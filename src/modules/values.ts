@@ -6,6 +6,7 @@ import {
 } from "./registry";
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
+import { presetEntries, presetInputs, presetPreview } from "./presets";
 import { frameValue, type AudioFrame } from "./audio";
 import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./external";
 import { textInputOf } from "./sources";
@@ -29,6 +30,8 @@ export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   if (definition.kind === "viseme") return visemeInputs(module);
   // Ручной модуль в режиме «Состояния» задаёт входы сам: номер + флаг на состояние.
   if (definition.kind === "manual" && manualMode(module) === "enum") return enumInputs(module);
+  // Пресеты: номер выбранного в панели плюс флаг на каждый пресет.
+  if (definition.kind === "presets") return presetInputs(module);
   // Внешний источник: входы задаёт таблица отображения, а не шаблон.
   if (definition.kind === "external") return externalInputs(module, definition.inputs);
   if (definition.kind === "keyboard") {
@@ -209,6 +212,23 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
       }
       const final = module.config.normalize === true ? normalizeVisemes(local) : local;
       Object.assign(values, final);
+      continue;
+    }
+
+    // Пресеты: номер берётся из панели модуля (кнопка «Показать»), флаги
+    // выводятся из него. Настоящий пресет живёт в переменной ядра и меняется
+    // событиями — поэтому здесь только предпросмотр.
+    if (definition.kind === "presets") {
+      const index = presetPreview(module);
+      for (const spec of specs) {
+        if (!inputEnabled(module, spec.name)) continue;
+        if (spec.name === "value") {
+          values[inputKey(module, spec.name)] = index;
+          continue;
+        }
+        const position = presetEntries(module).findIndex((entry) => entry.name === spec.name);
+        values[inputKey(module, spec.name)] = position === index ? 1 : 0;
+      }
       continue;
     }
 
