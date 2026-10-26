@@ -43,6 +43,8 @@ interface RightPanelProps {
   onInsertSnippet: (snippet: string) => void;
   /** Проверка скрипта в ядре: подсветка ошибки. */
   checkScript?: ScriptCheck;
+  /** Выбрать объект: переход к строке чужого скрипта из ошибки. */
+  onSelectObject?: (id: string) => void;
   calibrate: CalibrationApi["calibrate"];
   cancelCalibration: CalibrationApi["cancelCalibration"];
   /** Состояние внешних источников: видно в карточке модуля. */
@@ -93,6 +95,27 @@ export function RightPanel(props: RightPanelProps) {
     props.modules.flatMap((module) => moduleInputKeys(module).map((item) => [item.key, item.spec.label])),
   );
   const editorKey = tab === "globals" ? "globals" : props.selected?.id || "empty";
+  // Куда перейти по клику на ошибку: область и строку. `nonce` нужен, чтобы
+  // повторный клик по той же строке снова подсветил её, а не промолчал.
+  const [reveal, setReveal] = useState<{ scope: string; line: number; nonce: number } | null>(null);
+  // Переход — событие, а не состояние: после показа строку снимаем, чтобы
+  // возвращение на эту вкладку через минуту не подсвечивало её снова.
+  useEffect(() => {
+    if (!reveal) return;
+    const timer = window.setTimeout(() => setReveal(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [reveal]);
+  const openIssue = (scope: string, line: number) => {
+    // `globals` — глобальный скрипт, остальное — id объекта. Сначала переключаем
+    // область, потом просим редактор прокрутиться: он уже будет с нужным текстом.
+    if (scope === "globals") {
+      setTab("globals");
+    } else if (props.objects.some((object) => object.id === scope)) {
+      props.onSelectObject?.(scope);
+      setTab("object");
+    }
+    setReveal({ scope, line, nonce: Date.now() });
+  };
   // Проверка видит соседние области: конфликт имён — это всегда две строки,
   // своя и чужая. `scope` пустой у глобального скрипта: тогда ядро смотрит,
   // не заняли ли глобальное имя в скриптах объектов.
@@ -175,6 +198,8 @@ export function RightPanel(props: RightPanelProps) {
             constants={Object.keys(enumConstants(props.modules))}
             checkScope={checkScope}
             onCheck={props.checkScript}
+            reveal={reveal?.scope === editorKey ? reveal : undefined}
+            onOpenIssue={openIssue}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}
         </div>

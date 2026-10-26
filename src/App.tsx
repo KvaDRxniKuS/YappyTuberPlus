@@ -1065,6 +1065,7 @@ export default function App() {
           onManual={moduleInputs.setManual}
           onInsertSnippet={insertEventSnippet}
           checkScript={engine.checkScript}
+          onSelectObject={selectOnly}
           calibrate={moduleInputs.calibrate}
           cancelCalibration={moduleInputs.cancelCalibration}
           externalStatuses={moduleInputs.externalStatuses}

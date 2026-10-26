@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   appendSnippet, describeIssues, eventNameFor, eventNames, eventSnippet, freeEventName,
-  issueSpans,
+  issueSpans, issueTarget, scopeTitle,
 } from "../../src/engine/scripts";
 
 /**
@@ -110,4 +110,29 @@ test("сообщение под редактором называет перво
     { line: 1, column: 1, length: 3, message: "одна" },
     { line: 2, column: 1, length: 3, message: "две" },
   ])).toBe("одна · ещё 1");
+});
+
+test("клик по ошибке ведёт ко второму объявлению в другом скрипте", () => {
+  // Вторая строка в этом же тексте уже подчёркнута — переходить некуда.
+  expect(issueTarget(
+    [{ line: 1, column: 1, length: 5, message: "м", related: { scope: "head", line: 2 } }],
+    "head",
+  )).toBeNull();
+  // А если она в глобальном скрипте — ведём туда.
+  expect(issueTarget(
+    [{ line: 1, column: 1, length: 5, message: "м", related: { scope: "globals", line: 7 } }],
+    "head",
+  )).toEqual({ scope: "globals", line: 7 });
+  // У ошибки без второго места перехода нет вовсе.
+  expect(issueTarget([{ line: 1, column: 1, length: 3, message: "м" }], "head")).toBeNull();
+  // Несколько ошибок: берём первую, где есть куда идти.
+  expect(issueTarget([
+    { line: 1, column: 1, length: 3, message: "без места" },
+    { line: 2, column: 1, length: 3, message: "в объект", related: { scope: "arm", line: 9 } },
+  ], "head")).toEqual({ scope: "arm", line: 9 });
+});
+
+test("область называется как файл", () => {
+  expect(scopeTitle("globals")).toBe("globals.rig");
+  expect(scopeTitle("head")).toBe("head.rig");
 });

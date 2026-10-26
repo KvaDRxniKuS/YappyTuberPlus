@@ -107,6 +107,29 @@ export function issueSpans(
   return spans;
 }
 
+/**
+ * Куда ведёт клик по ошибке: второе объявление в **другом** скрипте.
+ *
+ * Если вторая строка в этом же тексте, она уже подчёркнута — переходить некуда.
+ * Возвращается первое такое место: остальные видны в сообщении как «ещё N».
+ */
+export function issueTarget(
+  issues: ScriptIssueInfo[],
+  ownScope: string,
+): { scope: string; line: number } | null {
+  for (const issue of issues) {
+    if (issue.related && issue.related.scope !== ownScope) {
+      return { scope: issue.related.scope, line: issue.related.line };
+    }
+  }
+  return null;
+}
+
+/** Как называется область в сообщении: `globals.rig` или `<id>.rig`. */
+export function scopeTitle(scope: string): string {
+  return scope === "globals" ? "globals.rig" : `${scope}.rig`;
+}
+
 /** Сообщение под редактором: первое место и сколько ещё таких же. */
 export function describeIssues(issues: ScriptIssueInfo[]): string {
   if (issues.length === 0) return "";

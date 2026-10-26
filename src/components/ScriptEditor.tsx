@@ -8,7 +8,7 @@ import { autocompletion, snippet, type CompletionContext, type CompletionResult 
 import { tags } from "@lezer/highlight";
 import type { ScriptIssueInfo } from "../types";
 import {
-  describeIssues, eventNames, freeEventName, issueSpans,
+  describeIssues, eventNames, freeEventName, issueSpans, issueTarget, scopeTitle,
   type ErrorSpan, type ScriptCheck, type ScriptScope,
 } from "../engine/scripts";
 import {
@@ -203,6 +203,28 @@ const hintField = StateField.define<string>({
   },
 });
 
+/**
+ * Строка, к которой вернулись по клику на ошибку в другом скрипте.
+ *
+ * Подсветка временная: она отвечает на вопрос «куда я попал», а не ругается.
+ */
+const revealEffect = StateEffect.define<{ from: number; to: number } | null>();
+
+const revealField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, transaction) {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(revealEffect)) continue;
+      next = effect.value
+        ? Decoration.set([Decoration.mark({ class: "cm-script-reveal" }).range(effect.value.from, effect.value.to)])
+        : Decoration.none;
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 const hintTooltip = showTooltip.compute([hintField], (state) => {
   const text = state.field(hintField);
   if (!text) return null;
@@ -238,13 +260,22 @@ interface ScriptEditorProps {
    * «объявлено глобально» и «глобальное имя заняли в объекте».
    */
   checkScope?: ScriptScope;
+  /**
+   * Куда перейти внутри этого текста: строка и номер попытки.
+   *
+   * Номер нужен, чтобы повторный клик по той же ошибке снова подсветил строку:
+   * одинаковые значения пропсов не вызывают эффект.
+   */
+  reveal?: { line: number; nonce: number };
+  /** Клик по ошибке в другом скрипте: переключить область и встать на строку. */
+  onOpenIssue?: (scope: string, line: number) => void;
   onCheck?: ScriptCheck;
   onApply: (value: string) => void;
 }
 
 export function ScriptEditor({
   value, objectIds, globals, moduleInputs = [], moduleInputLabels = {}, events = [],
-  constants = [], checkScope, onCheck, onApply,
+  constants = [], checkScope, reveal, onOpenIssue, onCheck, onApply,
 }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -260,7 +291,7 @@ export function ScriptEditor({
   // должна снимать ошибку в скрипте объекта без пересоздания редактора.
   const checkData = useRef<ScriptScope>(checkScope ?? { globals: "", objects: [] });
   checkData.current = checkScope ?? { globals: "", objects: [] };
-  const [errorText, setErrorText] = useState("");
+  const [issues, setIssues] = useState<ScriptIssueInfo[]>([]);
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
   // Высота шпаргалки: её тянут за верхний край и запоминают между сессиями.
@@ -316,11 +347,11 @@ export function ScriptEditor({
       const check = checkRef.current;
       if (!editor || !check) return;
       const scope = checkData.current;
-      void check(source, scope).then((issues) => {
+      void check(source, scope).then((next) => {
         const current = view.current;
         if (!current || current.state.doc.toString() !== source) return;
-        const spans = issueSpans(current.state.doc.toString(), issues, scope.scope ?? "globals");
-        setErrorText(describeIssues(issues));
+        const spans = issueSpans(current.state.doc.toString(), next, scope.scope ?? "globals");
+        setIssues(next);
         current.dispatch({ effects: errorEffect.of(spans.length > 0 ? spans : null) });
       }).catch(() => { /* ядро без `check` — просто без подсветки */ });
     };
@@ -522,6 +553,7 @@ export function ScriptEditor({
           ".cm-cursor": { borderLeftColor: "#8ad8c6" },
           ".cm-script-error": { textDecoration: "underline wavy #e08b8b" },
           ".cm-script-related": { textDecoration: "underline wavy #d3ad6a" },
+          ".cm-script-reveal": { backgroundColor: "#8ad8c622", outline: "1px solid #8ad8c655" },
           ".cm-script-hint": {
             padding: "3px 8px",
             background: "#232b31",
@@ -561,6 +593,33 @@ export function ScriptEditor({
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value }, selection: { anchor: cursor } });
     runCheckRef.current(value);
   }, [value]);
+
+  /**
+   * Переход к строке: клик по ошибке в другом скрипте.
+   *
+   * Зависимость — только `nonce`: объект ошибки пересоздаётся на каждый рендер,
+   * а подсветить надо ровно один раз на клик, даже если строка та же.
+   */
+  const revealNonce = reveal?.nonce;
+  useEffect(() => {
+    const editor = view.current;
+    const line = reveal?.line;
+    if (!editor || !line) return;
+    const target = editor.state.doc.line(Math.min(Math.max(line, 1), editor.state.doc.lines));
+    editor.dispatch({
+      selection: { anchor: target.from },
+      effects: [
+        EditorView.scrollIntoView(target.from, { y: "center" }),
+        revealEffect.of({ from: target.from, to: target.to }),
+      ],
+    });
+    editor.focus();
+    const timer = window.setTimeout(() => {
+      view.current?.dispatch({ effects: revealEffect.of(null) });
+    }, 1600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealNonce]);
 
   /**
    * Вставка готового блока (клик по шпаргалке — то же, что бросок мышью).
@@ -622,10 +681,30 @@ export function ScriptEditor({
     editor.focus();
   };
 
+  // Второе объявление может быть в другом скрипте: тогда в тексте его не
+  // подчеркнуть, зато можно туда перейти — область и строка известны.
+  const ownScope = checkScope?.scope ?? "globals";
+  const jump = issueTarget(issues, ownScope);
+  const jumpTitle = jump ? scopeTitle(jump.scope) : "";
+
   return (
     <>
       <div className="code-editor" ref={host} />
-      {errorText && <div className="script-error-line" title={errorText}>{errorText}</div>}
+      {issues.length > 0 && (
+        <div className="script-error-line" title={describeIssues(issues)}>
+          <span className="script-error-text">{describeIssues(issues)}</span>
+          {jump && (
+            <button
+              type="button"
+              className="script-error-jump"
+              title={`Показать второе объявление: ${jumpTitle}, строка ${jump.line}. Область переключится, строка подсветится`}
+              onClick={() => onOpenIssue?.(jump.scope, jump.line)}
+            >
+              <ChevronRight size={11} /> {jumpTitle}:{jump.line}
+            </button>
+          )}
+        </div>
+      )}
       {pinned.length > 0 && (
         <div className="favorite-commands">
           <span className="favorite-title" title="Избранные команды: клик вставляет вызов">★ Избранные</span>
