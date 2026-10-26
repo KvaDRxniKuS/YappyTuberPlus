@@ -74,8 +74,9 @@ start-yappytuber.bat --branch main  :: другая ветка
 
 - **`install-build-tools.bat`** — ставит Node.js, Rust, Visual Studio Build Tools (C++)
   и WebView2, если их нет (нужны права администратора и интернет);
-- **`build-yappytuber.bat`** — собирает `.exe` и установщик, результат открывает в
-  проводнике. Флаги: `--no-bundle` (только `.exe`), `--fast` (без пересборки WASM).
+- **`build-yappytuber.bat`** — собирает `.exe` и установщик. При успехе окно закрывается
+  само и открывает папку с результатом; остаётся открытым только при ошибке.
+  Флаги: `--no-bundle` (только `.exe`), `--fast` (без пересборки WASM), `--no-open`.
 
 Третий вариант — вообще ничего не ставить: один раз добавьте workflow из
 [`BUILD.md`](BUILD.md), затем вкладка **Actions** → **Сборка Windows** →

@@ -85,8 +85,11 @@ if "%ASSUME_YES%"=="0" (
   echo Будут установлены отсутствующие компоненты.
   echo Visual Studio Build Tools - это 2-4 ГБ и 10-20 минут.
   echo.
-  choice /c YN /m "Продолжить установку"
-  if errorlevel 2 goto summary
+  rem Вопрос через Enter: у `choice` каждая «лишняя» клавиша даёт громкий писк.
+  set "ANSWER="
+  set /p "ANSWER=Продолжить установку? [Y/n]: "
+  rem `!ANSWER!`, а не `%ANSWER%`: внутри блока значение читается на этапе разбора.
+  if /i "!ANSWER!"=="n" goto summary
 )
 echo.
 
@@ -191,8 +194,9 @@ exit /b 1
 echo Всё готово. Дальше - build-yappytuber.bat (двойной клик), он соберёт .exe.
 echo.
 if not exist "build-yappytuber.bat" goto done
-choice /c YN /t 15 /d Y /m "Собрать приложение сейчас"
-if errorlevel 2 goto done
+set "ANSWER="
+set /p "ANSWER=Собрать приложение сейчас? [Y/n]: "
+if /i "!ANSWER!"=="n" goto done
 echo.
 call "%~dp0build-yappytuber.bat"
 popd

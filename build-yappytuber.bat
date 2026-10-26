@@ -10,9 +10,12 @@ rem
 rem  Параметры:
 rem    --no-bundle   только .exe, без установщика (быстрая проверка)
 rem    --fast        без пересборки WASM-ядра (если Rust не нужен под рукой)
+rem    --no-open     не открывать папку с результатом (для сборки из скрипта)
 rem    --help        справка
 rem
 rem  Первый запуск долгий: компилируется Rust-часть (5-20 минут).
+rem  При успехе папка с результатом открывается сама, а окно закрывается:
+rem  нажимать ничего не нужно. Окно остаётся открытым только при ошибке.
 rem  Если чего-то не хватает, скрипт предложит запустить install-build-tools.bat.
 rem ===========================================================================
 setlocal EnableExtensions EnableDelayedExpansion
@@ -27,12 +30,14 @@ set "CARGO_BIN=%USERPROFILE%\.cargo\bin"
 set "PATH=%CARGO_BIN%;%PF%\nodejs;%PF%\Git\cmd;%PATH%"
 set "BUNDLE=1"
 set "FAST=0"
+set "OPEN=1"
 set "EXE=src-tauri\target\release\yappytuberplus.exe"
 
 :parse
 if "%~1"=="" goto parsed
 if /i "%~1"=="--no-bundle" ( set "BUNDLE=0" & shift & goto parse )
 if /i "%~1"=="--fast" ( set "FAST=1" & shift & goto parse )
+if /i "%~1"=="--no-open" ( set "OPEN=0" & shift & goto parse )
 if /i "%~1"=="--help" goto usage
 echo Неизвестный параметр: %~1
 goto usage
@@ -93,8 +98,11 @@ echo.
 if "%TOOLS_OK%"=="1" goto tools_ok
 echo Собирать нечем: не хватает компонентов выше.
 if not exist "install-build-tools.bat" goto tools_missing
-choice /c YN /m "Запустить установку инструментов"
-if errorlevel 2 goto tools_missing
+rem Вопрос через Enter, а не через `choice`: `choice` пищит на любой «лишней»
+rem клавише, а набирать Y/N вслепую неудобно.
+set "ANSWER="
+set /p "ANSWER=Запустить установку инструментов? [Y/n]: "
+if /i "%ANSWER%"=="n" goto tools_missing
 call "%~dp0install-build-tools.bat"
 popd
 exit /b 0
@@ -151,24 +159,29 @@ echo.
 if not "%RESULT%"=="0" goto build_failed
 if not exist "%EXE%" goto build_failed
 
+set "RELEASE=%CD%\src-tauri\target\release"
 echo ============================================================
 echo   Готово
 echo ============================================================
-echo Приложение: %CD%\%EXE%
+echo Приложение: %RELEASE%\yappytuberplus.exe
 set "SETUP="
-for %%F in ("src-tauri\target\release\bundle\nsis\*.exe") do if exist "%%~fF" set "SETUP=%%~fF"
+for %%F in ("%RELEASE%\bundle\nsis\*.exe") do if exist "%%~fF" set "SETUP=%%~fF"
 if defined SETUP echo Установщик: %SETUP%
 if not defined SETUP echo Установщик не собирался (--no-bundle) или NSIS недоступен.
 echo.
 echo Установщик можно отдать пользователям: Node.js и Rust им не нужны.
 echo Подробности: docs\BUILD.md
 echo.
-if not exist "src-tauri\target\release" goto build_no_folder
-choice /c YN /t 20 /d Y /m "Открыть папку с результатом"
-if errorlevel 2 goto build_no_folder
-start "" explorer "%CD%\src-tauri\target\release"
-:build_no_folder
-pause
+
+rem Папку открываем сразу, без вопроса: ждать клавишу незачем, а `choice`
+rem пищал на каждую «лишнюю» клавишу. Окно закрывается само.
+if "%OPEN%"=="0" goto build_quiet
+if defined SETUP goto open_setup
+if exist "%RELEASE%" start "" explorer "%RELEASE%"
+goto build_quiet
+:open_setup
+start "" explorer /select,"%SETUP%"
+:build_quiet
 popd
 exit /b 0
 
@@ -199,8 +212,10 @@ echo.
 echo   build-yappytuber.bat               приложение + установщик
 echo   build-yappytuber.bat --no-bundle   только .exe
 echo   build-yappytuber.bat --fast        без пересборки WASM-ядра
+echo   build-yappytuber.bat --no-open     не открывать папку с результатом
 echo.
 echo Инструменты сборки ставит install-build-tools.bat.
+echo При успехе папка с результатом открывается сама, окно закрывается.
 pause
 popd
 exit /b 0

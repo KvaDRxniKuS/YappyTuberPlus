@@ -4,7 +4,10 @@
 #   ./build-yappytuber.sh              приложение + пакет
 #   ./build-yappytuber.sh --no-bundle  только бинарник
 #   ./build-yappytuber.sh --fast       без пересборки WASM-ядра
+#   ./build-yappytuber.sh --no-open    не открывать папку с результатом
 #   ./build-yappytuber.sh --help       справка
+#
+# При успехе папка с результатом открывается сама, ждать нажатия не нужно.
 #
 # Внимание: на Linux получится .deb/AppImage, на macOS — .app/.dmg.
 # Файл .exe для Windows собирается только на Windows: см. build-yappytuber.bat
@@ -13,6 +16,7 @@ set -u
 
 BUNDLE=1
 FAST=0
+OPEN=1
 
 usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 fail() { printf '\nОШИБКА: %s\n' "$*" >&2; exit 1; }
@@ -23,6 +27,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-bundle) BUNDLE=0 ;;
     --fast) FAST=1 ;;
+    --no-open) OPEN=0 ;;
     -h|--help) usage; exit 0 ;;
     *) say "Неизвестный параметр: $1"; usage; exit 1 ;;
   esac
@@ -112,3 +117,20 @@ done
 
 say ""
 say "Подробности и решение ошибок: docs/BUILD.md"
+
+# --- папку открываем сами ----------------------------------------------------
+# В терминале ждать нажатия незачем, а в файловом менеджере результат виден
+# сразу: открываем папку с пакетом, иначе — с бинарником.
+if [ "$OPEN" = "1" ]; then
+  TARGET=""
+  for bundle in "$RELEASE"/bundle/*/*; do
+    [ -e "$bundle" ] && TARGET="$(dirname "$bundle")" && break
+  done
+  [ -n "$TARGET" ] || TARGET="$RELEASE"
+  if [ -d "$TARGET" ]; then
+    case "$(uname -s)" in
+      Darwin) open "$TARGET" >/dev/null 2>&1 || say "Откройте папку: $TARGET" ;;
+      *) xdg-open "$TARGET" >/dev/null 2>&1 || say "Откройте папку: $TARGET" ;;
+    esac
+  fi
+fi

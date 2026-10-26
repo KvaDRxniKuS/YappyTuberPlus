@@ -548,8 +548,10 @@ Node.js и WebView2; ядро собирается с target `wasm32-unknown-unk
 
 1. **`install-build-tools.bat`** — ставит Node.js LTS, Rust, Visual Studio Build Tools (C++)
    и WebView2, если их нет (нужен интернет и подтверждение UAC);
-2. **`build-yappytuber.bat`** — собирает `.exe` и установщик и открывает папку с результатом
-   (`--no-bundle` — только `.exe`, `--fast` — без пересборки WASM-ядра).
+2. **`build-yappytuber.bat`** — собирает `.exe` и установщик. При успехе окно закрывается
+   само и открывает папку с результатом (установщик выделен); при ошибке окно остаётся,
+   чтобы прочитать текст. Ключи: `--no-bundle` — только `.exe`, `--fast` — без пересборки
+   WASM-ядра, `--no-open` — не открывать папку.
 
 Если ставить ничего не хочется, установщик соберёт GitHub: один раз добавьте
 workflow из [`docs/BUILD.md`](docs/BUILD.md), затем **Actions** → **Сборка Windows** →

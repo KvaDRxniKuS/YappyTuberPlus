@@ -100,8 +100,9 @@ where winget >nul 2>&1
 if errorlevel 1 goto install_manual
 echo.
 echo Не найден %TOOL_NAME%. Можно установить автоматически через winget.
-choice /c YN /m "Установить %TOOL_NAME%"
-if errorlevel 2 goto install_manual
+set "ANSWER="
+set /p "ANSWER=Установить %TOOL_NAME%? [Y/n]: "
+if /i "%ANSWER%"=="n" goto install_manual
 echo == Установка %TOOL_NAME% - winget install %WINGET_ID%
 winget install --id "%WINGET_ID%" --exact --silent --accept-package-agreements --accept-source-agreements
 if errorlevel 1 goto install_manual
