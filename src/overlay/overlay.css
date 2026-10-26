@@ -85,6 +85,12 @@ body.overlay-guide {
   gap: 4px;
 }
 
+/* Слои, чьи картинки оверлей ещё не получил: видно в режиме ?guide=1. */
+.overlay-missing {
+  border-color: #7a5a2a !important;
+  color: #f0c36b;
+}
+
 .overlay-meta span {
   padding: 4px 7px;
   border: 1px solid #2b323a;

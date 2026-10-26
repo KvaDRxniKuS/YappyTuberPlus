@@ -220,6 +220,8 @@ export function OverlayApp() {
     };
   }, [guide, background, backgroundColor]);
 
+  const missingAssets = preset ? unresolvedAssetIds(assetIdsOfPreset(preset)).length : 0;
+
   return (
     <div className={`overlay-root ${guide ? "guide" : ""} ${capture ? "capture" : ""}`}>
       <canvas ref={canvas} className="overlay-canvas" />
@@ -252,6 +254,13 @@ export function OverlayApp() {
             <span>{snapshot?.config?.scaleMode ?? "contain"}</span>
             <span>транспорт: {snapshot?.transport || "…"}</span>
             <span>{snapshot?.frameCount ?? 0} кадров</span>
+            {/* Невидимый слой чаще всего — картинка, которую оверлей ещё не
+                получил: байты лежат в хранилище редактора, а у страницы в OBS
+                своё хранилище. Строка говорит об этом прямо, вместо того чтобы
+                оставлять пустое место в эфире. */}
+            {missingAssets > 0 && (
+              <span className="overlay-missing">картинок не получено: {missingAssets}</span>
+            )}
           </div>
           {!snapshot?.scene && (
             <div className="overlay-hint">
