@@ -6,7 +6,7 @@ import type { ModuleInputSpec } from "./registry";
  *
  * Модуль `external` — «быстрый путь» создания интеграции: адрес, транспорт и
  * таблица отображения живут в настройках экземпляра (то есть в пресете), код не
- * нужен. Детальная настройка — у каждого входа: подпись, границы и удержание
+ * нужен. Детальная настройка — у каждого входа: подпись, границы и длительность
  * значения. Число из источника не пересчитывается: шкалу меняет скрипт.
  *
  * `ws` (WebSocket) работает в окне и не подчиняется CORS, поэтому одинаково
@@ -205,7 +205,7 @@ export function externalInputs(module: ModuleInstance, fallback: ModuleInputSpec
     // у громкости — сотые. Паспорт входа читает его как `<вход>.step`.
     step: rule.step ?? (rule.kind === "flag" ? 1 : 0.01),
     kind: rule.kind ?? "level",
-    hint: `${rule.path}${rule.holdMs ? ` · держится ${Math.round(rule.holdMs)} мс` : ""}`,
+    hint: `${rule.path}${rule.holdMs ? ` · длительность ${Math.round(rule.holdMs)} мс` : ""}`,
   }));
 }
 

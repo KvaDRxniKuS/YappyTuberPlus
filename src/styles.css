@@ -1282,7 +1282,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .external-mapping-head,
 .external-mapping-row {
   display: grid;
-  grid-template-columns: minmax(48px, 1.1fr) minmax(74px, 1.6fr) minmax(48px, 1fr) 42px 42px 58px auto;
+  grid-template-columns: minmax(48px, 1.1fr) minmax(74px, 1.6fr) minmax(48px, 1fr) 42px 42px 90px auto;
   gap: 4px; align-items: center;
 }
 .external-mapping-head { color: #5d6872; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }

@@ -41,9 +41,9 @@ const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
  * Редактор внешнего источника.
  *
  * Сверху — куда подключаться, снизу — таблица «поле JSON → вход модуля». Таблица
- * и есть детальная настройка: у каждой строки своя подпись, границы и удержание
- * значения. Входы модуля появляются ровно из этих строк, поэтому ручного кода
- * для новой интеграции не нужно.
+ * и есть детальная настройка: у каждой строки своя подпись, границы и
+ * длительность значения. Входы модуля появляются ровно из этих строк, поэтому
+ * ручного кода для новой интеграции не нужно.
  */
 export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   const source = readExternalSource(props.module.config as Record<string, unknown>);
@@ -469,7 +469,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           <span>подпись</span>
           <span>мин</span>
           <span>макс</span>
-          <span>держать</span>
+          <span>длительность</span>
           <span />
         </div>
         {source.mapping.map((rule, index) => (
@@ -515,8 +515,8 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               min={0}
               step={50}
               integer
-              title="Сколько миллисекунд вход держит пришедшее число, потом ноль. Нужно событиям: «пришла награда» — это один пакет, а не постоянный уровень"
-              onCommit={(next) => patchRule(index, { holdMs: next }, "Удержание значения")}
+              title="Длительность значения, мс: столько вход помнит пришедшее число, потом ноль. Нужно событиям: «пришла награда» — это один пакет, а не постоянный уровень"
+              onCommit={(next) => patchRule(index, { holdMs: next }, "Длительность значения")}
             />
             <button className="icon-button" title="Удалить вход" onClick={() => removeRule(index)}><Trash2 size={12} /></button>
           </div>
