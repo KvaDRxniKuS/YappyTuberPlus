@@ -6,8 +6,8 @@ import type { ModuleInputSpec } from "./registry";
  *
  * Модуль `external` — «быстрый путь» создания интеграции: адрес, транспорт и
  * таблица отображения живут в настройках экземпляра (то есть в пресете), код не
- * нужен. Детальная настройка — те же поля, но у каждого входа: подпись, границы,
- * множитель, смещение и удержание импульса.
+ * нужен. Детальная настройка — у каждого входа: подпись, границы и удержание
+ * значения. Число из источника не пересчитывается: шкалу меняет скрипт.
  *
  * `ws` (WebSocket) работает в окне и не подчиняется CORS, поэтому одинаково
  * живёт в браузере и в приложении. `http`, `sse` и `osc` поднимает Rust
@@ -162,8 +162,6 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
         kind,
         min: rule.min === undefined ? undefined : readNumber(rule.min, 0),
         max: rule.max === undefined ? undefined : readNumber(rule.max, 1),
-        scale: rule.scale === undefined ? 1 : readNumber(rule.scale, 1),
-        offset: rule.offset === undefined ? 0 : readNumber(rule.offset, 0),
         step: rule.step === undefined ? undefined : readNumber(rule.step, 0.01),
         holdMs: rule.holdMs === undefined ? 0 : Math.max(0, readNumber(rule.holdMs, 0)),
         event: typeof rule.event === "string" && rule.event.trim() ? rule.event.trim() : undefined,
@@ -207,7 +205,7 @@ export function externalInputs(module: ModuleInstance, fallback: ModuleInputSpec
     // у громкости — сотые. Паспорт входа читает его как `<вход>.step`.
     step: rule.step ?? (rule.kind === "flag" ? 1 : 0.01),
     kind: rule.kind ?? "level",
-    hint: `${rule.path}${rule.holdMs ? ` · импульс ${Math.round(rule.holdMs)} мс` : ""}`,
+    hint: `${rule.path}${rule.holdMs ? ` · держится ${Math.round(rule.holdMs)} мс` : ""}`,
   }));
 }
 
@@ -288,19 +286,22 @@ export function ruleMatches(rule: ExternalRule, payload: unknown): boolean {
   return text !== "";
 }
 
-/** Применение правила к значению: множитель, смещение, границы. */
+/**
+ * Применение правила к значению: границы.
+ *
+ * Никаких множителей: источник отдаёт число в своих единицах (баллы, bits,
+ * удары в минуту), и вход принимает его как есть. Привести к другой шкале —
+ * дело скрипта (`twitch.cheer / 100`), который и так пишет пользователь.
+ */
 export function applyRule(rule: ExternalRule, raw: unknown): number | null {
   // Поля нет или оно не число (у фоллова приходит дата) — берём `fallback`:
   // «событие пришло» само по себе значение.
   const source = toNumber(raw) === null && rule.fallback !== undefined ? rule.fallback : raw;
   const value = toNumber(source);
   if (value === null) return null;
-  const scaled = value * (rule.scale ?? 1) + (rule.offset ?? 0);
-  const min = rule.min;
-  const max = rule.max;
-  let result = scaled;
-  if (min !== undefined) result = Math.max(min, result);
-  if (max !== undefined) result = Math.min(max, result);
+  let result = value;
+  if (rule.min !== undefined) result = Math.max(rule.min, result);
+  if (rule.max !== undefined) result = Math.min(rule.max, result);
   return result;
 }
 
@@ -319,5 +320,5 @@ export function applyMapping(payload: unknown, mapping: ExternalRule[]): Record<
 
 /** Путь по умолчанию для новой строки отображения. */
 export function defaultRule(input = "value", path = "$.value"): ExternalRule {
-  return { input, path, kind: "level", scale: 1, offset: 0, min: 0, max: 1, holdMs: 0 };
+  return { input, path, kind: "level", min: 0, max: 1, holdMs: 0 };
 }

@@ -41,9 +41,9 @@ const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
  * Редактор внешнего источника.
  *
  * Сверху — куда подключаться, снизу — таблица «поле JSON → вход модуля». Таблица
- * и есть детальная настройка: у каждой строки своя подпись, границы, множитель,
- * смещение и удержание импульса. Входы модуля появляются ровно из этих строк,
- * поэтому ручного кода для новой интеграции не нужно.
+ * и есть детальная настройка: у каждой строки своя подпись, границы и удержание
+ * значения. Входы модуля появляются ровно из этих строк, поэтому ручного кода
+ * для новой интеграции не нужно.
  */
 export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   const source = readExternalSource(props.module.config as Record<string, unknown>);
@@ -453,7 +453,8 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               <button className="button secondary" onClick={addReward} disabled={!rewardDraft.trim()}><Plus size={12} /></button>
             </div>
             <p className="module-hint">
-              Команда даёт флаг на 3 с, награда — на 5 с. Текст сообщения виден во «Входах», в формулы он не идёт.
+              Команда даёт флаг на 3 с, награда — на 5 с. Текст сообщения читается в скрипте:
+              <code> twitch.chat.message(0)</code> — последнее, <code>(-1)</code> — предыдущее.
             </p>
           </div>
         </div>
@@ -468,9 +469,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           <span>подпись</span>
           <span>мин</span>
           <span>макс</span>
-          <span>×</span>
-          <span>+</span>
-          <span>импульс</span>
+          <span>держать</span>
           <span />
         </div>
         {source.mapping.map((rule, index) => (
@@ -512,26 +511,12 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
             />
             <NumberField
               className="mapping-number"
-              value={rule.scale ?? 1}
-              step={0.1}
-              title="Множитель: применяется до смещения"
-              onCommit={(next) => patchRule(index, { scale: next }, "Множитель")}
-            />
-            <NumberField
-              className="mapping-number"
-              value={rule.offset ?? 0}
-              step={0.1}
-              title="Смещение: прибавляется после множителя"
-              onCommit={(next) => patchRule(index, { offset: next }, "Смещение")}
-            />
-            <NumberField
-              className="mapping-number"
               value={rule.holdMs ?? 0}
               min={0}
               step={50}
               integer
-              title="Удержание импульса, мс: событие живёт это время, потом гаснет"
-              onCommit={(next) => patchRule(index, { holdMs: next }, "Удержание импульса")}
+              title="Сколько миллисекунд вход держит пришедшее число, потом ноль. Нужно событиям: «пришла награда» — это один пакет, а не постоянный уровень"
+              onCommit={(next) => patchRule(index, { holdMs: next }, "Удержание значения")}
             />
             <button className="icon-button" title="Удалить вход" onClick={() => removeRule(index)}><Trash2 size={12} /></button>
           </div>

@@ -67,7 +67,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     // он показывается в панели «Входы» и в журнале.
     rule: {
       input: "chat", path: "$.payload.event.message_id", label: "Сообщений", kind: "level",
-      min: 0, max: 1_000_000, scale: 1, offset: 0, holdMs: 0, count: true,
+      min: 0, max: 1_000_000, holdMs: 0, count: true,
     },
   },
   {
@@ -77,7 +77,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     scope: "channel:read:redemptions",
     rule: {
       input: "reward", path: "$.payload.event.reward.cost", label: "Награда, баллы",
-      kind: "level", min: 0, max: 1_000_000, scale: 1, offset: 0, holdMs: 3000,
+      kind: "level", min: 0, max: 1_000_000, holdMs: 3000,
     },
   },
   {
@@ -87,7 +87,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     scope: "bits:read",
     rule: {
       input: "cheer", path: "$.payload.event.bits", label: "Bits",
-      kind: "level", min: 0, max: 100_000, scale: 1, offset: 0, holdMs: 2500,
+      kind: "level", min: 0, max: 100_000, holdMs: 2500,
     },
   },
   {
@@ -99,7 +99,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     // В событии нет числа: сам факт — это единица на несколько секунд.
     rule: {
       input: "follow", path: "$.payload.event.followed_at", label: "Фоллов",
-      kind: "flag", min: 0, max: 1, scale: 1, offset: 0, holdMs: 4000, fallback: 1,
+      kind: "flag", min: 0, max: 1, holdMs: 4000, fallback: 1,
     },
   },
   {
@@ -109,7 +109,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     scope: "channel:read:subscriptions",
     rule: {
       input: "subscribe", path: "$.payload.event.is_gift", label: "Подписка",
-      kind: "flag", min: 0, max: 1, scale: 1, offset: 0, holdMs: 4000, fallback: 1,
+      kind: "flag", min: 0, max: 1, holdMs: 4000, fallback: 1,
     },
   },
   {
@@ -119,7 +119,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     scope: "channel:read:subscriptions",
     rule: {
       input: "gift", path: "$.payload.event.total", label: "Подарено, шт",
-      kind: "level", min: 0, max: 1000, scale: 1, offset: 0, holdMs: 4000,
+      kind: "level", min: 0, max: 1000, holdMs: 4000,
     },
   },
   {
@@ -131,7 +131,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     extra: "from",
     rule: {
       input: "raid", path: "$.payload.event.viewers", label: "Рейд, зрителей",
-      kind: "level", min: 0, max: 100_000, scale: 1, offset: 0, holdMs: 6000,
+      kind: "level", min: 0, max: 100_000, holdMs: 6000,
     },
   },
   {
@@ -141,7 +141,7 @@ export const TWITCH_EVENTS: TwitchEventSpec[] = [
     scope: "channel:read:hype_train",
     rule: {
       input: "hype", path: "$.payload.event.level", label: "Hype Train, уровень",
-      kind: "level", min: 0, max: 100, scale: 1, offset: 0, holdMs: 6000,
+      kind: "level", min: 0, max: 100, holdMs: 6000,
     },
   },
 ];
@@ -177,8 +177,6 @@ export function commandRule(command: string): ExternalSourceRule {
     kind: "flag",
     min: 0,
     max: 1,
-    scale: 1,
-    offset: 0,
     holdMs: 3000,
     fallback: 1,
     event: "channel.chat.message",
@@ -196,8 +194,6 @@ export function rewardRule(title: string): ExternalSourceRule {
     kind: "flag",
     min: 0,
     max: 1,
-    scale: 1,
-    offset: 0,
     holdMs: 5000,
     fallback: 1,
     event: "channel.channel_points_custom_reward_redemption.add",

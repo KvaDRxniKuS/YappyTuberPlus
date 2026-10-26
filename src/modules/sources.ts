@@ -125,7 +125,7 @@ export class ExternalSourceHost {
     }
   }
 
-  /** Значения модуля с учётом удержания импульсов. */
+  /** Значения модуля с учётом удержания: истёкшее значение возвращается в ноль. */
   values(name: string): Record<string, number> {
     const entry = this.entries.get(name);
     if (!entry) return {};
@@ -136,7 +136,7 @@ export class ExternalSourceHost {
         result[input] = hold.value;
         continue;
       }
-      // Импульс погас: значение возвращается в ноль, а не залипает на последнем.
+      // Удержание истекло: значение возвращается в ноль, а не залипает на нём.
       delete entry.holds[input];
       entry.values[input] = 0;
       result[input] = 0;
@@ -429,9 +429,10 @@ export class ExternalSourceHost {
     const now = Date.now();
     for (const [input, value] of Object.entries(mapped)) {
       const rule = entry.source.mapping.find((item) => item.input === input);
-      // Импульс: ненулевое значение держится, чтобы событие успело сработать.
-      // Явный ноль снимает удержание сразу: так ведут себя и OSC-флаги, и
-      // источники, которые присылают и начало, и конец события.
+      // Удержание: ненулевое значение живёт заданное время, чтобы одиночный
+      // пакет («пришла награда») успел сработать событием. Явный ноль снимает
+      // удержание сразу: так ведут себя и OSC-флаги, и источники, которые
+      // присылают и начало, и конец события.
       if (rule?.holdMs && value !== 0) entry.holds[input] = { value, until: now + rule.holdMs };
       else if (!rule?.count) delete entry.holds[input];
       entry.values[input] = value;

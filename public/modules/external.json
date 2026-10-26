@@ -28,8 +28,6 @@
           "kind": "level",
           "min": 0,
           "max": 1,
-          "scale": 1,
-          "offset": 0,
           "holdMs": 0
         }
       ],
