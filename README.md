@@ -558,6 +558,7 @@ workflow из [`docs/BUILD.md`](docs/BUILD.md), затем **Actions** → **С�
 **Run workflow** — готовый файл появится в артефактах.
 
 Пошагово, с требованиями и разбором ошибок — [`docs/BUILD.md`](docs/BUILD.md).
+Устройство событий и времени в скрипте — [`docs/EVENTS.md`](docs/EVENTS.md).
 В текущей Linux-среде нативная часть проверена через `cargo check`; Windows-установщик
 здесь не создавался.
 
