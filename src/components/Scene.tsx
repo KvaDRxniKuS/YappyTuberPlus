@@ -332,6 +332,9 @@ export function Scene(props: SceneProps) {
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
       const object = ordered[index];
       if (accept && !accept(object)) continue;
+      // Невидимая фигура-маска не должна перехватывать клики у спрайтов под
+      // собой: её видно в дереве, там же она и выбирается.
+      if (object.kind === "shape" && object.shape?.draw === false) continue;
       const values = frame?.objects[object.id] || staticValues(object);
       // Призрак виден на сцене, значит по нему можно и щёлкнуть: иначе
       // полупрозрачный спрайт выглядел бы некликабельным.
