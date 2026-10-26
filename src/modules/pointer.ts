@@ -63,7 +63,11 @@ export interface MouseSample {
   dy: number;
   left: number;
   right: number;
-  /** Вращение колеса за кадр: −1…1 (один щелчок ≈ 1). */
+  /**
+   * Вращение колеса за кадр целыми щелчками: +1 — щелчок от себя, −1 — на
+   * себя. Дробных значений нет: тачпад присылает мелкие дельты, они копятся и
+   * превращаются в щелчок, иначе одно и то же движение давало бы 0.03.
+   */
   wheel: number;
   /** Дополнительные кнопки (`back`, `forward`, `button7`): 0/1. */
   buttons: Record<string, number>;
@@ -88,8 +92,12 @@ interface KeyState {
   hits: number;
 }
 
-/** Сколько «весит» один щелчок колеса: у DOM ~100, у глобального хука 120. */
-const WHEEL_STEP = 100;
+/**
+ * Сколько «весит» один щелчок колеса. Для браузера — `deltaY` одного щелчка:
+ * у Chromium и WebView2 это 100 (у Firefox 3 строки, но там своя дельта).
+ * Системный хук (`rdev`) присылает щелчки как есть, поэтому ему единица.
+ */
+export const WHEEL_STEP = 100;
 
 export class PointerState {
   private keys = new Map<string, KeyState>();
@@ -134,6 +142,10 @@ export class PointerState {
     this.buttons.set(name, down);
   }
 
+  /**
+   * Колесо в щелчках: `delta` — сколько щелчков добавить (обычно ±1, тачпад
+   * присылает меньше). Дробный остаток копится до целого.
+   */
   wheel(delta: number): void {
     if (Number.isFinite(delta)) this.pending.wheel += delta;
   }
@@ -177,10 +189,15 @@ export class PointerState {
       dy: clamp(this.pending.dy, -10000, 10000),
       left: this.buttons.get("left") ? 1 : 0,
       right: this.buttons.get("right") ? 1 : 0,
-      wheel: clamp(this.pending.wheel / WHEEL_STEP, -1, 1),
+      // Целое число щелчков: накопленная дробь переходит в следующий кадр, а
+      // не показывается как «0.4 щелчка» — так колесо не теряет прокрутку при
+      // быстром движении и не даёт ложных «полунажатий».
+      wheel: clamp(Math.trunc(this.pending.wheel), -20, 20),
       buttons: extras,
     };
-    this.pending = { dx: 0, dy: 0, wheel: 0 };
+    // Остаток колеса остаётся в копилке: иначе тачпад с мелкими дельтами
+    // никогда не набрал бы целый щелчок.
+    this.pending = { dx: 0, dy: 0, wheel: this.pending.wheel - Math.trunc(this.pending.wheel) };
     return { keys, mouse };
   }
 }
@@ -297,10 +314,16 @@ function fraction(value: number, start: number, size: number): number {
   return clamp01((value - start) / size);
 }
 
-/** Пиксели внутри области — в логических пикселях монитора (как в настройках Windows). */
-function offset(value: number, start: number, scale: number): number {
-  const clean = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  return (value - start) / clean;
+/**
+ * Пиксели внутри области.
+ *
+ * Ровно те же пиксели, в которых приходит курсор: системный хук отдаёт
+ * физические, и доли `x`/`y` считаются по той же ширине. Делить на масштаб
+ * монитора нельзя — тогда `px` живёт в другом пространстве, чем `x`, и на
+ * мониторе с масштабом 125 % числа расходятся с реальным разрешением.
+ */
+function offset(value: number, start: number): number {
+  return value - start;
 }
 
 /**
@@ -318,8 +341,8 @@ export function mouseValue(
   if (!mouse) return 0;
   if (name === "x" && area) return fraction(mouse.screenX, area.x, area.width);
   if (name === "y" && area) return fraction(mouse.screenY, area.y, area.height);
-  if (name === "px" && area) return offset(mouse.screenX, area.x, area.scale);
-  if (name === "py" && area) return offset(mouse.screenY, area.y, area.scale);
+  if (name === "px" && area) return offset(mouse.screenX, area.x);
+  if (name === "py" && area) return offset(mouse.screenY, area.y);
   if (name === "dx") return mouse.dx;
   if (name === "dy") return mouse.dy;
   if (name === "left") return mouse.left;
@@ -337,10 +360,19 @@ export interface MonitorOption {
 }
 
 /** Подпись монитора для настроек модуля: номер, размер и «основной». */
+/**
+ * Подпись монитора: его настоящее разрешение в пикселях.
+ *
+ * Раньше размер делился на масштаб — «чтобы как в настройках Windows», — и
+ * монитор 3440×1440 при масштабе 125 % показывался как 2752×1152. Путаница
+ * стоила доверия ко всем числам модуля, поэтому теперь показываем физические
+ * пиксели (ровно те, в которых считаются `px`/`py`), а масштаб — подсказкой.
+ */
 export function monitorLabel(monitor: ScreenMonitor): string {
-  const width = Math.round(monitor.width / (monitor.scale || 1));
-  const height = Math.round(monitor.height / (monitor.scale || 1));
-  return `Монитор ${monitor.index + 1} · ${width}×${height}${monitor.primary ? " · основной" : ""}`;
+  const width = Math.round(monitor.width);
+  const height = Math.round(monitor.height);
+  const scale = monitor.scale > 1.01 ? ` · масштаб ${Math.round(monitor.scale * 100)} %` : "";
+  return `Монитор ${monitor.index + 1} · ${width}×${height}${scale}${monitor.primary ? " · основной" : ""}`;
 }
 
 /** Имя кнопки мыши из `MouseEvent.button`: 3 и 4 — боковые кнопки. */

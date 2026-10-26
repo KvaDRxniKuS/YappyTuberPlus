@@ -4,7 +4,7 @@ import { normalizePreset } from "../../src/engine/preset";
 import {
   MASK_END, MASK_START, hasMaskBlock, parseMaskBlock, writeMaskBlock,
 } from "../../src/engine/maskScript";
-import { defaultMask } from "../../src/render/shape";
+import { defaultMask, normalizeMask } from "../../src/render/shape";
 import { maskStrength, NEUTRAL_VALUES } from "../../src/render/rigCanvas";
 import type { RigObject } from "../../src/types";
 
@@ -118,4 +118,17 @@ test("маска: сила из параметра, старое ядро не �
   const legacy = { ...NEUTRAL_VALUES } as Record<string, number>;
   delete legacy.mask;
   expect(maskStrength(legacy as never)).toBe(1);
+});
+
+test("маска: внутренний и внешний файл различаются по ссылке", () => {
+  // Внутренний файл — это ссылка на хранилище проекта.
+  const project = normalizeMask({ kind: "file", file: "asset:abc123" });
+  expect(project?.origin).toBe("project");
+  // Внешний — путь или data URL: он приехал с диска и в проекте его нет.
+  expect(normalizeMask({ kind: "file", file: "data:image/png;base64,AAAA" })?.origin).toBe("external");
+  expect(normalizeMask({ kind: "file", file: "C:/pics/mask.png" })?.origin).toBe("external");
+  // Явное поле сильнее догадки: пользователь мог импортировать внешний файл.
+  expect(normalizeMask({ kind: "file", file: "asset:abc", origin: "external" })?.origin).toBe("external");
+  expect(normalizeMask({ kind: "file", file: "x.png", origin: "project" })?.origin).toBe("project");
+  expect(defaultMask().origin).toBe("project");
 });

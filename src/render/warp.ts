@@ -455,6 +455,16 @@ export type WarpGrab =
   | null;
 
 /**
+ * Какие ручки ловит инструмент.
+ *
+ * Деформация и зона — два разных инструмента, поэтому и захват у них разный:
+ * в «Углах» нельзя случайно утащить рамку, а в «Зоне» — угол картинки. Раньше
+ * оба жили в одном режиме, прямоугольники пересекались, и приходилось
+ * прицеливаться, чтобы не задеть чужую ручку.
+ */
+export type WarpGrabMode = "all" | "frame" | "corners";
+
+/**
  * Поиск ручки под курсором. Сначала углы картинки (они важнее), потом
  * поворот, потом стороны зоны, и только затем — тело зоны.
  */
@@ -466,12 +476,20 @@ export function warpGrabAt(
   matrix: Affine,
   zoom: number,
   point: Vec2,
+  mode: WarpGrabMode = "all",
 ): WarpGrab {
   const handles = warpHandlesAt(object, values, left, top, matrix, zoom);
   const near = (target: Vec2, radius: number) => Math.hypot(target.x - point.x, target.y - point.y) <= radius;
   const cornerRadius = 9 / (zoom || 1);
-  for (const handle of handles.corners) {
-    if (near(handle.point, cornerRadius)) return { kind: "corner", corner: handle.corner };
+  if (mode !== "frame") {
+    for (const handle of handles.corners) {
+      if (near(handle.point, cornerRadius)) return { kind: "corner", corner: handle.corner };
+    }
+  }
+  if (mode === "corners") {
+    // Инструмент углов ничего другого не трогает: иначе на мелком спрайте
+    // ручка угла «побеждала» бы рамку, и зону нельзя было сдвинуть.
+    return null;
   }
   if (near(handles.rotation, cornerRadius)) {
     return {

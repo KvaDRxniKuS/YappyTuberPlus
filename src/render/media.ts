@@ -390,3 +390,83 @@ export class MediaAssets {
     entry.voices = [];
   }
 }
+
+const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov", ".mkv", ".m4v", ".ogv", ".ogg"];
+
+/**
+ * Видео ли это по ссылке. Маска бывает и картинкой (в том числе анимированной:
+ * GIF и WebP браузер анимирует сам), и фильмом — тогда маской становится
+ * текущий кадр. Прозрачное видео в маске — это «окно» с живой формой.
+ */
+export function isVideoSource(source: string | null | undefined): boolean {
+  if (!source) return false;
+  if (source.startsWith("data:video/")) return true;
+  const clean = source.split("?")[0].split("#")[0].toLowerCase();
+  return VIDEO_EXTENSIONS.some((extension) => clean.endsWith(extension));
+}
+
+/**
+ * Видео-маски.
+ *
+ * Отдельно от `MediaAssets`: у медиа-объекта есть сценарий воспроизведения
+ * (пауза, громкость, команды), а маске нужно просто «крутить кадр». Один файл
+ * на все объекты: несколько спрайтов могут резаться одной и той же маской.
+ */
+export class MaskMedia {
+  private videos = new Map<string, HTMLVideoElement>();
+
+  /** Каждый кадр: подключает новые видео-маски и отпускает ушедшие. */
+  sync(sources: Iterable<string | null | undefined>): void {
+    const alive = new Set<string>();
+    for (const source of sources) {
+      if (!source || !isVideoSource(source)) continue;
+      const url = assetUrl(source);
+      if (!url) continue;
+      alive.add(source);
+      const existing = this.videos.get(source);
+      if (existing) {
+        // Ссылка `asset:<id>` разрешилась позже — подключаем источник.
+        if (!existing.src) existing.src = url;
+        if (existing.paused) void existing.play().catch(() => {});
+        continue;
+      }
+      const video = document.createElement("video");
+      video.src = url;
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      void video.play().catch(() => {});
+      this.videos.set(source, video);
+    }
+    for (const [source, video] of [...this.videos]) {
+      if (alive.has(source)) continue;
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      this.videos.delete(source);
+    }
+  }
+
+  /** Готовый кадр или `null`, пока фильм не догрузился. */
+  get(source: string | null | undefined): HTMLVideoElement | null {
+    if (!source) return null;
+    const video = this.videos.get(source);
+    return video && video.readyState >= 2 ? video : null;
+  }
+
+  /** Маска ещё играет: оверлей просит следующий кадр. */
+  active(): boolean {
+    for (const video of this.videos.values()) if (!video.paused) return true;
+    return false;
+  }
+
+  dispose(): void {
+    for (const video of this.videos.values()) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    this.videos.clear();
+  }
+}

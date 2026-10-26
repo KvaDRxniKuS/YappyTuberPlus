@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   BoxSelect, CircleDot, Crosshair, Focus, Frame, Grid3X3, Hand, LassoSelect,
-  LocateFixed, MousePointer2, RotateCw, Scan, ZoomIn, ZoomOut,
+  LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
 import { GUIDE_LABEL } from "../types";
@@ -10,7 +10,7 @@ import {
   drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
 } from "../render/rigCanvas";
-import { MediaAssets } from "../render/media";
+import { MediaAssets, MaskMedia } from "../render/media";
 import { onAssetsChanged } from "../engine/assets";
 import type { TextChannel } from "../render/text";
 import {
@@ -19,13 +19,20 @@ import {
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
-import { nearestPoint } from "../render/shape";
+import { insertIndexFor, nearestPoint, smoothingOf, traceItem } from "../render/shape";
 import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
   warpGrabAt, warpHandlesAt, warpQuad, warpEnabled,
 } from "../render/warp";
 
-export type SceneTool = "move" | "pivot" | "pan" | "marquee" | "lasso" | "warp";
+export type SceneTool =
+  | "move" | "pivot" | "pan" | "marquee" | "lasso"
+  /** Зона деформации: прямоугольник, его стороны и поворот. */
+  | "warp"
+  /** Углы деформации: только четыре точки картинки. */
+  | "deform"
+  /** Перо: точки контура фигуры. */
+  | "pen";
 
 export type SelectMode = "replace" | "toggle" | "add";
 
@@ -47,7 +54,10 @@ interface SceneProps {
    * точка хватается и переносится — как в графическом редакторе.
    */
   pen?: { objectId: string; itemId: string } | null;
-  onPenPoints?: (objectId: string, itemId: string, points: Vec2[]) => void;
+  /** Перо: точки контура; сглаживание идёт вместе с ними одним шагом истории. */
+  onPenPoints?: (objectId: string, itemId: string, points: Vec2[], smoothPoints: number[]) => void;
+  /** Перо: сглаживание точки, 0…100 %. Alt+клик переключает угол и кривую. */
+  onPenSmoothing?: (objectId: string, itemId: string, index: number, value: number) => void;
   /** Файлы, брошенные на сцену: тип объекта определится по файлу. */
   onDropFiles?: (files: FileList) => void;
   onTool: (tool: SceneTool) => void;
@@ -115,6 +125,8 @@ export function Scene(props: SceneProps) {
   const [zoomLabel, setZoomLabel] = useState(80);
   const assets = useRef(new SpriteAssets());
   const mediaAssets = useRef(new MediaAssets());
+  /** Видео-маски: маской может быть фильм, тогда видно его текущий кадр. */
+  const maskMedia = useRef(new MaskMedia());
   const dirty = useRef(true);
   const interaction = useRef<Interaction>(null);
   const spaceDown = useRef(false);
@@ -186,14 +198,17 @@ export function Scene(props: SceneProps) {
     // Медиа живёт по кадру: команды, громкость, пауза. Синхронизация идёт до
     // отрисовки, чтобы видео показало именно текущий кадр.
     mediaAssets.current.sync(preset, frame);
+    maskMedia.current.sync(maskSources(preset));
     drawRig(ctx, preset, frame, assets.current, {
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
-      media: mediaAssets.current, texts: current.texts,
+      media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
     });
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
-    if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId);
-    if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom);
+    if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "frame");
+    if (current.tool === "deform") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "corners");
+    drawShapeOutlines(ctx, preset, frame, zoom, current.selectedIds);
+    if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom, current.tool === "pen");
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
 
     ctx.strokeStyle = "#454d57";
@@ -208,7 +223,8 @@ export function Scene(props: SceneProps) {
     }
     drawMarquee(ctx, marqueeRef.current);
     // Видео меняется само по себе: пока оно играет, просим следующий кадр.
-    if (mediaAssets.current.active()) markDirty();
+    // Видео-маска тоже живая — иначе «окно» застыло бы на первом кадре.
+    if (mediaAssets.current.active() || maskMedia.current.active()) markDirty();
   };
 
   /** Артборд с тенью, нарисованный один раз на изменение размера сцены. */
@@ -284,7 +300,10 @@ export function Scene(props: SceneProps) {
     assets.current.sync(propsRef.current.preset.objects);
     markDirty();
   }), []);
-  useEffect(() => () => mediaAssets.current.dispose(), []);
+  useEffect(() => () => {
+    mediaAssets.current.dispose();
+    maskMedia.current.dispose();
+  }, []);
 
   useEffect(() => {
     markDirty();
@@ -414,12 +433,26 @@ export function Scene(props: SceneProps) {
           <button className={props.tool === "lasso" ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => props.onTool("lasso")}><LassoSelect size={15} /></button>
           <button className={props.tool === "pivot" ? "active" : ""} title="Пивот (P)" onClick={() => props.onTool("pivot")}><Crosshair size={15} /></button>
           <button
+            className={props.tool === "pen" ? "active" : ""}
+            title="Перо (N) · клик ставит точку между ближайшими, Alt+клик меняет сглаживание точки"
+            onClick={() => props.onTool("pen")}
+          ><PenTool size={15} /></button>
+          <button className={props.tool === "pan" ? "active" : ""} title="Панорамирование (Space)" onClick={() => props.onTool("pan")}><Hand size={15} /></button>
+          {/* Деформация — отдельной группой: зона и углы это разные правки,
+              и в работе они не должны пересекаться. */}
+          <span className="tool-separator" />
+          <button
             className={props.tool === "warp" ? "active" : ""}
-            title="Границы текстуры (T) · углы деформации и рамка зоны"
+            title="Зона деформации (T) · прямоугольник, его стороны и поворот"
             disabled={!props.primaryId}
             onClick={() => props.onTool("warp")}
           ><Frame size={15} /></button>
-          <button className={props.tool === "pan" ? "active" : ""} title="Панорамирование (Space)" onClick={() => props.onTool("pan")}><Hand size={15} /></button>
+          <button
+            className={props.tool === "deform" ? "active" : ""}
+            title="Углы деформации (R) · тяните углы картинки, не задевая зону"
+            disabled={!props.primaryId}
+            onClick={() => props.onTool("deform")}
+          ><Move3D size={15} /></button>
           <span className="tool-separator" />
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
           <button
@@ -471,21 +504,37 @@ export function Scene(props: SceneProps) {
               return;
             }
             const point = scenePoint(event);
-            if (current.pen) {
+            if (current.tool === "pen" && current.pen) {
               const object = current.preset.objects.find((item) => item.id === current.pen!.objectId);
               const item = object?.shape?.items.find((entry) => entry.id === current.pen!.itemId);
               if (object && item) {
                 const local = shapePoint(object, current.frameRef.current, point);
-                // Готовую точку хватаем, новую ставим в конец: перо ведёт себя
-                // как обычный инструмент, а не «очистить и начать заново».
                 const index = nearestPoint(item.points, local, 12 / camera.current.zoom);
                 if (index >= 0) {
+                  // Alt+клик по точке — это тип соединения: угол ⇄ кривая.
+                  // Галку «Кривая» на весь контур заменило свойство точки.
+                  if (event.altKey) {
+                    current.onPenSmoothing?.(object.id, item.id, index, smoothingOf(item, index) > 0 ? 0 : 100);
+                    return;
+                  }
                   interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index };
                   return;
                 }
-                const next = [...item.points, { x: roundPoint(local.x), y: roundPoint(local.y) }];
-                current.onPenPoints?.(object.id, item.id, next);
-                interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index: next.length - 1 };
+                // Новая точка встаёт между двумя ближайшими, а не в конец:
+                // так контур не «перескакивает» через всю фигуру. Сглаживание
+                // берём среднее у соседей — вставка не ломает готовую дугу.
+                const at = insertIndexFor(item.points, local, item.closed);
+                const before = item.points[at - 1] ?? item.points[item.points.length - 1];
+                const after = item.points[at] ?? item.points[0];
+                const easing = before && after
+                  ? (smoothingOf(item, item.points.indexOf(before)) + smoothingOf(item, item.points.indexOf(after))) / 2
+                  : 0;
+                const points = [...item.points];
+                points.splice(at, 0, { x: roundPoint(local.x), y: roundPoint(local.y) });
+                const smoothing = item.points.map((_, index) => smoothingOf(item, index));
+                smoothing.splice(at, 0, easing);
+                current.onPenPoints?.(object.id, item.id, points, smoothing);
+                interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index: at };
                 return;
               }
             }
@@ -524,14 +573,19 @@ export function Scene(props: SceneProps) {
                 return;
               }
             }
-            if (current.tool === "warp" && current.primaryId) {
+            if ((current.tool === "warp" || current.tool === "deform") && current.primaryId) {
               const object = current.preset.objects.find((item) => item.id === current.primaryId);
               if (object && object.kind !== "group" && object.kind !== "text") {
                 const values = current.frameRef.current?.objects[object.id] || staticValues(object);
                 const matrix = objectMatrix(object, values);
                 const left = -object.pivot.x * object.width;
                 const top = -object.pivot.y * object.height;
-                const grab = warpGrabAt(object, values, left, top, matrix, camera.current.zoom, point);
+                // Инструменты разделены: «Зона» не ловит углы, «Углы» не ловит
+                // рамку — прямоугольники больше не пересекаются в работе.
+                const grab = warpGrabAt(
+                  object, values, left, top, matrix, camera.current.zoom, point,
+                  current.tool === "deform" ? "corners" : "frame",
+                );
                 if (grab) {
                   // Первое движение в режиме включает деформацию: иначе ручки
                   // не меняли бы картинку, и это выглядело бы поломкой.
@@ -622,9 +676,13 @@ export function Scene(props: SceneProps) {
               const item = object?.shape?.items.find((entry) => entry.id === current.itemId);
               if (!object || !item) return;
               const local = shapePoint(object, propsRef.current.frameRef.current, scenePoint(event));
-              propsRef.current.onPenPoints?.(object.id, item.id, item.points.map((point, index) => (
-                index === current.index ? { x: roundPoint(local.x), y: roundPoint(local.y) } : point
-              )));
+              propsRef.current.onPenPoints?.(
+                object.id, item.id,
+                item.points.map((point, index) => (
+                  index === current.index ? { x: roundPoint(local.x), y: roundPoint(local.y) } : point
+                )),
+                item.points.map((_, index) => smoothingOf(item, index)),
+              );
               return;
             }
             if (current.type === "warpCorner" || current.type === "warpFrame" || current.type === "warpRotate") {
@@ -749,7 +807,9 @@ const TOOL_HINT: Record<SceneTool, string> = {
   lasso: "Обведите объекты; Shift — добавить к выборке",
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
-  warp: "Тяните углы картинки и рамку зоны; Shift на повороте — шаг 15°",
+  warp: "Зона деформации: тяните стороны и поворот; Shift на повороте — шаг 15°",
+  deform: "Углы деформации: тяните углы картинки; Shift на повороте — шаг 15°",
+  pen: "Клик ставит точку между ближайшими, перетаскивание двигает; Alt+клик — угол ⇄ кривая",
 };
 
 /** Объект считается выделенным, если выделен он сам или любой его предок. */
@@ -765,6 +825,7 @@ function drawPen(
   frame: RigFrame | null,
   pen: { objectId: string; itemId: string },
   zoom: number,
+  handles: boolean,
 ): void {
   const object = preset.objects.find((item) => item.id === pen.objectId);
   const item = object?.shape?.items.find((entry) => entry.id === pen.itemId);
@@ -773,17 +834,70 @@ function drawPen(
   const matrix = objectMatrix(object, values);
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
-  const radius = 4 / zoom;
-  for (const point of item.points) {
-    const world = transformPoint(matrix, left + point.x, top + point.y);
-    ctx.beginPath();
-    ctx.arc(world.x, world.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#14171b";
-    ctx.fill();
-    ctx.lineWidth = 1.5 / zoom;
-    ctx.strokeStyle = "#e4bd7c";
-    ctx.stroke();
+  ctx.save();
+  ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+  ctx.translate(left, top);
+  // Линия контура поверх фигуры: без неё не видно, где именно проходит кривая.
+  ctx.beginPath();
+  traceItem(ctx, item);
+  ctx.lineWidth = 1.4 / zoom;
+  ctx.strokeStyle = PEN_LINE_COLOR;
+  ctx.setLineDash([]);
+  ctx.stroke();
+  // Точки — только когда перо действительно правит: в других инструментах они
+  // мешали бы смотреть на картинку.
+  if (handles) {
+    const radius = 4 / zoom;
+    for (const [index, point] of item.points.entries()) {
+      const smoothing = smoothingOf(item, index);
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      // Угол и кривая различаются цветом: тип точки видно без наведения.
+      ctx.fillStyle = smoothing > 0 ? "#14171b" : "#e4bd7c";
+      ctx.fill();
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.strokeStyle = "#e4bd7c";
+      ctx.stroke();
+    }
   }
+  ctx.restore();
+}
+
+/**
+ * Тонкая обводка контуров выбранных фигур.
+ *
+ * Фигура рисуется заливкой, и на плоском цвете не видно, где кончается контур.
+ * Обводка появляется при выделении и исчезает при снятии выбора — на сцене в
+ * ролике её нет, это только подсказка редактора.
+ */
+function drawShapeOutlines(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  zoom: number,
+  selectedIds: string[],
+): void {
+  if (!selectedIds.length) return;
+  ctx.save();
+  ctx.strokeStyle = PEN_LINE_COLOR;
+  ctx.lineWidth = 1 / zoom;
+  ctx.setLineDash([5 / zoom, 4 / zoom]);
+  for (const id of selectedIds) {
+    const object = preset.objects.find((item) => item.id === id);
+    if (!object || object.kind !== "shape") continue;
+    const values = frame?.objects[object.id] || staticValues(object);
+    const matrix = objectMatrix(object, values);
+    ctx.save();
+    ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+    ctx.translate(-object.pivot.x * object.width, -object.pivot.y * object.height);
+    for (const item of object.shape?.items ?? []) {
+      ctx.beginPath();
+      traceItem(ctx, item);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 function roundPoint(value: number): number {
@@ -830,6 +944,9 @@ function hiddenIds(preset: RigPreset): Set<string> {
 }
 
 /** Пунктирные рамки скрытых объектов, пока активен инструмент выделения. */
+/** Цвет контура пера: та же тёплая гамма, что у ручек. */
+const PEN_LINE_COLOR = "#e4bd7c";
+
 /** Цвет спецрежима «Границы текстуры»: зона и её углы. */
 const WARP_COLOR = "#e0834a";
 const WARP_CORNER_COLOR = "#f0c36b";
@@ -841,6 +958,7 @@ function drawWarpOverlay(
   frame: RigFrame | null,
   zoom: number,
   primaryId: string | null,
+  mode: "frame" | "corners" = "frame",
 ) {
   if (!primaryId) return;
   const object = preset.objects.find((item) => item.id === primaryId);
@@ -854,14 +972,25 @@ function drawWarpOverlay(
   const size = 5 / zoom;
 
   ctx.save();
-  // Четырёхугольник картинки: видно, что именно получилось.
+  // Четырёхугольник картинки: видно, что именно получилось. В режиме зоны его
+  // не рисуем — он принадлежит инструменту углов.
   ctx.strokeStyle = WARP_COLOR;
   ctx.lineWidth = 1.4 / zoom;
   ctx.setLineDash([]);
-  ctx.beginPath();
-  handles.corners.forEach((handle, index) => (index === 0 ? ctx.moveTo(handle.point.x, handle.point.y) : ctx.lineTo(handle.point.x, handle.point.y)));
-  ctx.closePath();
-  ctx.stroke();
+  if (mode === "corners") {
+    ctx.beginPath();
+    handles.corners.forEach((handle, index) => (index === 0 ? ctx.moveTo(handle.point.x, handle.point.y) : ctx.lineTo(handle.point.x, handle.point.y)));
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = WARP_CORNER_COLOR;
+    for (const handle of handles.corners) {
+      ctx.beginPath();
+      ctx.arc(handle.point.x, handle.point.y, size + 1 / zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
 
   // Зона, которую гнём: пунктир плюс лёгкая заливка, чтобы отличать её от углов.
   ctx.fillStyle = "rgba(224, 131, 74, 0.10)";
@@ -897,13 +1026,6 @@ function drawWarpOverlay(
   ctx.fill();
   ctx.stroke();
 
-  // Углы картинки — то, ради чего режим и существует.
-  ctx.fillStyle = WARP_CORNER_COLOR;
-  for (const handle of handles.corners) {
-    ctx.beginPath();
-    ctx.arc(handle.point.x, handle.point.y, size + 1 / zoom, 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.restore();
 }
 
@@ -1085,4 +1207,13 @@ function drawGrid(ctx: CanvasRenderingContext2D, width: number, height: number, 
   line(50, GRID_COLOR);
   line(200, GRID_MAJOR);
   ctx.restore();
+}
+
+/** Файлы масок пресета: их отдаёт `MaskMedia`, чтобы видео-маска играла. */
+function maskSources(preset: RigPreset): string[] {
+  const sources: string[] = [];
+  for (const object of preset.objects) {
+    if (object.mask?.kind === "file" && object.mask.file) sources.push(object.mask.file);
+  }
+  return sources;
 }

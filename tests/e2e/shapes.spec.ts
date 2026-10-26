@@ -3,8 +3,8 @@ import { createDemoPreset } from "../../src/data/demoPreset";
 import { makeShape, normalizePreset } from "../../src/engine/preset";
 import { writeMaskBlock } from "../../src/engine/maskScript";
 import {
-  defaultMask, defaultShape, formatPoints, makeItem, nearestPoint, normalizeMask, normalizeShape,
-  parsePoints, uniqueItemId,
+  defaultMask, defaultShape, formatPoints, insertIndexFor, makeItem, nearestPoint, normalizeMask,
+  normalizeShape, parsePoints, readSmoothing, smoothingOf, tracePath, uniqueItemId,
 } from "../../src/render/shape";
 import { orderedObjects } from "../../src/render/rigCanvas";
 import type { RigPreset } from "../../src/types";
@@ -50,7 +50,8 @@ test("фигура без данных получает прямоугольни
   });
   expect(custom.items.map((item) => item.kind)).toEqual(["rect", "path"]);
   expect(custom.items[1].points).toEqual([{ x: 1, y: 2 }, { x: 3, y: 4 }]);
-  expect(custom.items[1].smooth).toBe(true);
+  // Старое поле `smooth: true` разворачивается в полное сглаживание точек.
+  expect(custom.items[1].smoothPoints).toEqual([100, 100]);
 });
 
 test("маска без источника не создаётся, с источником читается", () => {
@@ -103,4 +104,73 @@ test("перо: ближайшая точка и уникальные имена
   expect(item.id).toBe("ellipse_2");
   expect(empty.items.some((entry) => entry.id === item.id)).toBe(false);
   expect(empty.items).toHaveLength(1);
+});
+
+/** Канва-заглушка: записывает команды, чтобы проверить геометрию без браузера. */
+function recorder() {
+  const calls: string[] = [];
+  const ctx = {
+    moveTo: (x: number, y: number) => calls.push(`move ${x} ${y}`),
+    lineTo: (x: number, y: number) => calls.push(`line ${x} ${y}`),
+    bezierCurveTo: (...args: number[]) => calls.push(`curve ${args.map((value) => Math.round(value)).join(" ")}`),
+    closePath: () => calls.push("close"),
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+}
+
+test("перо: сглаживание — свойство точки, а не контура", () => {
+  const square = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  // Углы: четыре отрезка и замыкание.
+  const sharp = recorder();
+  tracePath(sharp.ctx, square, [0, 0, 0, 0], true);
+  expect(sharp.calls.filter((call) => call.startsWith("curve"))).toHaveLength(0);
+  expect(sharp.calls.filter((call) => call.startsWith("line"))).toHaveLength(4);
+
+  // Кривая целиком: в каждом ребре есть Безье.
+  const smooth = recorder();
+  tracePath(smooth.ctx, square, [100, 100, 100, 100], true);
+  expect(smooth.calls.filter((call) => call.startsWith("curve"))).toHaveLength(4);
+
+  // Смешанный контур: ребро сглаживается настолько, насколько сглажены его
+  // концы. Точки 0 и 1 — углы, 2 и 3 — кривые: кривым остаётся только ребро 2-3.
+  const mixed = recorder();
+  tracePath(mixed.ctx, square, [0, 0, 100, 100], true);
+  expect(mixed.calls.filter((call) => call.startsWith("curve"))).toHaveLength(1);
+
+  // Сила влияет на контрольные точки: 100 % уводит их дальше, чем 40 %.
+  const strong = recorder();
+  const weak = recorder();
+  tracePath(strong.ctx, square, [100, 100, 100, 100], false);
+  tracePath(weak.ctx, square, [40, 40, 40, 40], false);
+  expect(strong.calls[1]).not.toBe(weak.calls[1]);
+});
+
+test("перо: новая точка встаёт между двумя ближайшими", () => {
+  const square = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  // Клик по правой стороне — точка встаёт между 1 и 2.
+  expect(insertIndexFor(square, { x: 104, y: 50 }, false)).toBe(2);
+  // Клик по нижней стороне незамкнутого контура — между 2 и 3.
+  expect(insertIndexFor(square, { x: 50, y: 96 }, false)).toBe(3);
+  // Нижняя сторона — ребро между 2 и 3, точка встаёт перед третьей.
+  expect(insertIndexFor(square, { x: 50, y: 104 }, true)).toBe(3);
+  // Замыкающее ребро замкнутого контура (3 → 0) тоже участвует: клик мимо
+  // левой стороны вставляет точку в конец, а не выбрасывает её.
+  expect(insertIndexFor(square, { x: -4, y: 50 }, true)).toBe(4);
+  // В незамкнутом контуре замыкающего ребра нет: левой стороны нет, и точка
+  // уходит к ближайшему из настоящих рёбер — к верхнему.
+  expect(insertIndexFor(square, { x: -4, y: 50 }, false)).toBe(1);
+  // Меньше двух точек — добавляем в конец.
+  expect(insertIndexFor([{ x: 0, y: 0 }], { x: 10, y: 10 }, false)).toBe(1);
+});
+
+test("перо: старое поле smooth превращается в 100 % у каждой точки", () => {
+  const legacy = normalizeShape({ items: [{ kind: "path", points: "0,0; 10,0; 10,10", smooth: true }] });
+  expect(legacy.items[0].smoothPoints).toEqual([100, 100, 100]);
+  // Новый формат: массив по точкам, лишние значения отбрасываются.
+  const perPoint = normalizeShape({ items: [{ kind: "path", points: "0,0; 10,0", smoothPoints: [0, 55, 90] }] });
+  expect(perPoint.items[0].smoothPoints).toEqual([0, 55]);
+  // Мусор не ломает контур: он читается как угол.
+  expect(readSmoothing(["abc", -20, 400], false, 3)).toEqual([0, 0, 100]);
+  expect(smoothingOf(perPoint.items[0], 1)).toBe(55);
+  expect(smoothingOf(perPoint.items[0], 5)).toBe(0);
 });

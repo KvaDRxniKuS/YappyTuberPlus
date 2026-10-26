@@ -19,7 +19,7 @@ export function defaultShape(width = 240, height = 160): ShapeSpec {
       width,
       height,
       points: [],
-      smooth: false,
+      smoothPoints: [],
       closed: true,
     }],
     fill: "#6bc0aa",
@@ -31,7 +31,7 @@ export function defaultShape(width = 240, height = 160): ShapeSpec {
 
 /** Пустая маска: объект виден целиком. */
 export function defaultMask(): MaskSpec {
-  return { kind: "shape", shapeId: "", points: [], file: null, invert: false, feather: 0 };
+  return { kind: "shape", shapeId: "", points: [], file: null, origin: "project", invert: false, feather: 0 };
 }
 
 const ITEM_KINDS: ShapeItemKind[] = ["rect", "ellipse", "path"];
@@ -90,7 +90,10 @@ function normalizeItem(raw: unknown, index: number): ShapeItem | null {
     width: readNumber(item.width),
     height: readNumber(item.height),
     points: readPoints(item.points),
-    smooth: item.smooth === true,
+    // Сглаживание — свойство каждой точки (0…100 %). Старое поле `smooth`
+    // означало «весь контур кривой», поэтому при чтении оно разворачивается в
+    // сотни: настройка не должна потеряться при открытии старого пресета.
+    smoothPoints: readSmoothing(item.smoothPoints, item.smooth === true, readPoints(item.points).length),
     closed: item.closed !== false,
   };
 }
@@ -121,6 +124,12 @@ export function normalizeMask(raw: unknown): MaskSpec | undefined {
     shapeId: typeof source.shapeId === "string" ? source.shapeId : "",
     points: readPoints(source.points),
     file: typeof source.file === "string" && source.file ? source.file : null,
+    // Внутренний файл лежит в хранилище приложения (`asset:<id>`), внешний —
+    // путь или data URL. По самой ссылке это видно, поэтому старые пресеты
+    // получают правильное значение без отдельного поля.
+    origin: source.origin === "external"
+      ? "external"
+      : typeof source.file === "string" && /^asset:/.test(source.file) ? "project" : source.origin === "project" ? "project" : "external",
     invert: source.invert === true,
     feather: Math.max(0, readNumber(source.feather)),
   };
@@ -138,7 +147,7 @@ export function traceItem(ctx: CanvasRenderingContext2D, item: ShapeItem): void 
     ctx.ellipse(item.x + item.width / 2, item.y + item.height / 2, rx, ry, 0, 0, Math.PI * 2);
     return;
   }
-  tracePath(ctx, item.points, item.smooth, item.closed);
+  tracePath(ctx, item.points, item.smoothPoints, item.closed);
 }
 
 /**
@@ -151,7 +160,7 @@ export function traceItem(ctx: CanvasRenderingContext2D, item: ShapeItem): void 
 export function tracePath(
   ctx: CanvasRenderingContext2D,
   points: Vec2[],
-  smooth: boolean,
+  smoothing: number | number[] | boolean,
   closed: boolean,
 ): void {
   if (!points.length) return;
@@ -159,29 +168,37 @@ export function tracePath(
     ctx.moveTo(points[0].x, points[0].y);
     return;
   }
-  if (!smooth || points.length < 3) {
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index].x, points[index].y);
-    if (closed) {
-      ctx.lineTo(points[0].x, points[0].y);
-      ctx.closePath();
-    }
-    return;
-  }
-
+  const strength = (index: number): number => {
+    if (typeof smoothing === "boolean") return smoothing ? 100 : 0;
+    if (typeof smoothing === "number") return smoothing;
+    const value = smoothing[index];
+    return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
+  };
+  ctx.moveTo(points[0].x, points[0].y);
   const count = points.length;
   const at = (index: number) => points[((index % count) + count) % count];
-  ctx.moveTo(points[0].x, points[0].y);
   const segments = closed ? count : count - 1;
   for (let index = 0; index < segments; index += 1) {
+    const p1 = points[index];
+    const p2 = points[(index + 1) % count];
+    // Ребро сглаживается настолько, насколько сглажены обе его точки: угол
+    // рядом с дугой остаётся углом, а сама дуга не ломается.
+    const amount = Math.min(strength(index), strength((index + 1) % count)) / 100;
+    if (amount <= 0.0001) {
+      ctx.lineTo(p2.x, p2.y);
+      continue;
+    }
     const p0 = at(index - 1);
-    const p1 = at(index);
-    const p2 = at(index + 1);
     const p3 = at(index + 2);
-    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    // Catmull-Rom, сжатый к концам ребра: при 100 % линия проходит через
+    // точки как настоящая кривая, при 0 % — прямая.
+    const c1 = { x: p1.x + ((p2.x - p0.x) / 6) * amount, y: p1.y + ((p2.y - p0.y) / 6) * amount };
+    const c2 = { x: p2.x - ((p3.x - p1.x) / 6) * amount, y: p2.y - ((p3.y - p1.y) / 6) * amount };
     ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, p2.x, p2.y);
   }
+  // У замкнутого контура замыкающее ребро уже нарисовано циклом: у него своё
+  // сглаживание (между последней и первой точкой), и второй раз его рисовать
+  // нельзя — линия утолщалась бы на стыке.
   if (closed) ctx.closePath();
 }
 
@@ -191,6 +208,62 @@ export function traceShape(ctx: CanvasRenderingContext2D, spec: ShapeSpec): void
 }
 
 /** Ближайшая точка контура: по ней перо хватает готовую точку для переноса. */
+/**
+ * Сила сглаживания точек из файла пресета: массив 0…100 на каждую точку.
+ * Старый пресет с `smooth: true` получает полное сглаживание.
+ */
+export function readSmoothing(raw: unknown, legacy: boolean, count: number): number[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const values: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const value = Number(list[index]);
+    const fallback = legacy ? 100 : 0;
+    values.push(Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : fallback);
+  }
+  return values;
+}
+
+/** Сглаживание конкретной точки: 0 — угол, 100 — полная кривая. */
+export function smoothingOf(item: ShapeItem, index: number): number {
+  const value = item.smoothPoints[index];
+  return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
+}
+
+/**
+ * Куда вставить точку, чтобы контур не перекосило: между двумя ближайшими.
+ *
+ * Возвращает индекс, по которому новую точку нужно вставить (то есть она
+ * встанет перед ним). Для замкнутого контура замыкающее ребро тоже участвует:
+ * иначе клик по нижней стороне кольца отправлял точку в конец списка.
+ */
+export function insertIndexFor(points: Vec2[], target: Vec2, closed: boolean): number {
+  if (points.length < 2) return points.length;
+  let best = points.length;
+  let distance = Infinity;
+  const segments = closed ? points.length : points.length - 1;
+  for (let index = 0; index < segments; index += 1) {
+    const from = points[index];
+    const to = points[(index + 1) % points.length];
+    const squared = distanceToSegment(target, from, to);
+    if (squared < distance) {
+      distance = squared;
+      best = index + 1;
+    }
+  }
+  return best;
+}
+
+/** Квадрат расстояния от точки до отрезка. */
+function distanceToSegment(point: Vec2, from: Vec2, to: Vec2): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = dx * dx + dy * dy;
+  const t = length === 0 ? 0 : Math.min(1, Math.max(0, ((point.x - from.x) * dx + (point.y - from.y) * dy) / length));
+  const x = from.x + dx * t;
+  const y = from.y + dy * t;
+  return (point.x - x) ** 2 + (point.y - y) ** 2;
+}
+
 export function nearestPoint(points: Vec2[], target: Vec2, radius: number): number {
   let best = -1;
   let distance = radius * radius;
@@ -225,7 +298,7 @@ export function makeItem(spec: ShapeSpec, kind: ShapeItemKind, width: number, he
     width: Math.round(width * (1 - inset * 2)),
     height: Math.round(height * (1 - inset * 2)),
     points: [],
-    smooth: true,
+    smoothPoints: [],
     closed: true,
   };
 }

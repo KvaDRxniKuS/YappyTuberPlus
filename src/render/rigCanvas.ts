@@ -2,7 +2,7 @@ import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
 import { frontness, structurePaths } from "../engine/structure";
-import { DEFAULT_MEDIA, MediaAssets } from "./media";
+import { DEFAULT_MEDIA, MediaAssets, MaskMedia } from "./media";
 import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
@@ -166,6 +166,8 @@ export interface DrawRigOptions {
   ghostAlpha?: number;
   /** Медиа-объекты: звук и видео. Без него медиа рисуется заглушкой. */
   media?: MediaAssets;
+  /** Видео-маски: маской бывает и фильм, тогда видно его текущий кадр. */
+  maskMedia?: MaskMedia;
   /** Текстовый канал модулей: подстановки в шаблоне текстового объекта. */
   texts?: TextChannel;
 }
@@ -205,7 +207,7 @@ export function drawRig(
     // вырезается композитом, и только потом результат ложится на сцену.
     // Маску на маску не ставим: у фигуры её контуры и есть видимость.
     const masked = object.kind !== "group" && object.kind !== "shape" && !!object.mask
-      && maskReady(object.mask, preset, assets);
+      && maskReady(object.mask, preset, assets, options);
     // Сила маски — параметр `mask`: 1 режет по контуру, 0 показывает объект
     // целиком, дробное значение смешивает два варианта. Кадр старого ядра
     // этого параметра не знает — тогда маска работает как настроена.
@@ -349,9 +351,19 @@ export function drawShapeObject(ctx: CanvasRenderingContext2D, object: RigObject
  * Иначе маска без содержимого (нет фигуры, файла или точек) стёрла бы объект
  * целиком, и «пропал спрайт» выглядело бы как поломка пресета.
  */
-function maskReady(mask: MaskSpec, preset: RigPreset, assets: SpriteAssets): boolean {
+function maskReady(
+  mask: MaskSpec,
+  preset: RigPreset,
+  assets: SpriteAssets,
+  options: DrawRigOptions,
+): boolean {
   if (mask.kind === "shape") return preset.objects.some((item) => item.kind === "shape" && item.id === mask.shapeId);
-  if (mask.kind === "file") return !!mask.file && !!assets.get(mask.file);
+  if (mask.kind === "file") {
+    if (!mask.file) return false;
+    // Видео-маска: кадр есть, как только фильм догрузился.
+    if (options?.maskMedia?.get(mask.file)) return true;
+    return !!assets.get(mask.file);
+  }
   return mask.points.length >= 3;
 }
 
@@ -403,7 +415,7 @@ function drawMasked(
   layerCtx.globalCompositeOperation = object.mask?.invert ? "destination-out" : "destination-in";
   const feather = object.mask?.feather ?? 0;
   if (feather > 0) layerCtx.filter = `blur(${feather}px)`;
-  paintMask(layerCtx, preset, frame, assets, object, object.mask!, matrix, left, top);
+  paintMask(layerCtx, preset, frame, assets, object, object.mask!, matrix, left, top, options);
   layerCtx.restore();
 
   ctx.save();
@@ -423,6 +435,7 @@ function paintMask(
   matrix: Affine,
   left: number,
   top: number,
+  options: DrawRigOptions,
 ): void {
   ctx.fillStyle = "#fff";
   if (mask.kind === "shape") {
@@ -440,12 +453,16 @@ function paintMask(
     return;
   }
   if (mask.kind === "file") {
-    const image = mask.file ? assets.get(mask.file) : null;
-    if (!image) return;
+    // Маска-картинка или маска-фильм: у видео берём текущий кадр, и тогда
+    // маска живёт — прозрачное видео даёт движущееся «окно».
+    const video = mask.file ? options.maskMedia?.get(mask.file) ?? null : null;
+    const picture: CanvasImageSource | null = video ?? (mask.file ? assets.get(mask.file) : null);
+    if (!picture) return;
     ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
     ctx.translate(left, top);
-    // Картинка-маска растягивается по рамке объекта: альфа решает, что видно.
-    ctx.drawImage(image, 0, 0, object.width, object.height);
+    // Маска растягивается по рамке объекта: альфа (у видео — яркость кадра с
+    // альфой) решает, что видно.
+    ctx.drawImage(picture, 0, 0, object.width, object.height);
     return;
   }
   if (mask.points.length < 3) return;

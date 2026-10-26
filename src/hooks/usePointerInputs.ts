@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  EMPTY_POINTER, PointerState, monitorLabel, mouseButtonFromIndex,
+  EMPTY_POINTER, PointerState, WHEEL_STEP, monitorLabel, mouseButtonFromIndex,
   type MonitorOption, type PointerFrame, type ScreenMonitor, type ScreenRect, type ScreenSpace,
 } from "../modules/pointer";
 import { isTauri } from "../engine/presetFile";
@@ -205,24 +205,45 @@ export function usePointerInputs(active: boolean): {
     };
     const onButton = (button: string, down: boolean) => state.button(button, down);
     // Курсор приходит в пикселях экрана: область чтения выбирает модуль.
+    // Нативное окно уже присылает щелчки колеса, браузер — дельты прокрутки.
     const onMove = (x: number, y: number) => state.move(x, y);
     const onWheel = (delta: number) => state.wheel(delta);
+    const onWheelPixels = (deltaY: number) => { if (Number.isFinite(deltaY)) state.wheel(deltaY / WHEEL_STEP); };
     const onBlur = () => state.releaseAll();
 
     if (!isTauri()) {
       const keyDown = (event: KeyboardEvent) => onKey(event.code, true);
       const keyUp = (event: KeyboardEvent) => onKey(event.code, false);
       const mouseMove = (event: MouseEvent) => onMove(event.screenX, event.screenY);
-      const mouseDown = (event: MouseEvent) => onButton(mouseButtonFromIndex(event.button), true);
+      const mouseDown = (event: MouseEvent) => {
+        // Средняя кнопка в WebView2 и Chromium включает «автопрокрутку» и
+        // съедает часть событий — из-за этого СКМ «считывалось через раз».
+        if (event.button === 1) event.preventDefault();
+        onButton(mouseButtonFromIndex(event.button), true);
+      };
       const mouseUp = (event: MouseEvent) => onButton(mouseButtonFromIndex(event.button), false);
-      const wheel = (event: WheelEvent) => onWheel(event.deltaY);
+      const wheel = (event: WheelEvent) => onWheelPixels(event.deltaY);
+      // Отпускание ловим ещё и указателем: если мышь отпустили за пределами
+      // окна, `mouseup` до страницы не доходит, а кнопка оставалась зажатой
+      // навсегда. `pointerup` приходит и при захвате указателя.
+      const pointerDown = (event: PointerEvent) => {
+        if (event.pointerType === "mouse") onButton(mouseButtonFromIndex(event.button), true);
+      };
+      const pointerUp = (event: PointerEvent) => {
+        if (event.pointerType === "mouse") onButton(mouseButtonFromIndex(event.button), false);
+      };
       window.addEventListener("keydown", keyDown);
       window.addEventListener("keyup", keyUp);
       window.addEventListener("mousemove", mouseMove);
       window.addEventListener("mousedown", mouseDown);
       window.addEventListener("mouseup", mouseUp);
       window.addEventListener("wheel", wheel, { passive: true });
+      window.addEventListener("pointerdown", pointerDown, true);
+      window.addEventListener("pointerup", pointerUp, true);
+      window.addEventListener("pointercancel", pointerUp, true);
       window.addEventListener("blur", onBlur);
+      // Окно ушло в фон или вкладку закрыли — зажатых кнопок быть не может.
+      document.addEventListener("visibilitychange", onBlur);
       return () => {
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
@@ -230,7 +251,11 @@ export function usePointerInputs(active: boolean): {
         window.removeEventListener("mousedown", mouseDown);
         window.removeEventListener("mouseup", mouseUp);
         window.removeEventListener("wheel", wheel);
+        window.removeEventListener("pointerdown", pointerDown, true);
+        window.removeEventListener("pointerup", pointerUp, true);
+        window.removeEventListener("pointercancel", pointerUp, true);
         window.removeEventListener("blur", onBlur);
+        document.removeEventListener("visibilitychange", onBlur);
       };
     }
 

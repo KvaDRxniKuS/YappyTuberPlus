@@ -194,3 +194,34 @@ test("деформация: поворот зоны считается от це
   expect(round(grab.center.x)).toBe(100);
   expect(round(grab.center.y)).toBe(50);
 });
+
+test("деформация: «Зона» и «Углы» — разные инструменты", () => {
+  const object = sprite({ pivot: { x: 0, y: 0 }, warp: { ...defaultWarp(), enabled: true } });
+  const values = { ...DEFAULT_BASE } as never;
+  const grab = (point: { x: number; y: number }, mode: "frame" | "corners") =>
+    warpGrabAt(object, values, 0, 0, IDENTITY, 1, point, mode);
+
+  // Угол картинки ловится только инструментом углов. Пока деформации нет,
+  // угол картинки совпадает с углом зоны, поэтому смотрим на сдвинутый угол:
+  // правый нижний уехал на 50 % влево-вверх.
+  const bent = sprite({ pivot: { x: 0, y: 0 }, warp: { ...defaultWarp(), enabled: true, corners: { ...defaultWarp().corners, br: { x: -50, y: -50 } } } });
+  const grabBent = (point: { x: number; y: number }, mode: "frame" | "corners") =>
+    warpGrabAt(bent, values, 0, 0, IDENTITY, 1, point, mode);
+  // Угол картинки теперь в (100, 50): его ловит только «Углы».
+  expect(grabBent({ x: 100, y: 50 }, "corners")).toEqual({ kind: "corner", corner: "br" });
+  // А в «Зоне» эта точка — тело зоны, и рамка не тянется за угол.
+  expect(grabBent({ x: 100, y: 50 }, "frame")).toEqual({ kind: "move" });
+  // Угол зоны (200, 100) в «Углах» не ловится, а в «Зоне» это ручка размера.
+  expect(grabBent({ x: 200, y: 100 }, "corners")).toBeNull();
+  expect(grabBent({ x: 200, y: 100 }, "frame")).toEqual({ kind: "handle", handle: "br" });
+
+  // Сторона зоны и тело — только инструментом зоны.
+  expect(grab({ x: 200, y: 50 }, "frame")).toEqual({ kind: "handle", handle: "right" });
+  expect(grab({ x: 200, y: 50 }, "corners")).toBeNull();
+  expect(grab({ x: 100, y: 50 }, "frame")).toEqual({ kind: "move" });
+  expect(grab({ x: 100, y: 50 }, "corners")).toBeNull();
+
+  // Поворот зоны — тоже инструмент зоны.
+  expect(grab({ x: 100, y: -18 }, "frame")?.kind).toBe("rotation");
+  expect(grab({ x: 100, y: -18 }, "corners")).toBeNull();
+});

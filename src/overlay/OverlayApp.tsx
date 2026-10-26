@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
-import { MediaAssets } from "../render/media";
+import { MediaAssets, MaskMedia } from "../render/media";
 import { assetIdsOfPreset, ensureAssetsOfPreset, onAssetsChanged, unresolvedAssetIds } from "../engine/assets";
 import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
@@ -40,6 +40,8 @@ export function OverlayApp() {
   const presetRef = useRef<RigPreset | null>(null);
   const assets = useRef(new SpriteAssets());
   const mediaAssets = useRef(new MediaAssets());
+  /** Видео-маски: маской бывает фильм, и тогда «окно» живёт вместе с ним. */
+  const maskMedia = useRef(new MaskMedia());
   /**
    * Планировщик отрисовки. Цикла нет: холст перерисовывается только когда есть
    * новый кадр или изменились настройки, поэтому неподвижный риг не грузит
@@ -182,7 +184,10 @@ export function OverlayApp() {
       ctx.translate(transform.offsetX, transform.offsetY);
       ctx.scale(transform.scaleX, transform.scaleY);
       mediaAssets.current.sync(current, frame);
-      drawRig(ctx, current, frame, assets.current, { media: mediaAssets.current });
+      maskMedia.current.sync(current.objects.flatMap((object) => (
+        object.mask?.kind === "file" && object.mask.file ? [object.mask.file] : []
+      )));
+      drawRig(ctx, current, frame, assets.current, { media: mediaAssets.current, maskMedia: maskMedia.current });
       ctx.restore();
       if (guide) {
         ctx.save();
@@ -194,7 +199,7 @@ export function OverlayApp() {
       }
 
       // Видео меняется само: пока оно играет, просим следующий кадр.
-      if (mediaAssets.current.active()) loop.current?.request();
+      if (mediaAssets.current.active() || maskMedia.current.active()) loop.current?.request();
 
       const now = performance.now();
       if (guide && now - windowStart >= 1000) {
@@ -216,6 +221,7 @@ export function OverlayApp() {
       window.removeEventListener("resize", onResize);
       scheduler.stop();
       mediaAssets.current.dispose();
+      maskMedia.current.dispose();
       if (loop.current === scheduler) loop.current = null;
     };
   }, [guide, background, backgroundColor]);

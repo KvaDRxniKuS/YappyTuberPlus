@@ -61,20 +61,34 @@ test("движение мыши копится между кадрами и сб
   expect(idle.mouse.dy).toBe(0);
 });
 
-test("колесо нормируется и обрезается, кнопки отпускаются по blur", () => {
+test("колесо считается целыми щелчками, кнопки отпускаются по blur", () => {
   const state = new PointerState();
-  state.wheel(100);
-  state.wheel(100);
-  expect(state.snapshot(0).mouse.wheel).toBe(1);
-  state.button("left", true);
-  state.button("right", true);
+  // Колесо приходит в щелчках: два щелчка — это два.
+  state.wheel(1);
+  state.wheel(1);
+  expect(state.snapshot(0).mouse.wheel).toBe(2);
+  // Дробный остаток копится и не показывается как «полщелчка»: тачпад иначе
+  // давал бы 0.03 вместо прокрутки.
+  const touchpad = new PointerState();
+  touchpad.wheel(0.4);
+  expect(touchpad.snapshot(0).mouse.wheel).toBe(0);
+  touchpad.wheel(0.4);
+  touchpad.wheel(0.4);
+  expect(touchpad.snapshot(0).mouse.wheel).toBe(1);
+  // Мусор в событиях не превращается в бесконечную прокрутку.
+  const wild = new PointerState();
+  wild.wheel(1e6);
+  expect(wild.snapshot(0).mouse.wheel).toBe(20);
+  const state2 = state;
+  state2.button("left", true);
+  state2.button("right", true);
   expect(state.snapshot(0).mouse.left).toBe(1);
-  state.releaseAll();
+  state2.releaseAll();
   const released = state.snapshot(0);
   expect(released.mouse.left).toBe(0);
   expect(released.mouse.right).toBe(0);
   // Место на экране не обрезается: курсор бывает и за границей окна.
-  state.move(2600, -40);
+  state2.move(2600, -40);
   const far = state.snapshot(0);
   expect(far.mouse.screenX).toBe(2600);
   expect(far.mouse.screenY).toBe(-40);
@@ -279,4 +293,30 @@ test("стоп обнуляет счётчики hits, но не состоян�
   state.key("Space", false, 400);
   state.key("Space", true, 500);
   expect(state.snapshot(600).keys.Space.hits).toBe(1);
+});
+
+test("мышь: пиксели физические — как разрешение монитора, а не «логические»", () => {
+  // Монитор 3440×1440 с масштабом 125 %: подпись и `px` обязаны показывать
+  // настоящее разрешение, иначе числа расходятся с тем, что видит человек.
+  const physical: ScreenSpace = {
+    window: { x: 0, y: 0, width: 800, height: 600, scale: 1.25 },
+    monitors: [
+      { index: 0, name: "Широкий", x: 0, y: 0, width: 3440, height: 1440, scale: 1.25, primary: true },
+      { index: 1, name: "Вертикальный", x: 3440, y: 0, width: 1080, height: 1920, scale: 1, primary: false },
+    ],
+    scene: null,
+  };
+  expect(monitorLabel(physical.monitors[0])).toBe("Монитор 1 · 3440×1440 · масштаб 125 % · основной");
+  expect(monitorLabel(physical.monitors[1])).toBe("Монитор 2 · 1080×1920");
+
+  const frame: PointerFrame = {
+    keys: {},
+    mouse: { screenX: 1720, screenY: 720, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 },
+    screen: physical,
+  };
+  const wide = composeValues([module("wide", "mouse")], { audio: {}, manual: {}, auto: {}, pointer: frame });
+  // Центр монитора: половина по долям и 1720 физических пикселей.
+  expect(wide["wide.x"]).toBeCloseTo(0.5, 6);
+  expect(wide["wide.px"]).toBe(1720);
+  expect(wide["wide.py"]).toBe(720);
 });

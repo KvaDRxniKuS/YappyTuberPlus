@@ -129,6 +129,22 @@ export default function App() {
    * здесь, потому что его видят двое — сцена (клики) и инспектор (кнопка).
    */
   const [pen, setPen] = useState<{ objectId: string; itemId: string } | null>(null);
+  /**
+   * Инструменты сцены.
+   *
+   * Деформация разделена на два: зона (T) и углы (R) — раньше обе ручки жили в
+   * одном режиме, прямоугольники пересекались и приходилось прицеливаться.
+   * Перо (N) выбирает контур само: иначе после нажатия клавиши клики по сцене
+   * ничего не делали бы и инструмент выглядел бы сломанным.
+   */
+  const chooseTool = useCallback((next: SceneTool) => {
+    setTool(next);
+    if (next !== "pen") return;
+    const current = presetRef.current;
+    const object = current.objects.find((item) => item.id === selectionRef.current.at(-1));
+    const path = object?.kind === "shape" ? object.shape?.items.find((item) => item.kind === "path") : undefined;
+    if (object && path) setPen({ objectId: object.id, itemId: path.id });
+  }, []);
   const [showGrid, setShowGrid] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
   /** Пресет, ждущий решения по модулям при открытии. */
@@ -501,11 +517,13 @@ export default function App() {
         // Delete и Backspace удаляют выделение; в полях ввода до этого места не доходит.
         event.preventDefault();
         deleteRef.current();
-      } else if (!command && event.code === "KeyV") setTool("move");
-      else if (!command && event.code === "KeyM") setTool("marquee");
-      else if (!command && event.code === "KeyL") setTool("lasso");
-      else if (!command && event.code === "KeyP") setTool("pivot");
-      else if (!command && event.code === "KeyT") setTool("warp");
+      } else if (!command && event.code === "KeyV") chooseTool("move");
+      else if (!command && event.code === "KeyM") chooseTool("marquee");
+      else if (!command && event.code === "KeyL") chooseTool("lasso");
+      else if (!command && event.code === "KeyP") chooseTool("pivot");
+      else if (!command && event.code === "KeyT") chooseTool("warp");
+      else if (!command && event.code === "KeyR") chooseTool("deform");
+      else if (!command && event.code === "KeyN") chooseTool("pen");
       else if (!command && event.code === "KeyK") {
         event.preventDefault();
         if (event.shiftKey) stopTimeline(); else togglePause();
@@ -513,7 +531,7 @@ export default function App() {
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause, requestRename, moveSelected]);
+  }, [redo, undo, saveCurrent, saveCurrentAs, stopTimeline, togglePause, requestRename, moveSelected, chooseTool]);
 
 
   const updateObject = useCallback((next: RigObject, options: boolean | CommitOptions = true) => {
@@ -738,14 +756,37 @@ export default function App() {
   };
 
   /** Перо на сцене: точки контура правятся без отдельной истории на каждую. */
-  const penPoints = useCallback((objectId: string, itemId: string, points: Vec2[]) => {
+  const penPoints = useCallback((objectId: string, itemId: string, points: Vec2[], smoothPoints: number[]) => {
     const current = presetRef.current;
     const object = current.objects.find((item) => item.id === objectId);
     if (!object?.shape) return;
-    const items = object.shape.items.map((item) => (item.id === itemId ? { ...item, points } : item));
+    const items = object.shape.items.map((item) => (
+      item.id === itemId ? { ...item, points, smoothPoints } : item
+    ));
     updateObject(
       { ...object, shape: { ...object.shape, items } },
       { label: "Контур фигуры", coalesce: "pen" },
+    );
+  }, [updateObject]);
+
+  /**
+   * Сила сглаживания точки из пера (Alt+клик по точке).
+   *
+   * Тип соединения — свойство точки, а не контура: в одном контуре спокойно
+   * живут острый угол и плавная дуга.
+   */
+  const penSmoothing = useCallback((objectId: string, itemId: string, index: number, value: number) => {
+    const current = presetRef.current;
+    const object = current.objects.find((item) => item.id === objectId);
+    const item = object?.shape?.items.find((entry) => entry.id === itemId);
+    if (!object?.shape || !item) return;
+    const smoothing = item.points.map((_, at) => (at === index ? value : (item.smoothPoints[at] ?? 0)));
+    const items = object.shape.items.map((entry) => (
+      entry.id === itemId ? { ...entry, smoothPoints: smoothing } : entry
+    ));
+    updateObject(
+      { ...object, shape: { ...object.shape, items } },
+      { label: value > 0 ? "Точка: кривая" : "Точка: угол" },
     );
   }, [updateObject]);
 
@@ -1058,7 +1099,7 @@ export default function App() {
             pivots={layout.showPivots}
             texts={engineTexts}
             onDropFiles={(files) => { void importFiles(files); }}
-            onTool={setTool}
+            onTool={chooseTool}
             onToggleGrid={() => setShowGrid(!showGrid)}
             onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}
             onCyclePivots={() => setLayout((current) => ({ ...current, showPivots: nextGuideMode(current.showPivots) }))}
@@ -1095,6 +1136,7 @@ export default function App() {
             onWarp={warpObject}
             pen={pen}
             onPenPoints={penPoints}
+            onPenSmoothing={penSmoothing}
           />
           <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
           <Inspector
@@ -1143,6 +1185,9 @@ export default function App() {
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
           onText={updateTextObjects}
+          onObject={(object) => updateObject(object)}
+          pen={pen}
+          onPen={setPen}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}

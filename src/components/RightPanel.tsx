@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, SlidersHorizontal, Spline } from "lucide-react";
+import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, Shapes, SlidersHorizontal, Spline } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
@@ -7,6 +7,7 @@ import { moduleConstants } from "../modules/presets";
 import { InputsPanel } from "./InputsPanel";
 import { BehaviourPanel } from "./BehaviourPanel";
 import { ModulesPanel } from "./ModulesPanel";
+import { ShapePanel } from "./ShapePanel";
 import type { MonitorOption } from "../modules/pointer";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
@@ -39,6 +40,11 @@ interface RightPanelProps {
   onBehaviour: (scripts: Record<string, string>) => void;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
+  /** Правка объекта целиком: контуры фигуры пишутся этой вкладкой. */
+  onObject: (object: RigObject) => void;
+  /** Перо: какой контур фигуры рисуется на сцене. */
+  pen?: { objectId: string; itemId: string } | null;
+  onPen?: (pen: { objectId: string; itemId: string } | null) => void;
   /** Выделение целиком: поведение правится сразу у всех. */
   selectedObjects: RigObject[];
   onGlobalScript: (script: string) => void;
@@ -64,14 +70,30 @@ interface RightPanelProps {
   externalTexts?: Record<string, ExternalTextLine[]>;
 }
 
-type Tab = "behaviour" | "object" | "globals" | "inputs" | "modules";
+/**
+ * Порядок вкладок: сначала то, чем пользуются каждый день (поведение, входы,
+ * модули), в конце — сложное (скрипт объекта и глобальный скрипт). «Фигура»
+ * появляется только у объекта-фигуры и стоит рядом со скриптом объекта.
+ */
+type Tab = "behaviour" | "inputs" | "modules" | "object" | "shape" | "globals";
 
 export function RightPanel(props: RightPanelProps) {
-  const [tab, setTab] = useState<Tab>("object");
+  const [tab, setTab] = useState<Tab>("behaviour");
   // Смена выделения не выбивает из «Входов», «Модулей» и «Поведения»:
   // там как раз удобно переключать объекты подряд.
+  const isShape = props.selected?.kind === "shape";
   useEffect(() => {
-    setTab((current) => (current === "behaviour" || current === "inputs" || current === "modules" ? current : "object"));
+    setTab((current) => {
+      // Вкладка фигуры есть только у фигуры: у остальных объектов она не
+      // должна висеть пустой.
+      if (current === "shape" && props.selected?.kind !== "shape") return "object";
+      return current;
+    });
+  }, [props.selected?.id, props.selected?.kind]);
+  // Смена выделения не выбивает из «Входов», «Модулей», «Поведения» и
+  // «Фигуры»: там как раз удобно переключать объекты подряд.
+  useEffect(() => {
+    setTab((current) => (current === "behaviour" || current === "inputs" || current === "modules" || current === "shape" ? current : "object"));
   }, [props.selected?.id]);
   // Значения кадра — свёрнутая секция: скрипт забирает всю высоту колонки,
   // а кадр открывается по клику и не висит пустой третью экрана.
@@ -143,10 +165,13 @@ export function RightPanel(props: RightPanelProps) {
     <aside className="right-panel panel-surface">
       <div className="right-tabs">
         <button className={tab === "behaviour" ? "active" : ""} onClick={() => setTab("behaviour")}><Spline size={14} /> Поведение</button>
-        <button className={tab === "object" ? "active" : ""} onClick={() => setTab("object")}><Braces size={14} /> Объект</button>
-        <button className={tab === "globals" ? "active" : ""} onClick={() => setTab("globals")}><Globe2 size={14} /> Глобальные</button>
         <button className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}><SlidersHorizontal size={14} /> Входы</button>
         <button className={tab === "modules" ? "active" : ""} onClick={() => setTab("modules")}><Blocks size={14} /> Модули</button>
+        <button className={tab === "object" ? "active" : ""} onClick={() => setTab("object")}><Braces size={14} /> Объект</button>
+        {isShape && (
+          <button className={tab === "shape" ? "active" : ""} onClick={() => setTab("shape")}><Shapes size={14} /> Фигура</button>
+        )}
+        <button className={tab === "globals" ? "active" : ""} onClick={() => setTab("globals")}><Globe2 size={14} /> Глобальные</button>
       </div>
 
       {tab === "behaviour" ? (
@@ -156,6 +181,14 @@ export function RightPanel(props: RightPanelProps) {
           onChange={props.onBehaviour}
           onText={props.onText}
           modules={props.modules}
+        />
+      ) : tab === "shape" ? (
+        <ShapePanel
+          object={props.selected}
+          frame={props.frame}
+          pen={props.pen ?? null}
+          onPen={props.onPen ?? (() => {})}
+          onChange={props.onObject}
         />
       ) : tab === "modules" ? (
         <ModulesPanel
