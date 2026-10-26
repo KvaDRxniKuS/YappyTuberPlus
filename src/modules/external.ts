@@ -91,6 +91,10 @@ function transliterate(text: string): string {
 export const TEXT_HISTORY_MIN = 1;
 export const TEXT_HISTORY_MAX = 100;
 export const TEXT_HISTORY_DEFAULT = 12;
+/** Срок хранения сообщения: в секундах, `0` — только по количеству. */
+export const TEXT_RETAIN_MIN = 0;
+export const TEXT_RETAIN_MAX = 86_400;
+export const TEXT_RETAIN_DEFAULT = 300;
 
 /** Настройки текста: путь обязателен, остальное — с понятными умолчаниями. */
 function readTextConfig(raw: unknown): ExternalTextConfig | undefined {
@@ -101,6 +105,7 @@ function readTextConfig(raw: unknown): ExternalTextConfig | undefined {
   const authorPath = String(item.authorPath ?? "").trim();
   const input = String(item.input ?? "").trim();
   const history = Number(item.history);
+  const retain = Number(item.retainSeconds);
   return {
     path,
     authorPath: authorPath || undefined,
@@ -109,6 +114,11 @@ function readTextConfig(raw: unknown): ExternalTextConfig | undefined {
     history: Number.isFinite(history)
       ? Math.min(TEXT_HISTORY_MAX, Math.max(TEXT_HISTORY_MIN, Math.round(history)))
       : TEXT_HISTORY_DEFAULT,
+    // Срок хранения — рядом с количеством: сообщение живёт, пока не истечёт
+    // время и пока его не вытеснят новые. Ноль снимает ограничение по времени.
+    retainSeconds: Number.isFinite(retain) && item.retainSeconds !== undefined
+      ? Math.min(TEXT_RETAIN_MAX, Math.max(TEXT_RETAIN_MIN, Math.round(retain)))
+      : TEXT_RETAIN_DEFAULT,
     showAuthor: item.showAuthor !== false,
   };
 }

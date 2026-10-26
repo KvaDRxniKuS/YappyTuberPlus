@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { InputValues, ModuleConfig, ModuleInstance } from "../types";
+import type { InputMark, InputValues, ModuleConfig, ModuleInstance } from "../types";
 import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOption } from "../modules/audio";
 import { inputRange, moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey, inputMeta, inputTexts, isPointerKind } from "../modules/values";
@@ -10,6 +10,11 @@ import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modu
 export interface ModuleInputsApi {
   /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
   inputs: InputValues;
+  /**
+   * Отметки активности для ядра — функция, а не поле: возраст метки считается
+   * в момент кадра, иначе `count(5)` не уменьшался бы без новых сообщений.
+   */
+  marks: () => Record<string, InputMark[]>;
   audio: Record<string, AudioFrame>;
   manual: Record<string, number>;
   /** Значения авто-модулей (моргание по таймеру). */
@@ -272,7 +277,7 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   }), [modules, audio, manual, auto, pointer, externalInputs.values, externalInputs.texts, libraryVersion]);
 
   return {
-    inputs, audio, manual, auto, devices, active, error, contextState,
+    inputs, marks: externalInputs.marks, audio, manual, auto, devices, active, error, contextState,
     start, stop, setManual, refreshDevices, calibrate, cancelCalibration,
     // Стоп анимации: счётчики нажатий клавиш начинаются заново.
     resetPointerHits: pointerInputs.resetHits,

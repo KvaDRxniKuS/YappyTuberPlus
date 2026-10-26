@@ -331,8 +331,6 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.signature-hint { flex: none; padding: 4px 10px; border-top: 1px solid #262b32; background: #1d2127; color: #9fd3c6; font-family: monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.signature-hint[data-empty="true"] { color: #5c6771; }
 .favorite-commands { flex: none; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-top: 1px solid #262b32; background: #1e2328; overflow-x: auto; }
 .favorite-title { flex: none; color: #d9b26a; font-size: 10px; letter-spacing: .4px; text-transform: uppercase; }
 .favorite-commands code { flex: none; padding: 2px 5px; border-radius: 3px; background: #2b3239; color: #b9d4e3; font-size: 10px; white-space: nowrap; cursor: pointer; }

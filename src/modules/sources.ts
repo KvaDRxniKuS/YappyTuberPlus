@@ -1,5 +1,8 @@
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
-import { applyMapping, isNativeTransport, isTwitchTransport, readExternalSource, readPath, ruleMatches } from "./external";
+import {
+  applyMapping, isNativeTransport, isTwitchTransport, readExternalSource, readPath, ruleMatches,
+  TEXT_RETAIN_DEFAULT,
+} from "./external";
 import { isTauri } from "../engine/presetFile";
 import { TwitchChannel, type TwitchInfo, type TwitchState } from "./twitch";
 
@@ -44,6 +47,32 @@ interface Hold {
   until: number;
 }
 
+/**
+ * Отметка активности входа: когда случилось событие и какой у него вес.
+ *
+ * По отметкам ядро считает `count(с)`, `sum(с)` и `avg(с)`: сообщение чата —
+ * вес 1, награда — своей стоимостью, поэтому `twitch.reward.sum(10)` даёт
+ * сумму бит за 10 секунд.
+ */
+export interface ExternalMark {
+  at: number;
+  weight: number;
+}
+
+/** Сколько отметок держим на вход: активность читают за секунды, не за сутки. */
+export const MARK_LIMIT = 400;
+/** Сколько живёт отметка: старые окна всё равно никто не спросит. */
+export const MARK_TTL_MS = 120_000;
+
+/** Имя входа, в который источник пишет текст (чат, награды). */
+export function textInputOf(source: ExternalSourceConfig): string | null {
+  if (!source.text) return null;
+  return source.text.input
+    ?? source.mapping.find((rule) => rule.count)?.input
+    ?? source.mapping[0]?.input
+    ?? "text";
+}
+
 interface Entry {
   source: ExternalSourceConfig;
   key: string;
@@ -66,6 +95,10 @@ interface Entry {
   texts: ExternalTextLine[];
   /** Сколько строк держим: настройка модуля «Хранить сообщений». */
   textLimit: number;
+  /** Сколько живёт строка: настройка модуля «Срок хранения», мс (`0` — без предела). */
+  textRetainMs: number;
+  /** Отметки активности: когда и с каким весом сработали правила. */
+  marks: Record<string, ExternalMark[]>;
 }
 
 /** Событие из Rust: состояние источника или сырой текст пакета. */
@@ -170,8 +203,25 @@ export class ExternalSourceHost {
   /** Последние тексты каждого источника: панель «Входы» показывает их как есть. */
   texts(): Record<string, ExternalTextLine[]> {
     const result: Record<string, ExternalTextLine[]> = {};
-    for (const [name, entry] of this.entries) result[name] = entry.texts;
+    for (const [name, entry] of this.entries) {
+      this.pruneTexts(entry);
+      result[name] = entry.texts;
+    }
     return result;
+  }
+
+  /**
+   * Убирает строки старше срока хранения.
+   *
+   * Чистим не только при приёме пакета: в тихом чате новые сообщения не приходят,
+   * а панель и скрипт не должны показывать вчерашние.
+   */
+  private pruneTexts(entry: Entry): void {
+    if (entry.textRetainMs <= 0 || entry.texts.length === 0) return;
+    const edge = Date.now() - entry.textRetainMs;
+    while (entry.texts.length > 0 && entry.texts[entry.texts.length - 1].at < edge) {
+      entry.texts.pop();
+    }
   }
 
   /** Журналы всех источников: последние строки для карточки модуля. */
@@ -259,6 +309,10 @@ export class ExternalSourceHost {
       // Сколько строк помним — настройка модуля: столько же видно в панели и
       // доступно скрипту через `twitch.chat.message(-n)`.
       textLimit: source.text?.history ? Math.max(1, source.text.history) : TEXT_LIMIT,
+      // Срок хранения — вторая половина памяти чата: старые строки пропадают
+      // сами, даже если новых сообщений нет.
+      textRetainMs: Math.max(0, (source.text?.retainSeconds ?? TEXT_RETAIN_DEFAULT) * 1000),
+      marks: {},
     };
     this.entries.set(name, entry);
     if (twitch) {
@@ -378,11 +432,37 @@ export class ExternalSourceHost {
         entry.values = {};
         entry.holds = {};
         entry.counters = {};
+        entry.marks = {};
       }
       if (state === "error" && payload.message) this.record(entry, "error", payload.message);
       return;
     }
     if (payload.kind === "text") this.ingest(entry, payload.text);
+  }
+
+  /**
+   * Отметки активности всех источников: `<модуль>` → `<вход>` → метки.
+   *
+   * Возраст считает вызывающий код: часы фронтенда и ядра не связаны, поэтому
+   * ядру отдают «сколько миллисекунд назад», а не абсолютное время.
+   */
+  marks(): Record<string, Record<string, ExternalMark[]>> {
+    const result: Record<string, Record<string, ExternalMark[]>> = {};
+    for (const [name, entry] of this.entries) {
+      if (Object.keys(entry.marks).length > 0) result[name] = entry.marks;
+    }
+    return result;
+  }
+
+  /** Добавляет отметку: старые вычищаются по возрасту и по количеству. */
+  private mark(entry: Entry, input: string, weight: number): void {
+    const now = Date.now();
+    const list = entry.marks[input] ?? [];
+    list.push({ at: now, weight: Number.isFinite(weight) ? weight : 1 });
+    // Держим окно коротким: активность читают за секунды, а память не растёт.
+    while (list.length > MARK_LIMIT) list.shift();
+    while (list.length > 0 && now - list[0].at > MARK_TTL_MS) list.shift();
+    entry.marks[input] = list;
   }
 
   /** Разбор одного пакета: таблица отображения превращает его в числа. */
@@ -404,6 +484,19 @@ export class ExternalSourceHost {
       entry.counters[rule.input] = (entry.counters[rule.input] ?? 0) + 1;
       mapped[rule.input] = entry.counters[rule.input];
     }
+    // Отметки активности: подошедший пакет — событие входа. Вес — значение
+    // правила (биты, стоимость награды), у счётчика — одно событие.
+    for (const rule of mapping) {
+      if (!ruleMatches(rule, parsed)) continue;
+      if (rule.count) {
+        this.mark(entry, rule.input, 1);
+        continue;
+      }
+      const value = mapped[rule.input];
+      // Ноль — не событие: так источник присылает и начало, и конец.
+      if (value === undefined || value === 0) continue;
+      this.mark(entry, rule.input, value);
+    }
     // Текст (чат): в числа не превращается, поэтому живёт отдельным списком.
     const textConfig = entry.source.text;
     if (textConfig) {
@@ -417,6 +510,10 @@ export class ExternalSourceHost {
           text: line.slice(0, 200),
         });
         if (entry.texts.length > entry.textLimit) entry.texts.length = entry.textLimit;
+        this.pruneTexts(entry);
+        // Сообщение чата — событие с весом 1: `twitch.chat.count(5)`.
+        const textInput = textInputOf(entry.source);
+        if (textInput) this.mark(entry, textInput, 1);
       }
     }
     if (Object.keys(mapped).length === 0) {
@@ -483,6 +580,7 @@ export class ExternalSourceHost {
       entry.values = {};
       entry.holds = {};
       entry.counters = {};
+      entry.marks = {};
       if (entry.source.reconnect !== false) this.scheduleReconnect(entry);
     };
   }

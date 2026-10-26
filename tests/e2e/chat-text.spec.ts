@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { textChannel, resolveTemplate } from "../../src/render/text";
 import { inputMeta, inputTexts, textInputName } from "../../src/modules/values";
 import { readExternalSource } from "../../src/modules/external";
-import { eventHintAt, EVENT_KINDS } from "../../src/engine/signatures";
+import { INPUT_FIELDS, hintAt } from "../../src/engine/signatures";
 import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefinitions } from "../../src/modules/registry";
 import type { ExternalTextLine } from "../../src/modules/sources";
 import type { ModuleInstance } from "../../src/types";
@@ -98,29 +98,39 @@ test("настройки текста переживают чтение конф
   expect(clamped.text?.showAuthor).toBe(false);
 });
 
-test("подсказка события показывает единственную форму и типы", () => {
+test("подсказка события объясняет новую форму по месту курсора", () => {
   const inputs = [{ key: "twitch.chat", label: "Сообщений" }, { key: "mic.db", label: "Громкость" }];
-  const hint = eventHintAt("on twitch.chat.", "on twitch.chat.".length, inputs);
-  expect(hint).toContain("on twitch.chat.");
-  expect(hint).toContain("Сообщений");
-  expect(hint).toContain("hold(сек)");
+  const events = ["click", "chat"];
 
-  // Свежая строка без входа: напоминаем форму и `on start`.
-  expect(eventHintAt("on ", 3, inputs)).toContain("on start");
-  // Набранный вход без типа.
-  expect(eventHintAt("on mic.db", "on mic.db".length, inputs)).toContain("Громкость");
-  // Старая форма записи — прямо говорим, что не нужна.
-  expect(eventHintAt("on event.mic.db.down", 18, inputs)).toContain("event.");
-  // Вне заголовка подсказка не мешает вызову функции.
-  expect(eventHintAt("text = fixed(mic.db, 2)", 12, inputs)).toBeNull();
-  // Объявление своего события.
-  const trigger = eventHintAt("trigger kick = mic.db", "trigger kick = mic.db".length, inputs);
-  expect(trigger).toContain("trigger kick = mic.db");
-  expect(trigger).toContain("Громкость");
+  // `on` — только объявленные события: путей к входам больше нет.
+  const onEmpty = hintAt("on ", 3, { inputs, events });
+  expect(onEmpty).toContain("on start");
+  expect(onEmpty).toContain("click");
+  expect(hintAt("on cli", "on cli".length, { inputs, events })).toContain("on click");
+
+  // Старая форма записи — прямо говорим, что так не пишется.
+  const old = hintAt("on mic.db.down", "on mic.db.down".length, { inputs, events });
+  expect(old).toContain("event имя()");
+
+  // Своё событие: форма, переменные, `in`.
+  expect(hintAt("event ", "event ".length, { inputs, events })).toContain("event имя(переменные ; пауза)");
+  expect(hintAt("event kick(loud = 1", "event kick(loud = 1".length, { inputs, events }))
+    .toContain("пауза");
+  const duration = "event kick() { mic.talking > 0.2 in ";
+  expect(hintAt(duration, duration.length, { inputs, events })).toContain("in 0.5s");
+
+  // Поля входа: направления уровня и активность за окно.
+  const fields = hintAt("event chat() { twitch.chat.", "event chat() { twitch.chat.".length, { inputs, events });
+  expect(fields).toContain("Сообщений");
+  expect(fields).toContain("up · down · change");
+  expect(fields).toContain("count(5)");
+
+  // Вне событий подсказка не мешает вызову функции.
+  expect(hintAt("text = fixed(mic.db, 2)", 12, { inputs, events })).toBeNull();
 });
 
-test("типы событий в подсказке — ровно те, что понимает ядро", () => {
-  expect(EVENT_KINDS.map((item) => item.kind)).toEqual([
-    "down", "up", "change", "hold(0.5)", "relax(0.6)",
+test("поля входа в подсказке — ровно те, что понимает ядро", () => {
+  expect(INPUT_FIELDS.map((item) => item.field)).toEqual([
+    "up", "down", "change", "count(5)", "sum(5)", "avg(5)",
   ]);
 });

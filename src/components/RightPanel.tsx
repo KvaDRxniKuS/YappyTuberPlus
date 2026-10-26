@@ -11,7 +11,7 @@ import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
 import type { ScriptCheck } from "../engine/scripts";
-import { namedTriggers } from "../engine/scripts";
+import { eventNames } from "../engine/scripts";
 
 interface RightPanelProps {
   selected: RigObject | null;
@@ -160,7 +160,10 @@ export function RightPanel(props: RightPanelProps) {
             globals={props.globals}
             moduleInputs={props.modules.flatMap((module) => moduleInputKeys(module).map((item) => item.key))}
             moduleInputLabels={inputLabels}
-            triggers={namedTriggers(props.globalScript)}
+            events={[...new Set([
+              ...eventNames(props.globalScript),
+              ...eventNames(editorValue),
+            ])]}
             constants={Object.keys(enumConstants(props.modules))}
             onCheck={props.checkScript}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}

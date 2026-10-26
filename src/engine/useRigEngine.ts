@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { InputValues, RigFrame, RigPreset } from "../types";
+import type { InputMark, InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
 import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
@@ -17,6 +17,13 @@ export function useRigEngine(
   frameSinkRef?: RefObject<((frame: RigFrame) => void) | null>,
   /** Текст модулей: подстановки в шаблонах текстовых объектов. */
   textsRef?: RefObject<TextChannel>,
+  /**
+   * Отметки активности входов: `count(с)`, `sum(с)`, `avg(с)` в скрипте.
+   *
+   * Возраст метки считается здесь, в момент кадра: если бы он лежал в состоянии
+   * React, окно не обновлялось бы без новых сообщений.
+   */
+  marks?: () => Record<string, InputMark[]>,
 ) {
   const [backend, setBackend] = useState<EngineBackend | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
@@ -28,6 +35,8 @@ export function useRigEngine(
   const frameRef = useRef<RigFrame | null>(null);
   const handleRef = useRef<number | null>(null);
   const presetRef = useRef(preset);
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
   const pausedRef = useRef(paused);
   const resetClockRef = useRef(true);
   const structureKey = engineStructure(preset);
@@ -74,7 +83,13 @@ export function useRigEngine(
       op: "tick",
       handle,
       now: (typeof performance === "undefined" ? Date.now() : performance.now()) / 1000,
-      inputs: { values: inputs.values, signals: inputs.signals ?? {}, texts: inputs.texts, meta: inputs.meta },
+      inputs: {
+        values: inputs.values,
+        signals: inputs.signals ?? {},
+        texts: inputs.texts,
+        meta: inputs.meta,
+        marks: marksRef.current?.(),
+      },
       paused: true,
       resetClock: true,
     }).catch(() => null);
@@ -263,6 +278,7 @@ export function useRigEngine(
             signals: inputs.signals ?? {},
             texts: inputs.texts,
             meta: inputs.meta,
+            marks: marksRef.current?.(),
           },
           paused: false,
           resetClock,

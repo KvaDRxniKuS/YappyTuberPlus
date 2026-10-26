@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { applyMapping, applyRule, readExternalSource } from "../../src/modules/external";
+import {
+  applyMapping, applyRule, readExternalSource, TEXT_RETAIN_DEFAULT, TEXT_RETAIN_MAX,
+} from "../../src/modules/external";
 import type { ExternalSourceRule } from "../../src/types";
 
 /**
@@ -64,4 +66,35 @@ test("условие строки и запасное значение рабо�
   expect(applyMapping({ followed_at: "2026-10-26T10:00:00Z" }, mapping)).toEqual({ follow: 1 });
   expect(applyMapping({ text: "!Dance" }, mapping)).toEqual({ cmd: 1 });
   expect(applyMapping({ text: "привет" }, mapping)).toEqual({});
+});
+
+test("история чата помнит и количество, и срок хранения", () => {
+  const base = { transport: "twitch" as const, url: "", mapping: [] };
+  // Срок хранения — вторая половина памяти: количество без срока оставляло бы
+  // вчерашние сообщения на экране, а срок без количества — бесконечный список.
+  const own = readExternalSource({
+    source: { ...base, text: { path: "$.message", input: "chat", history: 30, retainSeconds: 90 } },
+  });
+  expect(own.text?.history).toBe(30);
+  expect(own.text?.retainSeconds).toBe(90);
+
+  // Ноль — «не ограничивать по времени»: остаётся только предел количества.
+  const forever = readExternalSource({
+    source: { ...base, text: { path: "$.message", retainSeconds: 0 } },
+  });
+  expect(forever.text?.retainSeconds).toBe(0);
+
+  // Пределы: отрицательное время не имеет смысла, гигантское — тоже.
+  const clamped = readExternalSource({
+    source: { ...base, text: { path: "$.message", retainSeconds: -5 } },
+  });
+  expect(clamped.text?.retainSeconds).toBe(0);
+  const huge = readExternalSource({
+    source: { ...base, text: { path: "$.message", retainSeconds: 10_000_000 } },
+  });
+  expect(huge.text?.retainSeconds).toBe(TEXT_RETAIN_MAX);
+
+  // Старый пресет без настройки получает умолчание, а не «навсегда».
+  const older = readExternalSource({ source: { ...base, text: { path: "$.message" } } });
+  expect(older.text?.retainSeconds).toBe(TEXT_RETAIN_DEFAULT);
 });

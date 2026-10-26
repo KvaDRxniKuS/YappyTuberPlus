@@ -2,50 +2,36 @@ import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from "
 import { ChevronRight } from "lucide-react";
 import { basicSetup } from "codemirror";
 import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
+import { Decoration, EditorView, keymap, showTooltip, type DecorationSet } from "@codemirror/view";
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { autocompletion, snippet, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { tags } from "@lezer/highlight";
 import type { ScriptErrorInfo } from "../types";
-import type { ScriptCheck } from "../engine/scripts";
+import { eventNames, type ScriptCheck } from "../engine/scripts";
 import {
-  FUNCTION_NAMES, SIGNATURES, eventHintAt, signatureAt, signatureLine, signatureOf,
+  FUNCTION_NAMES, INPUT_FIELDS, SIGNATURES, hintAt, signatureAt, signatureLine, signatureOf,
 } from "../engine/signatures";
 import { useFavorites } from "../hooks/useFavorites";
 
-const EVENT_KINDS = ["down", "up", "change", "hold", "relax"];
-
 const language = StreamLanguage.define({
-  startState: () => ({ inEvent: false }),
-  token(stream, state) {
-    if (stream.sol()) state.inEvent = false;
+  token(stream) {
     if (stream.eatSpace()) return null;
     if (stream.match(/^\/\/.*/)) return "comment";
     // Строка — значение: `text = "привет"`.
     if (stream.match(/^"(?:[^"\\]|\\.)*"/)) return "string";
-    if (stream.match(/^(?:and|or|not|inherit|parent|offset|on|trigger)\b/)) return "keyword";
+    // Ключевые слова событий: объявление, подписка, вызов и длительность.
+    if (stream.match(/^(?:event|on|call|in|and|or|not|inherit|parent|offset)\b/)) return "keyword";
     if (stream.match(/^(?:time|dt|canvasWidth|canvasHeight|width|height|pi|e|signal|start|text)\b/)) return "variableName.special";
+    // Поля входа: направления уровня и активность за окно.
+    if (stream.match(/^\.(?:up|down|change|count|sum|avg|min|max|step|label|kind)\b/)) return "typeName";
     if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*/)) {
       const word = stream.current();
-      // Внутри заголовка события модуль и вход — обычные свойства, а тип
-      // (`down`, `hold`, …) подсвечен отдельно.
-      if (state.inEvent) {
-        if (EVENT_KINDS.includes(word)) return "typeName";
-        return "propertyName";
-      }
-      if (word === "event") {
-        state.inEvent = true;
-        return "variableName.special";
-      }
       if (word === "state") return "variableName.special";
       if (/^\s*\(/.test(stream.string.slice(stream.pos))) return "function";
       return "variableName";
     }
     if (stream.match(/^[+\-*/%^<>=?:!]+/)) return "operator";
-    if (stream.match(/^[{},]/)) {
-      state.inEvent = false;
-      return "punctuation";
-    }
+    if (stream.match(/^[{},]/)) return "punctuation";
     stream.next();
     return null;
   },
@@ -71,15 +57,6 @@ const PARAMETERS = ["x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "o
 const TEXT_PARAMETER = "text";
 // Входы приходят из модулей и подставляются в автодополнение динамически.
 const INPUTS = ["time", "dt", "signal", "parent", "inherit", "offset", "width", "height", "canvasWidth", "canvasHeight", "state"];
-// Типы событий: `on мышь.вход.down`. `hold`/`relax` ждут время в секундах.
-const EVENT_CHOICES = [
-  { kind: "down", detail: "нажатие" },
-  { kind: "up", detail: "отпускание" },
-  { kind: "change", detail: "значение изменилось" },
-  { kind: "hold(0.5)", detail: "держать 0.5 с; срабатывает кадром позже нажатия" },
-  { kind: "relax(0.5)", detail: "отпущено 0.5 с; срабатывает кадром позже отпускания" },
-];
-
 // Порядок групп в списке функций под редактором.
 const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" | "media" | "text"; title: string }> = [
   { id: "math", title: "математика" },
@@ -105,15 +82,30 @@ const SNIPPET_MIME = "application/x-yappy-snippet";
  */
 const EVENT_BLOCKS: Array<{ code: string; note: string }> = [
   { code: "on start {\n  \n}", note: "первый кадр после запуска и после «Стоп»" },
-  { code: "on mouse.left.down {\n  \n}", note: "нажатие: вход перешёл из 0 в 1" },
-  { code: "on mouse.left.up {\n  \n}", note: "отпускание: вход вернулся в 0" },
-  { code: "on mic.talking.change {\n  \n}", note: "значение изменилось с прошлого кадра" },
-  { code: "on mouse.left.hold(0.5) {\n  \n}", note: "держать дольше 0,5 с — один раз за удержание" },
-  { code: "on mouse.left.relax(0.6) {\n  \n}", note: "отпущено дольше 0,6 с — один раз за отпускание" },
+  {
+    code: "event click() { mouse.left.up }\non click {\n  \n}",
+    note: "нажатие: сигнал вырос; тело пишет автор",
+  },
+  {
+    code: "event speak() { mic.talking > 0.2 in 500 }\non speak {\n  \n}",
+    note: "речь дольше 0,5 с: длительность даёт оператор in",
+  },
+  {
+    code: "event silence() { !(mic.talking > 0.2) in 600 }\non silence {\n  \n}",
+    note: "тишина дольше 0,6 с: отрицание условия вместо relax",
+  },
+  {
+    code: "event chat() { twitch.chat.count(5) > 10 }\non chat {\n  \n}",
+    note: "активность входа: сколько событий за 5 секунд",
+  },
+  {
+    code: "event kick() { mouse.left.up }\non kick {\n  call kick()\n}",
+    note: "своё имя события и прямой вызов обработчика",
+  },
 ];
 
-/** Объявление своего события: живёт только в глобальном скрипте. */
-const TRIGGER_BLOCK = "trigger kick = mouse.left.down\n";
+/** Заготовка объявления события: имя подставляет автор. */
+const EVENT_DECLARATION = "event имя() { mouse.left.up }\n";
 
 /** Перетаскивание блока: кладём и свой MIME, и обычный текст — на всякий случай. */
 function startBlockDrag(event: DragEvent, code: string): void {
@@ -172,6 +164,40 @@ const errorField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/**
+ * Текст подсказки в самом редакторе.
+ *
+ * Раньше подсказка жила строкой под редактором и отъедала высоту; теперь она
+ * всплывает у курсора и не мешает читать скрипт.
+ */
+const hintEffect = StateEffect.define<string>();
+
+const hintField = StateField.define<string>({
+  create: () => "",
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(hintEffect)) return effect.value;
+    }
+    return value;
+  },
+});
+
+const hintTooltip = showTooltip.compute([hintField], (state) => {
+  const text = state.field(hintField);
+  if (!text) return null;
+  return {
+    pos: state.selection.main.head,
+    above: true,
+    arrow: false,
+    create: () => {
+      const dom = document.createElement("div");
+      dom.className = "cm-script-hint";
+      dom.textContent = text;
+      return { dom };
+    },
+  };
+});
+
 /** Строка и столбец ошибки в смещения документа. */
 function errorRange(state: EditorState, error: ScriptErrorInfo | null): { from: number; to: number } | null {
   if (!error) return null;
@@ -190,8 +216,8 @@ interface ScriptEditorProps {
   moduleInputs?: string[];
   /** Подписи входов для подсказки события: `twitch.chat` → «Сообщений». */
   moduleInputLabels?: Record<string, string>;
-  /** Имена событий из `trigger … = …` в глобальном скрипте. */
-  triggers?: string[];
+  /** Объявленные события: глобальные плюс локальные события этого скрипта. */
+  events?: string[];
   /** Константы модулей: состояния enum (`walk`, `mode_walk`). */
   constants?: string[];
   onCheck?: ScriptCheck;
@@ -199,7 +225,7 @@ interface ScriptEditorProps {
 }
 
 export function ScriptEditor({
-  value, objectIds, globals, moduleInputs = [], moduleInputLabels = {}, triggers = [],
+  value, objectIds, globals, moduleInputs = [], moduleInputLabels = {}, events = [],
   constants = [], onCheck, onApply,
 }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -209,10 +235,9 @@ export function ScriptEditor({
   const runCheckRef = useRef<(source: string) => void>(() => {});
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const completionData = useRef({ objectIds, globals, moduleInputs, triggers, constants });
-  const hintData = useRef({ moduleInputs, moduleInputLabels });
-  hintData.current = { moduleInputs, moduleInputLabels };
-  const [hint, setHint] = useState("");
+  const completionData = useRef({ objectIds, globals, moduleInputs, events, constants });
+  const hintData = useRef({ moduleInputs, moduleInputLabels, events });
+  hintData.current = { moduleInputs, moduleInputLabels, events };
   const [errorText, setErrorText] = useState("");
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
@@ -233,7 +258,7 @@ export function ScriptEditor({
   const pinned = favorites.filter((name) => SIGNATURES[name] !== undefined);
   applyRef.current = onApply;
   checkRef.current = onCheck;
-  completionData.current = { objectIds, globals, moduleInputs, triggers, constants };
+  completionData.current = { objectIds, globals, moduleInputs, events, constants };
 
   useEffect(() => {
     if (!host.current) return;
@@ -245,14 +270,22 @@ export function ScriptEditor({
     const readHint = (state: EditorState) => {
       const source = state.doc.toString();
       const position = state.selection.main.head;
-      // Заголовок события важнее вызова функции: подсказка показывает
-      // единственную форму `on модуль.вход.тип` и типы события.
+      // Место события важнее вызова функции: подсказка объясняет форму
+      // `event имя() { условие }`, `on имя` и оператор `in`.
       const inputs = hintData.current.moduleInputs.map((key) => ({
         key,
         label: hintData.current.moduleInputLabels[key],
       }));
-      setHint(eventHintAt(source, position, inputs)
-        ?? signatureLine(signatureAt(source, position)));
+      const events = [...new Set([...hintData.current.events, ...eventNames(source)])];
+      const text = hintAt(source, position, { inputs, events })
+        ?? signatureLine(signatureAt(source, position));
+      if (state.field(hintField) === text) return;
+      // Dispatch внутри updateListener дал бы рекурсию, поэтому кадр позже.
+      requestAnimationFrame(() => {
+        const current = view.current;
+        if (!current || current.state.field(hintField) === text) return;
+        current.dispatch({ effects: hintEffect.of(text) });
+      });
     };
     // Проверка идёт отдельно от применения: ошибка подсвечивается, но текст
     // продолжает автосохраняться — сцену это не останавливает.
@@ -273,61 +306,105 @@ export function ScriptEditor({
       checkTimer.current = setTimeout(() => runCheck(source), 320);
     };
 
-    // Заголовок события — только `on …` или правая часть `trigger`.
-    const isHeader = (prefix: string) =>
-      /^\s*on\s+[\w.]*$/.test(prefix) || /^\s*trigger\s+[\w]+\s*=\s*[\w.]*$/.test(prefix);
+    /** Объявленные события: из пропсов плюс уже написанные в этом тексте. */
+    const declaredEvents = (state: EditorState) =>
+      [...new Set([...completionData.current.events, ...eventNames(state.doc.toString())])];
 
     const completion = (context: CompletionContext): CompletionResult | null => {
       const word = context.matchBefore(/[A-Za-z0-9_.]*/);
       if (!word || (word.from === word.to && !context.explicit)) return null;
       const {
-        objectIds: ids, globals: globalNames, moduleInputs: inputNames, triggers: triggerNames,
+        objectIds: ids, globals: globalNames, moduleInputs: inputNames,
         constants: constantNames,
       } = completionData.current;
       const line = context.state.doc.lineAt(context.pos);
       const prefix = context.state.sliceDoc(line.from, context.pos);
 
-      // Заголовок события: `on …` или правая часть `trigger имя = …`.
-      if (isHeader(prefix)) {
-        const typed = word.text.replace(/\.$/, "");
-        if (inputNames.includes(typed)) {
-          // Вход выбран целиком: подсказываем тип и сразу раскрываем тело блока.
-          return {
-            from: context.pos,
-            validFor: /^[\w()]*$/,
-            options: EVENT_CHOICES.map((entry) => ({
-              label: entry.kind,
-              detail: entry.detail,
-              type: "enum",
-              apply: snippet(`${entry.kind} {\n\t\${}\n}`),
-            })),
-          };
-        }
+      // `on …`: только `start` и объявленные события — путей к входам нет.
+      if (/^\s*on\s+[\w]*$/.test(prefix)) {
         return {
           from: word.from,
-          validFor: /^[A-Za-z0-9_.]*$/,
+          validFor: /^[A-Za-z0-9_]*$/,
           options: [
-            { label: "start", detail: "первый кадр после запуска", type: "keyword" },
-            ...triggerNames.map((name) => ({ label: name, detail: "своё событие (trigger)", type: "variable" })),
-            ...inputNames.map((name) => ({
+            {
+              label: "start",
+              detail: "первый кадр после запуска",
+              type: "keyword",
+              apply: snippet("start {\n\t\${}\n}"),
+            },
+            ...declaredEvents(context.state).map((name) => ({
               label: name,
-              detail: hintData.current.moduleInputLabels[name]
-                ? `вход модуля · ${hintData.current.moduleInputLabels[name]}`
-                : "вход модуля",
-              type: "property",
+              detail: "своё событие (event)",
+              type: "variable",
+              apply: snippet(`${name} {\n\t\${}\n}`),
             })),
           ],
         };
       }
-      if (/^\s*trigger\s+$/.test(prefix)) {
+      // `call …`: те же имена, но обработчик запускается сразу.
+      if (/(?:^|[^\w.])call\s+[\w]*$/.test(prefix)) {
         return {
           from: word.from,
-          options: [{
-            label: "trigger kick = mouse.left.down",
-            detail: "своё имя события",
-            type: "keyword",
-            apply: snippet("trigger ${kick} = ${mouse.left.down}"),
-          }],
+          validFor: /^[A-Za-z0-9_]*$/,
+          options: declaredEvents(context.state).map((name) => ({
+            label: name,
+            detail: "вызвать обработчик сразу",
+            type: "function",
+            apply: `${name}()`,
+          })),
+        };
+      }
+      // `event …`: готовый скелет — форма и обработчик рядом.
+      if (/^\s*event\s+[\w]*$/.test(prefix)) {
+        return {
+          from: word.from,
+          validFor: /^[A-Za-z0-9_]*$/,
+          options: [
+            {
+              label: "click",
+              detail: "нажатие: mouse.left.up",
+              type: "keyword",
+              apply: snippet("click() { mouse.left.up }\n\non click {\n\t\${}\n}"),
+            },
+            {
+              label: "speak",
+              detail: "речь дольше 0,5 с: in 500",
+              type: "keyword",
+              apply: snippet("speak() { mic.talking > 0.2 in 500 }\n\non speak {\n\t\${}\n}"),
+            },
+            {
+              label: "chat",
+              detail: "активность чата за 5 с",
+              type: "keyword",
+              apply: snippet("chat() { twitch.chat.count(5) > 10 }\n\non chat {\n\t\${}\n}"),
+            },
+          ],
+        };
+      }
+      // `in …`: время условия в миллисекундах или секундах.
+      if (/(?:^|[^\w.])in\s+$/.test(prefix)) {
+        return {
+          from: context.pos,
+          options: ["100", "250", "500", "1000", "0.5s", "1s"].map((value) => ({
+            label: value,
+            detail: "мс; суффикс s — секунды",
+            type: "constant",
+          })),
+        };
+      }
+      // `<вход>.` — направления уровня и активность за окно.
+      const inputField = /(?:^|[^\w.])([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\.(\w*)$/.exec(prefix);
+      if (inputField && inputNames.includes(inputField[1])) {
+        const start = context.pos - inputField[2].length;
+        return {
+          from: start,
+          validFor: /^\w*$/,
+          options: INPUT_FIELDS.map((entry) => ({
+            label: entry.field,
+            detail: entry.note,
+            type: "property",
+            apply: entry.field.includes("(") ? snippet(entry.field.replace("(", "(\${}")) : entry.field,
+          })),
         };
       }
       // `state.` — прошлый кадр: подсказываем переменные и параметры объекта.
@@ -358,9 +435,10 @@ export function ScriptEditor({
           })),
         };
       }
+      const localEvents = declaredEvents(context.state);
       const options = [...new Set([
         ...ids, ...globalNames, ...PARAMETERS, TEXT_PARAMETER, ...INPUTS, ...inputNames,
-        ...triggerNames, ...constantNames, ...FUNCTION_NAMES,
+        ...localEvents, ...constantNames, ...FUNCTION_NAMES,
       ])].map((label) => {
         if (SIGNATURES[label]) {
           return {
@@ -379,7 +457,7 @@ export function ScriptEditor({
               ? "объект"
               : globalNames.includes(label)
                 ? "глобальная переменная"
-                : triggerNames.includes(label)
+                : localEvents.includes(label)
                   ? "своё событие"
                   : constantNames.includes(label)
                     ? "состояние модуля"
@@ -395,6 +473,8 @@ export function ScriptEditor({
         language,
         syntaxHighlighting(highlight),
         errorField,
+        hintField,
+        hintTooltip,
         autocompletion({ override: [completion], activateOnTyping: true }),
         dropSnippet,
         Prec.highest(keymap.of([{ key: "Mod-s", run: () => { applyNow(); return true; } }])),
@@ -417,6 +497,17 @@ export function ScriptEditor({
           ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "#6eb8a834 !important" },
           ".cm-cursor": { borderLeftColor: "#8ad8c6" },
           ".cm-script-error": { textDecoration: "underline wavy #e08b8b" },
+          ".cm-script-hint": {
+            padding: "3px 8px",
+            background: "#232b31",
+            border: "1px solid #36434c",
+            borderRadius: "4px",
+            color: "#9fd3c6",
+            fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace",
+            fontSize: "11.5px",
+            whiteSpace: "nowrap",
+            boxShadow: "0 6px 18px #0006",
+          },
           ".cm-tooltip": { backgroundColor: "#24282f", border: "1px solid #363c45", color: "#d9dde2" },
           ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "#35414a", color: "#f0f4f7" },
           ".cm-completionDetail": { color: "#7f8b96", fontStyle: "normal", marginLeft: "8px" },
@@ -507,11 +598,7 @@ export function ScriptEditor({
   return (
     <>
       <div className="code-editor" ref={host} />
-      {errorText
-        ? <div className="script-error-line" title={errorText}>{errorText}</div>
-        : <div className="signature-hint" data-empty={hint ? "false" : "true"}>
-          {hint || "Поставьте курсор внутрь вызова функции — покажу ожидаемые аргументы."}
-        </div>}
+      {errorText && <div className="script-error-line" title={errorText}>{errorText}</div>}
       {pinned.length > 0 && (
         <div className="favorite-commands">
           <span className="favorite-title" title="Избранные команды: клик вставляет вызов">★ Избранные</span>
@@ -562,20 +649,22 @@ export function ScriptEditor({
                 <button
                   className="help-event"
                   draggable
-                  title="Объявление события живёт в глобальном скрипте; дальше пишут on kick { … }"
-                  onDragStart={(event) => startBlockDrag(event, TRIGGER_BLOCK)}
-                  onClick={() => insertSnippet(TRIGGER_BLOCK)}
+                  title="Объявление события: условие в фигурных скобках, действия — в on ниже"
+                  onDragStart={(event) => startBlockDrag(event, EVENT_DECLARATION)}
+                  onClick={() => insertSnippet(EVENT_DECLARATION)}
                 >
-                  <code>trigger kick = mouse.left.down</code>
-                  <small>своё имя события: объявляется в глобальном скрипте</small>
+                  <code>event имя() {"{ условие }"}</code>
+                  <small>своё событие: имя, переменные и пауза в скобках</small>
                 </button>
               </div>
             </div>
             <div className="editor-hint">
-              <span><b>{"on <вход>.<тип> { … }"}</b> — условие, тело пишет автор</span>
-              <span><b>down</b> 0 → 1 · <b>up</b> 1 → 0 · <b>change</b> любое изменение</span>
-              <span><b>hold(0.5)</b> / <b>relax(0.5)</b> — секунды, срабатывают кадром позже фронта</span>
-              <span><b>on start</b> — первый кадр и после «Стоп»</span>
+              <span><b>{"event имя(переменные ; пауза) { условие }"}</b> — условие пишет автор</span>
+              <span><b>on имя {"{ … }"}</b> — действия; <b>on start</b> — первый кадр и после «Стоп»</span>
+              <span><b>in</b> — длительность: <b>mic.talking &gt; 0.2 in 500</b>, <b>in 0.5s</b></span>
+              <span><b>.up</b> вырос · <b>.down</b> упал · <b>.change</b> отличается от прошлого кадра</span>
+              <span>активность входа: <b>twitch.chat.count(5)</b> · <b>sum(5)</b> · <b>avg(5)</b></span>
+              <span><b>call имя(аргументы)</b> — обработчик выполняется сразу, пауза не мешает</span>
               <span>команды — отдельной строкой: <b>{"on start { play() }"}</b>, <b>seek(2.5)</b>, <b>{'play("дождь")'}</b></span>
               <span>чужой объект: <b>{'label.text = "…"'}</b>, <b>{'text("label", "…")'}</b></span>
               <span>текст — переменная: <b>{'text = "привет"'}</b> — база, в событии переопределяет до «Стопа»</span>

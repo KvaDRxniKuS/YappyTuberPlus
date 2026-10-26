@@ -64,6 +64,7 @@
         "authorPath": "$.payload.event.chatter_user_name",
         "input": "chat",
         "history": 12,
+        "retainSeconds": 300,
         "showAuthor": true
       },
       "mapping": [

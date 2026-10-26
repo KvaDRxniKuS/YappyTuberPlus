@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ModuleInstance } from "../types";
+import type { InputMark, ModuleInstance } from "../types";
 import { moduleDefinition } from "../modules/registry";
 import {
   ExternalSourceHost, sourceConfig,
@@ -18,6 +18,13 @@ export interface ExternalInputsApi {
   logs: Record<string, ExternalLogEntry[]>;
   /** Последние тексты (чат): только для показа, в формулы не идут. */
   texts: Record<string, ExternalTextLine[]>;
+  /**
+   * Отметки активности для ядра: `<модуль>.<вход>` → возраст и вес событий.
+   *
+   * Это функция, а не состояние: возраст считается в момент кадра, иначе
+   * `count(5)` не уменьшался бы, пока не пришло новое сообщение.
+   */
+  marks: () => Record<string, InputMark[]>;
   /** Проверка источника по кнопке: возвращает текст результата. */
   probe: (name: string) => Promise<string>;
   /** Вход в Twitch по коду: кнопка в карточке модуля. */
@@ -80,6 +87,23 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
 
   useEffect(() => () => hostRef.current?.dispose(), []);
 
+  const marks = useCallback((): Record<string, InputMark[]> => {
+    const host = hostRef.current;
+    if (!host) return {};
+    const now = Date.now();
+    const result: Record<string, InputMark[]> = {};
+    for (const [module, inputs] of Object.entries(host.marks())) {
+      for (const [input, list] of Object.entries(inputs)) {
+        // Возраст отдаём в миллисекундах: часы фронтенда и ядра не связаны.
+        result[`${module}.${input}`] = list.map((mark) => ({
+          ageMs: Math.max(0, now - mark.at),
+          weight: mark.weight,
+        }));
+      }
+    }
+    return result;
+  }, []);
+
   const authorize = useCallback((name: string) => {
     void hostRef.current?.authorize(name);
     // Состояние придёт событием канала: панель обновится сама.
@@ -100,7 +124,7 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
     return text;
   }, []);
 
-  return { values, statuses, logs, texts, probe, authorize, signOut };
+  return { values, statuses, logs, texts, marks, probe, authorize, signOut };
 }
 
 function sameNested(left: Record<string, Record<string, number>>, right: Record<string, Record<string, number>>): boolean {

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Activity, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
 import {
-  EXTERNAL_TRANSPORTS, TEXT_HISTORY_DEFAULT, TEXT_HISTORY_MAX, TEXT_HISTORY_MIN, TRANSPORT_INFO,
+  EXTERNAL_TRANSPORTS, TEXT_HISTORY_DEFAULT, TEXT_HISTORY_MAX, TEXT_HISTORY_MIN,
+  TEXT_RETAIN_DEFAULT, TEXT_RETAIN_MAX, TEXT_RETAIN_MIN, TRANSPORT_INFO,
   defaultRule, externalInputName, readExternalSource,
 } from "../modules/external";
 import {
@@ -346,6 +347,21 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
                   integer
                   title={`Сколько сообщений помним: ${TEXT_HISTORY_MIN}…${TEXT_HISTORY_MAX}`}
                   onCommit={(next) => patch({ text: { ...text, history: next } }, "История сообщений")}
+                />
+              </div>
+            </div>
+            <div className="module-field" title="Срок хранения сообщения: через столько секунд строка пропадает. 0 — не ограничивать по времени">
+              <span className="module-field-label">Хранить, с</span>
+              <div className="module-field-value">
+                <NumberField
+                  className="module-field-number"
+                  value={text.retainSeconds ?? TEXT_RETAIN_DEFAULT}
+                  min={TEXT_RETAIN_MIN}
+                  max={TEXT_RETAIN_MAX}
+                  step={1}
+                  integer
+                  title={`Секунды хранения: ${TEXT_RETAIN_MIN}…${TEXT_RETAIN_MAX}, 0 — только по количеству`}
+                  onCommit={(next) => patch({ text: { ...text, retainSeconds: next } }, "Срок хранения сообщений")}
                 />
               </div>
             </div>

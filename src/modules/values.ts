@@ -8,6 +8,7 @@ import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./v
 import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { frameValue, type AudioFrame } from "./audio";
 import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./external";
+import { textInputOf } from "./sources";
 import type { ExternalTextLine } from "./sources";
 import {
   keyboardKeys, keyLabel, mouseButtonLabel, mouseButtons, mouseValue, type PointerFrame,
@@ -274,12 +275,9 @@ export function inputMeta(modules: ModuleInstance[]): Record<string, InputMeta> 
  */
 export function textInputName(module: ModuleInstance): string | null {
   if (moduleDefinition(module.type).kind !== "external") return null;
-  const source = readExternalSource(module.config as Record<string, unknown>);
-  if (!source.text) return null;
-  return source.text.input
-    ?? source.mapping.find((rule) => rule.count)?.input
-    ?? source.mapping[0]?.input
-    ?? "text";
+  // Имя входа текста знает сам источник: чат и отметки активности должны
+  // попадать в один и тот же `<модуль>.<вход>`.
+  return textInputOf(readExternalSource(module.config as Record<string, unknown>));
 }
 
 /**

@@ -9,7 +9,24 @@ import { inputEnabled, inputKey, instanceInputs, isPointerKind } from "../module
 import { visemeEntries } from "../modules/viseme";
 import { enumStates, manualMode, stateIndex } from "../modules/manual";
 import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
-import { eventSnippet } from "../engine/scripts";
+import { eventNameFor, eventSnippet } from "../engine/scripts";
+
+/**
+ * Готовые условия для входа модуля.
+ *
+ * Блок вставляет **целое** событие: объявление с условием и подписку с пустым
+ * телом. Условие — обычное выражение, поэтому направления уровня (`.up`,
+ * `.down`, `.change`), длительность (`in 500`) и активность (`count(5)`)
+ * доступны любому входу, а не только чату.
+ */
+const EVENT_SHAPES: Array<{ id: string; label: string; note: string; condition: (key: string) => string }> = [
+  { id: "up", label: "рост", note: "сигнал вырос: нажатие", condition: (key) => `${key}.up` },
+  { id: "down", label: "спад", note: "сигнал упал: отпускание", condition: (key) => `${key}.down` },
+  { id: "change", label: "изменение", note: "значение отличается от прошлого кадра", condition: (key) => `${key}.change` },
+  { id: "level", label: "уровень", note: "значение выше половины", condition: (key) => `${key} > 0.5` },
+  { id: "long", label: "длительность", note: "условие держится дольше 0,5 с", condition: (key) => `${key} > 0.5 in 500` },
+  { id: "count", label: "активность", note: "сколько событий за 5 секунд", condition: (key) => `${key}.count(5) > 10` },
+];
 import type { ExternalTextLine } from "../modules/sources";
 import { readExternalSource, TEXT_HISTORY_DEFAULT } from "../modules/external";
 
@@ -136,18 +153,20 @@ export function InputsPanel(props: InputsPanelProps) {
             {isActionsOpen(module.name) && (
               <div className="module-actions">
                 <p className="module-actions-hint">
-                  Клик вставляет блок в текущий скрипт: своё имя объявляется в глобальных
-                  {" "}<code>trigger … = …</code>, подписка — <code>on …</code>.
+                  Клик вставляет целое событие в текущий скрипт: объявление{" "}
+                  <code>{"event имя() { условие }"}</code> и подписку <code>{"on имя { … }"}</code>.
+                  Условие — обычное выражение, поэтому подойдёт любой вход модуля.
                 </p>
                 {specs.filter((spec) => inputEnabled(module, spec.name)).flatMap((spec) => {
                   const key = inputKey(module, spec.name);
-                  return ["down", "up", "change", "hold(0.5)", "relax(0.5)"].map((kind) => (
+                  const name = eventNameFor(key);
+                  return EVENT_SHAPES.map((shape) => (
                     <code
-                      key={`${key}.${kind}`}
-                      title={`Вставить блок события ${key}.${kind}`}
-                      onClick={() => props.onInsertSnippet(eventSnippet(`${key}.${kind}`))}
+                      key={`${key}.${shape.id}`}
+                      title={`Вставить событие «${name}»: ${shape.note}`}
+                      onClick={() => props.onInsertSnippet(eventSnippet(name, shape.condition(key)))}
                     >
-                      {key}.{kind}
+                      {name} · {shape.label}
                     </code>
                   ));
                 })}

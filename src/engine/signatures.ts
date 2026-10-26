@@ -168,77 +168,108 @@ export function signatureLine(hint: SignatureHint | null): string {
   return `${signatureOf(hint.name)} — ${parameterHint(hint.name, hint.index) ?? "аргумент не нужен"}`;
 }
 
-/** Вход модуля для подсказки события: полное имя и подпись из панели. */
+/** Вход модуля для подсказки: полное имя и подпись из панели. */
 export interface EventHintInput {
   key: string;
   label?: string;
 }
 
-/** Типы событий: одни и те же для любого входа модуля. */
-export const EVENT_KINDS = [
-  { kind: "down", note: "0 → 1: нажали, заговорили" },
-  { kind: "up", note: "1 → 0: отпустили, замолчали" },
-  { kind: "change", note: "значение изменилось с прошлого кадра" },
-  { kind: "hold(0.5)", note: "держалось дольше 0,5 с — один раз за удержание" },
-  { kind: "relax(0.6)", note: "отпущено дольше 0,6 с — один раз за отпускание" },
+/**
+ * Поля входа в выражении: направления уровня и активность за окно.
+ *
+ * Это обычные числа, а не отдельные виды событий: `mouse.left.up` — 1 на кадре,
+ * когда сигнал вырос, `twitch.chat.count(5)` — сколько сообщений было за 5 с.
+ */
+export const INPUT_FIELDS = [
+  { field: "up", note: "значение выше, чем в прошлом кадре" },
+  { field: "down", note: "значение ниже, чем в прошлом кадре" },
+  { field: "change", note: "значение отличается от прошлого кадра" },
+  { field: "count(5)", note: "сколько событий входа было за 5 секунд" },
+  { field: "sum(5)", note: "суммарный вес событий за 5 секунд" },
+  { field: "avg(5)", note: "средний вес событий за 5 секунд" },
 ] as const;
 
-/**
- * Подсказка синтаксиса события под редактором.
- *
- * Пока курсор стоит в заголовке (`on …` или правая часть `trigger имя = …`),
- * показываем единственную правильную форму и — если вход уже набран — его
- * подпись и допустимые типы. Так `on twitch.chat.change` не приходится
- * вспоминать: подсказка меняется прямо во время набора.
- */
-export function eventHintAt(
-  source: string,
-  position: number,
-  inputs: EventHintInput[] = [],
-): string | null {
-  const cursor = Math.max(0, Math.min(position, source.length));
+/** Как пишется время: миллисекунды с необязательным суффиксом. */
+export const TIME_HINT = "in 500 · in 250ms · in 0.5s";
+
+/** Что нужно подсказке: входы модулей и объявленные события этой области. */
+export interface HintOptions {
+  inputs?: EventHintInput[];
+  /** Имена из `event имя(…) { … }`: подсказываются после `on` и `call`. */
+  events?: string[];
+}
+
+/** Строка, в которой стоит курсор, и текст до курсора. */
+function lineAt(source: string, cursor: number): { before: string; line: string } {
   const lineStart = source.lastIndexOf("\n", cursor - 1) + 1;
   const lineEnd = source.indexOf("\n", cursor);
   const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd);
-  const before = source.slice(lineStart, cursor);
-  const kinds = "down · up · change · hold(сек) · relax(сек)";
+  return { before: source.slice(lineStart, cursor), line };
+}
 
-  // `trigger имя = …`: объявление своего события.
-  const trigger = /^\s*trigger\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\w.]*)$/.exec(before);
-  if (trigger && !line.includes("{")) {
-    const path = trigger[2];
-    const found = inputs.find((input) => input.key === path);
-    if (found) {
-      return `trigger ${trigger[1]} = ${found.key}.down — вход «${found.label ?? found.key}»; типы: ${kinds}`;
+/**
+ * Подсказка по месту курсора — всплывает в самом редакторе, а не строкой снизу.
+ *
+ * Подсказка никогда не повторяет то, что уже написано целиком: как только блок
+ * открыт (`{`), она молчит, чтобы не закрывать код; дальше работает
+ * автодополнение. Ошибки старых форм (`on модуль.вход.тип`, `trigger`) тоже
+ * объясняются здесь — человек видит новую запись рядом с курсором.
+ */
+export function hintAt(source: string, position: number, options: HintOptions = {}): string | null {
+  const inputs = options.inputs ?? [];
+  const events = options.events ?? [];
+  const cursor = Math.max(0, Math.min(position, source.length));
+  const { before, line } = lineAt(source, cursor);
+  const opened = line.includes("{");
+
+  // `on …` — подписка на объявленное имя; пути к входам больше не пишутся.
+  const on = /^\s*on\s+([A-Za-z0-9_.]*)$/.exec(before);
+  if (on && !opened) {
+    const typed = on[1];
+    if (typed.includes(".")) {
+      return `«${typed}» — не событие: объявите его как event имя() { ${typed} }, а подписку пишите on имя { … }`;
     }
-    return `trigger ${trigger[1]} = модуль.вход.тип — своё имя события; типы: ${kinds}`;
+    const close = typed ? events.filter((name) => name.startsWith(typed)) : events;
+    if (!typed) {
+      return events.length
+        ? `on имя { … } — объявленные события: ${events.join(", ")}; первый кадр — on start { … }`
+        : "on start { … } — первый кадр; своё событие сначала объявляют: event имя() { условие }";
+    }
+    return close.length
+      ? `on ${close[0]} { … } — объявленные события: ${close.join(", ")}`
+      : `события '${typed}' нет: сначала event ${typed}() { условие }`;
   }
 
-  const header = /^\s*on\s+([\w.]*)\s*$/.exec(before);
-  if (!header || line.includes("{")) return null;
-  const path = header[1];
+  // `call имя(…)` — прямой запуск обработчика.
+  const call = /(?:^|[^\w.])call\s+([A-Za-z0-9_]*)$/.exec(before);
+  if (call) {
+    const typed = call[1];
+    const close = typed ? events.filter((name) => name.startsWith(typed)) : events;
+    const list = close.length ? `: ${close.join(", ")}` : "";
+    return `call имя(аргументы) — обработчик выполняется сразу, пауза не мешает${list}`;
+  }
 
-  // Уже набран `.тип`: подсказываем остальные типы для этого входа.
-  const withKind = /^(.+?)\.([A-Za-z_]*)$/.exec(path);
-  if (withKind && inputs.some((input) => input.key === withKind[1])) {
-    const found = inputs.find((input) => input.key === withKind[1])!;
-    return `on ${found.key}.${withKind[2] || "change"} { … } — вход «${found.label ?? found.key}»; типы: ${kinds}`;
+  // `event имя (переменные ; пауза) { условие }`.
+  if (/^\s*event\s+[A-Za-z0-9_]*$/.test(before) && !opened) {
+    return "event имя(переменные ; пауза) { условие } — например event click() { mouse.left.up }";
   }
-  const found = inputs.find((input) => input.key === path);
-  if (found) {
-    return `on ${found.key}.<тип> { … } — вход «${found.label ?? found.key}»; типы: ${kinds}`;
+  if (/^\s*event\s+[A-Za-z0-9_]+\s*\([^)]*$/.test(before)) {
+    return "переменные события: имя = выражение, через запятую; после ';' — пауза в миллисекундах";
   }
-  if (path.startsWith("event.")) {
-    return "префикс 'event.' не нужен: пишите 'on модуль.вход.тип { … }'";
+  if (/^\s*event\./.test(before)) {
+    return "префикс 'event.' не нужен: условие пишется как event имя() { … }";
   }
-  if (!path) {
-    return `on <модуль>.<вход>.<тип> { … } — типы: ${kinds}; первый кадр — on start { … }`;
+  // Условие в `event` уже набрано, имя переменной или входа — дальше `in`.
+  if (/(?:^|[^\w.])in\s*[0-9.]*$/.test(before)) {
+    return `длительность условия: ${TIME_HINT}`;
   }
-  const known = inputs
-    .map((input) => input.key)
-    .filter((key) => key.startsWith(path))
-    .slice(0, 4);
-  return known.length
-    ? `on ${known[0].split(".")[0]}.<вход>.<тип> { … } — похоже на: ${known.join(", ")}`
-    : `вход «${path}» не найден: имена входов видны во «Входах» и в списке модулей`;
+
+  // `<вход>.<поле>` — направления уровня и активность.
+  const field = /(?:^|[^\w.])([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_]*)$/.exec(before);
+  if (field && inputs.some((input) => input.key === field[1])) {
+    const label = inputs.find((input) => input.key === field[1])?.label;
+    const name = label ? `«${label}»` : field[1];
+    return `${field[1]}.<поле> — ${name}: ${INPUT_FIELDS.map((entry) => entry.field).join(" · ")}`;
+  }
+  return null;
 }

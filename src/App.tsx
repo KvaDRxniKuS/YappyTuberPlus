@@ -208,7 +208,9 @@ export default function App() {
   const textsRef = useRef<Record<string, { text: string; author?: string }>>({});
   const engineTexts = useMemo(() => textChannel(moduleInputs.externalTexts), [moduleInputs.externalTexts]);
   textsRef.current = engineTexts;
-  const engine = useRigEngine(preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef);
+  const engine = useRigEngine(
+    preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef, moduleInputs.marks,
+  );
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const primaryId = selection.at(-1) ?? null;
   const selected = preset.objects.find((object) => object.id === primaryId) || null;
