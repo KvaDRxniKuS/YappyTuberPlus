@@ -65,6 +65,12 @@ pub enum Expr {
         field: String,
         args: Vec<Expr>,
     },
+    /// Условие с требованием по времени: `<условие> in <мс>`.
+    ///
+    /// Постфиксный оператор: `mic.talking > 0.2 in 100` — «истинно непрерывно
+    /// уже 100 мс». Заменяет прежние `hold`/`relax`: отрицание условия даёт
+    /// «ложно уже столько» без второго оператора (`!(A > 0.2) in 600`).
+    In { expr: Box<Expr>, ms: f64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +99,8 @@ enum TokenKind {
     And,
     Or,
     Not,
+    /// Ключевое слово `in`: требование длительности у условия.
+    In,
     End,
 }
 
@@ -281,6 +289,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     "and" => TokenKind::And,
                     "or" => TokenKind::Or,
                     "not" => TokenKind::Not,
+                    "in" => TokenKind::In,
                     _ => TokenKind::Ident(ident),
                 }
             }
@@ -393,13 +402,57 @@ impl ExpressionParser {
     }
 
     fn and(&mut self) -> Result<Expr, String> {
-        let mut expr = self.comparison()?;
+        let mut expr = self.duration()?;
         while self.check(&TokenKind::And) {
             self.advance();
             expr = Expr::Binary {
                 op: BinaryOp::And,
                 left: Box::new(expr),
-                right: Box::new(self.comparison()?),
+                right: Box::new(self.duration()?),
+            };
+        }
+        Ok(expr)
+    }
+
+    /// Длительность: `<условие> in <время>`.
+    ///
+    /// Связывает крепче `&&`/`||` и слабее сравнений, поэтому
+    /// `a > 1 && b > 2 in 100` — это `a > 1 && (b > 2 in 100)`, а скобки
+    /// берут по времени всё условие целиком: `(a > 1 && b > 2) in 100`.
+    fn duration(&mut self) -> Result<Expr, String> {
+        let mut expr = self.comparison()?;
+        while self.check(&TokenKind::In) {
+            self.advance();
+            let value = match self.peek().clone() {
+                TokenKind::Number(value) => {
+                    self.advance();
+                    value
+                }
+                _ => {
+                    return Err(format!(
+                        "после 'in' ожидалось время в миллисекундах на позиции {}",
+                        self.position() + 1
+                    ))
+                }
+            };
+            // Суффиксы: `in 100ms` и `in 0.5s`. Без суффикса — миллисекунды.
+            let mut ms = value;
+            if let TokenKind::Ident(unit) = self.peek().clone() {
+                match unit.as_str() {
+                    "ms" => self.advance(),
+                    "s" => {
+                        self.advance();
+                        ms = value * 1000.0;
+                    }
+                    _ => {}
+                }
+            }
+            if !ms.is_finite() || ms < 0.0 {
+                return Err("время в 'in' не может быть отрицательным".into());
+            }
+            expr = Expr::In {
+                expr: Box::new(expr),
+                ms,
             };
         }
         Ok(expr)
@@ -583,30 +636,32 @@ pub fn parse_expression(source: &str) -> Result<Expr, String> {
     ExpressionParser::new(source)?.parse()
 }
 
-/// Условие, по которому срабатывает блок события.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EventKind {
-    /// Значение перешло из нуля в единицу: нажатие, начало речи.
-    Down,
-    /// Значение вернулось в ноль: отпускание.
-    Up,
-    /// Значение изменилось с прошлого кадра (аналоговые входы).
-    Change,
-    /// Вход держится дольше `сек` — один раз за удержание.
-    Hold(f64),
-    /// Вход отпущен дольше `сек` — один раз за отпускание.
-    Relax(f64),
-}
-
-/// Откуда берётся событие.
+/// Откуда берётся блок `on …`.
+///
+/// Отдельного «события входа» больше нет: условие пишется в объявлении события
+/// (`event click() { mouse.left.up }`), а `on` только подписывается на имя.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventSource {
     /// Первый кадр после запуска: `on start { … }`.
     Start,
-    /// Прямая подписка на вход модуля: `on mouse.left.down { … }`.
-    Input { source: String, kind: EventKind },
-    /// Именованное событие из `trigger`: `on kick { … }`.
+    /// Своё событие: `on clap { … }`.
     Named(String),
+}
+
+/// Объявление события: `event clap (loud = mic.loudness ; 5000) { условие }`.
+///
+/// Переменные — живые алиасы выражений: в условии они считаются каждый кадр,
+/// а в обработчике (`on clap`) читаются как снимок на момент срабатывания.
+#[derive(Debug, Clone)]
+pub struct EventDecl {
+    pub name: String,
+    pub params: Vec<(String, Arc<Expr>)>,
+    /// Пауза повторной активации, мс: 0 — каждый кадр, пока условие истинно.
+    pub cooldown_ms: f64,
+    /// Условие срабатывания: одно логическое выражение.
+    pub condition: Arc<Expr>,
+    /// Строка объявления: её называет ошибка повторного объявления.
+    pub line: usize,
 }
 
 /// Куда пишет присваивание.
@@ -618,14 +673,6 @@ pub enum AssignTarget {
     Foreign { object: String, param: String },
 }
 
-/// Объявление именованного события: `trigger kick = mouse.left.down`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TriggerDecl {
-    pub name: String,
-    pub source: String,
-    pub kind: EventKind,
-}
-
 /// Один оператор в теле блока события.
 ///
 /// Присваивание меняет параметр, команда (`play()`, `seek(2)`, `text("…")`)
@@ -635,13 +682,24 @@ pub struct TriggerDecl {
 pub enum Statement {
     Assign(AssignTarget, Arc<Expr>),
     Call(Arc<Expr>),
+    /// `call имя(аргументы)` — синхронно запустить своё событие.
+    ///
+    /// Аргументы встают на место переменных события по порядку. Пауза (`cd`)
+    /// при вызове игнорируется: вызов — это прямая команда, а не «сработало».
+    Emit {
+        name: String,
+        args: Vec<Arc<Expr>>,
+        line: usize,
+    },
 }
 
-/// Блок `on … { имя = выражение … }`.
+/// Блок `on имя { … }`.
 #[derive(Debug, Clone)]
 pub struct EventBlock {
     pub source: EventSource,
     pub body: Vec<Statement>,
+    /// Строка заголовка: на неё ссылается ошибка повторного `on`.
+    pub line: usize,
 }
 
 /// Ошибка разбора с местом в тексте: редактор подчёркивает этот диапазон.
@@ -677,16 +735,23 @@ impl std::fmt::Display for ScriptError {
     }
 }
 
-/// Разобранный скрипт: присваивания, блоки событий и объявления `trigger`.
+/// Разобранный скрипт: присваивания, объявления событий и блоки `on`.
 #[derive(Debug, Default)]
 pub struct Script {
     pub assignments: Vec<(AssignTarget, Arc<Expr>)>,
     pub events: Vec<EventBlock>,
-    pub triggers: Vec<TriggerDecl>,
+    pub definitions: Vec<EventDecl>,
 }
 
 fn valid_identifier(text: &str) -> bool {
-    !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    let mut chars = text.chars();
+    match chars.next() {
+        // Первая буква не может быть цифрой: `1abc` — не имя.
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        _ => false,
+    }
 }
 
 /// Ключевое слово в начале строки отдельным словом: `on`, `trigger`.
@@ -698,100 +763,154 @@ fn keyword_at<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
     }
 }
 
-/// Тип условия из текста: `down`, `hold(0.5)`, `relax(1)`.
-fn kind_from(name: &str, argument: Option<&str>) -> Result<EventKind, String> {
-    let seconds = match name {
-        "hold" | "relax" => match argument.map(str::trim) {
-            Some(value) if !value.is_empty() => {
-                let parsed = value.parse::<f64>().map_err(|_| {
-                    format!("время в '{}' должно быть числом", name)
-                })?;
-                if !parsed.is_finite() || parsed < 0.0 {
-                    return Err(format!("время в '{}' не может быть отрицательным", name));
-                }
-                parsed
-            }
-            _ => 0.0,
-        },
-        _ => {
-            if argument.is_some() {
-                return Err(format!("у события '{}' нет аргументов", name));
-            }
-            0.0
-        }
-    };
-    Ok(match name {
-        "down" => EventKind::Down,
-        "up" => EventKind::Up,
-        "change" => EventKind::Change,
-        "hold" => EventKind::Hold(seconds),
-        "relax" => EventKind::Relax(seconds),
-        other => {
-            return Err(format!(
-                "неизвестный тип события '{}'; ожидалось down, up, change, hold(сек) или relax(сек)",
-                other
-            ))
-        }
-    })
-}
-
-/// `mouse.left.hold(0.5)` → (`mouse.left`, `hold`, `0.5`).
-fn split_event_path(text: &str) -> (&str, &str, Option<&str>) {
-    if text.ends_with(')') {
-        if let Some(open) = text.rfind('(') {
-            let before = &text[..open];
-            let argument = &text[open + 1..text.len() - 1];
-            let trimmed = before.trim_end();
-            let name_start = trimmed
-                .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .map(|index| index + 1)
-                .unwrap_or(0);
-            return (&before[..name_start], &trimmed[name_start..], Some(argument));
-        }
-    }
-    match text.rfind('.') {
-        Some(index) => (&text[..index], &text[index + 1..], None),
-        None => ("", text, None),
-    }
-}
-
-/// Разбор условия события: `start`, `mouse.left.down`, `mic.talking.hold(0.5)`, `kick`.
+/// Разбор заголовка `on …`: `start` или имя события.
+///
+/// Старые формы (`on mouse.left.down`, `hold(0.5)`) не поддерживаются: событие
+/// пишется явно через `event`, и подсказка сразу показывает, как это сделать.
 fn parse_event_source(raw: &str) -> Result<EventSource, String> {
     let text = raw.trim();
     if text.is_empty() {
         return Err("пустое условие события".into());
     }
-    // Событие записывается одной формой: `on модуль.вход.тип`. Префикса
-    // `event.` больше нет — он дублировал `on` и путал: в скрипте остаются
-    // только входы модулей и их типы.
-    if text.starts_with("event.") {
-        return Err("заголовок события пишется как 'on модуль.вход.тип { … }': префикс 'event.' не нужен".into());
+    if text == "start" {
+        return Ok(EventSource::Start);
     }
-    let path = text;
-    if !path.contains('.') {
-        if !valid_identifier(path) {
-            return Err(format!("некорректное имя события '{}'", raw.trim()));
-        }
-        return Ok(if path == "start" {
-            EventSource::Start
-        } else {
-            EventSource::Named(path.to_string())
-        });
-    }
-    let (head, name, argument) = split_event_path(path);
-    let head = head.trim().trim_end_matches('.');
-    let parts: Vec<&str> = head.split('.').collect();
-    if parts.len() != 2 || !valid_identifier(parts[0].trim()) || !valid_identifier(parts[1].trim()) {
+    if let Some(rest) = text.strip_prefix("event.") {
         return Err(format!(
-            "ожидалось 'модуль.вход.тип' или имя события, а не '{}'",
-            raw.trim()
+            "'event.' — префикс старой записи: условие пишется как 'event имя() {{ {} }}', а подписка — 'on имя {{ … }}'",
+            rest
         ));
     }
-    let kind = kind_from(name.trim(), argument)?;
-    Ok(EventSource::Input {
-        source: format!("{}.{}", parts[0].trim(), parts[1].trim()),
-        kind,
-    })
+    if text.contains('.') || text.contains('(') {
+        return Err(format!(
+            "«{}» — не событие: объявите его как 'event имя() {{ {} }}', а подписку пишите 'on имя {{ … }}'",
+            text, text
+        ));
+    }
+    if !valid_identifier(text) {
+        return Err(format!(
+            "некорректное имя события '{}': латиница, цифры и '_'",
+            text
+        ));
+    }
+    Ok(EventSource::Named(text.to_string()))
+}
+
+/// Разбиение по разделителю верхнего уровня: запятые внутри скобок и кавычек
+/// принадлежат выражениям (`vec(1, 2)`), а не списку переменных.
+fn split_top_level(text: &str, separator: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut quoted = false;
+    let mut current = String::new();
+    for c in text.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                current.push(c);
+            }
+            '(' | '[' if !quoted => {
+                depth += 1;
+                current.push(c);
+            }
+            ')' | ']' if !quoted => {
+                depth -= 1;
+                current.push(c);
+            }
+            _ if c == separator && depth == 0 && !quoted => {
+                parts.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => current.push(c),
+        }
+    }
+    parts.push(current.trim().to_string());
+    parts
+}
+
+/// Заголовок `event clap (loud = mic.loudness ; 5000)` → имя, переменные, пауза.
+fn parse_event_header(
+    header: &str,
+) -> Result<(String, Vec<(String, Arc<Expr>)>, f64), String> {
+    let text = header.trim();
+    let (name, tail) = match text.find('(') {
+        Some(open) => {
+            if !text.ends_with(')') {
+                return Err("у события не закрыта скобка переменных: 'event имя(переменные ; пауза)'".into());
+            }
+            (&text[..open], Some(&text[open + 1..text.len() - 1]))
+        }
+        None => (text, None),
+    };
+    let name = name.trim();
+    if !valid_identifier(name) {
+        return Err(format!(
+            "имя события '{}': латиница, цифры и '_', первая буква не цифра",
+            name
+        ));
+    }
+    if name == "start" {
+        return Err("имя 'start' занято встроенным событием первого кадра".into());
+    }
+    let mut params: Vec<(String, Arc<Expr>)> = Vec::new();
+    let mut cooldown = 0.0;
+    if let Some(tail) = tail {
+        let mut sections = split_top_level(tail, ';');
+        if sections.len() > 2 {
+            return Err("в скобках события одно ';': слева переменные, справа пауза".into());
+        }
+        let pause = if sections.len() == 2 { Some(sections.pop().unwrap()) } else { None };
+        let list = sections.pop().unwrap_or_default();
+        if !list.is_empty() {
+            for item in split_top_level(&list, ',') {
+                if item.is_empty() {
+                    continue;
+                }
+                let (param, expression) = item.split_once('=').ok_or_else(|| {
+                    format!("переменная события пишется как 'имя = выражение', а не '{}'", item)
+                })?;
+                let param = param.trim();
+                if !valid_identifier(param) {
+                    return Err(format!(
+                        "имя переменной события '{}': латиница, цифры и '_'",
+                        param
+                    ));
+                }
+                // Параметры объекта — те же переменные, просто их читает сам
+                // объект. Перекрывать их в событии нельзя: непонятно, что
+                // победит в формуле.
+                if param == "time" || param == "dt" || param == "pi" || param == "e" {
+                    return Err(format!(
+                        "'{}' — встроенное имя, выберите другое для переменной события",
+                        param
+                    ));
+                }
+                if params.iter().any(|(existing, _)| existing == param) {
+                    return Err(format!("переменная '{}' объявлена дважды", param));
+                }
+                let expression = expression.trim();
+                if expression.is_empty() {
+                    return Err(format!("у переменной '{}' нет выражения", param));
+                }
+                let parsed = parse_expression(expression)
+                    .map_err(|message| format!("в переменной '{}': {}", param, message))?;
+                params.push((param.to_string(), Arc::new(parsed)));
+            }
+        }
+        if let Some(pause) = pause {
+            let pause = pause.trim().trim_end_matches("ms").trim();
+            if !pause.is_empty() {
+                let seconds = pause
+                    .parse::<f64>()
+                    .map_err(|_| "пауза события — число миллисекунд".to_string())?;
+                if !seconds.is_finite() || seconds < 0.0 {
+                    return Err("пауза события не может быть отрицательной".into());
+                }
+                cooldown = seconds;
+            }
+        }
+    }
+    Ok((name.to_string(), params, cooldown))
 }
 
 /// Разбор цели присваивания: `x`, `speed` или `head.rotation`.
@@ -902,6 +1021,52 @@ fn parse_statement(
     next_call_id: &mut u32,
 ) -> Result<Statement, ScriptError> {
     let trimmed = text.trim();
+    // `call имя(аргументы)` — прямой запуск своего события.
+    if let Some(rest) = keyword_at(trimmed, "call") {
+        let body = rest.trim();
+        let open = body.find('(').ok_or_else(|| {
+            ScriptError::new(
+                line,
+                column,
+                trimmed.len(),
+                "вызов пишется как 'call имя(аргументы)'",
+            )
+        })?;
+        if !body.ends_with(')') {
+            return Err(ScriptError::new(
+                line,
+                column,
+                trimmed.len(),
+                "у вызова не закрыта скобка аргументов",
+            ));
+        }
+        let name = body[..open].trim();
+        if !valid_identifier(name) {
+            return Err(ScriptError::new(
+                line,
+                column + "call".len() + 1,
+                name.len().max(1),
+                "имя события: латиница, цифры и '_'",
+            ));
+        }
+        let mut args = Vec::new();
+        let inside = &body[open + 1..body.len() - 1];
+        if !inside.trim().is_empty() {
+            for item in split_top_level(inside, ',') {
+                if item.is_empty() {
+                    continue;
+                }
+                let parsed = parse_expression(&item)
+                    .map_err(|message| ScriptError::new(line, column, trimmed.len(), message))?;
+                args.push(Arc::new(parsed));
+            }
+        }
+        return Ok(Statement::Emit {
+            name: name.to_string(),
+            args,
+            line,
+        });
+    }
     if looks_like_call(trimmed) {
         let expr = parse_expression(trimmed).map_err(|message| {
             let shift = position_from_message(&message);
@@ -949,74 +1114,154 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
         }
         let column = code.len() - code.trim_start().len() + 1;
 
-        // `trigger имя = модуль.вход.тип`
-        if let Some(rest) = keyword_at(trimmed, "trigger") {
+        // Объявление события: `event имя(переменные ; пауза) { условие }`.
+        //
+        // Старый `trigger имя = модуль.вход.тип` убран вместе с `hold`/`relax`:
+        // длительность стала оператором `in` у любого условия, поэтому источник
+        // у события больше не один вход, а целое выражение.
+        //
+        // `event.x = 5` — это присваивание чужому объекту с именем `event`,
+        // поэтому точка после слова означает объект, а не объявление.
+        let event_keyword =
+            keyword_at(trimmed, "event").filter(|rest| !rest.trim_start().starts_with('.'));
+        if let Some(rest) = event_keyword {
             let body = rest.trim();
-            let equal = body.find('=').ok_or_else(|| {
+            if body.is_empty() || !body.contains('{') {
+                return Err(ScriptError::new(
+                    line_number,
+                    column,
+                    trimmed.len(),
+                    "событие пишется как 'event имя(переменные ; пауза) { условие }'",
+                ));
+            }
+            let open = body.find('{').unwrap();
+            let header_text = &body[..open];
+            let (name, params, cooldown_ms) = parse_event_header(header_text)
+                .map_err(|message| ScriptError::new(line_number, column + "event".len() + 1, header_text.trim().len(), message))?;
+            if let Some(previous) = script.definitions.iter().find(|entry| entry.name == name) {
+                return Err(ScriptError::new(
+                    line_number,
+                    column + "event".len() + 1,
+                    name.len(),
+                    format!(
+                        "событие '{}' уже объявлено в строке {}",
+                        name, previous.line
+                    ),
+                ));
+            }
+            let after_open = &body[open + 1..];
+            let mut condition_text = String::new();
+            let mut closed = false;
+            match after_open.find('}') {
+                Some(close) => {
+                    condition_text = after_open[..close].trim().to_string();
+                    let rest_after = &after_open[close + 1..];
+                    let tail = rest_after.trim_start();
+                    if !tail.is_empty() {
+                        let offset = "event".len()
+                            + (trimmed.len() - rest.len())
+                            + open
+                            + 1
+                            + close
+                            + 1
+                            + (rest_after.len() - tail.len());
+                        return Err(ScriptError::new(
+                            line_number,
+                            column + offset,
+                            tail.trim_end().len(),
+                            "после '}' объявления события ничего не пишется",
+                        ));
+                    }
+                    closed = true;
+                }
+                None => {
+                    let mut parts: Vec<String> = Vec::new();
+                    let first = after_open.trim();
+                    if !first.is_empty() {
+                        parts.push(first.to_string());
+                    }
+                    while index + 1 < lines.len() {
+                        index += 1;
+                        let next_raw = lines[index];
+                        let next_code = next_raw.split("//").next().unwrap_or("");
+                        let next_trimmed = next_code.trim();
+                        if next_trimmed == "}" {
+                            closed = true;
+                            break;
+                        }
+                        if let Some(text) = next_trimmed.strip_suffix('}') {
+                            let text = text.trim();
+                            if !text.is_empty() {
+                                parts.push(text.to_string());
+                            }
+                            closed = true;
+                            break;
+                        }
+                        if !next_trimmed.is_empty() {
+                            parts.push(next_trimmed.to_string());
+                        }
+                    }
+                    condition_text = parts.join(" ");
+                }
+            }
+            if !closed {
+                return Err(ScriptError::new(
+                    line_number,
+                    column,
+                    trimmed.len(),
+                    "объявление события не закрыто '}'",
+                ));
+            }
+            if condition_text.is_empty() {
+                return Err(ScriptError::new(
+                    line_number,
+                    column,
+                    trimmed.len(),
+                    "у события нет условия: оно пишется в фигурных скобках",
+                ));
+            }
+            let condition = parse_expression(&condition_text).map_err(|message| {
                 ScriptError::new(
                     line_number,
                     column,
                     trimmed.len(),
-                    "ожидалось 'trigger имя = модуль.вход.тип'",
+                    format!("в условии события '{}': {}", name, message),
                 )
             })?;
-            let name = body[..equal].trim();
-            if !valid_identifier(name) {
-                return Err(ScriptError::new(
-                    line_number,
-                    column + "trigger".len() + 1,
-                    name.len(),
-                    "имя события — латиница, цифры и '_'",
-                ));
-            }
-            if name == "start" {
-                return Err(ScriptError::new(
-                    line_number,
-                    column + "trigger".len() + 1,
-                    name.len(),
-                    "имя 'start' занято встроенным событием",
-                ));
-            }
-            let value_text = &body[equal + 1..];
-            let value = value_text.trim();
-            let value_column = column + equal + 1 + (value_text.len() - value_text.trim_start().len());
-            if value.is_empty() {
-                return Err(ScriptError::new(
-                    line_number,
-                    value_column,
-                    1,
-                    "после '=' ожидалось 'модуль.вход.тип'",
-                ));
-            }
-            let parsed = parse_event_source(value).map_err(|message| {
-                ScriptError::new(line_number, value_column, value.len(), message)
-            })?;
-            let (source_name, kind) = match parsed {
-                EventSource::Input { source, kind } => (source, kind),
-                _ => {
-                    return Err(ScriptError::new(
-                        line_number,
-                        value_column,
-                        value.len(),
-                        "trigger ждёт 'модуль.вход.тип'",
-                    ))
-                }
-            };
-            if script.triggers.iter().any(|entry| entry.name == name) {
+            script.definitions.push(EventDecl {
+                name,
+                params,
+                cooldown_ms,
+                condition: Arc::new(condition),
+                line: line_number,
+            });
+            index += 1;
+            continue;
+        }
+
+        // `call` — действие обработчика: на верхнем уровне ему нечего вызывать.
+        if let Some(rest) = keyword_at(trimmed, "call") {
+            if rest.trim().contains('(') {
                 return Err(ScriptError::new(
                     line_number,
                     column,
                     trimmed.len(),
-                    format!("событие '{}' уже объявлено", name),
+                    "'call' пишется внутри 'on имя { … }': это действие события",
                 ));
             }
-            script.triggers.push(TriggerDecl {
-                name: name.to_string(),
-                source: source_name,
-                kind,
-            });
-            index += 1;
-            continue;
+        }
+
+        // Старые формы событий: подсказываем новую, а не разбираем молча.
+        if let Some(rest) = keyword_at(trimmed, "trigger") {
+            return Err(ScriptError::new(
+                line_number,
+                column,
+                trimmed.len(),
+                format!(
+                    "'trigger' больше нет: объявите событие как 'event имя() {{ {} }}', а действия — в 'on имя {{ … }}'",
+                    rest.trim()
+                ),
+            ));
         }
 
         // Блок события: только `on <условие> { … }`.
@@ -1029,7 +1274,7 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
                 line_number,
                 column,
                 trimmed.len(),
-                "заголовок события пишется как 'on модуль.вход.тип { … }': префикс 'event.' не нужен",
+                "условие события объявляется как 'event имя() { условие }': префикс 'event.' не нужен",
             ));
         }
         let event_block = keyword_at(trimmed, "on").map(|rest| (rest, "on".len()));
@@ -1045,7 +1290,7 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
                     line_number,
                     header_column,
                     trimmed.len(),
-                    "после 'on' ожидалось условие: 'start', 'имя' или 'модуль.вход.тип'",
+                    "после 'on' ожидалось 'start' или имя события",
                 ));
             }
             let event_source = parse_event_source(header).map_err(|message| {
@@ -1131,6 +1376,7 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
             script.events.push(EventBlock {
                 source: event_source,
                 body,
+                line: line_number,
             });
             index += 1;
             continue;
@@ -1196,6 +1442,7 @@ impl CountCalls {
                     self.visit(arg);
                 }
             }
+            Expr::In { expr, .. } => self.visit(expr),
             Expr::Unary { expr, .. } => self.visit(expr),
             Expr::Binary { left, right, .. } => {
                 self.visit(left);
@@ -1247,75 +1494,111 @@ mod tests {
     #[test]
     fn event_blocks_parse() {
         let script = parse_script(
-            "a = 0\non mouse.left.down {\n  a = !a\n  b = 1\n}\n",
+            "a = 0\nevent click() { mouse.left.up }\non click {\n  a = !a\n  b = 1\n}\n",
         )
         .unwrap();
         assert_eq!(script.assignments.len(), 1);
+        assert_eq!(script.definitions.len(), 1);
+        assert_eq!(script.definitions[0].name, "click");
         assert_eq!(script.events.len(), 1);
-        match &script.events[0].source {
-            EventSource::Input { source, kind } => {
-                assert_eq!(source, "mouse.left");
-                assert!(matches!(kind, EventKind::Down));
-            }
-            other => panic!("ожидался входной источник, а не {:?}", other),
-        }
+        assert!(matches!(&script.events[0].source, EventSource::Named(name) if name == "click"));
         assert_eq!(script.events[0].body.len(), 2);
     }
 
     #[test]
-    fn event_hold_takes_seconds() {
-        // Точка внутри `hold(0.5)` не должна ломать разбор пути.
-        let script = parse_script("on mic.talking.hold(0.5) { a = 1 }").unwrap();
-        match &script.events[0].source {
-            EventSource::Input { source, kind } => {
-                assert_eq!(source, "mic.talking");
-                assert!(matches!(kind, EventKind::Hold(value) if (*value - 0.5).abs() < 1e-9));
-            }
-            other => panic!("ожидался входной источник, а не {:?}", other),
-        }
+    fn duration_operator_takes_milliseconds() {
+        // `in` — постфиксный оператор длительности вместо `hold`/`relax`.
+        let script = parse_script("event speak() { mic.talking > 0.2 in 500 }").unwrap();
+        let Expr::In { expr, ms } = script.definitions[0].condition.as_ref() else {
+            panic!("ожидался оператор 'in': {:?}", script.definitions[0].condition);
+        };
+        assert!((*ms - 500.0).abs() < 1e-9);
+        assert!(matches!(expr.as_ref(), Expr::Binary { op: BinaryOp::Greater, .. }));
+
+        // Суффиксы времени и вложенность.
+        let script = parse_script("event a() { x > 1 in 0.5s }").unwrap();
+        let Expr::In { ms, .. } = script.definitions[0].condition.as_ref() else {
+            panic!("ожидался 'in'");
+        };
+        assert!((*ms - 500.0).abs() < 1e-9);
+
+        // `in` крепче `&&`: временное требование относится только к правой части.
+        let script = parse_script("event a() { x > 1 && y > 2 in 100 }").unwrap();
+        let Expr::Binary { op: BinaryOp::And, right, .. } = script.definitions[0].condition.as_ref() else {
+            panic!("ожидался '&&' на верхнем уровне");
+        };
+        assert!(matches!(right.as_ref(), Expr::In { .. }));
+
+        // Два `in` подряд разрешены.
+        assert!(parse_script("event a() { x > 1 in 100 in 100 }").is_ok());
+        // Отрицание условия — вместо `relax`.
+        assert!(parse_script("event a() { !(mic.talking > 0.2) in 600 }").is_ok());
+        // Отрицательное время — ошибка.
+        assert!(parse_script("event a() { x > 1 in -5 }").is_err());
     }
 
     #[test]
-    fn event_unknown_type_is_rejected() {
-        assert!(parse_script("on mouse.left.tap { a = 1 }").is_err());
-        assert!(parse_script("on mouse.left.down { a = 1").is_err());
-        assert!(parse_script("on mouse.talking { a = 1 }").is_err());
+    fn on_requires_declared_event_name() {
+        // Источника «модуль.вход.тип» у `on` больше нет: условие живёт в `event`.
+        let error = parse_script("on mouse.left.down { a = 1 }").unwrap_err();
+        assert!(error.message.contains("не событие"), "{}", error.message);
+        let error = parse_script("on mic.talking.hold(0.5) { a = 1 }").unwrap_err();
+        assert!(error.message.contains("не событие"), "{}", error.message);
+        assert!(parse_script("on click { a = 1").is_err());
     }
 
     #[test]
-    fn trigger_declares_named_event() {
+    fn event_header_reads_params_and_cooldown() {
         let script = parse_script(
-            "trigger kick = mouse.left.down\ntrigger breath = Mic.talking.relax(0.6)\non kick { a = 1 }",
+            "event clap (loud = mic.loudness, db = mic.db ; 5000) { twitch.reward.sum(10) >= 80 }",
         )
         .unwrap();
-        assert_eq!(script.triggers.len(), 2);
-        assert_eq!(script.triggers[0].name, "kick");
-        assert_eq!(script.triggers[0].source, "mouse.left");
-        assert!(matches!(&script.triggers[1].kind, EventKind::Relax(value) if (*value - 0.6).abs() < 1e-9));
-        assert!(matches!(&script.events[0].source, EventSource::Named(name) if name == "kick"));
+        let decl = &script.definitions[0];
+        assert_eq!(decl.name, "clap");
+        assert_eq!(decl.params.len(), 2);
+        assert_eq!(decl.params[0].0, "loud");
+        assert_eq!(decl.params[1].0, "db");
+        assert!((decl.cooldown_ms - 5000.0).abs() < 1e-9);
+        // Пауза необязательна, переменные тоже.
+        let plain = parse_script("event tick() { a > 1 }").unwrap();
+        assert!(plain.definitions[0].params.is_empty());
+        assert_eq!(plain.definitions[0].cooldown_ms, 0.0);
+        // Повтор имени — ошибка со ссылкой на строку объявления.
+        let duplicate = parse_script("event a() { x > 1 }\nevent a() { y > 1 }").unwrap_err();
+        assert!(duplicate.message.contains("уже объявлено в строке 1"), "{}", duplicate.message);
     }
 
     #[test]
-    fn start_and_plain_input_parse() {
-        let script = parse_script("on start { a = 0 }\non key.space.up { a = 1 }").unwrap();
-        assert!(matches!(&script.events[0].source, EventSource::Start));
-        match &script.events[1].source {
-            EventSource::Input { source, kind } => {
-                assert_eq!(source, "key.space");
-                assert!(matches!(kind, EventKind::Up));
-            }
-            other => panic!("ожидался входной источник, а не {:?}", other),
-        }
+    fn call_statement_parses_arguments() {
+        let script = parse_script("on start { call clap(0.9, -12) }").unwrap();
+        assert!(matches!(
+            &script.events[0].body[0],
+            Statement::Emit { name, args, .. } if name == "clap" && args.len() == 2
+        ));
+        // Аргументы с запятыми внутри вызова — не разделители списка.
+        let script = parse_script("on start { call spot(vec(1, 2)) }").unwrap();
+        assert!(matches!(
+            &script.events[0].body[0],
+            Statement::Emit { args, .. } if args.len() == 1
+        ));
+        assert!(parse_script("on start { call clap }").is_err());
+    }
+
+    #[test]
+    fn trigger_is_rejected_with_a_hint() {
+        let error = parse_script("trigger kick = mouse.left.down").unwrap_err();
+        assert!(error.message.contains("'trigger' больше нет"), "{}", error.message);
+        assert!(error.message.contains("event имя()"), "{}", error.message);
     }
 
     #[test]
     fn event_prefix_is_rejected_with_a_hint() {
-        // Заголовок события один: `on модуль.вход.тип`. Старая запись без `on`
+        // Условие живёт в объявлении события. Старая запись без `event`
         // подсказывает правильную форму, а не молчит.
         let error = parse_script("event.mouse.left.down { a = 1 }").unwrap_err();
         assert!(error.message.contains("префикс 'event.' не нужен"), "{}", error.message);
         let error = parse_script("on event.key.space.up { a = 1 }").unwrap_err();
-        assert!(error.message.contains("префикс 'event.' не нужен"), "{}", error.message);
+        assert!(error.message.contains("префикс старой записи"), "{}", error.message);
     }
 
     #[test]

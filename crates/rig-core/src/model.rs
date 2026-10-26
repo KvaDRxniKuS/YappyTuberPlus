@@ -275,6 +275,40 @@ pub struct InputValues {
     /// `twitch.reward.max` и посчитать долю.
     #[serde(default)]
     pub meta: BTreeMap<String, InputMeta>,
+    /// Отметки активности входа: когда что-то случилось.
+    ///
+    /// Возраст считается **от текущего момента** и приходит от редактора:
+    /// часы фронтенда и ядра не связаны, поэтому договорились только о возрасте
+    /// метки, а не об абсолютном времени. По ним считаются
+    /// `count(с)`, `sum(с)` и `avg(с)`.
+    #[serde(default)]
+    pub marks: BTreeMap<String, Vec<InputMark>>,
+}
+
+/// Одна отметка активности: возраст и вес события.
+///
+/// Вес нужен `sum`: награда за 500 бит тяжелее сообщения чата, у которого вес 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputMark {
+    /// Сколько миллисекунд назад это случилось.
+    #[serde(default, rename = "ageMs")]
+    pub age_ms: f64,
+    /// Вес события; без него считается одно событие.
+    #[serde(default = "unit_weight")]
+    pub weight: f64,
+}
+
+impl Default for InputMark {
+    fn default() -> Self {
+        Self {
+            age_ms: 0.0,
+            weight: 1.0,
+        }
+    }
+}
+
+fn unit_weight() -> f64 {
+    1.0
 }
 
 /// Одна строка текстового канала: сообщение чата и его автор.

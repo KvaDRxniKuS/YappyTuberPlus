@@ -3,7 +3,7 @@ use crate::model::{
     TextLine, Vec2,
 };
 use crate::parser::{
-    parse_script, AssignTarget, BinaryOp, EventKind, EventSource, Expr, Statement, UnaryOp,
+    parse_script, AssignTarget, BinaryOp, EventSource, Expr, Statement, UnaryOp,
 };
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
@@ -22,13 +22,47 @@ enum Value {
     Signals,
 }
 
-/// Условие, по которому срабатывает готовый блок события.
+/// Откуда берётся блок `on …` после сборки.
 #[derive(Debug, Clone)]
-enum CompiledTrigger {
+enum CompiledSource {
     /// `on start` — первый кадр после запуска или остановки.
     Start,
-    /// Вход модуля: значение берётся из `inputs.values`.
-    Input { source: String, kind: EventKind },
+    /// Своё событие: индекс в `definitions`.
+    Named(usize),
+}
+
+/// Объявленное событие после сборки: условие и его переменные.
+///
+/// Переменные хранятся выражениями: в условии они считаются каждый кадр
+/// (живой алиас), а в обработчике подставляются снимком на момент срабатывания.
+#[derive(Debug, Clone)]
+struct CompiledDefinition {
+    name: String,
+    /// Объект, в скрипте которого объявлено событие; `None` — глобальный скрипт.
+    scope: Option<String>,
+    params: Vec<(String, Arc<Expr>)>,
+    /// Пауза повторного срабатывания, мс.
+    cooldown_ms: f64,
+    condition: Arc<Expr>,
+    /// Строка объявления: на неё ссылается диагностика повторного имени.
+    line: usize,
+}
+
+/// Состояние объявления между кадрами.
+#[derive(Debug, Clone, Default)]
+struct DefinitionState {
+    /// Момент, с которого условие истинно; `None` — сейчас ложно (событие взведено).
+    since: Option<f64>,
+    /// Момент последнего срабатывания в текущем «взведении».
+    last: Option<f64>,
+}
+
+/// `call имя(аргументы)` после сборки: индекс события и готовые аргументы.
+#[derive(Debug, Clone)]
+struct CompiledCall {
+    target: usize,
+    name: String,
+    args: Vec<Arc<Expr>>,
 }
 
 /// Запись текста: `text = …` в своём скрипте или `label.text = …` в чужом.
@@ -47,7 +81,9 @@ struct TextWrite {
 /// Блок события, готовый к исполнению: условие, владелец и цели тела.
 #[derive(Debug, Clone)]
 struct CompiledEvent {
-    trigger: CompiledTrigger,
+    source: CompiledSource,
+    /// Строка заголовка `on …`: её называет ошибка повторной подписки.
+    line: usize,
     /// Объект, в скрипте которого записан блок; `None` — глобальные переменные.
     owner: Option<String>,
     /// Что присвоить при срабатывании: узел и выражение.
@@ -56,7 +92,12 @@ struct CompiledEvent {
     text_body: Vec<TextWrite>,
     /// Команды (`play()`, `seek(…)`, `text(…)`): выполняются после присваиваний.
     actions: Vec<Arc<Expr>>,
+    /// Вызовы своих событий (`call имя(…)`): идут последними, как команды.
+    emits: Vec<CompiledCall>,
 }
+
+/// Предел вложенности `call`: защита от цепочки, которую не поймала сборка.
+const MAX_CALL_DEPTH: usize = 8;
 
 /// Команды, которые понимает тело блока события. Всё остальное — формулы.
 const ACTIONS: [&str; 8] = [
@@ -223,19 +264,6 @@ fn check_action(
     true
 }
 
-/// Состояние одного блока: прошлое значение, начало удержания и защёлка.
-#[derive(Debug, Clone)]
-struct EventState {
-    last: f64,
-    since: f64,
-    fired: bool,
-    /// Условие `hold`/`relax` уже выполняется (нужно, чтобы поймать начало).
-    active: bool,
-    /// Кадр, на котором условие выполнилось: `hold(0)` ждёт следующий кадр,
-    /// поэтому он и не совпадает по поведению с `down`.
-    armed: u64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct StateKey {
     node: NodeKey,
@@ -268,9 +296,21 @@ pub struct Rig {
     cycle_nodes: BTreeSet<NodeKey>,
     diagnostics: BTreeSet<String>,
     states: HashMap<StateKey, RuntimeState>,
+    /// Объявления событий: глобальные, затем локальные в порядке объектов.
+    definitions: Vec<CompiledDefinition>,
+    /// Состояние каждого объявления: с какого момента истинно, когда сработало.
+    definition_state: Vec<DefinitionState>,
+    /// Состояние узлов `in`: момент, с которого условие истинно.
+    ///
+    /// Ключ — адрес подвыражения: оно создаётся при разборе один раз и живёт
+    /// столько же, сколько сцена, поэтому адрес годится как идентификатор.
+    in_state: HashMap<usize, f64>,
     /// Блоки `on …` из глобального скрипта и скриптов объектов.
     events: Vec<CompiledEvent>,
-    event_state: HashMap<usize, EventState>,
+    /// Значения входов в прошлом кадре: по ним считаются `.up/.down/.change`.
+    previous_inputs: BTreeMap<String, f64>,
+    /// Переменные события, видимые в текущем вычислении.
+    bindings: BTreeMap<String, Value>,
     /// Записи чужим объектам из обычных присваиваний: применяются последними.
     writes: Vec<(NodeKey, Arc<Expr>)>,
     /// Состояние медиа по id объекта: команды и параметры `play/speed/volume`.
@@ -360,15 +400,12 @@ impl Rig {
         let mut text_base: Vec<TextWrite> = Vec::new();
         let mut persistent_globals: HashSet<String> = HashSet::new();
         let mut compile_diagnostics: BTreeSet<String> = BTreeSet::new();
-        // Именованные события объявляются только в глобальном скрипте: так у них
-        // одно имя на всю сцену, и любой объект может на него подписаться.
-        let mut triggers: HashMap<String, (String, EventKind)> = HashMap::new();
+        // Объявления событий: глобальные видны всем, локальные — своему объекту.
+        let mut definitions: Vec<CompiledDefinition> = Vec::new();
+        let mut global_defs: HashMap<String, usize> = HashMap::new();
 
         match parse_script(&preset.globals) {
             Ok(script) => {
-                for decl in &script.triggers {
-                    triggers.insert(decl.name.clone(), (decl.source.clone(), decl.kind.clone()));
-                }
                 for (target, expr) in &script.assignments {
                     match target {
                         AssignTarget::Local(name) => {
@@ -407,9 +444,24 @@ impl Rig {
                         }
                     }
                 }
+                for decl in &script.definitions {
+                    register_definition(
+                        &mut definitions,
+                        &mut global_defs,
+                        decl,
+                        None,
+                        &mut compile_diagnostics,
+                    );
+                }
+                let empty_locals: HashMap<String, usize> = HashMap::new();
                 for block in &script.events {
-                    let trigger = match resolve_trigger(&block.source, &triggers) {
-                        Ok(trigger) => trigger,
+                    let source = match resolve_source(
+                        &block.source,
+                        &empty_locals,
+                        &global_defs,
+                        &definitions,
+                    ) {
+                        Ok(source) => source,
                         Err(message) => {
                             compile_diagnostics.insert(format!("глобальные: {}", message));
                             continue;
@@ -417,9 +469,31 @@ impl Rig {
                     };
                     let mut body = Vec::new();
                     let mut actions = Vec::new();
+                    let mut emits = Vec::new();
                     let mut text_body: Vec<TextWrite> = Vec::new();
                     for statement in &block.body {
                         let (target, expr) = match statement {
+                            Statement::Emit { name, args, line } => {
+                                match resolve_call(
+                                    name,
+                                    &empty_locals,
+                                    &global_defs,
+                                    &definitions,
+                                ) {
+                                    Ok(target) => emits.push(CompiledCall {
+                                        target,
+                                        name: name.clone(),
+                                        args: args.clone(),
+                                    }),
+                                    Err(message) => {
+                                        compile_diagnostics.insert(format!(
+                                            "глобальные (строка {}): {}",
+                                            line, message
+                                        ));
+                                    }
+                                }
+                                continue;
+                            }
                             Statement::Assign(target, expr) => (target, expr),
                             Statement::Call(call) => {
                                 if check_action(
@@ -481,11 +555,13 @@ impl Rig {
                         body.push((key, expr.clone()));
                     }
                     events.push(CompiledEvent {
-                        trigger,
+                        source,
+                        line: block.line,
                         owner: None,
                         body,
                         text_body,
                         actions,
+                        emits,
                     });
                 }
             }
@@ -503,12 +579,6 @@ impl Rig {
                     continue;
                 }
             };
-            if !script.triggers.is_empty() {
-                compile_diagnostics.insert(format!(
-                    "{}: 'trigger' объявляется только в глобальном скрипте",
-                    object.id
-                ));
-            }
             for (target, expr) in &script.assignments {
                 match target {
                     AssignTarget::Local(name) => {
@@ -574,9 +644,33 @@ impl Rig {
                     }
                 }
             }
+            // Локальные объявления: имя занято глобальным событием — ошибка,
+            // иначе `on` в объекте означал бы два разных события с одним именем.
+            let mut local_defs: HashMap<String, usize> = HashMap::new();
+            for decl in &script.definitions {
+                if let Some(global_index) = global_defs.get(&decl.name).copied() {
+                    compile_diagnostics.insert(format!(
+                        "{} (строка {}): событие '{}' уже объявлено глобально в строке {} — имя занято",
+                        object.id, decl.line, decl.name, definitions[global_index].line
+                    ));
+                    continue;
+                }
+                register_definition(
+                    &mut definitions,
+                    &mut local_defs,
+                    decl,
+                    Some(object.id.as_str()),
+                    &mut compile_diagnostics,
+                );
+            }
             for block in &script.events {
-                let trigger = match resolve_trigger(&block.source, &triggers) {
-                    Ok(trigger) => trigger,
+                let source = match resolve_source(
+                    &block.source,
+                    &local_defs,
+                    &global_defs,
+                    &definitions,
+                ) {
+                    Ok(source) => source,
                     Err(message) => {
                         compile_diagnostics.insert(format!("{}: {}", object.id, message));
                         continue;
@@ -584,9 +678,31 @@ impl Rig {
                 };
                 let mut body = Vec::new();
                 let mut actions = Vec::new();
+                let mut emits = Vec::new();
                 let mut text_body: Vec<TextWrite> = Vec::new();
                 for statement in &block.body {
                     let (target, expr) = match statement {
+                        Statement::Emit { name, args, line } => {
+                            match resolve_call(
+                                name,
+                                &local_defs,
+                                &global_defs,
+                                &definitions,
+                            ) {
+                                Ok(target) => emits.push(CompiledCall {
+                                    target,
+                                    name: name.clone(),
+                                    args: args.clone(),
+                                }),
+                                Err(message) => {
+                                    compile_diagnostics.insert(format!(
+                                        "{} (строка {}): {}",
+                                        object.id, line, message
+                                    ));
+                                }
+                            }
+                            continue;
+                        }
                         Statement::Assign(target, expr) => (target, expr),
                         Statement::Call(call) => {
                             if check_action(
@@ -666,14 +782,22 @@ impl Rig {
                     body.push((key, expr.clone()));
                 }
                 events.push(CompiledEvent {
-                    trigger,
+                    source,
+                    line: block.line,
                     owner: Some(object.id.clone()),
                     body,
                     text_body,
                     actions,
+                    emits,
                 });
             }
         }
+
+        // Рекурсия `call` — ошибка ещё до первого кадра: бесконечный вызов
+        // нельзя «поймать» во время работы, он бы просто подвесил сцену.
+        check_recursion(&definitions, &events, &mut compile_diagnostics);
+        check_duplicate_handlers(&definitions, &events, &mut compile_diagnostics);
+        let definition_state = vec![DefinitionState::default(); definitions.len()];
 
         let mut previous = Frame::default();
         let mut media = BTreeMap::new();
@@ -728,8 +852,12 @@ impl Rig {
             cycle_nodes: BTreeSet::new(),
             diagnostics: BTreeSet::new(),
             states: HashMap::new(),
+            definitions,
+            definition_state,
+            in_state: HashMap::new(),
             events,
-            event_state: HashMap::new(),
+            previous_inputs: BTreeMap::new(),
+            bindings: BTreeMap::new(),
             writes,
             playback,
             media,
@@ -770,12 +898,15 @@ impl Rig {
         // стоп-кадра: следующее нажатие снова первое, а текст — базовый.
         if reset_clock {
             self.last_now = Some(self.now);
-            self.event_state.clear();
+            self.definition_state.iter_mut().for_each(|state| *state = DefinitionState::default());
+            self.in_state.clear();
+            self.bindings.clear();
             self.texts.clear();
             self.started = false;
         }
         if paused && step_dt.is_none() {
             self.last_now = Some(self.now);
+            self.previous_inputs = inputs.values.clone();
             self.inputs = inputs;
             self.cache.clear();
             self.visiting.clear();
@@ -804,7 +935,9 @@ impl Rig {
         };
         self.time += self.dt;
         self.seq += 1;
-        self.inputs = inputs;
+        // Прошлый кадр нужен полям `.up/.down/.change`: значения входов
+        // сравниваются с тем, что было, а не с нулём.
+        self.previous_inputs = std::mem::replace(&mut self.inputs, inputs).values;
         self.cache.clear();
         self.visiting.clear();
         self.cycle_nodes.clear();
@@ -911,110 +1044,220 @@ impl Rig {
 
     /// Считает условия событий и применяет тела сработавших блоков.
     ///
+    /// Сначала считаются **все** объявления этого кадра, потом выполняются
+    /// обработчики: так одно событие не влияет на условие другого в том же кадре.
     /// Значения попадают в кэш кадра до обычного вычисления, поэтому на этом
     /// кадре побеждает событие, а на следующем — обычные формулы или прошлое
     /// значение переменной.
     fn fire_events(&mut self) {
-        let now = self.time;
-        let seq = self.seq;
         let first_frame = !self.started;
+        // Снимки переменных для сработавших событий: обработчику достаётся
+        // значение на момент срабатывания, а не «микрофон уже изменился».
+        let mut fired: Vec<Option<BTreeMap<String, Value>>> = Vec::new();
+        for index in 0..self.definitions.len() {
+            fired.push(self.evaluate_definition(index));
+        }
         for index in 0..self.events.len() {
-            let (trigger, owner, body, text_body, actions) = {
-                let event = &self.events[index];
-                (
-                    event.trigger.clone(),
-                    event.owner.clone(),
-                    event.body.clone(),
-                    event.text_body.clone(),
-                    event.actions.clone(),
-                )
-            };
-            let fired = match &trigger {
+            let should_run = match &self.events[index].source {
                 // `on start` — первый кадр после запуска, остановки или перезапуска.
-                CompiledTrigger::Start => first_frame,
-                CompiledTrigger::Input { source, kind } => {
-                    let value = self.inputs.values.get(source).copied().unwrap_or(0.0);
-                    let high = value > 0.5;
-                    // `relax` — то же удержание, только условие обратное.
-                    let active = if matches!(kind, EventKind::Relax(_)) {
-                        !high
-                    } else {
-                        high
-                    };
-                    // Первое наблюдение запоминает текущее значение: иначе `change`
-                    // срабатывал бы на старте сцены, а `down` — на уже зажатой клавише.
-                    let state = self.event_state.entry(index).or_insert(EventState {
-                        last: value,
-                        since: 0.0,
-                        fired: false,
-                        active: false,
-                        armed: 0,
-                    });
-                    let fired = match kind {
-                        EventKind::Down => state.last <= 0.5 && high,
-                        EventKind::Up => state.last > 0.5 && !high,
-                        EventKind::Change => (value - state.last).abs() > 1e-9,
-                        // Удержание срабатывает не в кадре, когда условие выполнилось,
-                        // а следующим: так даже `hold(0)` и `relax(0)` отличаются от
-                        // `down`/`up` и дают «на кадр позже».
-                        EventKind::Hold(seconds) | EventKind::Relax(seconds) => {
-                            if !active {
-                                state.fired = false;
-                                state.active = false;
-                                false
-                            } else {
-                                if !state.active {
-                                    state.active = true;
-                                    state.since = now;
-                                    state.armed = seq;
-                                    state.fired = false;
-                                }
-                                if !state.fired && seq > state.armed && now - state.since >= *seconds {
-                                    state.fired = true;
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                        }
-                    };
-                    state.last = value;
-                    fired
-                }
+                CompiledSource::Start => first_frame,
+                CompiledSource::Named(target) => fired.get(*target).map(Option::is_some).unwrap_or(false),
             };
-            if !fired {
+            if !should_run {
                 continue;
             }
-            let context = match &owner {
+            let bindings = match &self.events[index].source {
+                CompiledSource::Named(target) => fired[*target].clone().unwrap_or_default(),
+                CompiledSource::Start => BTreeMap::new(),
+            };
+            self.run_handler(index, bindings, 0);
+        }
+        self.started = true;
+    }
+
+    /// Считает условие объявления и решает, срабатывает ли оно в этом кадре.
+    ///
+    /// Возвращает снимок переменных, если событие сработало: живой алиас
+    /// `loud = mic.loudness` считается сейчас, обработчик получает именно это
+    /// значение, даже если следующий кадр изменит микрофон.
+    fn evaluate_definition(&mut self, index: usize) -> Option<BTreeMap<String, Value>> {
+        let (owner, params, cooldown_ms, condition) = {
+            let definition = &self.definitions[index];
+            (
+                definition.scope.clone(),
+                definition.params.clone(),
+                definition.cooldown_ms,
+                definition.condition.clone(),
+            )
+        };
+        let context = match &owner {
+            Some(id) => NodeKey::Param(id.clone(), Param::X),
+            None => NodeKey::Global(String::new()),
+        };
+        let bindings = self.collect_bindings(&params, &context);
+        let truth = self.with_bindings(&bindings, |rig| {
+            rig.numeric(&condition, &context) != 0.0
+        });
+        let now = self.time;
+        let state = &mut self.definition_state[index];
+        if !truth {
+            // Условие стало ложным — событие взведено: следующий фронт сработает
+            // сразу, не дожидаясь паузы прошлого срабатывания.
+            state.since = None;
+            state.last = None;
+            return None;
+        }
+        if state.since.is_none() {
+            state.since = Some(now);
+            state.last = None;
+        }
+        let ready = match state.last {
+            // Пауза `cd` отсчитывается от прошлого срабатывания; `0` — каждый кадр.
+            Some(last) => now - last >= cooldown_ms.max(0.0),
+            None => true,
+        };
+        if !ready {
+            return None;
+        }
+        state.last = Some(now);
+        Some(bindings)
+    }
+
+    /// Переменные события в этом кадре: выражения объявления по порядку.
+    fn collect_bindings(
+        &mut self,
+        params: &[(String, Arc<Expr>)],
+        context: &NodeKey,
+    ) -> BTreeMap<String, Value> {
+        self.bind_params(params, &[], context)
+    }
+
+    /// Выполняет замыкание с подставленными переменными события.
+    ///
+    /// Переменные — обычные имена в выражениях, поэтому они подменяют карту
+    /// привязок на время вычисления и возвращаются как были: вложенный `call`
+    /// не должен терять переменные вызывающего.
+    fn with_bindings<T>(
+        &mut self,
+        bindings: &BTreeMap<String, Value>,
+        action: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let saved = std::mem::replace(&mut self.bindings, bindings.clone());
+        let result = action(self);
+        self.bindings = saved;
+        result
+    }
+
+    /// Обработчик `on …`: присваивания, текст, команды и вызовы.
+    fn run_handler(&mut self, index: usize, bindings: BTreeMap<String, Value>, depth: usize) {
+        let (owner, body, text_body, actions, emits) = {
+            let event = &self.events[index];
+            (
+                event.owner.clone(),
+                event.body.clone(),
+                event.text_body.clone(),
+                event.actions.clone(),
+                event.emits.clone(),
+            )
+        };
+        let context = match &owner {
+            Some(id) => NodeKey::Param(id.clone(), Param::X),
+            None => NodeKey::Global(String::new()),
+        };
+        let saved = std::mem::replace(&mut self.bindings, bindings);
+        for (key, expression) in body {
+            let mut result = self.numeric(&expression, &context);
+            // visible живёт в 0/1, и запись чужому объекту — не исключение.
+            if matches!(&key, NodeKey::Param(_, Param::Visible)) {
+                result = result.round().clamp(0.0, 1.0);
+            }
+            self.cache.insert(key, result);
+        }
+        // Текст — не число: он не идёт в кэш, а живёт до остановки.
+        for write in text_body {
+            let write_context = match &write.owner {
                 Some(id) => NodeKey::Param(id.clone(), Param::X),
                 None => NodeKey::Global(String::new()),
             };
-            for (key, expression) in body {
-                let mut result = self.numeric(&expression, &context);
-                // visible живёт в 0/1, и запись чужому объекту — не исключение.
-                if matches!(&key, NodeKey::Param(_, Param::Visible)) {
-                    result = result.round().clamp(0.0, 1.0);
-                }
-                self.cache.insert(key, result);
-            }
-            // Текст — не число: он не идёт в кэш, а живёт до остановки.
-            for write in text_body {
-                let write_context = match &write.owner {
-                    Some(id) => NodeKey::Param(id.clone(), Param::X),
-                    None => NodeKey::Global(String::new()),
-                };
-                let value = self.text_value(&write.expr, &write_context);
-                if value.is_empty() {
-                    self.texts.remove(&write.target);
-                } else {
-                    self.texts.insert(write.target, value);
-                }
-            }
-            for action in actions {
-                self.run_action(&action, &owner, &context);
+            let value = self.text_value(&write.expr, &write_context);
+            if value.is_empty() {
+                self.texts.remove(&write.target);
+            } else {
+                self.texts.insert(write.target, value);
             }
         }
-        self.started = true;
+        for action in actions {
+            self.run_action(&action, &owner, &context);
+        }
+        for call in emits {
+            self.emit_event(&call, &context, depth);
+        }
+        self.bindings = saved;
+    }
+
+    /// `call имя(аргументы)`: обработчики события выполняются сразу, в этом кадре.
+    ///
+    /// Пауза игнорируется — это прямая команда, а не «условие сработало».
+    /// Аргументы встают на место переменных по порядку; недостающие берутся из
+    /// выражений объявления. Глубина ограничена, чтобы ошибка не подвесила сцену.
+    fn emit_event(&mut self, call: &CompiledCall, caller: &NodeKey, depth: usize) {
+        if depth >= MAX_CALL_DEPTH {
+            self.diagnostics.insert(format!(
+                "вызов '{}': вложенность больше {} — проверьте call",
+                call.name, MAX_CALL_DEPTH
+            ));
+            return;
+        }
+        let (owner, params) = {
+            let definition = &self.definitions[call.target];
+            (definition.scope.clone(), definition.params.clone())
+        };
+        let context = match &owner {
+            Some(id) => NodeKey::Param(id.clone(), Param::X),
+            None => NodeKey::Global(String::new()),
+        };
+        // Аргументы считаются в контексте вызывающего, со своими переменными.
+        let mut values = Vec::new();
+        for argument in &call.args {
+            values.push(self.eval_expr(argument, caller));
+        }
+        let bindings = self.bind_params(&params, &values, &context);
+        let saved = std::mem::replace(&mut self.bindings, bindings);
+        for index in 0..self.events.len() {
+            if let CompiledSource::Named(target) = self.events[index].source {
+                if target == call.target {
+                    let snapshot = self.bindings.clone();
+                    self.run_handler(index, snapshot, depth + 1);
+                }
+            }
+        }
+        self.bindings = saved;
+    }
+
+    /// Значения переменных: аргумент вызова по порядку, иначе выражение объявления.
+    ///
+    /// Считаются по очереди и с уже готовыми предыдущими: `db = loud * 2`
+    /// в объявлении видит `loud` так же, как в `call`.
+    fn bind_params(
+        &mut self,
+        params: &[(String, Arc<Expr>)],
+        values: &[Value],
+        context: &NodeKey,
+    ) -> BTreeMap<String, Value> {
+        let mut bindings = BTreeMap::new();
+        for (position, (name, default)) in params.iter().enumerate() {
+            let value = match values.get(position) {
+                Some(value) => value.clone(),
+                None => {
+                    let saved = std::mem::replace(&mut self.bindings, bindings.clone());
+                    let value = self.eval_expr(default, context);
+                    self.bindings = saved;
+                    value
+                }
+            };
+            bindings.insert(name.clone(), value);
+        }
+        bindings
     }
 
     /// Выполняет команду из тела события.
@@ -1297,6 +1540,20 @@ impl Rig {
             // В числовой формуле она даёт диагностику уже на приведении к числу.
             Expr::Text(value) => Value::Text(value.clone()),
             Expr::Name(name) => self.eval_name(name, context),
+            // `<условие> in <мс>`: сколько времени условие истинно подряд.
+            Expr::In { expr, ms } => {
+                // Ключ — адрес подвыражения: узел создан один раз при разборе,
+                // поэтому адрес стабилен всю жизнь сцены.
+                let key = expr.as_ref() as *const Expr as usize;
+                let value = self.numeric(expr, context);
+                if value == 0.0 {
+                    self.in_state.remove(&key);
+                    return Value::Number(0.0);
+                }
+                let now = self.time;
+                let since = *self.in_state.entry(key).or_insert(now);
+                Value::Number(bool_number(now - since >= *ms))
+            }
             Expr::Unary { op, expr } => {
                 let value = self.numeric(expr, context);
                 Value::Number(match op {
@@ -1467,7 +1724,7 @@ impl Rig {
                 match self.input_field(module, input, field, offset, context) {
                     Some(value) => value,
                     None => self.error_value(format!(
-                        "у входа '{}' нет поля '{}'; есть message, user, min, max, step, label, kind",
+                        "у входа '{}' нет поля '{}'; есть message, user, min, max, step, label, kind, up, down, change, count, sum, avg",
                         subject, field
                     )),
                 }
@@ -1497,11 +1754,59 @@ impl Rig {
         let key = format!("{}.{}", module, input);
         let known = self.inputs.texts.contains_key(&key)
             || self.inputs.meta.contains_key(&key)
-            || self.inputs.values.contains_key(&key);
+            || self.inputs.values.contains_key(&key)
+            || self.inputs.marks.contains_key(&key);
         if !known {
             return None;
         }
         let name = field.to_ascii_lowercase();
+        // Направление уровня сигнала: `up` — вырос, `down` — упал, `change` —
+        // отличается от прошлого кадра. Это обычные числа 0/1, а не события.
+        if matches!(name.as_str(), "up" | "down" | "change") {
+            let current = self.inputs.values.get(&key).copied().unwrap_or(0.0);
+            // Первого кадра в истории нет: фронта на старте сцены не бывает.
+            let delta = match self.previous_inputs.get(&key) {
+                Some(previous) => current - previous,
+                None => 0.0,
+            };
+            return Some(Value::Number(match name.as_str() {
+                "up" => bool_number(delta > 1e-9),
+                "down" => bool_number(delta < -1e-9),
+                _ => bool_number(delta.abs() > 1e-9),
+            }));
+        }
+        // Активность за окно: `count(5)`, `sum(5)`, `avg(5)` — окно в секундах.
+        if matches!(name.as_str(), "count" | "sum" | "avg") {
+            let window_ms = self
+                .input_window_seconds(offset, context)
+                .map(|seconds| seconds * 1000.0)
+                .unwrap_or(0.0)
+                .max(0.0);
+            let marks = self.inputs.marks.get(&key);
+            let mut count = 0.0;
+            let mut total = 0.0;
+            for mark in marks.into_iter().flatten() {
+                if mark.age_ms.is_finite() && mark.age_ms >= 0.0 && mark.age_ms <= window_ms {
+                    count += 1.0;
+                    total += if mark.weight.is_finite() {
+                        mark.weight
+                    } else {
+                        1.0
+                    };
+                }
+            }
+            return Some(Value::Number(match name.as_str() {
+                "count" => count,
+                "sum" => total,
+                _ => {
+                    if count > 0.0 {
+                        total / count
+                    } else {
+                        0.0
+                    }
+                }
+            }));
+        }
         if matches!(name.as_str(), "min" | "max" | "step" | "label" | "kind") {
             let meta = self.inputs.meta.get(&key)?;
             return Some(match name.as_str() {
@@ -1529,7 +1834,21 @@ impl Rig {
         })
     }
 
+    /// Окно активности в секундах: `count(5)` → 5.
+    ///
+    /// Второго аргумента у полей нет, поэтому лишние просто не читаются.
+    fn input_window_seconds(&mut self, offset: Option<&Expr>, context: &NodeKey) -> Option<f64> {
+        let expr = offset?;
+        let value = self.numeric(expr, context);
+        Some(if value.is_finite() { value } else { 0.0 })
+    }
+
     fn eval_name(&mut self, name: &str, context: &NodeKey) -> Value {
+        // Переменная события важнее объекта и глобальных формул: внутри `on`
+        // это снимок на момент срабатывания, в условии — живой алиас.
+        if let Some(value) = self.bindings.get(name) {
+            return value.clone();
+        }
         match name {
             "pi" => return Value::Number(PI),
             "e" => return Value::Number(E),
@@ -2200,37 +2519,235 @@ fn foreign_key(
     Ok(NodeKey::Param(object.to_string(), parsed))
 }
 
-/// Условие блока: встроенный `start`, объявленное имя `trigger` или прямой вход.
-fn resolve_trigger(
+/// Имена, которые нельзя занимать переменной события.
+///
+/// Параметры объекта — это те же переменные, только их читает сам объект:
+/// перекрывать их молча нельзя. Встроенные имена тоже заняты ядром.
+fn reserved_binding(name: &str) -> bool {
+    Param::parse(name).is_some()
+        || matches!(
+            name,
+            "pi" | "e"
+                | "time"
+                | "dt"
+                | "canvasWidth"
+                | "canvasHeight"
+                | "signal"
+                | "parent"
+                | "inherit"
+                | "offset"
+                | "width"
+                | "height"
+                | "state"
+                | "text"
+                | "start"
+        )
+}
+
+/// Добавляет объявление события в общий список и в карту своей области.
+fn register_definition(
+    definitions: &mut Vec<CompiledDefinition>,
+    scope_map: &mut HashMap<String, usize>,
+    decl: &crate::parser::EventDecl,
+    scope: Option<&str>,
+    diagnostics: &mut BTreeSet<String>,
+) {
+    let label = scope.unwrap_or("глобальные");
+    let mut valid = true;
+    for (name, _) in &decl.params {
+        if reserved_binding(name) {
+            diagnostics.insert(format!(
+                "{} (строка {}): переменная события '{}' занята — это параметр объекта или встроенное имя",
+                label, decl.line, name
+            ));
+            valid = false;
+        }
+    }
+    if scope_map.contains_key(&decl.name) {
+        // Внутри одной области повтор имени ловит ещё парсер, но объект может
+        // собрать два скрипта в один список — проверка дешёвая.
+        if let Some(previous) = scope_map.get(&decl.name).copied() {
+            diagnostics.insert(format!(
+                "{} (строка {}): событие '{}' уже объявлено в строке {}",
+                label, decl.line, decl.name, definitions[previous].line
+            ));
+        }
+        valid = false;
+    }
+    if !valid {
+        return;
+    }
+    let index = definitions.len();
+    definitions.push(CompiledDefinition {
+        name: decl.name.clone(),
+        scope: scope.map(str::to_string),
+        params: decl.params.clone(),
+        cooldown_ms: decl.cooldown_ms,
+        condition: decl.condition.clone(),
+        line: decl.line,
+    });
+    scope_map.insert(decl.name.clone(), index);
+}
+
+/// Подписка `on имя`: своя область, затем глобальные события.
+fn resolve_source(
     source: &EventSource,
-    triggers: &HashMap<String, (String, EventKind)>,
-) -> Result<CompiledTrigger, String> {
-    Ok(match source {
-        EventSource::Start => CompiledTrigger::Start,
-        EventSource::Input { source, kind } => CompiledTrigger::Input {
-            source: source.clone(),
-            kind: kind.clone(),
-        },
-        EventSource::Named(name) => match triggers.get(name) {
-            Some((input, kind)) => CompiledTrigger::Input {
-                source: input.clone(),
-                kind: kind.clone(),
-            },
-            None => {
-                let mut known: Vec<&str> = triggers.keys().map(String::as_str).collect();
-                known.sort();
-                let list = if known.is_empty() {
-                    "объявленных имён нет".to_string()
-                } else {
-                    known.join(", ")
-                };
+    local: &HashMap<String, usize>,
+    global: &HashMap<String, usize>,
+    definitions: &[CompiledDefinition],
+) -> Result<CompiledSource, String> {
+    match source {
+        EventSource::Start => Ok(CompiledSource::Start),
+        EventSource::Named(name) => {
+            if let Some(index) = local.get(name).or_else(|| global.get(name)).copied() {
+                return Ok(CompiledSource::Named(index));
+            }
+            // Событие может быть локальным для другого объекта: это не опечатка,
+            // а именно невидимость, и подсказка должна быть другой.
+            if let Some(index) = definitions
+                .iter()
+                .position(|entry| entry.name == *name && entry.scope.is_some())
+            {
+                let owner = definitions[index].scope.clone().unwrap_or_default();
                 return Err(format!(
-                    "неизвестное событие '{}'; объявите 'trigger {} = модуль.вход.тип' ({})",
-                    name, name, list
+                    "событие '{}' объявлено в скрипте объекта '{}' и здесь не видно",
+                    name, owner
                 ));
             }
-        },
-    })
+            let mut known: Vec<&str> = global.keys().map(String::as_str).collect();
+            known.sort();
+            let list = if known.is_empty() {
+                "объявленных событий нет".to_string()
+            } else {
+                known.join(", ")
+            };
+            Err(format!(
+                "событие '{}' не объявлено: напишите 'event {}() {{ условие }}' ({})",
+                name, name, list
+            ))
+        }
+    }
+}
+
+/// `call имя(…)`: находит объявление в своей области или среди глобальных.
+fn resolve_call(
+    name: &str,
+    local: &HashMap<String, usize>,
+    global: &HashMap<String, usize>,
+    definitions: &[CompiledDefinition],
+) -> Result<usize, String> {
+    if let Some(index) = local.get(name).or_else(|| global.get(name)).copied() {
+        return Ok(index);
+    }
+    if let Some(index) = definitions
+        .iter()
+        .position(|entry| entry.name == name && entry.scope.is_some())
+    {
+        let owner = definitions[index].scope.clone().unwrap_or_default();
+        return Err(format!(
+            "вызов '{}': событие объявлено в скрипте объекта '{}' и здесь не видно",
+            name, owner
+        ));
+    }
+    Err(format!(
+        "вызов '{}': событие не объявлено — напишите 'event {}() {{ условие }}'",
+        name, name
+    ))
+}
+
+/// Один `on` на событие и область: вторая подписка — ошибка с обеими строками.
+///
+/// Иначе непонятно, в каком порядке выполняются два обработчика одного имени,
+/// и `call` запускал бы оба.
+fn check_duplicate_handlers(
+    definitions: &[CompiledDefinition],
+    events: &[CompiledEvent],
+    diagnostics: &mut BTreeSet<String>,
+) {
+    // Ключ — область и подписка: `start` или индекс объявления.
+    let mut seen: HashMap<(Option<String>, Option<usize>), usize> = HashMap::new();
+    for event in events {
+        let key = match &event.source {
+            CompiledSource::Start => (event.owner.clone(), None),
+            CompiledSource::Named(index) => (event.owner.clone(), Some(*index)),
+        };
+        if let Some(previous) = seen.get(&key).copied() {
+            let label = event.owner.clone().unwrap_or_else(|| "глобальные".into());
+            let name = match &event.source {
+                CompiledSource::Start => "start".to_string(),
+                CompiledSource::Named(index) => definitions[*index].name.clone(),
+            };
+            diagnostics.insert(format!(
+                "{} (строка {}): 'on {}' уже объявлен в строке {} — у события один обработчик",
+                label, event.line, name, previous
+            ));
+            continue;
+        }
+        seen.insert(key, event.line);
+    }
+}
+
+/// Ищет рекурсию `call`: цепочка вызовов, возвращающаяся в то же событие.
+///
+/// Синхронный вызов без ограничения ушёл бы в бесконечность, поэтому это
+/// ошибка сборки, а не диагностика кадра.
+fn check_recursion(
+    definitions: &[CompiledDefinition],
+    events: &[CompiledEvent],
+    diagnostics: &mut BTreeSet<String>,
+) {
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); definitions.len()];
+    for event in events {
+        if let CompiledSource::Named(owner) = event.source {
+            for call in &event.emits {
+                edges[owner].push(call.target);
+            }
+        }
+    }
+    // 0 — не посещён, 1 — в стеке, 2 — готов.
+    fn walk(
+        node: usize,
+        edges: &[Vec<usize>],
+        colors: &mut [u8],
+        stack: &mut Vec<usize>,
+        definitions: &[CompiledDefinition],
+        diagnostics: &mut BTreeSet<String>,
+    ) {
+        colors[node] = 1;
+        stack.push(node);
+        for target in &edges[node] {
+            if colors[*target] == 1 {
+                let start = stack.iter().position(|entry| entry == target).unwrap_or(0);
+                let mut path: Vec<&str> = stack[start..]
+                    .iter()
+                    .map(|index| definitions[*index].name.as_str())
+                    .collect();
+                path.push(definitions[*target].name.as_str());
+                diagnostics.insert(format!(
+                    "рекурсия вызова: {} — событие не может вызывать себя через call",
+                    path.join(" → ")
+                ));
+            } else if colors[*target] == 0 {
+                walk(*target, edges, colors, stack, definitions, diagnostics);
+            }
+        }
+        stack.pop();
+        colors[node] = 2;
+    }
+    let mut colors = vec![0u8; definitions.len()];
+    let mut stack = Vec::new();
+    for node in 0..definitions.len() {
+        if colors[node] == 0 {
+            walk(
+                node,
+                &edges,
+                &mut colors,
+                &mut stack,
+                definitions,
+                diagnostics,
+            );
+        }
+    }
 }
 
 fn key_name(key: &NodeKey) -> String {
@@ -2436,7 +2953,7 @@ impl RuntimeStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{BasePose, CanvasConfig, RigObject};
+    use crate::model::{BasePose, CanvasConfig, InputMark, RigObject};
 
     fn object(id: &str, parent: Option<&str>, script: &str) -> RigObject {
         RigObject {
@@ -2521,7 +3038,7 @@ mod tests {
         let mut label = object(
             "label",
             None,
-            "text = \"привет\"\non mic.db.change { text = \"пока\" }",
+            "text = \"привет\"\nevent louder() { mic.db.change }\non louder {\n  text = \"пока\"\n}",
         );
         label.kind = ObjectKind::Text;
         let mut rig = Rig::new(preset(vec![label], "")).unwrap();
@@ -2584,7 +3101,7 @@ mod tests {
         marker.kind = ObjectKind::Text;
         let mut rig = Rig::new(preset(
             vec![label, marker],
-            "on mic.db.change { marker.text = \"глоб\" + text(mic.db) }",
+            "event louder() { mic.db.change }\non louder {\n  marker.text = \"глоб\" + text(mic.db)\n}",
         ))
         .unwrap();
         let mut inputs = InputValues::default();
@@ -2856,7 +3373,7 @@ mod tests {
     fn event_block_toggles_variable() {
         let mut rig = Rig::new(preset(
             vec![object("o", None, "visible = a")],
-            "on event.mouse.left.down {\n  a = !a\n}",
+            "event click() { mouse.left.up }\non click {\n  a = !a\n}",
         ))
         .unwrap();
         let idle = tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
@@ -2865,7 +3382,7 @@ mod tests {
         let press = tick_with(&mut rig, 0.033, &[("mouse.left", 1.0)]);
         assert_eq!(press.globals["a"], 1.0);
         assert_eq!(press.objects["o"]["visible"], 1.0);
-        // Удержание не повторяет событие, отпускание — тоже.
+        // Удержание не повторяет событие: `.up` истинно только на росте.
         let hold = tick_with(&mut rig, 0.066, &[("mouse.left", 1.0)]);
         assert_eq!(hold.globals["a"], 1.0);
         let release = tick_with(&mut rig, 0.099, &[("mouse.left", 0.0)]);
@@ -2876,42 +3393,60 @@ mod tests {
     }
 
     #[test]
-    fn event_hold_fires_once_after_delay() {
+    fn duration_operator_delays_firing() {
         let mut rig = Rig::new(preset(
-            vec![object("o", None, "x = a")],
-            "on event.mic.talking.hold(0.5) {\n  a = a + 1\n}",
+            vec![object("o", None, "x = ticks")],
+            "event speak() { mic.talking > 0.5 in 300 }\non speak {\n  ticks = ticks + 1\n}",
         ))
         .unwrap();
-        tick_with(&mut rig, 0.0, &[("mic.talking", 1.0)]);
-        let early = tick_with(&mut rig, 0.2, &[("mic.talking", 1.0)]);
+        let first = tick_with(&mut rig, 0.0, &[("mic.talking", 1.0)]);
+        assert_eq!(first.objects["o"]["x"], 0.0);
+        let early = tick_with(&mut rig, 200.0, &[("mic.talking", 1.0)]);
         assert_eq!(early.objects["o"]["x"], 0.0);
-        let fired = tick_with(&mut rig, 0.6, &[("mic.talking", 1.0)]);
+        // Ровно 300 мс удержания — срабатывание.
+        let fired = tick_with(&mut rig, 300.0, &[("mic.talking", 1.0)]);
         assert_eq!(fired.objects["o"]["x"], 1.0);
-        // Держим дальше — блок не повторяется.
-        let later = tick_with(&mut rig, 1.4, &[("mic.talking", 1.0)]);
-        assert_eq!(later.objects["o"]["x"], 1.0);
+        // Паузы нет (`cd 0`) — дальше событие срабатывает каждый кадр.
+        let later = tick_with(&mut rig, 400.0, &[("mic.talking", 1.0)]);
+        assert_eq!(later.objects["o"]["x"], 2.0);
+        // Условие стало ложным — `in` начинается заново.
+        tick_with(&mut rig, 500.0, &[("mic.talking", 0.0)]);
+        let quiet = tick_with(&mut rig, 600.0, &[("mic.talking", 1.0)]);
+        assert_eq!(quiet.objects["o"]["x"], 2.0);
     }
 
     #[test]
-    fn event_hold_zero_waits_next_frame() {
+    fn silence_is_negated_duration() {
         let mut rig = Rig::new(preset(
-            vec![object("o", None, "x = held\ny = pressed")],
-            "on event.mic.talking.hold(0) {\n  held = held + 1\n}\non event.mic.talking.down {\n  pressed = pressed + 1\n}",
+            vec![object("o", None, "x = quiet")],
+            "event silence() { !(mic.talking > 0.5) in 500 }\non silence {\n  quiet = quiet + 1\n}",
         ))
         .unwrap();
-        tick_with(&mut rig, 0.0, &[("mic.talking", 0.0)]);
-        // Фронт: `down` срабатывает сразу, `hold(0)` — только следующим кадром.
-        let press = tick_with(&mut rig, 0.033, &[("mic.talking", 1.0)]);
-        assert_eq!(press.objects["o"]["y"], 1.0);
-        assert_eq!(press.objects["o"]["x"], 0.0);
-        let next = tick_with(&mut rig, 0.066, &[("mic.talking", 1.0)]);
-        assert_eq!(next.objects["o"]["x"], 1.0);
-        // Отпускание снимает удержание, следующее нажатие снова срабатывает.
-        tick_with(&mut rig, 0.099, &[("mic.talking", 0.0)]);
-        let again = tick_with(&mut rig, 0.132, &[("mic.talking", 1.0)]);
-        assert_eq!(again.objects["o"]["x"], 1.0);
-        let again_next = tick_with(&mut rig, 0.165, &[("mic.talking", 1.0)]);
-        assert_eq!(again_next.objects["o"]["x"], 2.0);
+        let speaking = tick_with(&mut rig, 0.0, &[("mic.talking", 1.0)]);
+        assert_eq!(speaking.objects["o"]["x"], 0.0);
+        // Тишина началась на 300-й мс — окно отсчитывается от неё.
+        let pause = tick_with(&mut rig, 300.0, &[("mic.talking", 0.0)]);
+        assert_eq!(pause.objects["o"]["x"], 0.0);
+        let early = tick_with(&mut rig, 700.0, &[("mic.talking", 0.0)]);
+        assert_eq!(early.objects["o"]["x"], 0.0);
+        let silent = tick_with(&mut rig, 800.0, &[("mic.talking", 0.0)]);
+        assert_eq!(silent.objects["o"]["x"], 1.0);
+    }
+
+    #[test]
+    fn cooldown_limits_refiring_and_keeps_snapshot() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = held")],
+            "event clap(loud = mic.loudness ; 1000) { mic.talking > 0.5 }\non clap {\n  held = loud\n}",
+        ))
+        .unwrap();
+        let first = tick_with(&mut rig, 0.0, &[("mic.talking", 1.0), ("mic.loudness", 0.2)]);
+        assert_eq!(first.objects["o"]["x"], 0.2);
+        // Пауза не пускает повторное срабатывание, значение остаётся прежним.
+        let early = tick_with(&mut rig, 500.0, &[("mic.talking", 1.0), ("mic.loudness", 0.9)]);
+        assert_eq!(early.objects["o"]["x"], 0.2);
+        let later = tick_with(&mut rig, 1000.0, &[("mic.talking", 1.0), ("mic.loudness", 0.9)]);
+        assert_eq!(later.objects["o"]["x"], 0.9);
     }
 
     #[test]
@@ -2919,21 +3454,38 @@ mod tests {
         // Переменную меняет только событие — формула объекта обязана её видеть.
         let mut rig = Rig::new(preset(
             vec![object("o", None, "x = counter")],
-            "on event.mic.talking.down {\n  counter = counter + 5\n}",
+            "event speak() { mic.talking > 0.5 }\non speak {\n  counter = counter + 5\n}",
         ))
         .unwrap();
         let idle = tick_with(&mut rig, 0.0, &[("mic.talking", 0.0)]);
         assert_eq!(idle.objects["o"]["x"], 0.0);
         let press = tick_with(&mut rig, 0.033, &[("mic.talking", 1.0)]);
         assert_eq!(press.objects["o"]["x"], 5.0);
-        assert!(!press.diagnostics.iter().any(|message| message.contains("неизвестное имя")));
+        assert!(!press
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("неизвестное имя")));
+    }
+
+    #[test]
+    fn event_variables_are_visible_in_condition() {
+        // Живой алиас: `loud` в условии — то же, что `mic.loudness`.
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = hits")],
+            "event clap(loud = mic.loudness) { loud > 0.7 }\non clap {\n  hits = hits + 1\n}",
+        ))
+        .unwrap();
+        let quiet = tick_with(&mut rig, 0.0, &[("mic.loudness", 0.2)]);
+        assert_eq!(quiet.objects["o"]["x"], 0.0);
+        let loud = tick_with(&mut rig, 0.033, &[("mic.loudness", 0.9)]);
+        assert_eq!(loud.objects["o"]["x"], 1.0);
     }
 
     #[test]
     fn event_body_reads_previous_frame_via_state() {
         let mut rig = Rig::new(preset(
             vec![object("o", None, "x = a")],
-            "on event.mouse.left.down {\n  a = state.a + 1\n}",
+            "event click() { mouse.left.up }\non click {\n  a = state.a + 1\n}",
         ))
         .unwrap();
         let idle = tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
@@ -2963,20 +3515,174 @@ mod tests {
     }
 
     #[test]
-    fn named_trigger_is_shared_between_scripts() {
+    fn global_event_is_shared_with_object_script() {
+        // Событие объявлено глобально, обработчик — в скрипте объекта.
         let mut rig = Rig::new(preset(
-            vec![object("o", None, "x = counter")],
-            "trigger kick = mouse.left.down\non kick {\n  counter = counter + 1\n}",
+            vec![object("o", None, "x = 0\non kick {\n  x = x + 1\n}")],
+            "event kick() { mouse.left.up }",
         ))
         .unwrap();
         tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
         let press = tick_with(&mut rig, 0.033, &[("mouse.left", 1.0)]);
         assert_eq!(press.objects["o"]["x"], 1.0);
+        // Формула `x = 0` побеждает на следующем кадре: событие живёт кадр.
         let held = tick_with(&mut rig, 0.066, &[("mouse.left", 1.0)]);
-        assert_eq!(held.objects["o"]["x"], 1.0);
-        tick_with(&mut rig, 0.099, &[("mouse.left", 0.0)]);
-        let again = tick_with(&mut rig, 0.132, &[("mouse.left", 1.0)]);
-        assert_eq!(again.objects["o"]["x"], 2.0);
+        assert_eq!(held.objects["o"]["x"], 0.0);
+        assert!(held.diagnostics.is_empty(), "{:?}", held.diagnostics);
+    }
+
+    #[test]
+    fn local_event_belongs_to_its_object() {
+        let mut rig = Rig::new(preset(
+            vec![object(
+                "o",
+                None,
+                "x = 0\nevent boom() { mouse.left.up }\non boom {\n  x = 7\n}",
+            )],
+            "",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
+        let press = tick_with(&mut rig, 0.033, &[("mouse.left", 1.0)]);
+        assert_eq!(press.objects["o"]["x"], 7.0);
+        assert!(press.diagnostics.is_empty(), "{:?}", press.diagnostics);
+    }
+
+    #[test]
+    fn call_runs_handler_immediately_with_arguments() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = held")],
+            "event clap(loud = mic.loudness) { mouse.left.up }\non clap {\n  held = loud\n}\non start {\n  call clap(0.75)\n}",
+        ))
+        .unwrap();
+        let first = tick_with(&mut rig, 0.0, &[("mic.loudness", 0.1)]);
+        assert_eq!(first.objects["o"]["x"], 0.75);
+    }
+
+    #[test]
+    fn call_without_arguments_uses_declaration_values() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = held")],
+            "event clap(loud = mic.loudness) { mouse.left.up }\non clap {\n  held = loud\n}\non start {\n  call clap()\n}",
+        ))
+        .unwrap();
+        let first = tick_with(&mut rig, 0.0, &[("mic.loudness", 0.3)]);
+        assert_eq!(first.objects["o"]["x"], 0.3);
+    }
+
+    #[test]
+    fn recursion_in_call_is_reported() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = 0")],
+            "event a() { mouse.left.up }\nevent b() { mouse.right.up }\non a {\n  call b()\n}\non b {\n  call a()\n}",
+        ))
+        .unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[]);
+        assert!(
+            frame
+                .diagnostics
+                .iter()
+                .any(|message| message.contains("рекурсия вызова")),
+            "{:?}",
+            frame.diagnostics
+        );
+    }
+
+    #[test]
+    fn local_redeclaration_of_global_event_is_reported() {
+        let mut rig = Rig::new(preset(
+            vec![object(
+                "o",
+                None,
+                "x = 0\nevent clap() { mouse.right.up }",
+            )],
+            "event clap() { mouse.left.up }",
+        ))
+        .unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[]);
+        assert!(
+            frame
+                .diagnostics
+                .iter()
+                .any(|message| message.contains("уже объявлено глобально")),
+            "{:?}",
+            frame.diagnostics
+        );
+    }
+
+    #[test]
+    fn event_variable_cannot_shadow_object_param() {
+        let mut rig = Rig::new(preset(
+            vec![object(
+                "o",
+                None,
+                "x = 0\nevent boom(x = 1) { mouse.left.up }",
+            )],
+            "",
+        ))
+        .unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[]);
+        assert!(
+            frame
+                .diagnostics
+                .iter()
+                .any(|message| message.contains("занята")),
+            "{:?}",
+            frame.diagnostics
+        );
+    }
+
+    #[test]
+    fn input_direction_fields_are_numbers() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "rotation = mouse.x.up\ny = mouse.x.down\nlayer = mouse.x.change")],
+            "",
+        ))
+        .unwrap();
+        let idle = tick_with(&mut rig, 0.0, &[("mouse.x", 10.0)]);
+        // Первого кадра в истории нет: фронта на старте не бывает.
+        assert_eq!(idle.objects["o"]["rotation"], 0.0);
+        let up = tick_with(&mut rig, 0.033, &[("mouse.x", 20.0)]);
+        assert_eq!(up.objects["o"]["layer"], 1.0);
+        assert_eq!(up.objects["o"]["rotation"], 1.0);
+        assert_eq!(up.objects["o"]["y"], 0.0);
+        let down = tick_with(&mut rig, 0.066, &[("mouse.x", 5.0)]);
+        assert_eq!(down.objects["o"]["y"], 1.0);
+        assert_eq!(down.objects["o"]["rotation"], 0.0);
+        let same = tick_with(&mut rig, 0.099, &[("mouse.x", 5.0)]);
+        assert_eq!(same.objects["o"]["layer"], 0.0);
+    }
+
+    #[test]
+    fn activity_fields_count_marks_inside_window() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "rotation = twitch.chat.count(5)\ny = twitch.reward.sum(5)\nlayer = twitch.reward.avg(5)")],
+            "",
+        ))
+        .unwrap();
+        let mut inputs = InputValues::default();
+        // Внутри окна 5 с — три метки (веса 10 и 30), снаружи — одна.
+        inputs.marks.insert(
+            "twitch.chat".into(),
+            vec![
+                InputMark { age_ms: 100.0, weight: 1.0 },
+                InputMark { age_ms: 2000.0, weight: 1.0 },
+                InputMark { age_ms: 9000.0, weight: 1.0 },
+            ],
+        );
+        inputs.marks.insert(
+            "twitch.reward".into(),
+            vec![
+                InputMark { age_ms: 500.0, weight: 10.0 },
+                InputMark { age_ms: 4000.0, weight: 30.0 },
+                InputMark { age_ms: 7000.0, weight: 99.0 },
+            ],
+        );
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        assert_eq!(frame.objects["o"]["rotation"], 2.0);
+        assert_eq!(frame.objects["o"]["y"], 40.0);
+        assert_eq!(frame.objects["o"]["layer"], 20.0);
+        assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
     }
 
     #[test]
@@ -3006,7 +3712,7 @@ mod tests {
         assert!(frame
             .diagnostics
             .iter()
-            .any(|message| message.contains("неизвестное событие 'kick'")));
+            .any(|message| message.contains("событие 'kick' не объявлено")));
         assert!(frame
             .diagnostics
             .iter()
@@ -3020,7 +3726,7 @@ mod tests {
             vec![object(
                 "o",
                 None,
-                "x = 0\non event.mouse.right.up {\n  x = x + 10\n}",
+                "x = 0\nevent release() { !mouse.right }\non release {\n  x = x + 10\n}",
             )],
             "",
         ))
@@ -3037,7 +3743,7 @@ mod tests {
     fn event_change_fires_on_any_delta() {
         let mut rig = Rig::new(preset(
             vec![object("o", None, "x = a")],
-            "on event.mouse.x.change {\n  a = a + 1\n}",
+            "event moved() { mouse.x.change }\non moved {\n  a = a + 1\n}",
         ))
         .unwrap();
         tick_with(&mut rig, 0.0, &[("mouse.x", 0.1)]);

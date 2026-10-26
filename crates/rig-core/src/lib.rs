@@ -6,7 +6,7 @@ mod runtime;
 mod ffi;
 
 pub use model::{
-    BasePose, BaseUpdate, CanvasConfig, Frame, InputMeta, InputText, InputValues, RigObject,
-    RigPreset, TextLine, Vec2,
+    BasePose, BaseUpdate, CanvasConfig, Frame, InputMark, InputMeta, InputText, InputValues,
+    RigObject, RigPreset, TextLine, Vec2,
 };
 pub use runtime::RuntimeStore;

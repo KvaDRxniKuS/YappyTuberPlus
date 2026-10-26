@@ -213,6 +213,20 @@ export interface InputValues {
    * `twitch.reward.max`, `twitch.reward.label`.
    */
   meta?: Record<string, InputMeta>;
+  /**
+   * Отметки активности входа: когда что-то случилось.
+   *
+   * Возраст считается от текущего момента и приходит из редактора: часы
+   * фронтенда и ядра не связаны. По ним считаются `count(с)`, `sum(с)` и
+   * `avg(с)`; вес нужен `sum` — награда за 500 бит тяжелее сообщения чата.
+   */
+  marks?: Record<string, InputMark[]>;
+}
+
+/** Одна отметка активности: возраст в миллисекундах и вес события. */
+export interface InputMark {
+  ageMs: number;
+  weight?: number;
 }
 
 /** Строка текстового канала: сообщение и его автор. */
