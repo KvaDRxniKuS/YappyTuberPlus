@@ -25,6 +25,12 @@
     }
   ],
   "fields": [],
+  "editor": {
+    "columns": {
+      "input": 64,
+      "path": 132
+    }
+  },
   "defaults": {
     "source": {
       "transport": "ws",

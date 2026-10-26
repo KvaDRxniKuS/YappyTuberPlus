@@ -43,6 +43,14 @@
     }
   ],
   "fields": [],
+  "editor": {
+    "columns": {
+      "input": 84,
+      "path": 172,
+      "label": 104,
+      "duration": 108
+    }
+  },
   "defaults": {
     "source": {
       "transport": "twitch",

@@ -601,8 +601,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .tree-row.drop-after::after { bottom: -1px; }
 
 /* ---------- Модули и входы ---------- */
+/* Прокрутка вкладки — только вертикальная: горизонтальные полосы живут внутри
+   таблиц модулей, иначе при сужении панели поля уезжают за край экрана. */
 .modules-panel,
-.inputs-panel { display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow: auto; }
+.inputs-panel { display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow-y: auto; overflow-x: hidden; }
 
 .module-actions { display: flex; align-items: center; gap: 8px; }
 
@@ -1278,12 +1280,25 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   background: #0f1215; color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace;
 }
 .module-field-text:focus { outline: none; border-color: #609c8c; }
-.external-mapping { display: flex; flex-direction: column; gap: 3px; padding: 6px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418; }
+.external-mapping { display: flex; flex-direction: column; gap: 6px; padding: 6px 7px; border: 1px solid var(--border-soft); border-radius: 5px; background: #101418; }
+/* Горизонтальная прокрутка — внутри блока таблицы, а не у всей вкладки. */
+.external-mapping-scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.external-mapping-scroll::-webkit-scrollbar { height: 8px; }
+.external-mapping-scroll::-webkit-scrollbar-track { background: #0c1013; border-radius: 4px; }
+.external-mapping-scroll::-webkit-scrollbar-thumb { background: #2c343c; border-radius: 4px; }
+.external-mapping-scroll::-webkit-scrollbar-thumb:hover { background: #3a444e; }
+.external-mapping-table { display: flex; flex-direction: column; gap: 3px; }
 .external-mapping-head,
 .external-mapping-row {
   display: grid;
-  grid-template-columns: minmax(48px, 1.1fr) minmax(74px, 1.6fr) minmax(48px, 1fr) 42px 42px 90px auto;
   gap: 4px; align-items: center;
+}
+/* Шапка не уезжает при прокрутке вбок: видно, какая колонка куда сдвинулась. */
+.external-mapping-head { position: sticky; top: 0; z-index: 1; background: #101418; }
+/* Кнопка удаления прижата к правому краю блока: её не надо искать прокруткой. */
+.external-mapping-row .row-action {
+  position: sticky; right: 0; z-index: 1; justify-self: end;
+  background: #101418; box-shadow: -8px 0 8px -8px #000;
 }
 .external-mapping-head { color: #5d6872; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
 .external-mapping-row { padding: 2px 0; border-top: 1px solid #171c21; }

@@ -42,6 +42,20 @@ export interface ModuleInputSpec {
  * `kind` выбирает реализацию в коде (`loudness`, `manual`, `autoblink`,
  * `viseme`): сам JSON ничего не считает, он описывает входы и настройки.
  */
+/**
+ * Как рисовать таблицу настроек модуля.
+ *
+ * Широкая таблица не должна уводить поля за край панели: внутри блока
+ * появляется горизонтальная прокрутка, а минимальные ширины колонок задаёт
+ * разработчик модуля — у названия строки и у одного числа они разные.
+ */
+export interface ModuleEditorSpec {
+  /** Минимальная ширина всей таблицы: меньше — прокрутка внутри блока. */
+  minWidth?: number;
+  /** Минимальная ширина колонки по её роли (`input`, `path`, `label`…). */
+  columns?: Record<string, number>;
+}
+
 export interface ModuleDefinition {
   id: string;
   title: string;
@@ -51,6 +65,8 @@ export interface ModuleDefinition {
   audio?: boolean;
   inputs: ModuleInputSpec[];
   fields: ModuleField[];
+  /** Минимальные ширины таблицы настроек: ставит разработчик модуля. */
+  editor?: ModuleEditorSpec;
   defaults: ModuleConfig;
 }
 
@@ -111,6 +127,25 @@ function normalizeField(raw: unknown): ModuleField | null {
   };
 }
 
+function normalizeEditor(raw: unknown): ModuleEditorSpec | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const source = raw as Record<string, unknown>;
+  const minWidth = readNumber(source.minWidth);
+  const columns: Record<string, number> = {};
+  if (source.columns && typeof source.columns === "object") {
+    for (const [key, value] of Object.entries(source.columns as Record<string, unknown>)) {
+      const width = readNumber(value);
+      // Слишком узкая колонка превращается в нечитаемую: держим нижний предел.
+      if (key && width !== undefined && width >= 24) columns[key] = Math.round(width);
+    }
+  }
+  if (minWidth === undefined && Object.keys(columns).length === 0) return undefined;
+  return {
+    minWidth: minWidth === undefined ? undefined : Math.max(120, Math.round(minWidth)),
+    columns: Object.keys(columns).length ? columns : undefined,
+  };
+}
+
 function normalizeInput(raw: unknown): ModuleInputSpec | null {
   if (!raw || typeof raw !== "object") return null;
   const input = raw as Record<string, unknown>;
@@ -150,6 +185,7 @@ export function normalizeDefinition(raw: unknown): ModuleDefinition | null {
     audio: source.audio === true || kind === "loudness",
     inputs,
     fields,
+    editor: normalizeEditor(source.editor),
     defaults: source.defaults && typeof source.defaults === "object" ? { ...(source.defaults as ModuleConfig) } : {},
   };
 }

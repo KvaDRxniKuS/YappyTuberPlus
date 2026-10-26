@@ -13,6 +13,23 @@ import { openExternal } from "../engine/links";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
 import { NumberField } from "./NumberField";
+import { moduleDefinition } from "../modules/registry";
+import { tableMinWidth, tableTemplate, type TableColumn } from "./tableLayout";
+
+/**
+ * Роли колонок таблицы отображения. Ширины по умолчанию — нижняя граница:
+ * шаблон модуля может их увеличить (`editor.columns`), но не сделать уже 24 px.
+ * «Поле JSON» и подпись тянутся, числа — фиксированные: им больше не нужно.
+ */
+const MAPPING_COLUMNS: TableColumn[] = [
+  { key: "input", width: 62, grow: 1 },
+  { key: "path", width: 104, grow: 1.6 },
+  { key: "label", width: 64, grow: 1 },
+  { key: "min", width: 42 },
+  { key: "max", width: 42 },
+  { key: "duration", width: 96 },
+  { key: "action", width: 26 },
+];
 
 interface ExternalSourceEditorProps {
   module: ModuleInstance;
@@ -48,6 +65,12 @@ const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
 export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
   const source = readExternalSource(props.module.config as Record<string, unknown>);
   const status = props.status;
+  // Минимальные ширины колонок задаёт шаблон модуля: у Twitch поле JSON
+  // длинное, у пульсометра короткое, и одна общая сетка тут не подходит.
+  const editor = moduleDefinition(props.module.type).editor;
+  const columns = editor?.columns ?? {};
+  const gridTemplate = tableTemplate(MAPPING_COLUMNS, columns);
+  const gridMinWidth = tableMinWidth(MAPPING_COLUMNS, columns, 4, editor?.minWidth);
   // Результат проверки живёт здесь: он не часть пресета и не должен в него попадать.
   const [check, setCheck] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -463,7 +486,14 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
       <p className="module-hint external-hint">{transportHint(source.transport)}</p>
 
       <div className="external-mapping">
-        <div className="external-mapping-head">
+        {/* Прокрутка живёт внутри блока: сузили панель — листается таблица,
+            а не уезжает вся вкладка и не пропадают поля за краем экрана. */}
+        <div className="external-mapping-scroll">
+        <div
+          className="external-mapping-table"
+          style={{ minWidth: gridMinWidth, gridTemplateColumns: gridTemplate }}
+        >
+        <div className="external-mapping-head" style={{ gridTemplateColumns: gridTemplate }}>
           <span>вход</span>
           <span>поле JSON</span>
           <span>подпись</span>
@@ -473,7 +503,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
           <span />
         </div>
         {source.mapping.map((rule, index) => (
-          <div className="external-mapping-row" key={`${rule.input}-${index}`}>
+          <div className="external-mapping-row" key={`${rule.input}-${index}`} style={{ gridTemplateColumns: gridTemplate }}>
             <input
               value={rule.input}
               spellCheck={false}
@@ -518,12 +548,18 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               title="Длительность значения, мс: столько вход помнит пришедшее число, потом ноль. Нужно событиям: «пришла награда» — это один пакет, а не постоянный уровень"
               onCommit={(next) => patchRule(index, { holdMs: next }, "Длительность значения")}
             />
-            <button className="icon-button" title="Удалить вход" onClick={() => removeRule(index)}><Trash2 size={12} /></button>
+            <button
+              className="icon-button row-action"
+              title="Удалить вход"
+              onClick={() => removeRule(index)}
+            ><Trash2 size={12} /></button>
           </div>
         ))}
         {source.mapping.length === 0 && (
           <p className="muted">Таблица пуста: модуль использует входы шаблона. Добавьте строку — появится свой вход.</p>
         )}
+        </div>
+        </div>
         <button className="button secondary external-add" onClick={addRule}><Plus size={12} /> Добавить вход</button>
       </div>
     </div>
