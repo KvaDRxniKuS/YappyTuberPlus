@@ -38,13 +38,19 @@ export const DEFAULT_TEXT: TextSpec = {
  */
 const SCAN = /'\{[^{}]*\}'|\{([^{}]+)\}/g;
 
-/** Канал из журнала сообщений модулей: берём последнее сообщение каждого. */
+/**
+ * Канал из журнала сообщений модулей: берём последнее сообщение каждого.
+ *
+ * Журнал источника держит свежие строки **первыми** (так их видно в панели),
+ * поэтому последнее сообщение — `list[0]`. Раньше здесь стоял `list[length-1]`,
+ * и в шаблоне застревало самое старое сообщение из буфера.
+ */
 export function textChannel(
   lines?: Record<string, { text: string; author?: string }[]>,
 ): TextChannel {
   const result: TextChannel = {};
   for (const [module, list] of Object.entries(lines ?? {})) {
-    const last = list[list.length - 1];
+    const last = list[0];
     if (last) result[module] = { text: last.text, author: last.author };
   }
   return result;

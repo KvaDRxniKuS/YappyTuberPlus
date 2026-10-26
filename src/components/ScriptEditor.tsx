@@ -8,7 +8,9 @@ import { autocompletion, snippet, type CompletionContext, type CompletionResult 
 import { tags } from "@lezer/highlight";
 import type { ScriptErrorInfo } from "../types";
 import type { ScriptCheck } from "../engine/scripts";
-import { FUNCTION_NAMES, SIGNATURES, signatureAt, signatureLine, signatureOf } from "../engine/signatures";
+import {
+  FUNCTION_NAMES, SIGNATURES, eventHintAt, signatureAt, signatureLine, signatureOf,
+} from "../engine/signatures";
 import { useFavorites } from "../hooks/useFavorites";
 
 const EVENT_KINDS = ["down", "up", "change", "hold", "relax"];
@@ -186,6 +188,8 @@ interface ScriptEditorProps {
   globals: string[];
   /** Полные имена входов модулей: `mic.talking`, `auto.blink`, `manual.value`. */
   moduleInputs?: string[];
+  /** Подписи входов для подсказки события: `twitch.chat` → «Сообщений». */
+  moduleInputLabels?: Record<string, string>;
   /** Имена событий из `trigger … = …` в глобальном скрипте. */
   triggers?: string[];
   /** Константы модулей: состояния enum (`walk`, `mode_walk`). */
@@ -195,7 +199,8 @@ interface ScriptEditorProps {
 }
 
 export function ScriptEditor({
-  value, objectIds, globals, moduleInputs = [], triggers = [], constants = [], onCheck, onApply,
+  value, objectIds, globals, moduleInputs = [], moduleInputLabels = {}, triggers = [],
+  constants = [], onCheck, onApply,
 }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -205,6 +210,8 @@ export function ScriptEditor({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completionData = useRef({ objectIds, globals, moduleInputs, triggers, constants });
+  const hintData = useRef({ moduleInputs, moduleInputLabels });
+  hintData.current = { moduleInputs, moduleInputLabels };
   const [hint, setHint] = useState("");
   const [errorText, setErrorText] = useState("");
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
@@ -236,7 +243,16 @@ export function ScriptEditor({
       if (view.current) applyRef.current(view.current.state.doc.toString());
     };
     const readHint = (state: EditorState) => {
-      setHint(signatureLine(signatureAt(state.doc.toString(), state.selection.main.head)));
+      const source = state.doc.toString();
+      const position = state.selection.main.head;
+      // Заголовок события важнее вызова функции: подсказка показывает
+      // единственную форму `on модуль.вход.тип` и типы события.
+      const inputs = hintData.current.moduleInputs.map((key) => ({
+        key,
+        label: hintData.current.moduleInputLabels[key],
+      }));
+      setHint(eventHintAt(source, position, inputs)
+        ?? signatureLine(signatureAt(source, position)));
     };
     // Проверка идёт отдельно от применения: ошибка подсвечивается, но текст
     // продолжает автосохраняться — сцену это не останавливает.
@@ -257,9 +273,9 @@ export function ScriptEditor({
       checkTimer.current = setTimeout(() => runCheck(source), 320);
     };
 
-    // Заголовок события: `on …`, `event.…` (без `on`) или правая часть `trigger`.
+    // Заголовок события — только `on …` или правая часть `trigger`.
     const isHeader = (prefix: string) =>
-      /^\s*(?:on|event\.)\s*[\w.]*$/.test(prefix) || /^\s*trigger\s+[\w]+\s*=\s*[\w.]*$/.test(prefix);
+      /^\s*on\s+[\w.]*$/.test(prefix) || /^\s*trigger\s+[\w]+\s*=\s*[\w.]*$/.test(prefix);
 
     const completion = (context: CompletionContext): CompletionResult | null => {
       const word = context.matchBefore(/[A-Za-z0-9_.]*/);
@@ -273,7 +289,7 @@ export function ScriptEditor({
 
       // Заголовок события: `on …` или правая часть `trigger имя = …`.
       if (isHeader(prefix)) {
-        const typed = word.text.replace(/^event\./, "").replace(/\.$/, "");
+        const typed = word.text.replace(/\.$/, "");
         if (inputNames.includes(typed)) {
           // Вход выбран целиком: подсказываем тип и сразу раскрываем тело блока.
           return {
@@ -293,7 +309,13 @@ export function ScriptEditor({
           options: [
             { label: "start", detail: "первый кадр после запуска", type: "keyword" },
             ...triggerNames.map((name) => ({ label: name, detail: "своё событие (trigger)", type: "variable" })),
-            ...inputNames.map((name) => ({ label: `event.${name}`, detail: "вход модуля", type: "property" })),
+            ...inputNames.map((name) => ({
+              label: name,
+              detail: hintData.current.moduleInputLabels[name]
+                ? `вход модуля · ${hintData.current.moduleInputLabels[name]}`
+                : "вход модуля",
+              type: "property",
+            })),
           ],
         };
       }

@@ -11,6 +11,7 @@ import { enumStates, manualMode, stateIndex } from "../modules/manual";
 import { CalibrateButton, SpectrumBars, useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 import { eventSnippet } from "../engine/scripts";
 import type { ExternalTextLine } from "../modules/sources";
+import { readExternalSource, TEXT_HISTORY_DEFAULT } from "../modules/external";
 
 interface InputsPanelProps extends CalibrationApi {
   modules: ModuleInstance[];
@@ -239,18 +240,28 @@ export function InputsPanel(props: InputsPanelProps) {
                 </div>
               );
             })}
-            {/* Текст из источника (чат): показываем как есть. В формулы он не
-                попадает — движок входов знает только числа. */}
-            {!isCollapsed(module.name) && (props.texts?.[module.name]?.length ?? 0) > 0 && (
-              <div className="input-texts">
-                <span className="input-texts-title">Последние сообщения</span>
-                {(props.texts?.[module.name] ?? []).slice(0, 4).map((line, index) => (
-                  <div className="input-text-line" key={`${line.at}-${index}`} title={line.text}>
-                    {line.author && <b>{line.author}:</b>} <span>{line.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Текст из источника (чат): показываем как есть. В числовые
+                формулы он не попадает, а в скрипт приходит строкой —
+                `twitch.chat.message(-1)`. Сколько строк и с автором ли —
+                настройки модуля. */}
+            {!isCollapsed(module.name) && (props.texts?.[module.name]?.length ?? 0) > 0 && (() => {
+              const textConfig = readExternalSource(module.config as Record<string, unknown>).text;
+              const limit = textConfig?.history ?? TEXT_HISTORY_DEFAULT;
+              const showAuthor = textConfig?.showAuthor !== false;
+              return (
+                <div className="input-texts">
+                  <span className="input-texts-title">
+                    Последние сообщения
+                    <small>{module.name}.{textConfig?.input ?? "chat"}.message(0…{1 - limit})</small>
+                  </span>
+                  {(props.texts?.[module.name] ?? []).slice(0, limit).map((line, index) => (
+                    <div className="input-text-line" key={`${line.at}-${index}`} title={line.text}>
+                      {showAuthor && line.author && <b>{line.author}:</b>} <span>{line.text}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </section>
         );
       })}

@@ -1,4 +1,4 @@
-import type { InputValues, ModuleInstance, RigPreset } from "../types";
+import type { InputMeta, InputTextLine, InputValues, ModuleInstance, RigPreset } from "../types";
 import { DEFAULT_MODULES } from "../types";
 import {
   hasModule, inputDefault, inputRange, libraryEmpty, moduleDefaults, moduleDefinition,
@@ -7,7 +7,8 @@ import {
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { frameValue, type AudioFrame } from "./audio";
-import { externalInputs } from "./external";
+import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./external";
+import type { ExternalTextLine } from "./sources";
 import {
   keyboardKeys, keyLabel, mouseButtonLabel, mouseButtons, mouseValue, type PointerFrame,
 } from "./pointer";
@@ -238,6 +239,73 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
 function fallbackValue(module: ModuleInstance, definition: ModuleDefinition, spec: ModuleInputSpec): number {
   if (definition.kind === "manual" || definition.kind === "autoblink") return inputRange(module, spec).min;
   return inputDefault(spec);
+}
+
+/**
+ * Паспорта входов: подпись, границы, шаг и вид.
+ *
+ * Панель знала их всегда, а скрипт — нет. Теперь `twitch.reward.max` и
+ * `manual.value.label` читаются прямо в формуле: доля от предела считается без
+ * второй копии числа в скрипте.
+ */
+export function inputMeta(modules: ModuleInstance[]): Record<string, InputMeta> {
+  const meta: Record<string, InputMeta> = {};
+  for (const module of modules) {
+    for (const spec of instanceInputs(module)) {
+      const range = inputRange(module, spec);
+      meta[inputKey(module, spec.name)] = {
+        label: spec.label || spec.name,
+        min: range.min,
+        max: range.max,
+        step: range.step,
+        kind: spec.kind ?? "level",
+      };
+    }
+  }
+  return meta;
+}
+
+/**
+ * Вход, к которому относится текст источника.
+ *
+ * По умолчанию — строка-счётчик (у Twitch это `chat`), иначе первый вход
+ * таблицы отображения. Имя можно задать и руками: оно попадает в скрипт как
+ * `twitch.chat.message`.
+ */
+export function textInputName(module: ModuleInstance): string | null {
+  if (moduleDefinition(module.type).kind !== "external") return null;
+  const source = readExternalSource(module.config as Record<string, unknown>);
+  if (!source.text) return null;
+  return source.text.input
+    ?? source.mapping.find((rule) => rule.count)?.input
+    ?? source.mapping[0]?.input
+    ?? "text";
+}
+
+/**
+ * Текстовый канал для ядра: `<модуль>.<вход>` → последние строки.
+ *
+ * В ядро строки уходят **от старых к свежим**: так `message()` — последнее
+ * сообщение, `message(-1)` — предыдущее. Журнал источника держит свежие
+ * первыми (их первыми видно в панели), поэтому здесь порядок разворачивается.
+ */
+export function inputTexts(
+  modules: ModuleInstance[],
+  lines?: Record<string, ExternalTextLine[]>,
+): Record<string, { lines: InputTextLine[] }> {
+  const texts: Record<string, { lines: InputTextLine[] }> = {};
+  for (const module of modules) {
+    const input = textInputName(module);
+    if (!input) continue;
+    const source = readExternalSource(module.config as Record<string, unknown>);
+    const limit = source.text?.history ?? TEXT_HISTORY_DEFAULT;
+    const list = lines?.[module.name] ?? [];
+    if (list.length === 0) continue;
+    texts[`${module.name}.${input}`] = {
+      lines: list.slice(0, limit).reverse().map((line) => ({ text: line.text, author: line.author })),
+    };
+  }
+  return texts;
 }
 
 export function inputsPayload(values: Record<string, number>, signals: Record<string, number> = {}): InputValues {

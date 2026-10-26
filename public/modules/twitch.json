@@ -1,7 +1,7 @@
 {
   "id": "twitch",
   "title": "Twitch",
-  "description": "События канала: чат, награды за баллы, bits, фолловы. Вход по коду; текст сообщений виден во «Входах», в формулы идут только числа.",
+  "description": "События канала: чат, награды за баллы, bits, фолловы. Вход по коду; текст чата читается в скрипте как twitch.chat.message(0), (-1) — предыдущее сообщение, twitch.chat.user(-1) — его автор, twitch.chat.min/max — границы входа.",
   "kind": "external",
   "audio": false,
   "inputs": [
@@ -53,7 +53,10 @@
       "channel": "",
       "text": {
         "path": "$.payload.event.message.text",
-        "authorPath": "$.payload.event.chatter_user_name"
+        "authorPath": "$.payload.event.chatter_user_name",
+        "input": "chat",
+        "history": 12,
+        "showAuthor": true
       },
       "mapping": [
         {
@@ -71,7 +74,8 @@
           "when": {
             "path": "$.metadata.subscription_type",
             "equals": "channel.chat.message"
-          }
+          },
+          "step": 1
         },
         {
           "input": "reward",
@@ -87,7 +91,8 @@
           "when": {
             "path": "$.metadata.subscription_type",
             "equals": "channel.channel_points_custom_reward_redemption.add"
-          }
+          },
+          "step": 1
         },
         {
           "input": "cheer",
@@ -103,7 +108,8 @@
           "when": {
             "path": "$.metadata.subscription_type",
             "equals": "channel.cheer"
-          }
+          },
+          "step": 1
         },
         {
           "input": "follow",
@@ -120,7 +126,8 @@
           "when": {
             "path": "$.metadata.subscription_type",
             "equals": "channel.follow"
-          }
+          },
+          "step": 1
         }
       ]
     }

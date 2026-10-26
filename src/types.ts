@@ -200,6 +200,34 @@ export interface RigFrame {
 export interface InputValues {
   values: Record<string, number>;
   signals: Record<string, number>;
+  /**
+   * Текстовый канал входов: `<модуль>.<вход>` → последние строки.
+   *
+   * Числовые формулы текста не видят, поэтому чат едет отдельной картой.
+   * Свежие строки идут **последними**: в скрипте `twitch.chat.message()` —
+   * последнее сообщение, `(-1)` — предыдущее.
+   */
+  texts?: Record<string, { lines: InputTextLine[] }>;
+  /**
+   * Паспорт входа: подпись, границы, шаг и вид. Скрипт читает их как
+   * `twitch.reward.max`, `twitch.reward.label`.
+   */
+  meta?: Record<string, InputMeta>;
+}
+
+/** Строка текстового канала: сообщение и его автор. */
+export interface InputTextLine {
+  text: string;
+  author?: string;
+}
+
+/** Границы и подпись входа — то, что раньше знал только редактор. */
+export interface InputMeta {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  kind: string;
 }
 
 /**
@@ -232,6 +260,8 @@ export interface ExternalSourceRule {
   max?: number;
   scale?: number;
   offset?: number;
+  /** Шаг изменения значения; пусто — по виду входа (`flag` → 1, иначе 0.01). */
+  step?: number;
   /** Удержание импульса, мс: события вроде «пришла награда» живут один пакет. */
   holdMs?: number;
   /** Событие Twitch, из которого пришла строка: по нему включаются подписки. */
@@ -252,6 +282,15 @@ export interface ExternalTextConfig {
   path: string;
   /** Поле с именем автора: показывается рядом с текстом. */
   authorPath?: string;
+  /**
+   * Вход, к которому относится текст: `chat` у Twitch. По нему скрипт
+   * читает `twitch.chat.message`, поэтому имя должно совпадать с входом.
+   */
+  input?: string;
+  /** Сколько последних строк держать: столько видно в панели и в скрипте. */
+  history?: number;
+  /** Показывать автора рядом с текстом в панели «Входы». */
+  showAuthor?: boolean;
 }
 
 /** Внешний источник в настройках экземпляра (`config.source`). */

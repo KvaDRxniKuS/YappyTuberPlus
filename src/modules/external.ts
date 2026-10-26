@@ -87,14 +87,30 @@ function transliterate(text: string): string {
     .join("");
 }
 
-/** Настройки текста: путь обязателен, автор — по желанию. */
+/** Пределы истории сообщений: столько строк держим и читаем из скрипта. */
+export const TEXT_HISTORY_MIN = 1;
+export const TEXT_HISTORY_MAX = 100;
+export const TEXT_HISTORY_DEFAULT = 12;
+
+/** Настройки текста: путь обязателен, остальное — с понятными умолчаниями. */
 function readTextConfig(raw: unknown): ExternalTextConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const item = raw as Record<string, unknown>;
   const path = String(item.path ?? "").trim();
   if (!path) return undefined;
   const authorPath = String(item.authorPath ?? "").trim();
-  return { path, authorPath: authorPath || undefined };
+  const input = String(item.input ?? "").trim();
+  const history = Number(item.history);
+  return {
+    path,
+    authorPath: authorPath || undefined,
+    // Имя входа нужно скрипту (`twitch.chat.message`), поэтому оно латиницей.
+    input: input ? readInputName(input) : undefined,
+    history: Number.isFinite(history)
+      ? Math.min(TEXT_HISTORY_MAX, Math.max(TEXT_HISTORY_MIN, Math.round(history)))
+      : TEXT_HISTORY_DEFAULT,
+    showAuthor: item.showAuthor !== false,
+  };
 }
 
 /** Имя входа только латиницей: оно попадает в выражение скрипта. */
@@ -148,6 +164,7 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
         max: rule.max === undefined ? undefined : readNumber(rule.max, 1),
         scale: rule.scale === undefined ? 1 : readNumber(rule.scale, 1),
         offset: rule.offset === undefined ? 0 : readNumber(rule.offset, 0),
+        step: rule.step === undefined ? undefined : readNumber(rule.step, 0.01),
         holdMs: rule.holdMs === undefined ? 0 : Math.max(0, readNumber(rule.holdMs, 0)),
         event: typeof rule.event === "string" && rule.event.trim() ? rule.event.trim() : undefined,
         when,
@@ -186,7 +203,9 @@ export function externalInputs(module: ModuleInstance, fallback: ModuleInputSpec
     label: rule.label || rule.input,
     min: rule.kind === "db" ? (rule.min ?? -80) : (rule.min ?? 0),
     max: rule.kind === "db" ? (rule.max ?? 0) : (rule.max ?? 1),
-    step: rule.kind === "flag" ? 1 : 0.01,
+    // Шаг берётся из строки таблицы: у счётчиков сообщений и bits он целый,
+    // у громкости — сотые. Паспорт входа читает его как `<вход>.step`.
+    step: rule.step ?? (rule.kind === "flag" ? 1 : 0.01),
     kind: rule.kind ?? "level",
     hint: `${rule.path}${rule.holdMs ? ` · импульс ${Math.round(rule.holdMs)} мс` : ""}`,
   }));

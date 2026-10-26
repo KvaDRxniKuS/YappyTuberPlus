@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Activity, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
-import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, externalInputName, readExternalSource } from "../modules/external";
+import {
+  EXTERNAL_TRANSPORTS, TEXT_HISTORY_DEFAULT, TEXT_HISTORY_MAX, TEXT_HISTORY_MIN, TRANSPORT_INFO,
+  defaultRule, externalInputName, readExternalSource,
+} from "../modules/external";
 import {
   TWITCH_APPS, TWITCH_EVENTS, TWITCH_VERIFY, commandRule, eventRule, rewardRule, selectedEvents,
   twitchCommands, twitchRewards,
@@ -62,6 +65,8 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
     }
   };
   const info = TRANSPORT_INFO[source.transport];
+  // Текст источника (чат) настраивается, только если он вообще собирается.
+  const text = source.text;
   const patch = (change: Partial<ExternalSourceConfig>, label?: string) => {
     props.onChange({ ...source, ...change }, label);
   };
@@ -262,6 +267,79 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               />
             </div>
           </div>
+        )}
+
+        {/* Текст источника: чат. Раньше путь и автор были только в шаблоне
+            модуля, и «последние сообщения» нельзя было ни настроить, ни
+            прочитать из скрипта. */}
+        {text && (
+          <>
+            <div className="module-field" title="Путь к тексту в сообщении источника: $.payload.event.message.text">
+              <span className="module-field-label">Текст</span>
+              <div className="module-field-value">
+                <input
+                  className="module-field-text"
+                  value={text.path}
+                  spellCheck={false}
+                  placeholder="$.payload.event.message.text"
+                  onChange={(event) => patch({ text: { ...text, path: event.target.value } }, "Путь текста")}
+                />
+              </div>
+            </div>
+            <div className="module-field" title="Путь к имени автора: $.payload.event.chatter_user_name">
+              <span className="module-field-label">Автор</span>
+              <div className="module-field-value">
+                <input
+                  className="module-field-text"
+                  value={text.authorPath ?? ""}
+                  spellCheck={false}
+                  placeholder="$.payload.event.chatter_user_name"
+                  onChange={(event) => patch({ text: { ...text, authorPath: event.target.value || undefined } }, "Путь автора")}
+                />
+              </div>
+            </div>
+            <div className="module-field" title="Вход, к которому относится текст: в скрипте это twitch.chat.message(-1)">
+              <span className="module-field-label">Вход текста</span>
+              <div className="module-field-value">
+                <select
+                  value={text.input ?? source.mapping.find((rule) => rule.count)?.input ?? source.mapping[0]?.input ?? ""}
+                  onChange={(event) => patch({ text: { ...text, input: event.target.value || undefined } }, "Вход текста")}
+                >
+                  {source.mapping.map((rule) => (
+                    <option key={rule.input} value={rule.input}>{rule.input}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="module-field" title="Сколько последних строк держать: столько же видно в панели и в скрипте">
+              <span className="module-field-label">Хранить</span>
+              <div className="module-field-value">
+                <NumberField
+                  className="module-field-number"
+                  value={text.history ?? TEXT_HISTORY_DEFAULT}
+                  min={TEXT_HISTORY_MIN}
+                  max={TEXT_HISTORY_MAX}
+                  step={1}
+                  integer
+                  title={`Сколько сообщений помним: ${TEXT_HISTORY_MIN}…${TEXT_HISTORY_MAX}`}
+                  onCommit={(next) => patch({ text: { ...text, history: next } }, "История сообщений")}
+                />
+              </div>
+            </div>
+            <div className="module-field" title="Показывать автора рядом с текстом в панели «Входы»">
+              <span className="module-field-label">Автор в панели</span>
+              <div className="module-field-value">
+                <div className="module-field-flag">
+                  <Switch
+                    checked={text.showAuthor !== false}
+                    onChange={(next) => patch({ text: { ...text, showAuthor: next } }, "Автор в панели")}
+                    title="Показывать автора сообщения"
+                  />
+                  <span>{text.showAuthor !== false ? "да" : "нет"}</span>
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         <div className="module-field" title="Переподключаться при обрыве: значения на время обрыва обнуляются.">

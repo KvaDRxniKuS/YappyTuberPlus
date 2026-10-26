@@ -167,3 +167,78 @@ export function signatureLine(hint: SignatureHint | null): string {
   if (!hint) return "";
   return `${signatureOf(hint.name)} — ${parameterHint(hint.name, hint.index) ?? "аргумент не нужен"}`;
 }
+
+/** Вход модуля для подсказки события: полное имя и подпись из панели. */
+export interface EventHintInput {
+  key: string;
+  label?: string;
+}
+
+/** Типы событий: одни и те же для любого входа модуля. */
+export const EVENT_KINDS = [
+  { kind: "down", note: "0 → 1: нажали, заговорили" },
+  { kind: "up", note: "1 → 0: отпустили, замолчали" },
+  { kind: "change", note: "значение изменилось с прошлого кадра" },
+  { kind: "hold(0.5)", note: "держалось дольше 0,5 с — один раз за удержание" },
+  { kind: "relax(0.6)", note: "отпущено дольше 0,6 с — один раз за отпускание" },
+] as const;
+
+/**
+ * Подсказка синтаксиса события под редактором.
+ *
+ * Пока курсор стоит в заголовке (`on …` или правая часть `trigger имя = …`),
+ * показываем единственную правильную форму и — если вход уже набран — его
+ * подпись и допустимые типы. Так `on twitch.chat.change` не приходится
+ * вспоминать: подсказка меняется прямо во время набора.
+ */
+export function eventHintAt(
+  source: string,
+  position: number,
+  inputs: EventHintInput[] = [],
+): string | null {
+  const cursor = Math.max(0, Math.min(position, source.length));
+  const lineStart = source.lastIndexOf("\n", cursor - 1) + 1;
+  const lineEnd = source.indexOf("\n", cursor);
+  const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd);
+  const before = source.slice(lineStart, cursor);
+  const kinds = "down · up · change · hold(сек) · relax(сек)";
+
+  // `trigger имя = …`: объявление своего события.
+  const trigger = /^\s*trigger\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\w.]*)$/.exec(before);
+  if (trigger && !line.includes("{")) {
+    const path = trigger[2];
+    const found = inputs.find((input) => input.key === path);
+    if (found) {
+      return `trigger ${trigger[1]} = ${found.key}.down — вход «${found.label ?? found.key}»; типы: ${kinds}`;
+    }
+    return `trigger ${trigger[1]} = модуль.вход.тип — своё имя события; типы: ${kinds}`;
+  }
+
+  const header = /^\s*on\s+([\w.]*)\s*$/.exec(before);
+  if (!header || line.includes("{")) return null;
+  const path = header[1];
+
+  // Уже набран `.тип`: подсказываем остальные типы для этого входа.
+  const withKind = /^(.+?)\.([A-Za-z_]*)$/.exec(path);
+  if (withKind && inputs.some((input) => input.key === withKind[1])) {
+    const found = inputs.find((input) => input.key === withKind[1])!;
+    return `on ${found.key}.${withKind[2] || "change"} { … } — вход «${found.label ?? found.key}»; типы: ${kinds}`;
+  }
+  const found = inputs.find((input) => input.key === path);
+  if (found) {
+    return `on ${found.key}.<тип> { … } — вход «${found.label ?? found.key}»; типы: ${kinds}`;
+  }
+  if (path.startsWith("event.")) {
+    return "префикс 'event.' не нужен: пишите 'on модуль.вход.тип { … }'";
+  }
+  if (!path) {
+    return `on <модуль>.<вход>.<тип> { … } — типы: ${kinds}; первый кадр — on start { … }`;
+  }
+  const known = inputs
+    .map((input) => input.key)
+    .filter((key) => key.startsWith(path))
+    .slice(0, 4);
+  return known.length
+    ? `on ${known[0].split(".")[0]}.<вход>.<тип> { … } — похоже на: ${known.join(", ")}`
+    : `вход «${path}» не найден: имена входов видны во «Входах» и в списке модулей`;
+}

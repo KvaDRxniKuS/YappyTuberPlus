@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InputValues, ModuleConfig, ModuleInstance } from "../types";
 import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOption } from "../modules/audio";
 import { inputRange, moduleDefinition } from "../modules/registry";
-import { composeValues, inputEnabled, inputKey, isPointerKind } from "../modules/values";
+import { composeValues, inputEnabled, inputKey, inputMeta, inputTexts, isPointerKind } from "../modules/values";
 import { usePointerInputs } from "./usePointerInputs";
 import { useExternalSource } from "./useExternalSource";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
@@ -264,8 +264,12 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   const inputs = useMemo<InputValues>(() => ({
     values: composeValues(modules, { audio, manual, auto, pointer, external: externalInputs.values }),
     signals: {},
+    // Текст чата и паспорта входов едут вместе со значениями: в скрипте это
+    // `twitch.chat.message(-1)` и `twitch.reward.max`.
+    texts: inputTexts(modules, externalInputs.texts),
+    meta: inputMeta(modules),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [modules, audio, manual, auto, pointer, externalInputs.values, libraryVersion]);
+  }), [modules, audio, manual, auto, pointer, externalInputs.values, externalInputs.texts, libraryVersion]);
 
   return {
     inputs, audio, manual, auto, devices, active, error, contextState,

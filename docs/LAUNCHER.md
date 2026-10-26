@@ -77,7 +77,8 @@ start-yappytuber.bat --branch main  :: другая ветка
 - **`build-yappytuber.bat`** — собирает `.exe` и установщик, результат открывает в
   проводнике. Флаги: `--no-bundle` (только `.exe`), `--fast` (без пересборки WASM).
 
-Третий вариант — вообще ничего не ставить: вкладка **Actions** → **Сборка Windows** →
+Третий вариант — вообще ничего не ставить: один раз добавьте workflow из
+[`BUILD.md`](BUILD.md), затем вкладка **Actions** → **Сборка Windows** →
 **Run workflow** на GitHub, готовый установщик появится в артефактах.
 
 ## Linux / macOS

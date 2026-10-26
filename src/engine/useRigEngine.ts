@@ -74,7 +74,7 @@ export function useRigEngine(
       op: "tick",
       handle,
       now: (typeof performance === "undefined" ? Date.now() : performance.now()) / 1000,
-      inputs: { values: inputs.values, signals: inputs.signals ?? {} },
+      inputs: { values: inputs.values, signals: inputs.signals ?? {}, texts: inputs.texts, meta: inputs.meta },
       paused: true,
       resetClock: true,
     }).catch(() => null);
@@ -258,7 +258,12 @@ export function useRigEngine(
           op: "tick",
           handle,
           now: nowMs / 1000,
-          inputs: { values: inputs.values, signals: inputs.signals ?? {} },
+          inputs: {
+            values: inputs.values,
+            signals: inputs.signals ?? {},
+            texts: inputs.texts,
+            meta: inputs.meta,
+          },
           paused: false,
           resetClock,
         }).then((response) => {

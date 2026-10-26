@@ -263,6 +263,50 @@ pub struct InputValues {
     /// Ключи вида `<модуль>.<вход>`; набор задаёт редактор.
     #[serde(default)]
     pub values: BTreeMap<String, f64>,
+    /// Текстовый канал входов: `<модуль>.<вход>` → последние строки.
+    ///
+    /// В числовой формуле текста нет, поэтому чат живёт отдельной картой.
+    /// Свежие строки идут **последними**: `twitch.chat.message()` — последнее
+    /// сообщение, `(-1)` — предыдущее.
+    #[serde(default)]
+    pub texts: BTreeMap<String, InputText>,
+    /// Паспорт входа: подпись, границы, шаг и вид. Редактор присылает их
+    /// вместе со значениями, чтобы скрипт мог прочитать, например,
+    /// `twitch.reward.max` и посчитать долю.
+    #[serde(default)]
+    pub meta: BTreeMap<String, InputMeta>,
+}
+
+/// Одна строка текстового канала: сообщение чата и его автор.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TextLine {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
+/// История одного входа: строки от старых к свежим.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InputText {
+    #[serde(default)]
+    pub lines: Vec<TextLine>,
+}
+
+/// Паспорт входа модуля: то, что раньше знал только редактор.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InputMeta {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub min: f64,
+    #[serde(default)]
+    pub max: f64,
+    #[serde(default)]
+    pub step: f64,
+    /// `level`, `db` или `flag` — как трактовать значение.
+    #[serde(default)]
+    pub kind: String,
 }
 
 /// Одна команда воспроизведения, которую скрипт отдал медиа-объекту.

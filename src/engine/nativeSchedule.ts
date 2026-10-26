@@ -99,6 +99,10 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
   const snapshot = () => ({
     values: { ...options.inputsRef.current.values },
     signals: { ...(options.inputsRef.current.signals ?? {}) },
+    // Текст и паспорта входов: без них в нативном режиме не работали бы
+    // `twitch.chat.message(-1)` и `twitch.reward.max`.
+    texts: options.inputsRef.current.texts,
+    meta: options.inputsRef.current.meta,
   });
 
   let disposed = false;

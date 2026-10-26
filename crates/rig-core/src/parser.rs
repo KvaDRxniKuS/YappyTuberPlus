@@ -55,6 +55,16 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    /// Поле входа модуля с аргументом: `twitch.chat.message(-1)`.
+    ///
+    /// `subject` — `модуль.вход`, `field` — что именно читаем (`message`,
+    /// `user`, `min`, `max`, `label`). Аргумент — смещение по истории: 0 или
+    /// пусто — последнее сообщение, −1 — предыдущее.
+    FieldCall {
+        subject: String,
+        field: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -506,6 +516,25 @@ impl ExpressionParser {
                 continue;
             }
             if self.check(&TokenKind::LParen) {
+                // `twitch.chat.message(-1)`: путь из трёх частей — это поле
+                // входа модуля, а не встроенная функция. Путь запоминаем
+                // строкой, чтобы ядро нашло вход и его паспорт.
+                if let Some((subject, field)) = field_path(&expr) {
+                    self.advance();
+                    let mut args = Vec::new();
+                    if !self.check(&TokenKind::RParen) {
+                        loop {
+                            args.push(self.ternary()?);
+                            if !self.check(&TokenKind::Comma) {
+                                break;
+                            }
+                            self.advance();
+                        }
+                    }
+                    self.consume(&TokenKind::RParen, "ожидалось ')'")?;
+                    expr = Expr::FieldCall { subject, field, args };
+                    continue;
+                }
                 let name = match expr {
                     Expr::Name(name) => name,
                     _ => return Err("вызывать можно только встроенную функцию".into()),
@@ -732,8 +761,13 @@ fn parse_event_source(raw: &str) -> Result<EventSource, String> {
     if text.is_empty() {
         return Err("пустое условие события".into());
     }
-    // `event.` — необязательный префикс: `on event.mouse.left.down` = `on mouse.left.down`.
-    let path = text.strip_prefix("event.").unwrap_or(text).trim();
+    // Событие записывается одной формой: `on модуль.вход.тип`. Префикса
+    // `event.` больше нет — он дублировал `on` и путал: в скрипте остаются
+    // только входы модулей и их типы.
+    if text.starts_with("event.") {
+        return Err("заголовок события пишется как 'on модуль.вход.тип { … }': префикс 'event.' не нужен".into());
+    }
+    let path = text;
     if !path.contains('.') {
         if !valid_identifier(path) {
             return Err(format!("некорректное имя события '{}'", raw.trim()));
@@ -985,23 +1019,20 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
             continue;
         }
 
-        // Блок события: `on <условие> { … }`.
+        // Блок события: только `on <условие> { … }`.
         //
-        // `event.<условие> { … }` — та же запись без `on`. Автодополнение
-        // подставляет входы как `event.модуль.вход`, поэтому разрешаем писать
-        // этот заголовок напрямую. Строка, где слева от `{` есть `=`,
-        // остаётся присваиванием: `event` — обычное имя объекта.
-        let event_block = keyword_at(trimmed, "on")
-            .map(|rest| (rest, "on".len()))
-            .or_else(|| {
-                let rest = trimmed.strip_prefix("event.")?;
-                let head = rest.split('{').next().unwrap_or("");
-                if rest.contains('{') && !head.contains('=') {
-                    Some((rest, "event.".len()))
-                } else {
-                    None
-                }
-            });
+        // Второй формы (`event.…` без `on`) больше нет: два синтаксиса одного
+        // и того же сбивали с толку. Строка `event.x = 5` остаётся
+        // присваиванием чужому объекту с именем `event`.
+        if trimmed.starts_with("event.") && trimmed.contains('{') {
+            return Err(ScriptError::new(
+                line_number,
+                column,
+                trimmed.len(),
+                "заголовок события пишется как 'on модуль.вход.тип { … }': префикс 'event.' не нужен",
+            ));
+        }
+        let event_block = keyword_at(trimmed, "on").map(|rest| (rest, "on".len()));
         if let Some((rest, prefix_len)) = event_block {
             let open = rest.find('{').ok_or_else(|| {
                 ScriptError::new(line_number, column, trimmed.len(), "у блока события нет '{'")
@@ -1014,7 +1045,7 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
                     line_number,
                     header_column,
                     trimmed.len(),
-                    "после 'on' или 'event.' ожидалось условие: 'start', 'имя' или 'модуль.вход.тип'",
+                    "после 'on' ожидалось условие: 'start', 'имя' или 'модуль.вход.тип'",
                 ));
             }
             let event_source = parse_event_source(header).map_err(|message| {
@@ -1133,12 +1164,34 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
     Ok(script)
 }
 
+/// Путь `модуль.вход.поле` → (`модуль.вход`, `поле`).
+///
+/// Возвращает `None` для всего остального: `max(a, b)` остаётся встроенной
+/// функцией, а `vec(1, 2).x` по-прежнему нельзя вызвать.
+fn field_path(expr: &Expr) -> Option<(String, String)> {
+    let Expr::Member { expr: inner, name } = expr else {
+        return None;
+    };
+    let Expr::Member { expr: root, name: input } = inner.as_ref() else {
+        return None;
+    };
+    let Expr::Name(module) = root.as_ref() else {
+        return None;
+    };
+    Some((format!("{}.{}", module, input), name.clone()))
+}
+
 struct CountCalls(u32);
 impl CountCalls {
     fn visit(&mut self, expr: &Expr) {
         match expr {
             Expr::Call { id, args, .. } => {
                 self.0 = self.0.max(*id + 1);
+                for arg in args {
+                    self.visit(arg);
+                }
+            }
+            Expr::FieldCall { args, .. } => {
                 for arg in args {
                     self.visit(arg);
                 }
@@ -1243,8 +1296,8 @@ mod tests {
     }
 
     #[test]
-    fn start_and_event_prefix_parse() {
-        let script = parse_script("on start { a = 0 }\non event.key.space.up { a = 1 }").unwrap();
+    fn start_and_plain_input_parse() {
+        let script = parse_script("on start { a = 0 }\non key.space.up { a = 1 }").unwrap();
         assert!(matches!(&script.events[0].source, EventSource::Start));
         match &script.events[1].source {
             EventSource::Input { source, kind } => {
@@ -1256,31 +1309,47 @@ mod tests {
     }
 
     #[test]
-    fn event_header_without_on_parses() {
-        // `event.mouse.left.down { … }` — автодополнение подставляет именно
-        // такую форму, и она должна работать без `on`.
-        let script = parse_script("event.mouse.left.down { a = 1 }\nevent.key.space.hold(0.5) { b = 2 }\nevent.start { c = 3 }").unwrap();
-        assert_eq!(script.events.len(), 3);
-        match &script.events[0].source {
-            EventSource::Input { source, kind } => {
-                assert_eq!(source, "mouse.left");
-                assert!(matches!(kind, EventKind::Down));
-            }
-            other => panic!("ожидался входной источник, а не {:?}", other),
-        }
-        assert!(matches!(&script.events[1].source, EventSource::Input { kind: EventKind::Hold(value), .. } if (*value - 0.5).abs() < 1e-9));
-        assert!(matches!(&script.events[2].source, EventSource::Start));
-        assert_eq!(script.events[0].body.len(), 1);
+    fn event_prefix_is_rejected_with_a_hint() {
+        // Заголовок события один: `on модуль.вход.тип`. Старая запись без `on`
+        // подсказывает правильную форму, а не молчит.
+        let error = parse_script("event.mouse.left.down { a = 1 }").unwrap_err();
+        assert!(error.message.contains("префикс 'event.' не нужен"), "{}", error.message);
+        let error = parse_script("on event.key.space.up { a = 1 }").unwrap_err();
+        assert!(error.message.contains("префикс 'event.' не нужен"), "{}", error.message);
     }
 
     #[test]
     fn event_object_assignment_is_not_a_block() {
-        // Объект с именем `event` остаётся объектом: `event.x = 5` — присваивание.
+        // Объект с именем `event` остаётся объектом: `event.x = 5` — присваивание,
+        // а не заголовок события.
         let script = parse_script("event.x = 5").unwrap();
         assert!(script.events.is_empty());
         assert!(matches!(
             &script.assignments[0].0,
             AssignTarget::Foreign { object, param } if object == "event" && param == "x"
+        ));
+    }
+
+    #[test]
+    fn field_call_parses_as_input_field() {
+        // `twitch.chat.message(-1)` — поле входа модуля, а не встроенная функция.
+        let script = parse_script("text = twitch.chat.message(-1)").unwrap();
+        let Statement::Assign(_, Expr::FieldCall { subject, field, args }) = &script.assignments[0] else {
+            panic!("ожидался вызов поля входа: {:?}", script.assignments[0]);
+        };
+        assert_eq!(subject, "twitch.chat");
+        assert_eq!(field, "message");
+        assert_eq!(args.len(), 1);
+        // Без скобок — обычный доступ к полю входа.
+        let plain = parse_script("text = twitch.chat.message").unwrap();
+        assert!(matches!(
+            &plain.assignments[0],
+            Statement::Assign(_, Expr::Member { .. })
+        ));
+        // Встроенные функции не перестали работать.
+        assert!(matches!(
+            &parse_script("text = fixed(mic.db, 2)").unwrap().assignments[0],
+            Statement::Assign(_, Expr::Call { name, .. }) if name == "fixed"
         ));
     }
 

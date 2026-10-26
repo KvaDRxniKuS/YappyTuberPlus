@@ -87,6 +87,11 @@ export function RightPanel(props: RightPanelProps) {
     return () => window.clearTimeout(timer);
   }, [focusModule]);
   const editorValue = tab === "globals" ? props.globalScript : props.selected?.script || "";
+  // Подписи входов — для подсказки события: `on twitch.chat.change` показывает,
+  // что это «Сообщений». Считаются один раз на рендер панели.
+  const inputLabels = Object.fromEntries(
+    props.modules.flatMap((module) => moduleInputKeys(module).map((item) => [item.key, item.spec.label])),
+  );
   const editorKey = tab === "globals" ? "globals" : props.selected?.id || "empty";
   const dynamic = props.selected ? props.frame?.objects[props.selected.id] : null;
 
@@ -154,6 +159,7 @@ export function RightPanel(props: RightPanelProps) {
             objectIds={props.objects.map((object) => object.id)}
             globals={props.globals}
             moduleInputs={props.modules.flatMap((module) => moduleInputKeys(module).map((item) => item.key))}
+            moduleInputLabels={inputLabels}
             triggers={namedTriggers(props.globalScript)}
             constants={Object.keys(enumConstants(props.modules))}
             onCheck={props.checkScript}

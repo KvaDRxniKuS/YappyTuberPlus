@@ -64,34 +64,90 @@ xcode-select --install
 ### Сборка на GitHub без установки инструментов
 
 Если не хочется ставить Rust и Visual Studio, `.exe` соберёт GitHub Actions.
-Готовый файл workflow лежит в папке проекта: `.github/workflows/build-windows.yml`.
-Его нужно один раз добавить в репозиторий — через веб-интерфейс GitHub:
+Workflow ниже нужно один раз добавить в репозиторий — через веб-интерфейс GitHub:
 
 1. В репозитории: **Add file** → **Create new file**.
 2. Имя файла: `.github/workflows/build-windows.yml`.
-3. Вставьте содержимое файла из папки проекта и нажмите **Commit changes**.
+3. Вставьте текст из блока ниже и нажмите **Commit changes**.
 4. Вкладка **Actions** → **Сборка Windows** → **Run workflow**.
 
 Через 10–15 минут готовый набор (приложение и установщик) лежит в артефакте
 `YappyTuberPlus-windows`. На тег `v*` дополнительно создаётся черновик релиза
 с установщиком.
 
-Ключевые шаги этого workflow, если собирать его заново:
+Полный текст файла (то же самое, что нужно вставить на шаге 3):
 
 ```yaml
-- uses: actions/checkout@v4
-- uses: actions/setup-node@v4
-  with: { node-version: 22, cache: npm }
-- uses: dtolnay/rust-toolchain@stable
-  with: { targets: wasm32-unknown-unknown }
-- run: npm ci
-- run: npm run tauri build
-- uses: actions/upload-artifact@v4
-  with:
-    name: YappyTuberPlus-windows
-    path: |
-      src-tauri/target/release/yappytuberplus.exe
-      src-tauri/target/release/bundle/nsis/*.exe
+name: Сборка Windows
+
+# Готовый .exe можно получить без установки Rust и Node.js:
+# вкладка Actions → «Сборка Windows» → Run workflow, затем скачать артефакт
+# YappyTuberPlus-windows. На тег v* дополнительно создаётся черновик релиза.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "crates/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Кэш Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Зависимости
+        run: npm ci
+
+      - name: Сборка приложения и установщика
+        run: npm run tauri build
+
+      - name: Артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: YappyTuberPlus-windows
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/yappytuberplus.exe
+            src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Черновик релиза (тег v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
 ```
 
 ## 2. Подготовка проекта

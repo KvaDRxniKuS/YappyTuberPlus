@@ -62,8 +62,10 @@ interface Entry {
   log: ExternalLogEntry[];
   /** Счётчики: `chat` растёт с каждым сообщением, а не читается из поля. */
   counters: Record<string, number>;
-  /** Последние тексты (чат): только для показа, в кадр не идут. */
+  /** Последние тексты (чат): показываются в панели и уходят в кадр строкой. */
   texts: ExternalTextLine[];
+  /** Сколько строк держим: настройка модуля «Хранить сообщений». */
+  textLimit: number;
 }
 
 /** Событие из Rust: состояние источника или сырой текст пакета. */
@@ -74,7 +76,7 @@ type NativePayload =
 const NATIVE_EVENT = "yappy://source";
 /** Сколько строк журнала держим на источник: больше в карточке не прочитать. */
 export const LOG_LIMIT = 20;
-/** Сколько сообщений чата помним для показа в панели «Входы». */
+/** Сколько сообщений чата помним, если в настройках ничего не задано. */
 export const TEXT_LIMIT = 12;
 
 /** Строка текста из источника: чат, текст награды. В формулы не попадает. */
@@ -254,6 +256,9 @@ export class ExternalSourceHost {
     const entry: Entry = {
       source, key, socket: null, status: emptyStatus(), values: {}, holds: {},
       retry: null, attempts: 0, closed: false, native, log: [], counters: {}, texts: [],
+      // Сколько строк помним — настройка модуля: столько же видно в панели и
+      // доступно скрипту через `twitch.chat.message(-n)`.
+      textLimit: source.text?.history ? Math.max(1, source.text.history) : TEXT_LIMIT,
     };
     this.entries.set(name, entry);
     if (twitch) {
@@ -411,7 +416,7 @@ export class ExternalSourceHost {
           author: typeof author === "string" && author.trim() ? author.trim().slice(0, 40) : undefined,
           text: line.slice(0, 200),
         });
-        if (entry.texts.length > TEXT_LIMIT) entry.texts.length = TEXT_LIMIT;
+        if (entry.texts.length > entry.textLimit) entry.texts.length = entry.textLimit;
       }
     }
     if (Object.keys(mapped).length === 0) {

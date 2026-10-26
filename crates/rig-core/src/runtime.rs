@@ -1,5 +1,6 @@
 use crate::model::{
-    BaseUpdate, Frame, InputValues, MediaCue, NodeKey, ObjectKind, Param, RigPreset, Vec2,
+    BaseUpdate, Frame, InputText, InputValues, MediaCue, NodeKey, ObjectKind, Param, RigPreset,
+    TextLine, Vec2,
 };
 use crate::parser::{
     parse_script, AssignTarget, BinaryOp, EventKind, EventSource, Expr, Statement, UnaryOp,
@@ -1379,6 +1380,15 @@ impl Rig {
                 })
             }
             Expr::Member { expr, name } => {
+                // Поле входа модуля: `twitch.chat.message` — последнее сообщение
+                // чата, `twitch.reward.max` — верхняя граница входа.
+                if let Expr::Member { expr: root, name: input } = expr.as_ref() {
+                    if let Expr::Name(module) = root.as_ref() {
+                        if let Some(value) = self.input_field(module, input, name, None, context) {
+                            return value;
+                        }
+                    }
+                }
                 // Входы модулей адресуются как `<модуль>.<вход>`: если такого
                 // ключа нет, работает обычный доступ к полям (.x/.y, параметры).
                 if let Expr::Name(base) = expr.as_ref() {
@@ -1449,7 +1459,74 @@ impl Rig {
                 }
             }
             Expr::Call { id, name, args } => self.eval_call(*id, name, args, context),
+            Expr::FieldCall { subject, field, args } => {
+                // `twitch.chat.message(-1)`: смещение по истории. Второго
+                // аргумента у полей нет — лишние просто не читаются.
+                let offset = args.first();
+                let (module, input) = subject.split_once('.').unwrap_or((subject.as_str(), ""));
+                match self.input_field(module, input, field, offset, context) {
+                    Some(value) => value,
+                    None => self.error_value(format!(
+                        "у входа '{}' нет поля '{}'; есть message, user, min, max, step, label, kind",
+                        subject, field
+                    )),
+                }
+            }
         }
+    }
+
+    /// Поле входа модуля: строка чата, автор или паспорт входа.
+    ///
+    /// `None` означает «это не поле входа»: тогда вызывающий код работает как
+    /// раньше — с векторами, объектами и обычным доступом к параметрам.
+    /// Смещение читается по истории: 0 (или пусто) — последнее сообщение,
+    /// −1 — предыдущее, −2 — то, что было до него.
+    fn input_field(
+        &mut self,
+        module: &str,
+        input: &str,
+        field: &str,
+        offset: Option<&Expr>,
+        context: &NodeKey,
+    ) -> Option<Value> {
+        // Смещение считается до заимствования истории: `numeric` меняет
+        // диагностику и кэш, поэтому занимать `self.inputs` в этот момент нельзя.
+        let shift = offset
+            .map(|expr| self.numeric(expr, context).round() as i64)
+            .unwrap_or(0);
+        let key = format!("{}.{}", module, input);
+        let known = self.inputs.texts.contains_key(&key)
+            || self.inputs.meta.contains_key(&key)
+            || self.inputs.values.contains_key(&key);
+        if !known {
+            return None;
+        }
+        let name = field.to_ascii_lowercase();
+        if matches!(name.as_str(), "min" | "max" | "step" | "label" | "kind") {
+            let meta = self.inputs.meta.get(&key)?;
+            return Some(match name.as_str() {
+                "min" => Value::Number(meta.min),
+                "max" => Value::Number(meta.max),
+                "step" => Value::Number(meta.step),
+                "label" => Value::Text(meta.label.clone()),
+                _ => Value::Text(meta.kind.clone()),
+            });
+        }
+        if !matches!(name.as_str(), "message" | "text" | "chat" | "user" | "author" | "name") {
+            return None;
+        }
+        // Истории ещё нет: вход известен, но сообщений не было — пустая строка.
+        let line = self
+            .inputs
+            .texts
+            .get(&key)
+            .and_then(|texts| text_line(texts, shift))
+            .unwrap_or_default();
+        Some(if matches!(name.as_str(), "user" | "author" | "name") {
+            Value::Text(line.author.unwrap_or_default())
+        } else {
+            Value::Text(line.text)
+        })
     }
 
     fn eval_name(&mut self, name: &str, context: &NodeKey) -> Value {
@@ -2199,6 +2276,18 @@ fn rotate_vector(vector: Vec2, degrees: f64) -> Vec2 {
     }
 }
 
+/// Строка истории по смещению: 0 — последняя, −1 — предыдущая.
+///
+/// `None` — смещение ушло в будущее (истории ещё нет или просят больше, чем
+/// записано): вызывающий подставляет пустую строку.
+fn text_line(texts: &InputText, shift: i64) -> Option<TextLine> {
+    let index = texts.lines.len() as i64 - 1 + shift;
+    if index < 0 {
+        return Some(TextLine::default());
+    }
+    texts.lines.get(index as usize).cloned()
+}
+
 fn hash_unit(mut value: u64) -> f64 {
     value ^= value >> 30;
     value = value.wrapping_mul(0xBF58476D1CE4E5B9);
@@ -2510,6 +2599,104 @@ mod tests {
         let changed = rig.tick(0.1, louder, false, false, None);
         assert_eq!(changed.texts["marker"], "глоб0.75");
         assert!(changed.diagnostics.is_empty(), "диагностика: {:?}", changed.diagnostics);
+    }
+
+    /// История чата: свежие строки в конце, как приходит из редактора.
+    fn chat_inputs(messages: &[(&str, &str)]) -> InputValues {
+        let mut inputs = InputValues::default();
+        inputs.values.insert("twitch.chat".into(), messages.len() as f64);
+        inputs.texts.insert(
+            "twitch.chat".into(),
+            InputText {
+                lines: messages
+                    .iter()
+                    .map(|(author, text)| TextLine {
+                        text: (*text).to_string(),
+                        author: Some((*author).to_string()),
+                    })
+                    .collect(),
+            },
+        );
+        inputs.meta.insert(
+            "twitch.chat".into(),
+            crate::model::InputMeta {
+                label: "Сообщений".into(),
+                min: 0.0,
+                max: 1_000_000.0,
+                step: 1.0,
+                kind: "level".into(),
+            },
+        );
+        inputs
+    }
+
+    #[test]
+    fn chat_text_fields_read_history_by_offset() {
+        let mut message = object(
+            "message",
+            None,
+            "text = twitch.chat.message() + \" | \" + twitch.chat.message(-1)",
+        );
+        message.kind = ObjectKind::Text;
+        let mut author = object("author", None, "text = twitch.chat.user(-1)");
+        author.kind = ObjectKind::Text;
+        // Без скобок — то же самое, что `message()`: последнее сообщение.
+        let mut plain = object("plain", None, "text = twitch.chat.message");
+        plain.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![message, author, plain], "")).unwrap();
+        let inputs = chat_inputs(&[("ада", "первое"), ("боб", "второе")]);
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        assert_eq!(frame.texts["plain"], "второе");
+        assert_eq!(frame.texts["message"], "второе | первое");
+        assert_eq!(frame.texts["author"], "ада");
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn chat_text_survives_empty_history_and_far_offsets() {
+        let mut label = object("label", None, "text = twitch.chat.message(-5)");
+        label.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![label], "")).unwrap();
+        // Сообщений ещё не было: пустая строка, но не ошибка.
+        let empty = rig.tick(0.0, InputValues::default(), false, false, None);
+        assert_eq!(empty.texts.get("label").cloned().unwrap_or_default(), "");
+        assert!(empty.diagnostics.is_empty(), "диагностика: {:?}", empty.diagnostics);
+        let frame = rig.tick(0.1, chat_inputs(&[("ада", "одно")]), false, false, None);
+        // Смещение глубже истории — пустая строка, а не падение.
+        assert_eq!(frame.texts.get("label").cloned().unwrap_or_default(), "");
+    }
+
+    #[test]
+    fn input_meta_is_readable_from_the_script() {
+        // Доля от верхней границы входа: раньше пределы знал только редактор.
+        let mut share = object(
+            "share",
+            None,
+            "text = twitch.chat.label + \": \" + text(twitch.chat) + \" / \" + text(twitch.chat.max)",
+        );
+        share.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![share], "")).unwrap();
+        let mut inputs = chat_inputs(&[("ада", "привет")]);
+        inputs.values.insert("twitch.chat".into(), 3.0);
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        assert_eq!(frame.texts["share"], "Сообщений: 3 / 1000000");
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn unknown_input_field_is_reported() {
+        let mut label = object("label", None, "text = twitch.chat.нет_такого(-1)");
+        label.kind = ObjectKind::Text;
+        let mut rig = Rig::new(preset(vec![label], "")).unwrap();
+        let frame = rig.tick(0.0, chat_inputs(&[("ада", "привет")]), false, false, None);
+        assert!(
+            frame
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("нет поля 'нет_такого'")),
+            "диагностика: {:?}",
+            frame.diagnostics
+        );
     }
 
     #[test]
