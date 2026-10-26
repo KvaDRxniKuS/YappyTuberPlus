@@ -3,9 +3,10 @@ import { Activity, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
 import { EXTERNAL_TRANSPORTS, TRANSPORT_INFO, defaultRule, externalInputName, readExternalSource } from "../modules/external";
 import {
-  TWITCH_EVENTS, TWITCH_VERIFY, commandRule, eventRule, rewardRule, selectedEvents,
+  TWITCH_APPS, TWITCH_EVENTS, TWITCH_VERIFY, commandRule, eventRule, rewardRule, selectedEvents,
   twitchCommands, twitchRewards,
 } from "../modules/twitch";
+import { openExternal } from "../engine/links";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { Switch } from "./Switch";
 import { NumberField } from "./NumberField";
@@ -175,7 +176,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
 
         {source.transport === "twitch" ? (
           <>
-            <div className="module-field" title="Client ID приложения Twitch (dev.twitch.tv). Это не секрет: он едет вместе с пресетом.">
+            <div className="module-field" title="Client ID приложения Twitch: консоль разработчика → Applications → Manage. Это не секрет: он едет вместе с пресетом.">
               <span className="module-field-label">Client ID</span>
               <div className="module-field-value">
                 <input
@@ -199,6 +200,21 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
                 />
               </div>
             </div>
+            {/* Адрес консоли раньше жил только в документации: поле Client ID
+                просило строку, а где её взять — знал лишь README. Ссылка стоит
+                рядом с полем и открывается в браузере, а не в окне студии. */}
+            <p className="module-hint">
+              Где взять Client ID:{" "}
+              <button
+                type="button"
+                className="link-button"
+                title={TWITCH_APPS}
+                onClick={() => void openExternal(TWITCH_APPS)}
+              >
+                dev.twitch.tv/console/apps
+              </button>
+              {" "}→ Applications → Manage. Тип приложения — <b>Public</b>, Client Secret не нужен.
+            </p>
           </>
         ) : (
           <div className="module-field" title={info.placeholder}>
@@ -270,7 +286,16 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               <div className="twitch-code">
                 <span className="muted">Код для входа:</span>
                 <b>{status.twitch.userCode}</b>
-                <a href={status.twitch.verificationUri || TWITCH_VERIFY} target="_blank" rel="noreferrer">
+                <a
+                  href={status.twitch.verificationUri || TWITCH_VERIFY}
+                  title="Открыть страницу активации в браузере"
+                  onClick={(event) => {
+                    // Ссылка открывается системным браузером: навигация внутри
+                    // вебвью увела бы окно студии на twitch.tv.
+                    event.preventDefault();
+                    void openExternal(status.twitch?.verificationUri || TWITCH_VERIFY);
+                  }}
+                >
                   {status.twitch.verificationUri || TWITCH_VERIFY}
                 </a>
               </div>

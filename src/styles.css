@@ -1293,6 +1293,14 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .external-mapping-row input:focus { outline: none; border-color: #609c8c; }
 .external-add { align-self: flex-start; }
 .external-hint { margin: 0; }
+/* Подсказка под полями модуля: где взять значение (адрес консоли Twitch). */
+.module-hint { grid-column: 1 / -1; margin: 0; color: #6c7780; font-size: 11px; line-height: 1.45; }
+.module-hint b { color: #a7b1ba; font-weight: 600; }
+.link-button {
+  padding: 0; border: 0; background: none; color: #7fb8d8; font: inherit;
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.link-button:hover { color: #a8d6ee; }
 
 /* ---------- Twitch в карточке внешнего источника ---------- */
 .twitch-panel { display: flex; flex-direction: column; gap: 6px; }

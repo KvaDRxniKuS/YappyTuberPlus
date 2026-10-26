@@ -25,6 +25,13 @@ const TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const HELIX = "https://api.twitch.tv/helix";
 const SOCKET_URL = "wss://eventsub.wss.twitch.tv/ws";
 export const TWITCH_VERIFY = "https://www.twitch.tv/activate";
+/**
+ * Консоль разработчика: там лежит Client ID приложения.
+ *
+ * Ссылка стоит прямо в карточке модуля рядом с полем Client ID — искать адрес
+ * в документации и набирать руками больше не нужно.
+ */
+export const TWITCH_APPS = "https://dev.twitch.tv/console/apps";
 
 /** Событие Twitch, которое умеет модуль. */
 export interface TwitchEventSpec {

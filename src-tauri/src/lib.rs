@@ -19,6 +19,40 @@ fn rig_call(state: State<'_, Arc<schedule::Shared>>, request: &str) -> String {
     }
 }
 
+/// Открывает веб-ссылку в браузере по умолчанию.
+///
+/// Ссылки из интерфейса (консоль разработчика Twitch, страница активации кода)
+/// нельзя открывать внутри вебвью: навигация заменила бы окно студии чужой
+/// страницей, и вернуться было бы некуда. Отсюда адрес уходит системе.
+///
+/// Адрес проверяется: только `http`/`https` и только символы обычного URL.
+/// Это не формальность — строка попадает в системную команду, поэтому `&`,
+/// кавычки и переводы строк отсекаются до запуска.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let scheme = url.starts_with("https://") || url.starts_with("http://");
+    let clean = !url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || "\"'`^|&;<>()$".contains(c));
+    if !scheme || !clean {
+        return Err(format!("недопустимый адрес ссылки: {url}"));
+    }
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url.as_str()])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(url.as_str()).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(url.as_str()).spawn();
+    #[cfg(not(any(windows, unix)))]
+    let spawned: std::io::Result<std::process::Child> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "на этой платформе нет способа открыть браузер",
+    ));
+    spawned.map(|_| ()).map_err(|error| error.to_string())
+}
+
 /// Папка пресетов по умолчанию: `%APPDATA%/com.yappytuberplus.studio/presets`.
 #[tauri::command]
 fn preset_default_dir(app: tauri::AppHandle) -> Result<String, String> {
@@ -352,6 +386,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             rig_call,
+            open_external,
             preset_default_dir,
             preset_write,
             preset_read,
