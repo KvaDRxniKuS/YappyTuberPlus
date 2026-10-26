@@ -39,7 +39,8 @@ export async function openExternal(url: string): Promise<boolean> {
       await invoke("open_external", { url: safe });
       return true;
     } catch {
-      return false;
+      // Старая сборка приложения без команды `open_external`: не молчим, а
+      // пробуем открыть ссылку отдельным окном — студия при этом остаётся.
     }
   }
   return window.open(safe, "_blank", "noopener,noreferrer") !== null;
