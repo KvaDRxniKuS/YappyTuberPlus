@@ -905,6 +905,11 @@ function MaskSection({ object, mask, objects, onChange }: {
             <span>Инвертировать: показать то, что снаружи</span>
           </label>
           <NumberField label="Мягкий край" value={mask?.feather ?? 0} step={1} suffix="px" onCommit={(feather) => update({ feather: Math.max(0, feather) })} />
+          <p className="behaviour-hint">
+            Настройки пишутся в скрипт объекта блоком «маска», рядом стоит
+            формула <code>mask = 1</code>: ноль показывает объект целиком, дробь
+            проявляет маску плавно.
+          </p>
         </>
       )}
       {error && <p className="inline-error">{error}</p>}

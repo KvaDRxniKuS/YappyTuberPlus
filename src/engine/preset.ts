@@ -12,6 +12,7 @@ import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
 import { normalizeWarp } from "../render/warp";
+import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { sanitizeStateName, uniqueStateName } from "../modules/manual";
@@ -283,7 +284,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // Деформация крайних точек: без поля объект рисуется как обычно.
         warp: normalizeWarp(object.warp),
       };
-    }),
+    }).map((object) => normalizeMaskBlock(object)),
     globals: preset.globals || "",
     runtime: {
       fpsMode: preset.runtime?.fpsMode === "display" ? "display" : "limited",
@@ -609,3 +610,21 @@ export function groupSpot(preset: RigPreset, selected: string[]): { x: number; y
   };
 }
 
+
+/**
+ * Маска и её блок в скрипте всегда совпадают.
+ *
+ * Истина — скрипт: настройки читаются из блока, поле `mask` в пресете — только
+ * его отражение (его пишет инспектор, а рисует рендер). Нет блока — нет маски,
+ * поэтому удаление блока руками выключает маску, а не оставляет невидимую
+ * настройку, которую потом никто не найдёт. Испорченный блок тоже убирается:
+ * лучше показать объект целиком, чем резать его по мусору.
+ */
+export function normalizeMaskBlock(object: RigObject): RigObject {
+  const mask = hasMaskBlock(object.script) ? parseMaskBlock(object.script) ?? undefined : undefined;
+  const script = writeMaskBlock(object.script, mask);
+  if (script === object.script && mask === object.mask) return object;
+  const next: RigObject = { ...object, script };
+  if (mask) next.mask = mask; else delete next.mask;
+  return next;
+}

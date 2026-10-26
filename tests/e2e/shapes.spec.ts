@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import { makeShape, normalizePreset } from "../../src/engine/preset";
+import { writeMaskBlock } from "../../src/engine/maskScript";
 import {
   defaultMask, defaultShape, formatPoints, makeItem, nearestPoint, normalizeMask, normalizeShape,
   parsePoints, uniqueItemId,
@@ -13,9 +14,11 @@ function presetWithShape() {
   const preset = createDemoPreset();
   const shape = makeShape("mask_shape", "Маска", 320, 220, 500, 300);
   const sprite = preset.objects.find((object) => object.id === "head")!;
+  const mask = { ...defaultMask(), kind: "shape" as const, shapeId: shape.id };
   const objects = [
     ...preset.objects.map((object) => (object.id === sprite.id
-      ? { ...object, mask: { ...defaultMask(), kind: "shape" as const, shapeId: shape.id } }
+      // Маска живёт в скрипте объекта: поле в пресете — её отражение.
+      ? { ...object, mask, script: writeMaskBlock(object.script, mask) }
       : object)),
     shape,
   ];

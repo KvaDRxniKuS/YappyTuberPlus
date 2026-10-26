@@ -831,6 +831,9 @@ impl Rig {
             for param in Param::ALL {
                 let value = match param {
                     Param::SizeX | Param::SizeY | Param::Opacity => 1.0,
+                    // Маска по умолчанию работает: объект с маской на сцене
+                    // выглядит так, как настроено в инспекторе.
+                    Param::Mask => 1.0,
                     Param::Visible => object.base.visible,
                     Param::Layer => object.base.layer,
                     Param::Play => {
@@ -1506,6 +1509,7 @@ impl Rig {
         let Some(parent) = parent_id else {
             return match param {
                 Param::SizeX | Param::SizeY | Param::Opacity => 1.0,
+                Param::Mask => 1.0,
                 Param::Visible => self.preset.objects[index].base.visible,
                 Param::Layer => self.preset.objects[index].base.layer,
                 _ => 0.0,

@@ -55,6 +55,8 @@ const highlight = HighlightStyle.define([
 
 const PARAMETERS = [
   "x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer",
+  // Маска: 1 — режет по контуру, 0 — объект целиком (см. «Маска» в инспекторе).
+  "mask",
   // Деформация: углы в процентах размера зоны (см. «Деформация» в инспекторе).
   "warpTLx", "warpTLy", "warpTRx", "warpTRy", "warpBRx", "warpBRy", "warpBLx", "warpBLy",
 ];

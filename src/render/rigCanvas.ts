@@ -204,24 +204,62 @@ export function drawRig(
     // Маска работает через отдельный холст: объект рисуется в него, маска
     // вырезается композитом, и только потом результат ложится на сцену.
     // Маску на маску не ставим: у фигуры её контуры и есть видимость.
-    if (object.kind !== "group" && object.kind !== "shape" && object.mask && maskReady(object.mask, preset, assets)) {
-      drawMasked(ctx, preset, frame, assets, options, object, matrix, left, top, alpha);
+    const masked = object.kind !== "group" && object.kind !== "shape" && !!object.mask
+      && maskReady(object.mask, preset, assets);
+    // Сила маски — параметр `mask`: 1 режет по контуру, 0 показывает объект
+    // целиком, дробное значение смешивает два варианта. Кадр старого ядра
+    // этого параметра не знает — тогда маска работает как настроена.
+    const strength = masked ? maskStrength(values) : 0;
+    if (masked && strength > 0) {
+      drawMasked(ctx, preset, frame, assets, options, object, matrix, left, top, alpha * strength);
+      if (strength >= 1) continue;
+      // Проявление маски: вторая копия объекта идёт обычным путём, поэтому
+      // сумма двух половин даёт ровно ту картинку, что была до маски.
+      drawPlain(ctx, object, frame, assets, options, zoom, matrix, left, top, alpha * (1 - strength));
       continue;
     }
-    ctx.save();
-    ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
-    ctx.globalAlpha = alpha;
-    if (object.kind === "shape") {
-      // Контуры живут в координатах рамки объекта: пивот и поворот те же, что
-      // у спрайта, поэтому фигура — обычный объект сцены.
-      ctx.translate(left, top);
-      drawShapeObject(ctx, object);
-      ctx.restore();
-      continue;
-    }
-    drawObjectContent(ctx, object, frame, assets, options, zoom);
-    ctx.restore();
+    drawPlain(ctx, object, frame, assets, options, zoom, matrix, left, top, alpha);
   }
+}
+
+/**
+ * Сила маски из параметра `mask`: 1 — режет по контуру, 0 — объект целиком.
+ *
+ * Кадр старого ядра параметра не знает: тогда маска работает так, как
+ * настроена в инспекторе, а не исчезает.
+ */
+export function maskStrength(values: ObjectFrame): number {
+  const value = values.mask;
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(1, Math.max(0, value));
+}
+
+/** Обычная отрисовка объекта: трансформа, содержимое, без маски. */
+function drawPlain(
+  ctx: CanvasRenderingContext2D,
+  object: RigObject,
+  frame: RigFrame | null,
+  assets: SpriteAssets,
+  options: DrawRigOptions,
+  zoom: number,
+  matrix: Affine,
+  left: number,
+  top: number,
+  alpha: number,
+): void {
+  ctx.save();
+  ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+  ctx.globalAlpha = alpha;
+  if (object.kind === "shape") {
+    // Контуры живут в координатах рамки объекта: пивот и поворот те же, что
+    // у спрайта, поэтому фигура — обычный объект сцены.
+    ctx.translate(left, top);
+    drawShapeObject(ctx, object);
+    ctx.restore();
+    return;
+  }
+  drawObjectContent(ctx, object, frame, assets, options, zoom);
+  ctx.restore();
 }
 
 /** Содержимое объекта: картинка, медиа или текст. Трансформа уже применена. */

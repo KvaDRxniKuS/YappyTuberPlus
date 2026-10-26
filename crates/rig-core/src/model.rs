@@ -180,6 +180,9 @@ pub enum Param {
     Speed,
     /// Медиа: множитель громкости 0..1.
     Volume,
+    /// Маска: 1 — маска применяется, 0 — объект рисуется целиком. Дробные
+    /// значения смешивают оба варианта, поэтому маску можно плавно проявлять.
+    Mask,
     /// Деформация: смещение угла в процентах размера зоны (−100..100).
     WarpTLx,
     WarpTLy,
@@ -192,7 +195,7 @@ pub enum Param {
 }
 
 impl Param {
-    pub const ALL: [Param; 21] = [
+    pub const ALL: [Param; 22] = [
         Param::X,
         Param::Y,
         Param::Rotation,
@@ -206,6 +209,7 @@ impl Param {
         Param::Play,
         Param::Speed,
         Param::Volume,
+        Param::Mask,
         Param::WarpTLx,
         Param::WarpTLy,
         Param::WarpTRx,
@@ -231,6 +235,7 @@ impl Param {
             Param::Play => "play",
             Param::Speed => "speed",
             Param::Volume => "volume",
+            Param::Mask => "mask",
             Param::WarpTLx => "warpTLx",
             Param::WarpTLy => "warpTLy",
             Param::WarpTRx => "warpTRx",
@@ -264,6 +269,8 @@ impl Param {
             "play" => Param::Play,
             "speed" | "rate" => Param::Speed,
             "volume" | "gain" => Param::Volume,
+            // Маска: 1 — режет по контуру, 0 — объект целиком.
+            "mask" => Param::Mask,
             // Углы деформации: те же имена, что в инспекторе вкладки «Объект».
             "warpTLx" => Param::WarpTLx,
             "warpTLy" => Param::WarpTLy,

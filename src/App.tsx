@@ -19,6 +19,7 @@ import {
   uniqueId,
 } from "./engine/preset";
 import { inspectFile } from "./engine/importFile";
+import { parseMaskBlock, writeMaskBlock } from "./engine/maskScript";
 import {
   assetIdsOfPreset,
   ensureAssetsOfPreset,
@@ -516,13 +517,21 @@ export default function App() {
 
 
   const updateObject = useCallback((next: RigObject, options: boolean | CommitOptions = true) => {
+    // Маска живёт в скрипте объекта (управляемый блок), поэтому правка
+    // настроек в инспекторе обязана переписать блок. Сравниваем по JSON:
+    // точки — массив, по ссылке он меняется на каждой правке.
+    const withMask = (() => {
+      const before = JSON.stringify(next.mask ?? null);
+      const after = JSON.stringify(parseMaskBlock(next.script) ?? null);
+      return before === after ? next : { ...next, script: writeMaskBlock(next.script, next.mask) };
+    })();
     commit((current) => {
-      const previous = current.objects.find((object) => object.id === next.id);
-      const objects = current.objects.map((object) => object.id === next.id ? next : object);
+      const previous = current.objects.find((object) => object.id === withMask.id);
+      const objects = current.objects.map((object) => object.id === withMask.id ? withMask : object);
       // Поворот, масштаб и сдвиг родителя тянут за собой потомков — иначе
       // группа «отклеивается» от своих детей.
       const propagated = previous
-        ? propagateBase(objects, next.id, previous.base, next.base)
+        ? propagateBase(objects, withMask.id, previous.base, withMask.base)
         : objects;
       return { ...current, objects: propagated };
     }, options);
@@ -1125,7 +1134,12 @@ export default function App() {
           devices={moduleInputs.devices}
           monitors={moduleInputs.monitors}
           audioError={moduleInputs.error}
-          onObjectScript={(script) => { if (selected) updateObject({ ...selected, script }); }}
+          onObjectScript={(script) => {
+            if (!selected) return;
+            // Скрипт — истина для маски: правку блока в редакторе переносим
+            // в настройки объекта. Нет блока — маски у объекта нет.
+            updateObject({ ...selected, script, mask: parseMaskBlock(script) ?? undefined });
+          }}
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
           onText={updateTextObjects}
