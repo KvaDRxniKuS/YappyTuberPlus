@@ -439,11 +439,15 @@ impl ExpressionParser {
             let mut ms = value;
             if let TokenKind::Ident(unit) = self.peek().clone() {
                 match unit.as_str() {
-                    "ms" => self.advance(),
+                    "ms" => {
+                        self.advance();
+                    }
                     "s" => {
                         self.advance();
                         ms = value * 1000.0;
                     }
+                    // Другое слово — не единица времени: остаётся число как есть,
+                    // а лишнее слово поймает тот, кто читает выражение дальше.
                     _ => {}
                 }
             }
@@ -1154,7 +1158,9 @@ pub fn parse_script(source: &str) -> Result<Script, ScriptError> {
                 ));
             }
             let after_open = &body[open + 1..];
-            let mut condition_text = String::new();
+            // Обе ветки ниже задают условие целиком, поэтому начальное значение
+            // не нужно: пустая строка здесь только мешала бы компилятору.
+            let condition_text;
             let mut closed = false;
             match after_open.find('}') {
                 Some(close) => {
