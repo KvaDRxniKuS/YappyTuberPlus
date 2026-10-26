@@ -663,7 +663,7 @@ export function ScriptEditor({
               <span><b>on имя {"{ … }"}</b> — действия; <b>on start</b> — первый кадр и после «Стоп»</span>
               <span><b>in</b> — длительность: <b>mic.talking &gt; 0.2 in 500</b>, <b>in 0.5s</b></span>
               <span><b>.up</b> вырос · <b>.down</b> упал · <b>.change</b> отличается от прошлого кадра</span>
-              <span>активность входа: <b>twitch.chat.count(5)</b> · <b>sum(5)</b> · <b>avg(5)</b></span>
+              <span>активность входа (любого): <b>mouse.left.count(5)</b> · <b>twitch.chat.sum(5)</b> · <b>avg(5)</b></span>
               <span><b>call имя(аргументы)</b> — обработчик выполняется сразу, пауза не мешает</span>
               <span>команды — отдельной строкой: <b>{"on start { play() }"}</b>, <b>seek(2.5)</b>, <b>{'play("дождь")'}</b></span>
               <span>чужой объект: <b>{'label.text = "…"'}</b>, <b>{'text("label", "…")'}</b></span>

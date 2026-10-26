@@ -99,6 +99,12 @@ struct CompiledEvent {
 /// Предел вложенности `call`: защита от цепочки, которую не поймала сборка.
 const MAX_CALL_DEPTH: usize = 8;
 
+/// Сколько отметок активности держим на один вход.
+const EDGE_MARK_LIMIT: usize = 400;
+
+/// Сколько живёт отметка, выведенная ядром, в секундах: окна читают секунды.
+const EDGE_MARK_TTL: f64 = 120.0;
+
 /// Команды, которые понимает тело блока события. Всё остальное — формулы.
 const ACTIONS: [&str; 8] = [
     "play", "resume", "pause", "stop", "seek", "rate", "volume", "text",
@@ -309,6 +315,13 @@ pub struct Rig {
     events: Vec<CompiledEvent>,
     /// Значения входов в прошлом кадре: по ним считаются `.up/.down/.change`.
     previous_inputs: BTreeMap<String, f64>,
+    /// Отметки активности, выведенные из самих значений входов: (время, вес).
+    ///
+    /// Внешний источник знает вес события — биты, стоимость награды, — а клавиша
+    /// или кнопка мыши нет. Для них событие входа одно: значение поднялось с
+    /// нуля, вес 1. Так `count/sum/avg` работают у любого входа, а не только у
+    /// тех, кто присылает готовые отметки.
+    edge_marks: HashMap<String, Vec<(f64, f64)>>,
     /// Переменные события, видимые в текущем вычислении.
     bindings: BTreeMap<String, Value>,
     /// Записи чужим объектам из обычных присваиваний: применяются последними.
@@ -857,6 +870,7 @@ impl Rig {
             in_state: HashMap::new(),
             events,
             previous_inputs: BTreeMap::new(),
+            edge_marks: HashMap::new(),
             bindings: BTreeMap::new(),
             writes,
             playback,
@@ -900,6 +914,7 @@ impl Rig {
             self.last_now = Some(self.now);
             self.definition_state.iter_mut().for_each(|state| *state = DefinitionState::default());
             self.in_state.clear();
+            self.edge_marks.clear();
             self.bindings.clear();
             self.texts.clear();
             self.started = false;
@@ -938,6 +953,7 @@ impl Rig {
         // Прошлый кадр нужен полям `.up/.down/.change`: значения входов
         // сравниваются с тем, что было, а не с нулём.
         self.previous_inputs = std::mem::replace(&mut self.inputs, inputs).values;
+        self.record_edge_marks();
         self.cache.clear();
         self.visiting.clear();
         self.cycle_nodes.clear();
@@ -1040,6 +1056,34 @@ impl Rig {
         frame.order = draw_order.into_iter().map(|(_, _, id)| id).collect();
         self.previous = frame.clone();
         frame
+    }
+
+    /// Отмечает входы, у которых значение поднялось с нуля.
+    ///
+    /// Это «событие входа» для всего, что приходит от модулей: нажатие клавиши,
+    /// клик, моргание, вход в состояние. Внешние источники присылают свои
+    /// отметки с весом — они важнее (см. `input_field`), потому что только они
+    /// знают, сколько стоил пакет.
+    fn record_edge_marks(&mut self) {
+        let now = self.time;
+        for (key, value) in &self.inputs.values {
+            if *value == 0.0 {
+                continue;
+            }
+            // Уже ненулевое — это не новое событие, а то же самое удержание.
+            if self.previous_inputs.get(key).copied().unwrap_or(0.0) != 0.0 {
+                continue;
+            }
+            let list = self.edge_marks.entry(key.clone()).or_default();
+            list.push((now, 1.0));
+            // Сначала возраст: старые окна всё равно никто не спросит.
+            while matches!(list.first(), Some((at, _)) if now - at > EDGE_MARK_TTL) {
+                list.remove(0);
+            }
+            while list.len() > EDGE_MARK_LIMIT {
+                list.remove(0);
+            }
+        }
     }
 
     /// Считает условия событий и применяет тела сработавших блоков.
@@ -1785,17 +1829,40 @@ impl Rig {
                 .map(|seconds| seconds * 1000.0)
                 .unwrap_or(0.0)
                 .max(0.0);
-            let marks = self.inputs.marks.get(&key);
             let mut count = 0.0;
             let mut total = 0.0;
-            for mark in marks.into_iter().flatten() {
-                if mark.age_ms.is_finite() && mark.age_ms >= 0.0 && mark.age_ms <= window_ms {
-                    count += 1.0;
-                    total += if mark.weight.is_finite() {
-                        mark.weight
-                    } else {
-                        1.0
+            // Отметки внешнего источника важнее: только он знает вес события
+            // (биты, стоимость награды). Если их нет — считаем подъёмы значения
+            // с нуля: клавиши, кнопки мыши, моргание, состояния.
+            let provider = self.inputs.marks.get(&key).filter(|list| !list.is_empty());
+            match provider {
+                Some(marks) => {
+                    for mark in marks {
+                        if mark.age_ms.is_finite()
+                            && mark.age_ms >= 0.0
+                            && mark.age_ms <= window_ms
+                        {
+                            count += 1.0;
+                            total += if mark.weight.is_finite() {
+                                mark.weight
+                            } else {
+                                1.0
+                            };
+                        }
+                    }
+                }
+                None => {
+                    let Some(marks) = self.edge_marks.get(&key) else {
+                        return None;
                     };
+                    for (at, weight) in marks {
+                        // Возраст считаем по часам ядра: отметки ставит оно само.
+                        let age_ms = (self.time - at) * 1000.0;
+                        if age_ms >= 0.0 && age_ms <= window_ms {
+                            count += 1.0;
+                            total += *weight;
+                        }
+                    }
                 }
             }
             return Some(Value::Number(match name.as_str() {
@@ -3686,6 +3753,77 @@ mod tests {
         assert_eq!(frame.objects["o"]["y"], 40.0);
         assert_eq!(frame.objects["o"]["layer"], 20.0);
         assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn activity_fields_count_edges_of_any_input() {
+        // Клавиатура и мышь отметок не присылают: событие входа — подъём с нуля.
+        // `count(5)` у них значит «сколько нажатий за 5 секунд».
+        let mut rig = Rig::new(preset(
+            vec![object(
+                "o",
+                None,
+                "rotation = key.q.count(5)\ny = key.q.sum(5)\nlayer = key.q.avg(5)",
+            )],
+            "",
+        ))
+        .unwrap();
+        let idle = tick_with(&mut rig, 0.0, &[("key.q", 0.0)]);
+        assert_eq!(idle.objects["o"]["rotation"], 0.0);
+        let press = tick_with(&mut rig, 0.1, &[("key.q", 1.0)]);
+        assert_eq!(press.objects["o"]["rotation"], 1.0);
+        assert_eq!(press.objects["o"]["y"], 1.0);
+        assert_eq!(press.objects["o"]["layer"], 1.0);
+        // Удержание — не новое событие: отметка одна.
+        let held = tick_with(&mut rig, 0.2, &[("key.q", 1.0)]);
+        assert_eq!(held.objects["o"]["rotation"], 1.0);
+        // Отпустили и нажали снова — второе событие.
+        tick_with(&mut rig, 0.3, &[("key.q", 0.0)]);
+        let again = tick_with(&mut rig, 0.4, &[("key.q", 1.0)]);
+        assert_eq!(again.objects["o"]["rotation"], 2.0);
+        assert_eq!(again.objects["o"]["y"], 2.0);
+        // Через 6 секунд обе отметки вне окна в 5 секунд.
+        let later = tick_with(&mut rig, 6.5, &[("key.q", 1.0)]);
+        assert_eq!(later.objects["o"]["rotation"], 0.0);
+        assert!(later.diagnostics.is_empty(), "{:?}", later.diagnostics);
+    }
+
+    #[test]
+    fn provider_marks_win_over_edges() {
+        // Награда поднимает вход с нуля, но её вес — стоимость в битах.
+        // Подъём значения не должен прибавить к сумме лишнюю единицу.
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = twitch.reward.sum(5)\ny = twitch.reward.count(5)")],
+            "",
+        ))
+        .unwrap();
+        let mut inputs = InputValues::default();
+        inputs.values.insert("twitch.reward".into(), 500.0);
+        inputs.marks.insert(
+            "twitch.reward".into(),
+            vec![InputMark { age_ms: 100.0, weight: 500.0 }],
+        );
+        let frame = rig.tick(0.0, inputs, false, false, None);
+        assert_eq!(frame.objects["o"]["x"], 500.0);
+        assert_eq!(frame.objects["o"]["y"], 1.0);
+    }
+
+    #[test]
+    fn stop_clears_edge_marks() {
+        let mut rig = Rig::new(preset(
+            vec![object("o", None, "x = mouse.left.count(10)")],
+            "",
+        ))
+        .unwrap();
+        tick_with(&mut rig, 0.0, &[("mouse.left", 0.0)]);
+        let press = tick_with(&mut rig, 0.1, &[("mouse.left", 1.0)]);
+        assert_eq!(press.objects["o"]["x"], 1.0);
+        // «Стоп» начинает историю заново: старые нажатия не считаются.
+        let mut stopped = InputValues::default();
+        stopped.values.insert("mouse.left".into(), 1.0);
+        rig.tick(0.2, stopped, false, true, None);
+        let after = tick_with(&mut rig, 0.3, &[("mouse.left", 1.0)]);
+        assert_eq!(after.objects["o"]["x"], 0.0);
     }
 
     #[test]
