@@ -1852,10 +1852,10 @@ impl Rig {
                     }
                 }
                 None => {
-                    let Some(marks) = self.edge_marks.get(&key) else {
-                        return None;
-                    };
-                    for (at, weight) in marks {
+                    // Отметок может не быть вовсе: после «Стопа» история пуста,
+                    // у нового входа событий ещё не было. Это ноль, а не ошибка
+                    // «нет поля» — вход-то известен.
+                    for (at, weight) in self.edge_marks.get(&key).into_iter().flatten() {
                         // Возраст считаем по часам ядра: отметки ставит оно само.
                         let age_ms = (self.time - at) * 1000.0;
                         if age_ms >= 0.0 && age_ms <= window_ms {
@@ -3824,6 +3824,8 @@ mod tests {
         rig.tick(0.2, stopped, false, true, None);
         let after = tick_with(&mut rig, 0.3, &[("mouse.left", 1.0)]);
         assert_eq!(after.objects["o"]["x"], 0.0);
+        // Пустая история — это ноль, а не «у входа нет поля».
+        assert!(after.diagnostics.is_empty(), "{:?}", after.diagnostics);
     }
 
     #[test]
