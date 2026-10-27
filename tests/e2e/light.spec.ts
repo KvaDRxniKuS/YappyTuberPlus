@@ -6,6 +6,7 @@ import { makeLight, normalizePreset } from "../../src/engine/preset";
 import { collect, multiplyAffine, objectMatrix } from "../../src/render/rigCanvas";
 import { applyVolume, createCollector, lightingAvailable, resetCollector } from "../../src/render/lighting";
 import { DEFAULT_BASE, DEFAULT_LIGHT, type RigObject, type RigPreset } from "../../src/types";
+import { DEFAULT_BEHAVIOUR, behaviourBlock, readBehaviour, writeBehaviour } from "../../src/engine/behaviour";
 
 /*
  * Свет и карты нормалей проверяются без браузера: путь пятна и градиент
@@ -242,3 +243,31 @@ function frameValues() {
     opacity: 1, visible: 1, layer: 0,
   };
 }
+
+test("мерцание: волна пишется в opacity и читается обратно", () => {
+  const lamp = makeLight("lamp", "Лампа", 400, 300, { radius: 120 });
+  // Без глубины мерцания формулы нет: ровный свет не тратит кадр на волну.
+  expect(behaviourBlock(DEFAULT_BEHAVIOUR, lamp)).not.toContain("opacity =");
+
+  const sine = { ...DEFAULT_BEHAVIOUR, flickerAmplitude: 0.4, flickerSpeed: 2 };
+  const sineBlock = behaviourBlock(sine, lamp);
+  expect(sineBlock).toContain("opacity = 1 - 0.4 * (0.5 - 0.5 * sin(time *");
+  // Период — 1 / скорость: 2 Гц даёт 12.566 радиан в секунду.
+  expect(sineBlock).toContain("12.566");
+
+  // Шум даёт неровное мерцание и у каждого объекта свой seed.
+  const noise = { ...sine, flickerStyle: "noise" as const };
+  expect(behaviourBlock(noise, lamp)).toContain("noise(");
+  expect(behaviourBlock(noise, lamp)).not.toContain("sin(time");
+
+  // Настройки переживают запись и чтение блока.
+  const written = writeBehaviour(lamp.script, noise, lamp).script;
+  const back = readBehaviour(written);
+  expect(back.flickerStyle).toBe("noise");
+  expect(back.flickerAmplitude).toBeCloseTo(0.4, 5);
+  expect(back.flickerSpeed).toBe(2);
+  // Битые значения зажимаются, а не превращаются в текст скрипта.
+  expect(readBehaviour(`// @behaviour {"flickerAmplitude":5,"flickerSpeed":0}`)).toMatchObject({
+    flickerAmplitude: 1, flickerSpeed: 0.05,
+  });
+});

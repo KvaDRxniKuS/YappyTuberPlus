@@ -142,6 +142,17 @@ export interface Behaviour {
   followMouseAxisY: boolean;
   /** Инверсия: объект уходит от курсора, а не за ним. */
   followMouseInvert: boolean;
+  /**
+   * Мерцание света: форма волны, амплитуда и частота.
+   *
+   * Яркость пятна считается через обычный `opacity`, поэтому своя частота у
+   * каждой лампы ничего не стоит, а «без мерцания» — это просто 0.
+   */
+  flickerStyle: "sine" | "noise";
+  /** Глубина мерцания 0…1: 0 — ровный свет, 1 — гаснет до нуля. */
+  flickerAmplitude: number;
+  /** Частота мерцания, Гц: 1 — раз в секунду. */
+  flickerSpeed: number;
 }
 
 export const DEFAULT_BEHAVIOUR: Behaviour = {
@@ -191,6 +202,9 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   followMouseAxisX: true,
   followMouseAxisY: true,
   followMouseInvert: false,
+  flickerStyle: "sine",
+  flickerAmplitude: 0,
+  flickerSpeed: 2.5,
 };
 
 const START = "// ── поведение: вкладка «Поведение» ──";
@@ -268,7 +282,8 @@ export function isDefault(behaviour: Behaviour): boolean {
     && behaviour.wiggleRotAmp === 0
     && behaviour.mouth === "none" && behaviour.eye === "none"
     && behaviour.physRotation === null && behaviour.physSpace === "world"
-    && behaviour.followMouseModule === "";
+    && behaviour.followMouseModule === ""
+    && behaviour.flickerAmplitude === 0;
 }
 
 /** Настройки из скрипта: JSON-строка комментария. */
@@ -335,6 +350,9 @@ export function readBehaviour(script: string): Behaviour {
       merged.followMouseAxisX = source.followMouseAxisX !== false;
       merged.followMouseAxisY = source.followMouseAxisY !== false;
       merged.followMouseInvert = merged.followMouseInvert === true;
+      merged.flickerStyle = merged.flickerStyle === "noise" ? "noise" : "sine";
+      merged.flickerAmplitude = clampNumber(merged.flickerAmplitude, 0, 1, 0);
+      merged.flickerSpeed = clampNumber(merged.flickerSpeed, 0.05, 30, 2.5);
       // Пресеты: битые записи (старые пресеты, ручная правка JSON) отбрасываем,
       // иначе генератор написал бы в скрипт бессмысленное условие.
       merged.presets = Array.isArray(source.presets)
@@ -652,6 +670,18 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     rules.push(presets.mode === "only" ? `(${condition} ? 1 : 0)` : `(${condition} ? 0 : 1)`);
   }
   if (rules.length) body.push(`visible = ${rules.map((rule) => `(${rule})`).join(" * ")}`);
+
+  // Мерцание: волна 0…1, вычтенная из полной яркости. Синус — ровное «дыхание»
+  // лампы, шум — неровное, как у свечи или костра.
+  const flicker = Math.min(1, Math.max(0, behaviour.flickerAmplitude));
+  if (flicker > 0) {
+    const speed = Math.min(30, Math.max(0.05, behaviour.flickerSpeed));
+    const wave = behaviour.flickerStyle === "noise"
+      ? `noise(${num(seedOf(object.id))}, ${num(speed)})`
+      // Период синуса — 1 / скорость: 2π превращает герцы в радианы.
+      : `sin(time * ${num(2 * Math.PI * speed)})`;
+    body.push(`opacity = 1 - ${num(flicker)} * (0.5 - 0.5 * ${wave})`);
+  }
 
   if (!body.length) return "";
   return [

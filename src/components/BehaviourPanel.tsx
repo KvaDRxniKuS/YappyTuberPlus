@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { MousePointer2, Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
+import { Lightbulb, MousePointer2, Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
 import type { ModuleInstance, RigObject, TextSpec } from "../types";
 import { normalizeText } from "../engine/preset";
 import { hasQuotedPlaceholder, quotePlaceholders, unquotePlaceholders } from "../render/text";
@@ -519,6 +519,25 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
           </>
         )}
       </section>
+
+      {object.kind === "light" && (
+        <section className="behaviour-section">
+          <div className="section-title"><span><Lightbulb size={13} /> Мерцание</span></div>
+          <p className="behaviour-hint">
+            Яркость пятна считается обычным `opacity`, поэтому мерцание — просто формула.
+            Синус даёт ровное «дыхание» лампы, шум — неровное, как у свечи. Форма, радиус и
+            цвета пятна остаются во вкладке «Объект».
+          </p>
+          <div className="segmented small dense" title="Форма волны мерцания">
+            <button className={behaviour.flickerStyle === "sine" ? "active" : ""} onClick={() => patch({ flickerStyle: "sine" })}>синус</button>
+            <button className={behaviour.flickerStyle === "noise" ? "active" : ""} onClick={() => patch({ flickerStyle: "noise" })}>шум</button>
+          </div>
+          <Row label="Глубина" hint="0 — ровный свет" unit="%" value={Math.round(behaviour.flickerAmplitude * 100)}
+            min={0} max={100} step={1} onCommit={(value) => patch({ flickerAmplitude: value / 100 })} />
+          <Row label="Частота" hint="1 Гц — раз в секунду" unit="Гц" value={behaviour.flickerSpeed}
+            min={0} max={30} step={0.1} onCommit={(flickerSpeed) => patch({ flickerSpeed: Math.max(0.05, flickerSpeed) })} />
+        </section>
+      )}
 
       <section className="behaviour-section">
         <div className="section-title"><span><X size={13} /> Видимость</span></div>
