@@ -32,7 +32,7 @@ function recordingContext() {
     arc(_x: number, _y: number, radius: number, start: number) {
       calls.push(`arc r${round(radius)} a${round((start * 180) / Math.PI)}`);
     },
-    fill() { calls.push("fill"); },
+    fill() { calls.push(`fill ${this.globalCompositeOperation}`); },
     createRadialGradient(x0: number, y0: number, r0: number, x1: number, y1: number, r1: number) {
       calls.push(`gradient ${round(x0)},${round(y0)},${round(r0)} → ${round(x1)},${round(y1)},${round(r1)}`);
       return { addColorStop: (offset: number, color: string) => stops.push(`${round(offset)} ${color}`) };
@@ -131,9 +131,13 @@ test("свет: пятно рисуется градиентом и уважае
   expect(hidden.calls).toEqual([]);
 
   // Аддитивное наложение — единственное место, где меняется композит.
+  // Обычное наложение ложится только на нарисованное: на прозрачном фоне OBS
+  // не появляется цветной прямоугольник.
+  expect(paint.calls).toContain("fill source-atop");
+
   const glow = recordingContext();
   paintLight(glow.context as unknown as CanvasRenderingContext2D, { ...lamp, light: { ...lamp.light!, blend: "add" } }, canvas, 1);
-  expect(glow.calls).toContain("fill");
+  expect(glow.calls).toContain("fill lighter");
 });
 
 test("свет: рамка объекта равна диаметру пятна", () => {

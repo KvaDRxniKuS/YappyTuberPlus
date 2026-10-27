@@ -202,7 +202,11 @@ export function paintLight(
   gradient.addColorStop(kernel, withAlpha(spec.colorStart, alphaOf(spec.colorStart) * level));
   gradient.addColorStop(1, withAlpha(spec.colorEnd, alphaOf(spec.colorEnd) * level));
   ctx.save();
-  ctx.globalCompositeOperation = spec.blend === "add" ? "lighter" : "source-over";
+  // Обычное наложение ложится только на нарисованное: свет освещает объекты, а
+  // не пустое место, поэтому в OBS на прозрачном фоне не появляется цветной
+  // прямоугольник. «Свечение» складывается с холстом и гаснет к краю пятна
+  // само — там, где градиент уходит в прозрачность.
+  ctx.globalCompositeOperation = spec.blend === "add" ? "lighter" : "source-atop";
   ctx.fillStyle = gradient;
   ctx.beginPath();
   traceLight(ctx, spec, canvas);
