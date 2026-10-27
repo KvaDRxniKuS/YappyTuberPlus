@@ -81,12 +81,39 @@ pub enum ObjectKind {
     Media,
     /// Текстовый объект: содержимое приходит из шаблона и команд `text(…)`.
     Text,
+    /// Фигура: контуры вместо картинки. Ядру она интересна только позой —
+    /// геометрию рисует редактор и оверлей, — но вид объекта приходит из
+    /// редактора в каждом пресете, и без варианта здесь не собирается вообще
+    /// ничего: serde отвергает весь пресет целиком.
+    Shape,
 }
 
 impl ObjectKind {
     /// Объект, который рисуется на сцене: всё, кроме группы.
     pub fn drawable(self) -> bool {
         !matches!(self, ObjectKind::Group)
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::ObjectKind;
+
+    /// Виды объектов, которые пишет редактор. Если добавить вид в TypeScript и
+    /// забыть здесь, ядро ответит «unknown variant» и пресет не загрузится —
+    /// ровно эта ошибка и случилась с фигурой.
+    #[test]
+    fn every_editor_kind_is_accepted() {
+        for (json, expected) in [
+            ("\"sprite\"", ObjectKind::Sprite),
+            ("\"group\"", ObjectKind::Group),
+            ("\"media\"", ObjectKind::Media),
+            ("\"text\"", ObjectKind::Text),
+            ("\"shape\"", ObjectKind::Shape),
+        ] {
+            let parsed: ObjectKind = serde_json::from_str(json).expect(json);
+            assert_eq!(parsed, expected);
+        }
     }
 }
 
