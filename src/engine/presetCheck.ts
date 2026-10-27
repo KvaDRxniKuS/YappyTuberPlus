@@ -101,16 +101,28 @@ export function presetCompatibility(raw: unknown): CompatibilityReport {
   // Требование к ядру и убранные формы считаются по содержимому сцены.
   if (Array.isArray(preset.objects)) {
     const report = needsReport(preset as RigPreset);
-    const required = Math.max(report.needs, typeof preset.needs === "number" ? preset.needs : 0);
-    if (required > VERSION.core) {
+    // Требование по содержимому — то, что действительно нужно сцене сейчас.
+    // Число из файла говорит о том, чем файл записан; подмешивать его в
+    // требование нельзя: удалили фигуру — и «нужно 20» висело бы до
+    // сохранения, хотя просить уже нечего. Файл, записанный более новым
+    // ядром, показывается отдельным пунктом.
+    const fileNeeds = typeof preset.needs === "number" ? preset.needs : 0;
+    if (report.needs > VERSION.core) {
       const reasons = report.reasons
         .filter((reason) => reason.since > VERSION.core)
         .map((reason) => reason.label);
       issues.push({
-        label: `сцене нужно ядро ${required}, у редактора ${VERSION.core}`,
+        label: `сцене нужно ядро ${report.needs}, у редактора ${VERSION.core}`,
         detail: reasons.length
           ? `${reasons.join(", ")} — без них формулы вернут 0.`
           : `У редактора ядро ${VERSION.core}: новые формулы этой сцены вернут 0.`,
+      });
+    } else if (fileNeeds > VERSION.core) {
+      issues.push({
+        label: `файл записан сборкой с ядром ${fileNeeds}, у редактора ${VERSION.core}`,
+        detail: "Сцена в памяти просит меньше, но файл сохранён более новой сборкой: "
+          + "часть настроек могла быть записана в незнакомой форме. Открыть можно — "
+          + "проверьте после открытия, что ничего не пропало.",
       });
     }
     if (report.removed.length) {

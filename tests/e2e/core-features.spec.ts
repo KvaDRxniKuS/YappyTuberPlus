@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { needsCore, needsReport, BASE_FUNCTIONS, CORE_FEATURES } from "../../src/engine/coreFeatures";
+import { needsCore, needsReason, needsReport, BASE_FUNCTIONS, CORE_FEATURES } from "../../src/engine/coreFeatures";
 import { coreVerdict, VERSION } from "../../src/version";
 import { normalizePreset } from "../../src/engine/preset";
 import { stampPreset } from "../../src/engine/presetFile";
@@ -81,6 +81,24 @@ test("требование: таблица признаков согласова
   // Базовые функции не дублируются в признаках: иначе одно имя жило бы дважды.
   const inFeatures = new Set(CORE_FEATURES.flatMap((feature) => feature.functions ?? []));
   for (const name of BASE_FUNCTIONS) expect(inFeatures.has(name)).toBe(false);
+});
+
+test("требование: у числа есть причина, и она называется", () => {
+  // Пустая сцена: только базовые формулы.
+  expect(needsReason(needsReport(preset([{ script: "x = 1" }])))).toBe("только базовые формулы");
+
+  // Причина — признаки, давшие максимум: рядом с числом человек видит, что
+  // именно держит сцену на этом поколении, а не гадает.
+  const mask = needsReport(preset([{ script: "x = 1", mask: { enabled: true } }]));
+  expect(mask.needs).toBe(19);
+  expect(needsReason(mask)).toContain("маска");
+
+  const light = needsReport(preset([{ kind: "light" }]));
+  expect(light.needs).toBe(VERSION.core);
+  expect(needsReason(light)).toContain("свет");
+
+  // Незнакомый вызов важнее подписей: он и есть причина текущего поколения.
+  expect(needsReason(needsReport(preset([{ script: "x = mystery(1)" }])))).toContain("mystery()");
 });
 
 test("требование: файл уносит его с собой", () => {

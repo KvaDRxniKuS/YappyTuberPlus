@@ -7,7 +7,7 @@ import {
 import {
   coreVerdict, modulesMessage, outdatedMessage, versionLabel, versionShort, versionString, versionTitle,
 } from "./version";
-import { needsReport } from "./engine/coreFeatures";
+import { needsReason, needsReport } from "./engine/coreFeatures";
 import {
   IncompatiblePresetError, presetCompatibility, type CompatibilityIssue, type CompatibilityReport,
 } from "./engine/presetCheck";
@@ -285,12 +285,15 @@ export default function App() {
   const engine = useRigEngine(
     preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef, moduleInputs.marks,
   );
-  // Требование сцены к ядру считается по содержимому: правка формулы, не
-  // использующей новых возможностей, требования не поднимает. Требование из
-  // файла учитываем тоже — если сцена пришла из более новой сборки, о нём
-  // лучше знать, чем гадать.
+  // Требование сцены к ядру считается **по содержимому**: правка формулы, не
+  // использующей новых возможностей, требования не поднимает. Число из файла
+  // сюда не подмешивается: оно говорит о том, чем файл записан, а не о том,
+  // что в сцене есть сейчас — иначе удалённая фигура продолжала бы требовать
+  // ядро 20 до следующего сохранения. Про файл, если он новее, сказано
+  // отдельной строкой в подсказке.
   const needsReportData = useMemo(() => needsReport(preset), [preset]);
-  const sceneNeeds = Math.max(needsReportData.needs, preset.needs ?? 0);
+  const sceneNeeds = needsReportData.needs;
+  const fileNeeds = Math.max(0, preset.needs ?? 0);
   const coreVerdictData = useMemo(
     () => coreVerdict(
       { core: engine.core ?? null, acceptsFrom: engine.acceptsFrom },
@@ -1491,7 +1494,8 @@ export default function App() {
               слоты — в подсказке, а клик копирует машинную запись целиком. */}
           <button
             className="status-version"
-            title={`${versionTitle()}\nСцена: ей нужно ядро ${sceneNeeds}`
+            title={`${versionTitle()}\nСцена: ей нужно ядро ${sceneNeeds} — ${needsReason(needsReportData)}`
+              + `${fileNeeds > sceneNeeds ? `\nФайл записан сборкой с ядром ${fileNeeds}: после сохранения требование станет ${sceneNeeds}` : ""}`
               + `${buildInfoLine(buildInfo) ? `\n${buildInfoLine(buildInfo)}` : ""}`}
             onClick={() => {
               void navigator.clipboard?.writeText(versionString())
@@ -1500,7 +1504,12 @@ export default function App() {
             }}
           >
             <b>{versionShort()}</b>
-            <span>ядро {engine.core ?? "—"} · нужно {sceneNeeds}</span>
+            {/* «Нужно N» — минимум для сцены, а не требование к человеку. Галочка
+                показывает, что ядро его перекрывает: обновлять нечего. */}
+            <span>
+              ядро {engine.core ?? "—"} · нужно {sceneNeeds}
+              {engine.core != null && sceneNeeds <= engine.core ? " ✓" : ""}
+            </span>
           </button>
           <button
             className="status-check"

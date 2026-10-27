@@ -335,3 +335,21 @@ export function needsReport(preset: RigPreset): NeedsReport {
 export function needsCore(preset: RigPreset): number {
   return needsReport(preset).needs;
 }
+
+/**
+ * Почему сцене нужно именно это поколение — одной строкой для подсказки.
+ *
+ * Число без причины читается как требование к человеку: «нужно 20» — и что
+ * теперь делать? На деле это «сцене достаточно 20», а поднять его могла одна
+ * фигура в углу. Поэтому рядом с числом показываются признаки, давшие
+ * максимум: именно они объясняют, что сцену держит на этом поколении.
+ */
+export function needsReason(report: NeedsReport): string {
+  if (report.unknown.length) {
+    return `незнакомые вызовы: ${report.unknown.map((name) => `${name}()`).join(", ")}`;
+  }
+  if (!report.reasons.length) return "только базовые формулы";
+  const top = Math.max(...report.reasons.map((reason) => reason.since));
+  const labels = report.reasons.filter((reason) => reason.since === top).map((reason) => reason.label);
+  return labels.join(", ");
+}

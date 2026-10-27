@@ -70,11 +70,18 @@ test("совместимость: старый формат открываетс
   expect(parsed.version).toBe(PRESET_FORMAT);
 });
 
-test("совместимость: сцена просит ядро новее редактора", () => {
+test("совместимость: файл записан более новым ядром — отдельный пункт", () => {
+  // Требование по содержимому считается по сцене, а не по числу из файла:
+  // иначе удалённая фигура продолжала бы требовать ядро 20 до сохранения.
   const ahead = file({ needs: VERSION.core + 4 });
   const report = presetCompatibility(ahead);
-  expect(labels(report)).toContain(`ядро ${VERSION.core + 4}`);
-  expect(report.issues[0].detail).toContain(String(VERSION.core));
+  // Файл открывается: данные читаются, речь о том, что он новее.
+  expect(report.canOpen).toBe(true);
+  expect(labels(report)).toContain(`файл записан сборкой с ядром ${VERSION.core + 4}`);
+  expect(report.issues[0].detail).toContain("более новой сборкой");
+
+  // Пустая сцена ничего не просит: своего требования у неё нет.
+  expect(labels(report)).not.toContain(`сцене нужно ядро ${VERSION.core + 4}`);
 });
 
 test("совместимость: незнакомый вид объекта и убранные формы", () => {
