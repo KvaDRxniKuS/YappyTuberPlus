@@ -11,14 +11,14 @@
   "version": "1.0.21.3.1.1.1",
   "acceptsFrom": 16,
   "packaging": "1.0.0",
-  "builtAt": "2026-10-27T22:36:58.551Z",
-  "commit": "152ed7d",
+  "builtAt": "2026-10-27T22:48:13.531Z",
+  "commit": "8ac32be",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-BlCcUtc3.js",
-      "size": 395807,
-      "sha256": "a7866286760ab858c1bc6ba92009d40c82a21f348496ee8e37e555705fc6c0e1"
+      "path": "assets/bus-DHiC1f06.js",
+      "size": 396440,
+      "sha256": "d6d526e6806a26326c5d932efb3667d704971bf88ebc441e8c8610ea10f3f4f1"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,9 +76,9 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-BobB5i8V.js",
+      "path": "assets/overlay-BD0_FQKi.js",
       "size": 8905,
-      "sha256": "8ddb5d9f88877982774f81a84f32290efbd9926299d45510f8d60940fc04d30f"
+      "sha256": "ee1215c346a0f85b05ee5e870ac5d1764b01190c18401ad1b35adf64e32bc10a"
     },
     {
       "path": "assets/overlay-DT7yrNH-.css",
@@ -86,9 +86,9 @@
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
     },
     {
-      "path": "assets/studio-BUGOILVN.js",
-      "size": 753204,
-      "sha256": "fc18ee776121fb94b2e32c3093c80b1e99cca2d1a9b9c1feb3d568ec6158dca6"
+      "path": "assets/studio-C010jJL6.js",
+      "size": 753520,
+      "sha256": "da46a8f67942e2bf9a910d78f190301cf62faac23569f0a6d413587a64a02447"
     },
     {
       "path": "assets/studio-CbL1hzwe.css",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "671d9fc6f17e3747b7b0b92d3d6a50e6d8bb4162822fe8f0d054100476f0e09b"
+      "sha256": "ddb8a198951c6957530a6140c99c2c94e3fa5fe3fa60ad806d24aed7fac80d98"
     },
     {
       "path": "modules/autoblink.json",
@@ -173,7 +173,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "52cc01f77264aa5ea1eee8968bd3d34fe3b58658ac14c940700c0fb343ad092a"
+      "sha256": "ea764fee67839b2c302f0c7522a5248cc0750db1a3e35d2d0ea4ed7c57244fcf"
     },
     {
       "path": "rig_core.wasm",
