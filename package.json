@@ -17,7 +17,8 @@
     "build:info": "node scripts/build-version.mjs",
     "build:check": "node scripts/build-version.mjs --check",
     "build:publish": "node scripts/publish-build.mjs",
-    "update:agent": "node scripts/update-agent.mjs"
+    "update:agent": "node scripts/update-agent.mjs",
+    "example:normals": "node scripts/make-normal-example.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",
