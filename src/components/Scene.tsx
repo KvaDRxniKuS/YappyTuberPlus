@@ -19,7 +19,7 @@ import {
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
-import { insertIndexFor, nearestPoint, smoothingOf, traceItem } from "../render/shape";
+import { penAction, smoothingOf, traceItem } from "../render/shape";
 import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
   warpGrabAt, warpHandlesAt, warpQuad, warpEnabled,
@@ -58,6 +58,8 @@ interface SceneProps {
   onPenPoints?: (objectId: string, itemId: string, points: Vec2[], smoothPoints: number[]) => void;
   /** Перо: сглаживание точки, 0…100 %. Alt+клик переключает угол и кривую. */
   onPenSmoothing?: (objectId: string, itemId: string, index: number, value: number) => void;
+  /** Перо: замкнуть контур кликом по первой точке. */
+  onPenClosed?: (objectId: string, itemId: string, closed: boolean) => void;
   /** Файлы, брошенные на сцену: тип объекта определится по файлу. */
   onDropFiles?: (files: FileList) => void;
   onTool: (tool: SceneTool) => void;
@@ -208,7 +210,7 @@ export function Scene(props: SceneProps) {
     if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "frame");
     if (current.tool === "deform") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "corners");
     drawShapeOutlines(ctx, preset, frame, zoom, current.selectedIds);
-    if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom, current.tool === "pen");
+    if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom, true);
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
 
     ctx.strokeStyle = "#454d57";
@@ -503,38 +505,38 @@ export function Scene(props: SceneProps) {
               interaction.current = { type: "pan", startX: point.x, startY: point.y, camera: { ...camera.current } };
               return;
             }
+            // Инструмент пера, но контур не выбран: клик не должен выделять
+            // чужие объекты, иначе перо «переключает фокус» вместо рисования.
+            if (current.tool === "pen" && !current.pen) return;
             const point = scenePoint(event);
-            if (current.tool === "pen" && current.pen) {
+            if (current.pen) {
               const object = current.preset.objects.find((item) => item.id === current.pen!.objectId);
               const item = object?.shape?.items.find((entry) => entry.id === current.pen!.itemId);
               if (object && item) {
                 const local = shapePoint(object, current.frameRef.current, point);
-                const index = nearestPoint(item.points, local, 12 / camera.current.zoom);
-                if (index >= 0) {
-                  // Alt+клик по точке — это тип соединения: угол ⇄ кривая.
-                  // Галку «Кривая» на весь контур заменило свойство точки.
-                  if (event.altKey) {
-                    current.onPenSmoothing?.(object.id, item.id, index, smoothingOf(item, index) > 0 ? 0 : 100);
-                    return;
-                  }
-                  interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index };
+                const action = penAction(item, local, 12 / camera.current.zoom, event.altKey);
+                if (action.type === "toggle-smoothing") {
+                  current.onPenSmoothing?.(object.id, item.id, action.index, action.value);
                   return;
                 }
-                // Новая точка встаёт между двумя ближайшими, а не в конец:
-                // так контур не «перескакивает» через всю фигуру. Сглаживание
-                // берём среднее у соседей — вставка не ломает готовую дугу.
-                const at = insertIndexFor(item.points, local, item.closed);
-                const before = item.points[at - 1] ?? item.points[item.points.length - 1];
-                const after = item.points[at] ?? item.points[0];
-                const easing = before && after
-                  ? (smoothingOf(item, item.points.indexOf(before)) + smoothingOf(item, item.points.indexOf(after))) / 2
-                  : 0;
+                // Клик по первой точке замыкает контур — так перо и должно
+                // работать, иначе «замкнуть» можно только галочкой во вкладке.
+                if (action.type === "close") {
+                  current.onPenClosed?.(object.id, item.id, true);
+                  return;
+                }
+                if (action.type === "drag") {
+                  interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index: action.index };
+                  return;
+                }
+                // Новая точка встаёт между двумя ближайшими, а не в конец: так
+                // контур не «перескакивает» через всю фигуру.
                 const points = [...item.points];
-                points.splice(at, 0, { x: roundPoint(local.x), y: roundPoint(local.y) });
+                points.splice(action.index, 0, { x: roundPoint(local.x), y: roundPoint(local.y) });
                 const smoothing = item.points.map((_, index) => smoothingOf(item, index));
-                smoothing.splice(at, 0, easing);
+                smoothing.splice(action.index, 0, action.smoothing);
                 current.onPenPoints?.(object.id, item.id, points, smoothing);
-                interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index: at };
+                interaction.current = { type: "pen", objectId: object.id, itemId: item.id, index: action.index };
                 return;
               }
             }
@@ -788,7 +790,10 @@ export function Scene(props: SceneProps) {
       <div className="scene-statusbar">
         <span>
           <LocateFixed size={12} />
-          {TOOL_HINT[props.tool]}
+          {/* Перо без контура — это не поломка, а подсказка: где его взять. */}
+          {props.tool === "pen" && !props.pen
+            ? "Перо: выберите объект-фигуру с контуром «Перо» во вкладке «Фигура»"
+            : TOOL_HINT[props.tool]}
           {" · "}выделено: {props.selectedIds.length} · границы: {GUIDE_LABEL[props.bounds]} · пивоты: {GUIDE_LABEL[props.pivots]}
         </span>
         <div className="zoom-control">
@@ -809,7 +814,7 @@ const TOOL_HINT: Record<SceneTool, string> = {
   pan: "Панорамирование",
   warp: "Зона деформации: тяните стороны и поворот; Shift на повороте — шаг 15°",
   deform: "Углы деформации: тяните углы картинки; Shift на повороте — шаг 15°",
-  pen: "Клик ставит точку между ближайшими, перетаскивание двигает; Alt+клик — угол ⇄ кривая",
+  pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
 
 /** Объект считается выделенным, если выделен он сам или любой его предок. */

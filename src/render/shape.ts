@@ -253,6 +253,39 @@ export function insertIndexFor(points: Vec2[], target: Vec2, closed: boolean): n
   return best;
 }
 
+/**
+ * Что делает клик пером.
+ *
+ * Логика вынесена из сцены, чтобы её можно было проверить тестом: правила
+ * такие — Alt по точке меняет тип соединения, клик по первой точке замыкает
+ * контур (от трёх точек), клик по готовой точке начинает перетаскивание, а
+ * клик мимо вставляет новую между двумя ближайшими.
+ */
+export type PenAction =
+  | { type: "toggle-smoothing"; index: number; value: number }
+  | { type: "close" }
+  | { type: "drag"; index: number }
+  | { type: "insert"; index: number; smoothing: number };
+
+export function penAction(item: ShapeItem, target: Vec2, radius: number, alt = false): PenAction {
+  const index = nearestPoint(item.points, target, radius);
+  if (index >= 0) {
+    if (alt) return { type: "toggle-smoothing", index, value: smoothingOf(item, index) > 0 ? 0 : 100 };
+    if (index === 0 && item.points.length >= 3 && !item.closed) return { type: "close" };
+    return { type: "drag", index };
+  }
+  const at = insertIndexFor(item.points, target, item.closed);
+  // Сглаживание новой точки — среднее у соседей: вставка не ломает дугу.
+  const beforeIndex = at - 1 >= 0 ? at - 1 : item.points.length - 1;
+  const afterIndex = at < item.points.length ? at : 0;
+  const before = item.points[beforeIndex];
+  const after = item.points[afterIndex];
+  const smoothing = before && after
+    ? (smoothingOf(item, beforeIndex) + smoothingOf(item, afterIndex)) / 2
+    : 0;
+  return { type: "insert", index: at, smoothing };
+}
+
 /** Квадрат расстояния от точки до отрезка. */
 function distanceToSegment(point: Vec2, from: Vec2, to: Vec2): number {
   const dx = to.x - from.x;

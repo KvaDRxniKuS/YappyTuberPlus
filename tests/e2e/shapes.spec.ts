@@ -4,7 +4,7 @@ import { makeShape, normalizePreset } from "../../src/engine/preset";
 import { writeMaskBlock } from "../../src/engine/maskScript";
 import {
   defaultMask, defaultShape, formatPoints, insertIndexFor, makeItem, nearestPoint, normalizeMask,
-  normalizeShape, parsePoints, readSmoothing, smoothingOf, tracePath, uniqueItemId,
+  normalizeShape, parsePoints, penAction, readSmoothing, smoothingOf, tracePath, uniqueItemId,
 } from "../../src/render/shape";
 import { orderedObjects } from "../../src/render/rigCanvas";
 import type { RigPreset } from "../../src/types";
@@ -173,4 +173,36 @@ test("перо: старое поле smooth превращается в 100 % �
   expect(readSmoothing(["abc", -20, 400], false, 3)).toEqual([0, 0, 100]);
   expect(smoothingOf(perPoint.items[0], 1)).toBe(55);
   expect(smoothingOf(perPoint.items[0], 5)).toBe(0);
+});
+
+/** Путь пера из точек со сглаживанием по умолчанию. */
+function pathItem(points: Array<{ x: number; y: number }>, closed = false, smoothing: number[] = []) {
+  return {
+    id: "path_1", kind: "path" as const, x: 0, y: 0, width: 0, height: 0,
+    points, smoothPoints: smoothing.length ? smoothing : points.map(() => 0), closed,
+  };
+}
+
+test("перо: клик по первой точке замыкает контур", () => {
+  // Треугольник: клик по первой точке — замыкание, а не перетаскивание её.
+  const open = pathItem([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 80 }]);
+  expect(penAction(open, { x: 3, y: 2 }, 12)).toEqual({ type: "close" });
+  // Уже замкнутый контур: та же точка — обычное перетаскивание.
+  const closed = pathItem(open.points, true);
+  expect(penAction(closed, { x: 3, y: 2 }, 12)).toEqual({ type: "drag", index: 0 });
+  // Двух точек мало для замыкания: контур ещё не из чего собирать.
+  const line = pathItem([{ x: 0, y: 0 }, { x: 100, y: 0 }]);
+  expect(penAction(line, { x: 2, y: 1 }, 12)).toEqual({ type: "drag", index: 0 });
+  // Клик по любой другой точке — перетаскивание, не замыкание.
+  expect(penAction(open, { x: 100, y: 2 }, 12)).toEqual({ type: "drag", index: 1 });
+});
+
+test("перо: Alt меняет тип точки, мимо точек — вставка между ближайшими", () => {
+  const square = pathItem([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }], false, [0, 100, 100, 0]);
+  // Alt по точке: 0 → 100, 100 → 0.
+  expect(penAction(square, { x: 100, y: 2 }, 12, true)).toEqual({ type: "toggle-smoothing", index: 1, value: 0 });
+  expect(penAction(square, { x: 2, y: 2 }, 12, true)).toEqual({ type: "toggle-smoothing", index: 0, value: 100 });
+  // Alt не мешает обычному клику мимо точек: точка вставляется.
+  const inserted = penAction(square, { x: 104, y: 50 }, 12, true);
+  expect(inserted).toEqual({ type: "insert", index: 2, smoothing: 100 });
 });

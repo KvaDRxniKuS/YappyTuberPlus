@@ -139,11 +139,22 @@ export default function App() {
    */
   const chooseTool = useCallback((next: SceneTool) => {
     setTool(next);
-    if (next !== "pen") return;
+    // Ушли с пера — рисование закончилось: иначе клики продолжали бы ставить
+    // точки в невидимом режиме.
+    if (next !== "pen") { setPen(null); return; }
     const current = presetRef.current;
     const object = current.objects.find((item) => item.id === selectionRef.current.at(-1));
     const path = object?.kind === "shape" ? object.shape?.items.find((item) => item.kind === "path") : undefined;
     if (object && path) setPen({ objectId: object.id, itemId: path.id });
+  }, []);
+
+  /**
+   * Перо включили из вкладки «Фигура»: инструмент переключается вместе с ним.
+   * Без этого клики по сцене оставались «выделением» и выделяли чужой объект.
+   */
+  const startPen = useCallback((next: { objectId: string; itemId: string } | null) => {
+    setPen(next);
+    if (next) setTool("pen");
   }, []);
   const [showGrid, setShowGrid] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -775,6 +786,18 @@ export default function App() {
    * Тип соединения — свойство точки, а не контура: в одном контуре спокойно
    * живут острый угол и плавная дуга.
    */
+  /** Перо: клик по первой точке замыкает контур. */
+  const penClosed = useCallback((objectId: string, itemId: string, closed: boolean) => {
+    const current = presetRef.current;
+    const object = current.objects.find((item) => item.id === objectId);
+    if (!object?.shape) return;
+    const items = object.shape.items.map((item) => (item.id === itemId ? { ...item, closed } : item));
+    updateObject(
+      { ...object, shape: { ...object.shape, items } },
+      { label: closed ? "Контур замкнут" : "Контур разомкнут" },
+    );
+  }, [updateObject]);
+
   const penSmoothing = useCallback((objectId: string, itemId: string, index: number, value: number) => {
     const current = presetRef.current;
     const object = current.objects.find((item) => item.id === objectId);
@@ -1137,6 +1160,7 @@ export default function App() {
             pen={pen}
             onPenPoints={penPoints}
             onPenSmoothing={penSmoothing}
+            onPenClosed={penClosed}
           />
           <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
           <Inspector
@@ -1155,7 +1179,7 @@ export default function App() {
             onDelete={deleteSelected}
             onDuplicate={duplicateSelected}
             pen={pen}
-            onPen={setPen}
+            onPen={startPen}
           />
         </main>
 
@@ -1187,7 +1211,7 @@ export default function App() {
           onText={updateTextObjects}
           onObject={(object) => updateObject(object)}
           pen={pen}
-          onPen={setPen}
+          onPen={startPen}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
