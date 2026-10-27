@@ -43,6 +43,7 @@ import {
 } from "./engine/presetFile";
 import { applyCaptureWindow, applyOverlayWindow } from "./overlay/window";
 import { useOverlayHost } from "./hooks/useOverlayHost";
+import { WorkMeter } from "./components/WorkMeter";
 import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
@@ -1268,6 +1269,7 @@ export default function App() {
             {engine.status === "error" ? <X size={12} /> : engine.status === "ready" ? <Check size={12} /> : <Gauge size={12} />}
             {engine.status === "error" ? engine.error : engine.status === "ready" ? `Кадр #${engine.snapshot?.seq || 0} · ${engine.snapshot?.time.toFixed(1) || "0.0"} c` : "Компиляция Rust-ядра…"}
           </span>
+          <WorkMeter />
         </div>
         <div className="status-right">
           <button onClick={() => setOverlayOpen(true)} className={overlay.viewers.length ? "overlay-live" : undefined}><MonitorPlay size={12} /> Оверлей{overlay.viewers.length ? ` · ${overlay.viewers.length}` : ""}</button>

@@ -19,6 +19,7 @@ import {
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
+import { countDraw } from "../engine/meter";
 import { penAction, smoothingOf, traceItem } from "../render/shape";
 import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
@@ -203,6 +204,7 @@ export function Scene(props: SceneProps) {
   };
 
   const draw = () => {
+    countDraw();
     const element = canvas.current;
     const host = viewport.current;
     if (!element || !host) return;

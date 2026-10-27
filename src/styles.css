@@ -567,6 +567,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .status-file { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 260px; padding-left: 9px; border-left: 1px solid #30363d; color: #6f7f88; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-stopped { display: flex; align-items: center; gap: 4px; color: var(--danger); font-size: 10px; }
 
+/* Живая работа окна: нули в паузе и стопе — норма, ненулевые числа — повод смотреть. */
+.work-meter { font-size: 10px; font-variant-numeric: tabular-nums; color: #6f7c86; white-space: nowrap; }
+.work-meter.busy { color: #7fd3b8; }
+
 /* ---------- Сохранить + стрелка ---------- */
 .split-button { display: inline-flex; }
 .split-button .button.primary:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }

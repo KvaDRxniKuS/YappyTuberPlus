@@ -7,6 +7,7 @@ import type { ScriptScope } from "./scripts";
 import { neutralFrame, prepareFrame } from "./frame";
 import { moduleConstants, presetGlobals } from "../modules/presets";
 import { frameProduced } from "./frameSignal";
+import { countArrival, countFrame } from "./meter";
 import type { TextChannel } from "../render/text";
 
 export type EngineStatus = "loading" | "ready" | "error";
@@ -163,6 +164,7 @@ export function useRigEngine(
           fpsLimit: () => presetRef.current.runtime.fpsLimit,
           paused: () => pausedRef.current,
           onFrame: (frameResponse) => {
+            countArrival();
             const deliver = deliverRef.current;
             if (!deliver) return;
             if (pausedRef.current) {
@@ -241,6 +243,7 @@ export function useRigEngine(
       setError(response.error || "Ошибка кадра");
       return;
     }
+    countFrame();
     const gated = prepareFrame(presetRef.current, response.frame, textsRef?.current);
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
@@ -349,6 +352,9 @@ export function useRigEngine(
     setSnapshot(neutral);
     resetClockRef.current = true;
     setEpoch((value) => value + 1);
+    // Окна рисуют по сигналу «новый кадр»: нейтральная поза — тоже кадр, иначе
+    // после «Стопа» на сцене осталась бы последняя живая картинка.
+    frameProduced();
   }, []);
 
   /**
