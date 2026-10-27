@@ -106,6 +106,37 @@ function StateRow({ label, value, onChange, titles }: {
   );
 }
 
+/**
+ * Выбор модуля, когда их несколько.
+ *
+ * Пока в пресете один микрофон (или одно моргание), выбирать нечего — строки
+ * нет. Второй модуль того же типа делает выбор осмысленным: поведение читает
+ * ровно тот, чьё имя записано в блоке. Переименовали модуль — здесь видно,
+ * что формулы смотрят в старое имя.
+ */
+function ModulePicker({ label, modules, value, onPick }: {
+  label: string;
+  modules: ModuleInstance[];
+  value: string;
+  onPick: (name: string) => void;
+}) {
+  if (modules.length < 2) return null;
+  const known = modules.some((module) => module.name === value);
+  return (
+    <div className="behaviour-state">
+      <span>{label}<small>какой модуль слушать</small></span>
+      <select
+        value={known ? value : modules[0].name}
+        title="Модуль, чьи входы читает поведение"
+        onChange={(event) => onPick(event.target.value)}
+      >
+        {!known && <option value={modules[0].name}>выберите модуль</option>}
+        {modules.map((module) => <option key={module.name} value={module.name}>{module.name}</option>)}
+      </select>
+    </div>
+  );
+}
+
 /** Компактное числовое поле: значение применяется по Enter или уходу фокуса. */
 function TextNumber({ label, value, min, max, step, suffix, onCommit }: {
   label: string; value: number; min: number; max: number; step: number;
@@ -231,6 +262,11 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
     [object?.script],
   );
 
+  // Предупреждение о пропавшем модуле можно закрыть: оно объясняет, почему
+  // часть полей исчезла, но не должно висеть поверх работы, когда человек и
+  // так всё понял.
+  const [dismissed, setDismissed] = useState(false);
+
   // Кому пишем правку: всё выделение. Значения в панели — по основному объекту,
   // у остальных меняется только то поле, которое тронули, остальное своё.
   const targets = useMemo(
@@ -242,8 +278,18 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
     return <div className="empty-state behaviour-empty"><Spline size={24} /><p>Выберите объект или несколько: пресет поведения пишется в скрипт каждого</p></div>;
   }
 
+  /**
+   * Правка поведения.
+   *
+   * Заодно дописывается имя модуля, если его ещё нет: блок без имени не знает,
+   * чей вход читать, а модуль в пресете уже есть. Пока блок не нужен, имя
+   * никуда не сохраняется — `writeBehaviour` просто удаляет пустой блок.
+   */
   const patch = (next: Partial<Behaviour>) => {
-    onChange(writeBehaviourFor(targets, object, next));
+    const filled: Partial<Behaviour> = { ...next };
+    if (voiceModules.length && behaviour.voiceModule === "") filled.voiceModule = voiceModules[0].name;
+    if (eyeModules.length && behaviour.eyeModule === "") filled.eyeModule = eyeModules[0].name;
+    onChange(writeBehaviourFor(targets, object, filled));
   };
 
   const reset = () => onChange(resetBehaviourFor(targets));
@@ -261,6 +307,31 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
   const mouseModules = (modules ?? []).filter((module) => module.type === "mouse");
   const followModule = behaviour.followMouseModule;
   const followMissing = followModule !== "" && !mouseModules.some((module) => module.name === followModule);
+
+  /**
+   * Модули, без которых часть вкладки не имеет смысла.
+   *
+   * Правило одно для всей панели: **секция живёт, пока в пресете есть её
+   * модуль**. Микрофон даёт речь (рот, сквош, подпрыгивание, доворот) и
+   * моргание даёт глаз. Нет модуля — нет и полей: пустые ползунки, которые
+   * ничего не двигают, только путают. Настройки при этом остаются в блоке
+   * `@behaviour`, поэтому возврат модуля оживляет всё как было.
+   *
+   * Имена берутся не жёсткие: `mic` и `auto` — лишь имена по умолчанию в
+   * новом пресете. Пересозданный микрофон получает имя `loudness`, и формулы
+   * должны поехать за ним, а не сломаться.
+   */
+  const voiceModules = (modules ?? []).filter((module) => module.type === "loudness");
+  const eyeModules = (modules ?? []).filter((module) => module.type === "autoblink");
+  const hasVoice = voiceModules.length > 0;
+  const hasEye = eyeModules.length > 0;
+
+  /** Настройки речи и глаза, которые сейчас некуда приложить. */
+  const speechSet = behaviour.squash !== 0 || behaviour.bounce > 0 || behaviour.dragAngle > 0;
+  const missingVoice = hasVoice ? "" : speechSet ? "речь" : "";
+  const missingEye = hasEye ? "" : behaviour.eye !== "none" ? "глаз" : "";
+  const missingMouth = hasVoice ? "" : behaviour.mouth !== "none" ? "рот" : "";
+  const missing = [missingMouth, missingVoice, missingEye].filter(Boolean);
 
   return (
     <div className="behaviour-panel">
@@ -287,6 +358,20 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
           у остальных меняется только тронутое поле, их собственные настройки остаются.
         </>}
       </p>
+
+      {missing.length > 0 && !dismissed && (
+        <div className="behaviour-banner">
+          <p>
+            <b>Часть настроек сохранена, но не действует:</b>{" "}
+            {missing.join(", ")} — в пресете нет нужного модуля, поэтому формулы не
+            пишутся. Числа остались в блоке поведения и оживут, когда модуль вернётся:
+            добавьте {missing.includes("глаз") ? "«AutoBlink»" : "«Loudness»"} во вкладке «Модули».
+          </p>
+          <button className="icon-button" title="Скрыть предупреждение" onClick={() => setDismissed(true)}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {object.kind === "text" && (
         <section className="behaviour-section behaviour-text-section">
@@ -335,62 +420,76 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
           min={0.05} max={5} step={0.01} onCommit={(scaleX) => patch({ scaleX })} />
         <Row label="Размер Y" hint="скаляр к базовому размеру" unit="×" value={behaviour.scaleY}
           min={0.05} max={5} step={0.01} onCommit={(scaleY) => patch({ scaleY })} />
-        <Row label="Сквош" hint="минус меняет оси местами" unit="" value={behaviour.squash}
-          min={-1} max={1} step={0.01} onCommit={(squash) => patch({ squash })} />
-        <Row label="Скорость деформации" unit="мс" value={behaviour.squashIn}
-          min={20} max={600} step={10} onCommit={(squashIn) => patch({ squashIn })} />
-        <Row label="Скорость возврата" unit="мс" value={behaviour.squashOut}
-          min={20} max={600} step={10} onCommit={(squashOut) => patch({ squashOut })} />
-        <Row label="Подпрыгивание при речи" hint="вверх, пиксели" unit="px" value={behaviour.bounce}
-          min={0} max={400} step={1} onCommit={(bounce) => patch({ bounce })} />
-        <Row label="Скорость подпрыгивания" hint="меньше — резче" unit="мс" value={behaviour.bounceSpeed}
-          min={20} max={600} step={10} onCommit={(bounceSpeed) => patch({ bounceSpeed })} />
-        <div className="behaviour-state">
-          <span>Прыгать один раз<small>иначе — держится всю речь</small></span>
-          <Switch
-            checked={behaviour.bounceOnce}
-            onChange={(bounceOnce) => patch({ bounceOnce })}
-            title="Прыгнуть один раз и опуститься, даже если речь продолжается"
-          />
-        </div>
-        {behaviour.bounceOnce && (
-          <Row label="Длительность прыжка" hint="сколько держится вверху" unit="мс" value={behaviour.bounceHold}
-            min={100} max={3000} step={50} onCommit={(bounceHold) => patch({ bounceHold })} />
-        )}
+        {hasVoice ? (
+          <>
+            <Row label="Сквош" hint="минус меняет оси местами" unit="" value={behaviour.squash}
+              min={-1} max={1} step={0.01} onCommit={(squash) => patch({ squash })} />
+            <Row label="Скорость деформации" unit="мс" value={behaviour.squashIn}
+              min={20} max={600} step={10} onCommit={(squashIn) => patch({ squashIn })} />
+            <Row label="Скорость возврата" unit="мс" value={behaviour.squashOut}
+              min={20} max={600} step={10} onCommit={(squashOut) => patch({ squashOut })} />
+            <Row label="Подпрыгивание при речи" hint="вверх, пиксели" unit="px" value={behaviour.bounce}
+              min={0} max={400} step={1} onCommit={(bounce) => patch({ bounce })} />
+            <Row label="Скорость подпрыгивания" hint="меньше — резче" unit="мс" value={behaviour.bounceSpeed}
+              min={20} max={600} step={10} onCommit={(bounceSpeed) => patch({ bounceSpeed })} />
+            <div className="behaviour-state">
+              <span>Прыгать один раз<small>иначе — держится всю речь</small></span>
+              <Switch
+                checked={behaviour.bounceOnce}
+                onChange={(bounceOnce) => patch({ bounceOnce })}
+                title="Прыгнуть один раз и опуститься, даже если речь продолжается"
+              />
+            </div>
+            {behaviour.bounceOnce && (
+              <Row label="Длительность прыжка" hint="сколько держится вверху" unit="мс" value={behaviour.bounceHold}
+                min={100} max={3000} step={50} onCommit={(bounceHold) => patch({ bounceHold })} />
+            )}
+            <ModulePicker
+              label="Микрофон"
+              modules={voiceModules}
+              value={behaviour.voiceModule}
+              onPick={(voiceModule) => patch({ voiceModule })}
+            />
+          </>
+        ) : null}
       </section>
 
       <section className="behaviour-section">
         <div className="section-title"><span><RotateCw size={13} /> Доворот и пределы</span></div>
-        <Row label="Поворот при речи" hint="максимум, 0 — выключено" unit="°" value={behaviour.dragAngle}
-          min={0} max={180} step={1} onCommit={(dragAngle) => patch({ dragAngle })} />
-        <div className="behaviour-state">
-          <span>Направление<small>куда доворачивать</small></span>
-          <div className="segmented small dense">
-            {([
-              { id: "right", text: "вправо", title: "Всегда в одну сторону — вправо" },
-              { id: "left", text: "влево", title: "Всегда в одну сторону — влево" },
-              { id: "random", text: "случайно", title: "Направление меняется случайно, плавно" },
-              { id: "alternate", text: "поочерёдно", title: "Сперва в одну сторону, потом в другую, раз в 1.2 с" },
-            ] as const).map((option) => (
-              <button
-                key={option.id}
-                className={behaviour.dragMode === option.id ? "active" : ""}
-                title={option.title}
-                onClick={() => patch({ dragMode: option.id })}
-              >
-                {option.text}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="behaviour-state">
-          <span>В диапазоне<small>угол — это максимум</small></span>
-          <Switch
-            checked={behaviour.dragInRange}
-            onChange={(dragInRange) => patch({ dragInRange })}
-            title="Угол — максимум: фактический поворот гуляет случайно от 0 до него"
-          />
-        </div>
+        {hasVoice && (
+          <>
+            <Row label="Поворот при речи" hint="максимум, 0 — выключено" unit="°" value={behaviour.dragAngle}
+              min={0} max={180} step={1} onCommit={(dragAngle) => patch({ dragAngle })} />
+            <div className="behaviour-state">
+              <span>Направление<small>куда доворачивать</small></span>
+              <div className="segmented small dense">
+                {([
+                  { id: "right", text: "вправо", title: "Всегда в одну сторону — вправо" },
+                  { id: "left", text: "влево", title: "Всегда в одну сторону — влево" },
+                  { id: "random", text: "случайно", title: "Направление меняется случайно, плавно" },
+                  { id: "alternate", text: "поочерёдно", title: "Сперва в одну сторону, потом в другую, раз в 1.2 с" },
+                ] as const).map((option) => (
+                  <button
+                    key={option.id}
+                    className={behaviour.dragMode === option.id ? "active" : ""}
+                    title={option.title}
+                    onClick={() => patch({ dragMode: option.id })}
+                  >
+                    {option.text}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="behaviour-state">
+              <span>В диапазоне<small>угол — это максимум</small></span>
+              <Switch
+                checked={behaviour.dragInRange}
+                onChange={(dragInRange) => patch({ dragInRange })}
+                title="Угол — максимум: фактический поворот гуляет случайно от 0 до него"
+              />
+            </div>
+          </>
+        )}
         <Row label="Предел влево" hint="0 — не поворачивать влево" unit="°" value={behaviour.rotationalLimitLeft}
           min={0} max={180} step={1} onCommit={(rotationalLimitLeft) => patch({ rotationalLimitLeft })} />
         <Row label="Предел вправо" hint="0 — не поворачивать вправо" unit="°" value={behaviour.rotationalLimitRight}
@@ -477,29 +576,36 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
         )}
         {followModule !== "" && !followMissing && (
           <>
-            <div className="segmented small dense" title="Форма предела: круг радиуса или прямоугольник по осям">
+            <div className="segmented small inline" title="Форма предела: эллипс или прямоугольник">
               <button
-                className={behaviour.followMouseLimit === "circle" ? "active" : ""}
-                onClick={() => patch({ followMouseLimit: "circle" })}
-              >круг</button>
+                className={behaviour.followMouseLimit === "ellipse" ? "active" : ""}
+                title="Объект обходит эллипс: ширина и высота задают его размер целиком"
+                onClick={() => patch({ followMouseLimit: "ellipse" })}
+              >эллипс</button>
               <button
-                className={behaviour.followMouseLimit === "box" ? "active" : ""}
-                onClick={() => patch({ followMouseLimit: "box" })}
-              >по осям</button>
+                className={behaviour.followMouseLimit === "rect" ? "active" : ""}
+                title="Свой предел по каждой оси: можно разрешить движение только вбок"
+                onClick={() => patch({ followMouseLimit: "rect" })}
+              >прямоугольник</button>
             </div>
             <Row label="Сила" hint="доля пути к курсору" unit="%" value={Math.round(behaviour.followMouseStrength * 100)}
               min={0} max={100} step={1} onCommit={(value) => patch({ followMouseStrength: value / 100 })} />
-            {behaviour.followMouseLimit === "circle" ? (
-              <Row label="Предел" hint="радиус от базы" unit="px" value={behaviour.followMouseRadius}
-                min={1} max={1500} step={1} onCommit={(followMouseRadius) => patch({ followMouseRadius })} />
-            ) : (
-              <>
-                <Row label="Предел по X" unit="px" value={behaviour.followMouseRangeX}
-                  min={1} max={1500} step={1} onCommit={(followMouseRangeX) => patch({ followMouseRangeX })} />
-                <Row label="Предел по Y" unit="px" value={behaviour.followMouseRangeY}
-                  min={1} max={1500} step={1} onCommit={(followMouseRangeY) => patch({ followMouseRangeY })} />
-              </>
-            )}
+            <Row
+              label="Ширина"
+              hint={`полный размер: ±${Math.round(behaviour.followMouseWidth / 2)} от покоя`}
+              unit="px"
+              value={behaviour.followMouseWidth}
+              min={2} max={4000} step={1}
+              onCommit={(followMouseWidth) => patch({ followMouseWidth })}
+            />
+            <Row
+              label="Высота"
+              hint={`полный размер: ±${Math.round(behaviour.followMouseHeight / 2)} от покоя`}
+              unit="px"
+              value={behaviour.followMouseHeight}
+              min={2} max={4000} step={1}
+              onCommit={(followMouseHeight) => patch({ followMouseHeight })}
+            />
             <Row label="Мёртвая зона" hint="дрожание рядом с центром" unit="%" value={Math.round(behaviour.followMouseDead * 100)}
               min={0} max={90} step={1} onCommit={(value) => patch({ followMouseDead: value / 100 })} />
             <Row label="Сглаживание положения" hint="0 — мгновенно" unit="мс" value={behaviour.followMouseSmooth}
@@ -556,33 +662,47 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
         </section>
       )}
 
-      <section className="behaviour-section">
-        <div className="section-title"><span><X size={13} /> Видимость</span></div>
-        <StateRow
-          label="Рот"
-          value={behaviour.mouth}
-          onChange={(mouth) => patch({ mouth })}
-          titles={{
-            none: "не управлять видимостью",
-            open: "виден, когда персонаж говорит",
-            closed: "виден, когда персонаж молчит",
-          }}
-        />
-        <StateRow
-          label="Глаз"
-          value={behaviour.eye}
-          onChange={(eye) => patch({ eye })}
-          titles={{
-            none: "не управлять видимостью",
-            open: "виден, когда глаза открыты",
-            closed: "виден на моргании",
-          }}
-        />
-        <p className="behaviour-hint">
-          Если заданы оба, условия перемножаются: слой виден, когда верно и то, и другое.
-          Имена входов — стандартные: речь из модуля `mic`, моргание из `auto`.
-        </p>
-      </section>
+      {(hasVoice || hasEye) && (
+        <section className="behaviour-section">
+          <div className="section-title"><span><X size={13} /> Видимость</span></div>
+          {hasVoice && (
+            <StateRow
+              label="Рот"
+              value={behaviour.mouth}
+              onChange={(mouth) => patch({ mouth })}
+              titles={{
+                none: "не управлять видимостью",
+                open: "виден, когда персонаж говорит",
+                closed: "виден, когда персонаж молчит",
+              }}
+            />
+          )}
+          {hasEye && (
+            <StateRow
+              label="Глаз"
+              value={behaviour.eye}
+              onChange={(eye) => patch({ eye })}
+              titles={{
+                none: "не управлять видимостью",
+                open: "виден, когда глаза открыты",
+                closed: "виден на моргании",
+              }}
+            />
+          )}
+          <ModulePicker
+            label="Моргание"
+            modules={eyeModules}
+            value={behaviour.eyeModule}
+            onPick={(eyeModule) => patch({ eyeModule })}
+          />
+          <p className="behaviour-hint">
+            Если заданы оба, условия перемножаются: слой виден, когда верно и то, и другое.
+            Входы берутся из своих модулей: речь — из {hasVoice ? `«${behaviour.voiceModule || voiceModules[0].name}»` : "микрофона"},
+            моргание — из {hasEye ? `«${behaviour.eyeModule || eyeModules[0].name}»` : "модуля моргания"}.
+            Строки есть только у тех модулей, что добавлены в пресет.
+          </p>
+        </section>
+      )}
 
       <section className="behaviour-section">
         <div className="section-title"><span><RotateCw size={13} /> Физика поворота</span></div>
@@ -641,8 +761,10 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
                     min={0} max={1} step={0.01} onCommit={(physForce) => patch({ physForce })} />
                   <Row label="Плавность" hint="вязкость: 0 — качается долго, 1 — гаснет сразу" unit="" value={behaviour.physSmooth}
                     min={0} max={1} step={0.01} onCommit={(physSmooth) => patch({ physSmooth })} />
-                  <Row label="Длительность импульса" hint="толчок от речи" unit="мс" value={behaviour.dragImpulse}
-                    min={40} max={1500} step={10} onCommit={(dragImpulse) => patch({ dragImpulse })} />
+                  {hasVoice && (
+                    <Row label="Длительность импульса" hint="толчок от речи" unit="мс" value={behaviour.dragImpulse}
+                      min={40} max={1500} step={10} onCommit={(dragImpulse) => patch({ dragImpulse })} />
+                  )}
                   <p className="behaviour-hint">
                     С физикой «Поворот при речи» — это толчок: угол и направление берутся из него,
                     но постоянной силы нет, объект после удара качается сам. «Длительность импульса»

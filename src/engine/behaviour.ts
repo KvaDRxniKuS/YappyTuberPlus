@@ -40,6 +40,9 @@ export type PhysSpace = "world" | "parent";
 /** Куда доворачивать объект от речи. */
 export type DragMode = "right" | "left" | "random" | "alternate";
 
+/** Форма предела следования за мышью: эллипс или прямоугольник. */
+export type FollowShape = "ellipse" | "rect";
+
 export interface Behaviour {
   /** Сглаживание позиции: 0 — без фильтра, 1 — сильно отстаёт. */
   smooth: number;
@@ -98,6 +101,17 @@ export interface Behaviour {
   mouth: VisibilityRule;
   /** Глаз: `open` — виден при открытых глазах, `closed` — на моргании. */
   eye: VisibilityRule;
+  /**
+   * Имя модуля микрофона, чьи входы читает поведение: `mic.speak`,
+   * `mic.talking`. Пусто — речевых формул нет вовсе.
+   *
+   * Имя хранится снимком, как у мыши и пресетов: модуль можно переименовать
+   * или выбрать второй микрофон, и формулы поедут за ним. Жёсткое `mic`
+   * ломалось бы, стоило пересоздать модуль — новый получил бы имя `loudness`.
+   */
+  voiceModule: string;
+  /** Имя модуля моргания, чей вход `blink` читает видимость глаза. */
+  eyeModule: string;
   /** Мировой поворот «тяжёлой» стороной: 0 — вниз, 90 — вправо. `null` — выкл. */
   physRotation: number | null;
   /**
@@ -124,14 +138,18 @@ export interface Behaviour {
   followMouseModule: string;
   /** Доля пути к курсору: 1 — у края области объект уходит на весь предел. */
   followMouseStrength: number;
-  /** Форма ограничения: круг радиуса или прямоугольник по осям. */
-  followMouseLimit: "circle" | "box";
-  /** Радиус ограничения, пиксели холста. */
-  followMouseRadius: number;
-  /** Предел по X для прямоугольного ограничения, пиксели. */
-  followMouseRangeX: number;
-  /** Предел по Y для прямоугольного ограничения, пиксели. */
-  followMouseRangeY: number;
+  /** Форма предела: эллипс или прямоугольник со своими шириной и высотой. */
+  followMouseLimit: FollowShape;
+  /**
+   * Ширина предела, пиксели холста — **полный размер**, а не радиус.
+   *
+   * Объект ходит на половину: ширина 300 означает ±150 от покоя. Так подпись
+   * «Ширина» совпадает с тем, что видно на сетке, и одна и та же цифра
+   * означает одно и то же в обеих формах.
+   */
+  followMouseWidth: number;
+  /** Высота предела, пиксели холста — тоже полный размер. */
+  followMouseHeight: number;
   /** Мёртвая зона: доля хода курсора, в которой объект стоит на месте. */
   followMouseDead: number;
   /** Сглаживание следования, мс. 0 — без фильтра. */
@@ -199,6 +217,8 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   wiggleRotAmp: 0,
   mouth: "none",
   eye: "none",
+  voiceModule: "",
+  eyeModule: "",
   physRotation: null,
   physSpace: "world",
   physSmooth: 0.4,
@@ -206,10 +226,9 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   presets: [],
   followMouseModule: "",
   followMouseStrength: 1,
-  followMouseLimit: "circle",
-  followMouseRadius: 120,
-  followMouseRangeX: 200,
-  followMouseRangeY: 120,
+  followMouseLimit: "ellipse",
+  followMouseWidth: 240,
+  followMouseHeight: 240,
   followMouseDead: 0,
   followMouseSmooth: 120,
   followMouseAxisX: true,
@@ -357,11 +376,23 @@ export function readBehaviour(script: string): Behaviour {
       merged.followMouseModule = typeof source.followMouseModule === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(source.followMouseModule.trim())
         ? source.followMouseModule.trim()
         : "";
-      merged.followMouseLimit = merged.followMouseLimit === "box" ? "box" : "circle";
+      // Форма: старые `box`/`circle` читаются как `rect`/`ellipse`.
+      merged.followMouseLimit = source.followMouseLimit === "rect" || source.followMouseLimit === "box"
+        ? "rect"
+        : "ellipse";
       merged.followMouseStrength = clampNumber(merged.followMouseStrength, 0, 1, 1);
-      merged.followMouseRadius = clampNumber(merged.followMouseRadius, 1, 4000, 120);
-      merged.followMouseRangeX = clampNumber(merged.followMouseRangeX, 1, 4000, 200);
-      merged.followMouseRangeY = clampNumber(merged.followMouseRangeY, 1, 4000, 120);
+      // Размер предела. Старые поля (`radius`, `rangeX/Y`) переезжают в ширину
+      // и высоту **тем же числом**: смысл стал «полный размер», а не «полуось»,
+      // поэтому ход у готовых объектов станет вдвое меньше — это осознанное
+      // решение, а не ошибка чтения.
+      const legacySize = (own: unknown, radius: unknown, range: unknown, fallback: number): number => {
+        if (typeof own === "number") return clampNumber(own, 2, 8000, fallback);
+        if (typeof radius === "number") return clampNumber(radius, 2, 8000, fallback);
+        if (typeof range === "number") return clampNumber(range, 2, 8000, fallback);
+        return fallback;
+      };
+      merged.followMouseWidth = legacySize(source.followMouseWidth, source.followMouseRadius, source.followMouseRangeX, 240);
+      merged.followMouseHeight = legacySize(source.followMouseHeight, source.followMouseRadius, source.followMouseRangeY, 240);
       merged.followMouseDead = clampNumber(merged.followMouseDead, 0, 0.9, 0);
       merged.followMouseSmooth = clampNumber(merged.followMouseSmooth, 0, 2000, 120);
       merged.followMouseAxisX = source.followMouseAxisX !== false;
@@ -373,6 +404,14 @@ export function readBehaviour(script: string): Behaviour {
       merged.flickerStyle = merged.flickerStyle === "noise" ? "noise" : "sine";
       merged.flickerAmplitude = clampNumber(merged.flickerAmplitude, 0, 1, 0);
       merged.flickerSpeed = clampNumber(merged.flickerSpeed, 0.05, 30, 2.5);
+      // Имена модулей речи и моргания: та же проверка, что у мыши. Битое имя
+      // стало бы текстом скрипта, поэтому оно превращается в пустое — тогда
+      // речевые формулы просто не пишутся.
+      const moduleName = (value: unknown): string => (
+        typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim()) ? value.trim() : ""
+      );
+      merged.voiceModule = moduleName(source.voiceModule);
+      merged.eyeModule = moduleName(source.eyeModule);
       // Пресеты: битые записи (старые пресеты, ручная правка JSON) отбрасываем,
       // иначе генератор написал бы в скрипт бессмысленное условие.
       merged.presets = Array.isArray(source.presets)
@@ -386,7 +425,19 @@ export function readBehaviour(script: string): Behaviour {
           names: rule.names.filter((name) => typeof name === "string" && !!name),
         }))
         : [];
-      return merged;
+      /**
+       * В блок уходят только известные ключи и в порядке `DEFAULT_BEHAVIOUR`.
+       *
+       * Иначе старые поля (`followMouseRadius`, `rotationalDrag`) оставались бы
+       * в JSON навсегда: `merge` их сохраняет, а панель уже не знает. Блок —
+       * это паспорт настроек, и он должен читаться без сюрпризов.
+       */
+      const known = { ...DEFAULT_BEHAVIOUR } as Behaviour;
+      const writable = known as unknown as Record<string, unknown>;
+      for (const key of Object.keys(known) as Array<keyof Behaviour>) {
+        writable[key] = merged[key];
+      }
+      return known;
     } catch {
       break;
     }
@@ -400,6 +451,21 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   const seed = seedOf(object.id);
   const scale = hasParent ? "inherit" : "1";
   const body: string[] = [];
+
+  /**
+   * Речь и моргание — только через модуль.
+   *
+   * Вкладка «Поведение» показывает поля речи, лишь когда в пресете есть
+   * микрофон, и запоминает его имя. Здесь это имя превращается во вход
+   * (`mic.speak`, `voice_2.speak`). Нет модуля — нет и формул: иначе ядро
+   * получило бы ссылку на несуществующий вход, а объект — «поведение»,
+   * которое ничего не делает. Настройки при этом никуда не деваются: они
+   * лежат в JSON-блоке и оживают, когда модуль вернут.
+   */
+  const voice = behaviour.voiceModule.trim();
+  const eye = behaviour.eyeModule.trim();
+  const speak = voice ? `${voice}.speak` : null;
+  const talking = voice ? `(${voice}.talking > 0 or ${voice}.speak > 0.05)` : null;
 
   /**
    * Покачивание одной оси. «Случайно» не подменяет синусоиду шумом: шум с
@@ -449,10 +515,14 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
    * области означает «стоять на месте»: смещение считается от 0.5 и
    * нормируется в −1…1. Дальше его ограничивает форма:
    *
-   * - **круг** — вектор смещения укорачивается до радиуса, поэтому объект
-   *   ходит по кругу, а не по квадрату;
+   * - **эллипс** — делим смещение на полуоси, получаем «насколько вышли за
+   *   край», и при выходе укорачиваем вектор до единичной окружности в этих
+   *   координатах. Объект обходит эллипс целиком, а не квадрат с углами;
    * - **прямоугольник** — свой предел по каждой оси, тогда можно разрешить
    *   движение только вбок.
+   *
+   * Ширина и высота — **полный размер** области, поэтому полуось — половина.
+   * Одна и та же цифра означает одно и то же в обеих формах.
    *
    * «Мёртвая зона» вырезает середину хода: объект стоит, пока курсор рядом с
    * центром области, и только потом начинает тянуться. Без неё мелкое дрожание
@@ -474,10 +544,10 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     if (!followOn) return null;
     const strength = Math.min(1, Math.max(0, behaviour.followMouseStrength));
     const dead = Math.min(0.9, Math.max(0, behaviour.followMouseDead));
-    const circle = behaviour.followMouseLimit !== "box";
-    const radius = Math.max(1, behaviour.followMouseRadius);
-    const rangeX = Math.max(1, behaviour.followMouseRangeX);
-    const rangeY = Math.max(1, behaviour.followMouseRangeY);
+    const ellipse = behaviour.followMouseLimit !== "rect";
+    // Полуоси: ширина и высота — полный размер области.
+    const halfW = Math.max(1, behaviour.followMouseWidth / 2);
+    const halfH = Math.max(1, behaviour.followMouseHeight / 2);
     /** Ход одной оси: −1…1, с мёртвой зоной и инверсией. */
     const travel = (axis: "x" | "y"): string => {
       const raw = `((${followModule}.${axis} - 0.5) * 2)`;
@@ -487,18 +557,22 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       // край области так и не давал бы полного смещения.
       return `sign(${signed}) * max(abs(${signed}) - ${num(dead)}, 0) / ${num(1 - dead)}`;
     };
-    let x = behaviour.followMouseAxisX ? `${travel("x")} * ${num(circle ? radius : rangeX)} * ${num(strength)}` : "0";
-    let y = behaviour.followMouseAxisY ? `${travel("y")} * ${num(circle ? radius : rangeY)} * ${num(strength)}` : "0";
-    if (circle) {
-      // Длина вектора и его укорачивание: круг честный, а не «квадрат с
-      // закруглёнными числами». Делитель защищён от нуля.
-      const length = `sqrt((${x}) * (${x}) + (${y}) * (${y}))`;
-      const scale = `min(1, ${num(radius)} / max(${length}, 0.0001))`;
+    let x = behaviour.followMouseAxisX ? `${travel("x")} * ${num(halfW)} * ${num(strength)}` : "0";
+    let y = behaviour.followMouseAxisY ? `${travel("y")} * ${num(halfH)} * ${num(strength)}` : "0";
+    if (ellipse) {
+      // Эллипс: смещение делится на полуоси, длина полученного вектора
+      // показывает, насколько вышли за край. Дальше он укорачивается до
+      // единицы — объект обходит эллипс, а не прямоугольник с углами.
+      // Делители защищены от нуля, поэтому выключенная ось ничего не ломает.
+      const nx = `((${x}) / ${num(halfW)})`;
+      const ny = `((${y}) / ${num(halfH)})`;
+      const length = `sqrt((${nx}) * (${nx}) + (${ny}) * (${ny}))`;
+      const scale = `min(1, 1 / max(${length}, 0.0001))`;
       x = `(${x}) * ${scale}`;
       y = `(${y}) * ${scale}`;
     } else {
-      x = `limit(${x}, ${num(-rangeX)}, ${num(rangeX)})`;
-      y = `limit(${y}, ${num(-rangeY)}, ${num(rangeY)})`;
+      x = `limit(${x}, ${num(-halfW)}, ${num(halfW)})`;
+      y = `limit(${y}, ${num(-halfH)}, ${num(halfH)})`;
     }
     const ms = Math.min(2000, Math.max(0, behaviour.followMouseSmooth));
     const wrap = (expression: string) => (ms > 0 ? `smooth(${expression}, ${num(ms)})` : expression);
@@ -545,15 +619,15 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   }
   if (position || wiggleY || bounce || follow?.y) {
     const parts = [target("y")];
-    if (bounce) {
+    if (bounce && speak) {
       // Скорость подъёма задаётся отдельно от фильтра позиции, поэтому
       // «резкий прыжок при вязком следовании» — рабочая комбинация.
-      const rise = `smooth(mic.speak, ${num(behaviour.bounceSpeed)})`;
+      const rise = `smooth(${speak}, ${num(behaviour.bounceSpeed)})`;
       // Один прыжок — это импульс: быстрый фронт минус медленный спад. Разница
       // гаснет, даже если речь не кончилась, а в тишине оба слагаемых уходят в
       // ноль, и следующий всплеск речи снова даёт прыжок.
       const shape = behaviour.bounceOnce
-        ? `max(${rise} - smooth(mic.speak, ${num(Math.max(behaviour.bounceHold, behaviour.bounceSpeed))}), 0)`
+        ? `max(${rise} - smooth(${speak}, ${num(Math.max(behaviour.bounceHold, behaviour.bounceSpeed))}), 0)`
         : rise;
       const hop = `${shape} * ${num(behaviour.bounce)}`;
       // Если внешнего фильтра нет, подпрыгивание сглаживает собственная пружина:
@@ -564,7 +638,8 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     body.push(`y = ${filtered(parts.join(" "))}`);
   }
 
-  const drag = behaviour.dragAngle > 0;
+  // Доворот от речи без микрофона не на что опереть: поля нет — формулы нет.
+  const drag = behaviour.dragAngle > 0 && speak !== null;
   const rotFilter = behaviour.rotationSmooth > 0 || behaviour.rotationSpring > 0;
   const heavy = heavyAngle(object.pivot);
   const physical = behaviour.physRotation !== null && heavy !== null;
@@ -594,7 +669,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       ? `rnd(${phrase} + ${seed + 4}, 0, ${num(behaviour.dragAngle)})`
       : num(behaviour.dragAngle)
   } * ${dragDirection()}`;
-  const dragPush = `mic.speak * ${dragAmount}`;
+  const dragPush = `${speak} * ${dragAmount}`;
   const followTurn = follow?.rotation ?? null;
   const deviation = [drag ? dragPush : null, wiggleRot, followTurn].filter(Boolean) as string[];
 
@@ -638,7 +713,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       // Импульс: быстрый фронт минус медленный спад. Постоянного давления нет,
       // поэтому мотор всё время возвращает объект к покою, а толчок задаёт
       // качание — то, ради чего физика и включается.
-      const kick = `max(smooth(mic.speak, 60) - smooth(mic.speak, ${num(behaviour.dragImpulse)}), 0)`;
+      const kick = `max(smooth(${speak}, 60) - smooth(${speak}, ${num(behaviour.dragImpulse)}), 0)`;
       // Импульс не должен быть сильнее сустава: при почти нулевом затухании
       // толчок больше допуска залипает на упоре и дребезжит между сторонами.
       // Ноль с одной стороны — честный запрет: толкаем только в разрешённую.
@@ -688,13 +763,13 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   };
   const scaledX = sizeBase(behaviour.scaleX);
   const scaledY = sizeBase(behaviour.scaleY);
-  if (behaviour.squash !== 0) {
+  if (behaviour.squash !== 0 && speak) {
     // Отдельной переменной в скрипте объекта быть не может (имя слева — это
     // параметр), поэтому прошлое значение сквоша берём из `state.sizeY`:
     // sizeY = база * (1 + s), значит s_prev = state.sizeY - база. Сравниваем
     // модули: сквош бывает отрицательным, и тогда «рост» цели означает
     // уменьшение sizeY.
-    const value = `mic.speak * ${num(behaviour.squash)}`;
+    const value = `${speak} * ${num(behaviour.squash)}`;
     const past = `abs(state.sizeY - (${scaledY}))`;
     const timing = `abs(${value}) * (${scaledY}) > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}`;
     const ratio = behaviour.scaleX / behaviour.scaleY;
@@ -709,11 +784,10 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   }
 
   const rules: string[] = [];
-  const talking = "(mic.talking > 0 or mic.speak > 0.05)";
-  if (behaviour.mouth === "open") rules.push(`${talking} ? 1 : 0`);
-  if (behaviour.mouth === "closed") rules.push(`${talking} ? 0 : 1`);
-  if (behaviour.eye === "open") rules.push("1 - auto.blink");
-  if (behaviour.eye === "closed") rules.push("auto.blink");
+  if (talking && behaviour.mouth === "open") rules.push(`${talking} ? 1 : 0`);
+  if (talking && behaviour.mouth === "closed") rules.push(`${talking} ? 0 : 1`);
+  if (eye && behaviour.eye === "open") rules.push(`1 - ${eye}.blink`);
+  if (eye && behaviour.eye === "closed") rules.push(`${eye}.blink`);
   // Пресеты: «виден только при» и «виден при всех, кроме». Пустой список —
   // это «без ограничения», поэтому условие не пишется вовсе: иначе объект
   // исчез бы у всех, кто просто добавил пресеты.

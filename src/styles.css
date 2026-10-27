@@ -400,6 +400,20 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 /* Предупреждение в настройках поведения: модуль убрали, а формулы остались. */
 .behaviour-warning { color: #d8a878; }
 .behaviour-warning code { color: #cfd8de; font-size: 10px; }
+
+/*
+ * Предупреждение о пропавшем модуле: строка на всю панель с крестиком.
+ * Это не ошибка ввода, поэтому не красный, а тёплый фон — как у замечания.
+ */
+.behaviour-banner {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 0 8px; padding: 7px 8px;
+  border: 1px solid #3d3428; border-radius: 6px;
+  background: #241f19; color: #cdb491;
+}
+.behaviour-banner p { margin: 0; font-size: 10.5px; line-height: 1.45; }
+.behaviour-banner b { color: #e8cfa6; font-weight: 650; }
+.behaviour-banner .icon-button { flex: 0 0 auto; margin-left: auto; color: #9a8669; }
 /* Настройки текста во вкладке «Поведение»: те же поля, что в инспекторе. */
 .behaviour-text-section .text-property { margin-bottom: 6px; }
 .behaviour-text-source { width: 100%; margin-bottom: 8px; }
@@ -443,6 +457,12 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .segmented.small button { min-width: 25px; }
 /* Четыре режима направления не влезают в строку — переносим и ужимаем. */
 .segmented.dense { flex-wrap: wrap; justify-content: flex-end; gap: 2px; max-width: 62%; }
+/*
+ * Переключатель, который стоит отдельной строкой: рамка по кнопкам, а не на
+ * всю ширину панели. Широкая плашка с двумя маленькими кнопками внутри
+ * выглядела как пустое поле, которое надо заполнить.
+ */
+.segmented.inline { align-self: flex-start; width: max-content; max-width: 100%; justify-content: flex-start; margin-bottom: 7px; }
 .segmented.dense button { padding: 3px 5px; font-size: 10.5px; min-width: 0; }
 .signal-dot { width: 6px; height: 6px; border-radius: 50%; background: #414850; }
 .signal-dot.on { background: var(--accent); box-shadow: 0 0 7px #82d5c155; }

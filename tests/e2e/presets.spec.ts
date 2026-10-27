@@ -152,7 +152,8 @@ test("поведение: условие по пресетам дописыва�
     id: "coat", name: "Куртка", kind: "sprite", enabled: true, image: null, parentId: null,
     pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE }, script: "", width: 100, height: 100,
   };
-  const only = { ...DEFAULT_BEHAVIOUR, mouth: "open" as const, presets: [{
+  // Рот пишется только вместе с модулем: имя модуля — часть условия.
+  const only = { ...DEFAULT_BEHAVIOUR, voiceModule: "mic", mouth: "open" as const, presets: [{
     module: "presets_1", variable: "preset", mode: "only" as const, names: ["summer", "winter"],
   }] };
   const block = behaviourBlock(only, object);
@@ -180,20 +181,27 @@ test("поведение: следование за мышью с огранич
   // Без имени модуля формулы нет: вход `mouse.x` существует только с модулем.
   expect(behaviourBlock(DEFAULT_BEHAVIOUR, object)).not.toContain("mouse.");
 
-  const circle = { ...DEFAULT_BEHAVIOUR, followMouseModule: "mouse", followMouseRadius: 100, followMouseSmooth: 0 };
-  const circleBlock = behaviourBlock(circle, object);
-  // Круг: длина вектора укорачивается до радиуса, а не режется по осям.
-  expect(circleBlock).toContain("sqrt(");
-  expect(circleBlock).toContain("min(1, 100 / max(");
-  expect(circleBlock).toContain("mouse.x");
-  expect(circleBlock).toContain("mouse.y");
+  // Эллипс шириной и высотой 200: полуоси по 100, ход ±100.
+  const ellipse = { ...DEFAULT_BEHAVIOUR, followMouseModule: "mouse", followMouseWidth: 200, followMouseHeight: 200, followMouseSmooth: 0 };
+  const ellipseBlock = behaviourBlock(ellipse, object);
+  expect(ellipseBlock).toContain("sqrt(");
+  expect(ellipseBlock).toContain("* 100 * 1");
+  // Нормировка на полуоси: «вышли за край» — это длина больше единицы.
+  expect(ellipseBlock).toContain("min(1, 1 / max(");
+  expect(ellipseBlock).toContain("mouse.x");
+  expect(ellipseBlock).toContain("mouse.y");
 
-  // Прямоугольник: свой предел по каждой оси.
-  const box = { ...circle, followMouseLimit: "box" as const, followMouseRangeX: 60, followMouseRangeY: 20 };
+  // Разные полуоси: эллипс, а не круг — по X шире, чем по Y.
+  const wide = behaviourBlock({ ...ellipse, followMouseWidth: 400, followMouseHeight: 100 }, object);
+  expect(wide).toContain("* 200 * 1");
+  expect(wide).toContain("* 50 * 1");
+
+  // Прямоугольник: свой предел по каждой оси, тоже полуразмах.
+  const box = { ...ellipse, followMouseLimit: "rect" as const, followMouseWidth: 120, followMouseHeight: 40 };
   const boxBlock = behaviourBlock(box, object);
   expect(boxBlock).toContain("limit(");
-  expect(boxBlock).toContain("60");
-  expect(boxBlock).toContain("20");
+  expect(boxBlock).toContain("-60, 60");
+  expect(boxBlock).toContain("-20, 20");
   expect(boxBlock).not.toContain("sqrt(");
 
   // Одна ось: по второй объект не двигается вовсе.
@@ -201,22 +209,36 @@ test("поведение: следование за мышью с огранич
   expect(behaviourBlock(onlyX, object)).not.toContain("mouse.y");
 
   // Мёртвая зона растягивает остаток хода: край области по-прежнему даёт предел.
-  const dead = { ...circle, followMouseDead: 0.5 };
+  const dead = { ...ellipse, followMouseDead: 0.5 };
   expect(behaviourBlock(dead, object)).toContain("max(abs(");
   expect(behaviourBlock(dead, object)).toContain("/ 0.5");
 
   // Инверсия меняет знак хода.
-  expect(behaviourBlock({ ...circle, followMouseInvert: true }, object)).toContain("(-((");
+  expect(behaviourBlock({ ...ellipse, followMouseInvert: true }, object)).toContain("(-((");
 
   // Сглаживание — снаружи смещения.
-  expect(behaviourBlock({ ...circle, followMouseSmooth: 90 }, object)).toContain("smooth(");
+  expect(behaviourBlock({ ...ellipse, followMouseSmooth: 90 }, object)).toContain("smooth(");
 
   // Настройки переживают запись и чтение блока.
   const written = writeBehaviour(object.script, dead, object).script;
   const back = readBehaviour(written);
   expect(back.followMouseModule).toBe("mouse");
-  expect(back.followMouseRadius).toBe(100);
+  expect(back.followMouseWidth).toBe(200);
+  expect(back.followMouseHeight).toBe(200);
   expect(back.followMouseDead).toBe(0.5);
   // Битое имя модуля не превращается в текст скрипта.
   expect(readBehaviour(`// @behaviour {"followMouseModule":"мышь"}`).followMouseModule).toBe("");
+
+  // Старые пресеты: `circle`/`radius` читаются как эллипс с тем же числом,
+  // `box`/`rangeX` — как прямоугольник. Числа не пересчитываются: смысл стал
+  // «полный размер», поэтому ход у готового объекта вдвое меньше.
+  const legacyCircle = readBehaviour(`// @behaviour {"followMouseModule":"mouse","followMouseLimit":"circle","followMouseRadius":100}`);
+  expect(legacyCircle.followMouseLimit).toBe("ellipse");
+  expect([legacyCircle.followMouseWidth, legacyCircle.followMouseHeight]).toEqual([100, 100]);
+  const legacyBox = readBehaviour(`// @behaviour {"followMouseModule":"mouse","followMouseLimit":"box","followMouseRangeX":60,"followMouseRangeY":20}`);
+  expect(legacyBox.followMouseLimit).toBe("rect");
+  expect([legacyBox.followMouseWidth, legacyBox.followMouseHeight]).toEqual([60, 20]);
+  // Старые ключи не остаются в блоке: запись идёт по известным полям.
+  expect(written).not.toContain("followMouseRadius");
+  expect(written).not.toContain("followMouseRangeX");
 });
