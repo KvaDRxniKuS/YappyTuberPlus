@@ -13,9 +13,9 @@ import {
 } from "./engine/presetCheck";
 import { buildInfoLine, buildInfoMessage, loadBuildInfo, type BuildInfo } from "./engine/buildInfo";
 import {
-  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, manifestBaseUrl, skippedUpdate, skipUpdate,
-  updateChannel,
-  updateIssues, updateVerdict, type UpdateChannel, type UpdateManifest,
+  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, manifestBaseUrl, planUpdate, skipKey,
+  skippedUpdate, skipUpdate, updateChannel,
+  updateIssues, type UpdateChannel, type FilesDiff, type UpdateManifest, type UpdatePlanKind,
 } from "./engine/update";
 import { TreePanel } from "./components/TreePanel";
 import { Scene, type SceneTool } from "./components/Scene";
@@ -192,6 +192,8 @@ export default function App() {
   const [updateOffer, setUpdateOffer] = useState<
     {
       manifest: UpdateManifest; /** адрес паспорта: от него считается папка файлов */ base: string;
+      /** `newer` — новая версия, `refresh` — та же версия, другие файлы. */
+      kind: UpdatePlanKind; diff: FilesDiff;
       issues: CompatibilityIssue[]; channel: UpdateChannel;
     } | null
   >(null);
@@ -341,24 +343,28 @@ export default function App() {
       return;
     }
     const { manifest, url } = source;
-    const local = buildInfoRef.current?.version ?? versionString();
-    const verdict = updateVerdict(local, manifest.version);
-    if (verdict !== "newer") {
+    const local = buildInfoRef.current;
+    const plan = planUpdate(local, manifest, versionString());
+    if (plan.kind !== "newer" && plan.kind !== "refresh") {
       if (manual) {
-        notify(verdict === "none"
+        notify(plan.kind === "none"
           ? "Установлена последняя версия"
-          : verdict === "older"
-            ? `В репозитории сборка ${manifest.version} старше вашей (${local})`
-            : "Слои версий разъехались: обновление не предлагаю, разбираться нужно руками",
+          : plan.kind === "older"
+            ? `В репозитории сборка ${manifest.version} старше вашей (${local?.version ?? versionString()})`
+            : plan.kind === "unknown"
+              ? "Не удалось разобрать номер версии в репозитории"
+              : "Слои версий разъехались: обновление не предлагаю, разбираться нужно руками",
         7000);
       }
       return;
     }
-    if (!manual && skippedUpdate() === manifest.version) return;
+    if (!manual && skippedUpdate() === skipKey(manifest)) return;
     const channel = await updateChannel();
     setUpdateOffer({
       manifest,
       base: manifestBaseUrl(url),
+      kind: plan.kind,
+      diff: plan.diff,
       issues: updateIssues(manifest, presetRef.current, acceptsFromRef.current ?? 1),
       channel,
     });
@@ -1521,13 +1527,16 @@ export default function App() {
       />}
       {updateOffer && <UpdateDialog
         manifest={updateOffer.manifest}
+        refresh={updateOffer.kind === "refresh"}
+        changedFiles={[...updateOffer.diff.changed, ...updateOffer.diff.added]}
+        removedFiles={updateOffer.diff.removed}
         issues={updateOffer.issues}
         channel={updateOffer.channel}
         needsSave={!presetPath || savedPresetRef.current !== preset}
         onSave={async () => { await saveCurrent(); }}
         onInstall={installUpdate}
         onLater={() => setUpdateOffer(null)}
-        onSkipVersion={() => { skipUpdate(updateOffer.manifest.version); setUpdateOffer(null); }}
+        onSkipVersion={() => { skipUpdate(skipKey(updateOffer.manifest)); setUpdateOffer(null); }}
         onClose={() => setUpdateOffer(null)}
       />}
       {incompatible && <PresetIncompatibleDialog

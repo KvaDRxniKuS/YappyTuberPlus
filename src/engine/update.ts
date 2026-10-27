@@ -22,16 +22,11 @@
 import type { RigPreset } from "../types";
 import { PRESET_FORMAT, VERSION, parseVersion } from "../version";
 import { needsReport } from "./coreFeatures";
-import type { BuildInfo } from "./buildInfo";
+import type { BuildFile, BuildInfo } from "./buildInfo";
 import type { CompatibilityIssue } from "./presetCheck";
 
 /** Файл опубликованной сборки: что скачивать и чем проверять. */
-export interface UpdateFile {
-  /** Путь относительно папки сборки. */
-  path: string;
-  size: number;
-  sha256: string;
-}
+export type UpdateFile = BuildFile;
 
 /**
  * Паспорт опубликованной сборки: `build.json` из папки `dist`.
@@ -46,15 +41,8 @@ export interface UpdateManifest extends BuildInfo {
   bridge?: number;
   modules?: number;
   shell?: number;
-  packaging?: string;
-  /** Поколение формата самого манифеста. */
-  schema?: number;
   /** Старейшее поколение сценариев, которое понимает ядро этой сборки. */
   acceptsFrom?: number;
-  /** Все файлы папки. */
-  files?: UpdateFile[];
-  /** Собранное приложение, если оно лежит в папке (для нативного обновления). */
-  app?: UpdateFile;
 }
 
 /**
@@ -109,6 +97,79 @@ export function updateVerdict(localVersion: string | null, remoteVersion: string
   if (diffs.every((diff) => diff >= 0)) return "newer";
   if (diffs.every((diff) => diff <= 0)) return "older";
   return "mixed";
+}
+
+/** Чем отличается состав папки: по файлам, а не по номерам. */
+export interface FilesDiff {
+  /** Есть в опубликованной, нет в этой. */
+  added: string[];
+  /** Была здесь, пропала в опубликованной. */
+  removed: string[];
+  /** Есть в обеих, но содержимое разное. */
+  changed: string[];
+  /** Сколько всего путей задето. */
+  total: number;
+}
+
+/**
+ * Сверка состава папок по отпечаткам.
+ *
+ * Номера версий не всё видят: багфикс ядра без нового поколения оставляет ту же
+ * строку `1.0.21.3.1.1.1`, а файлы при этом другие. Обе стороны несут `files[]`
+ * со `sha256` — сравнение списков и есть сравнение по хешам, без скачивания.
+ * Отсутствующий список (старый паспорт или `npm run dev`) даёт пустую разницу:
+ * ругаться на то, чего нет, незачем.
+ */
+export function filesDiff(local?: BuildFile[], remote?: BuildFile[]): FilesDiff {
+  const empty: FilesDiff = { added: [], removed: [], changed: [], total: 0 };
+  if (!local?.length || !remote?.length) return empty;
+  const before = new Map(local.map((file) => [file.path, file.sha256]));
+  const after = new Map(remote.map((file) => [file.path, file.sha256]));
+  const added = [...after.keys()].filter((path) => !before.has(path)).sort();
+  const removed = [...before.keys()].filter((path) => !after.has(path)).sort();
+  const changed = [...after.keys()]
+    .filter((path) => before.has(path) && before.get(path) !== after.get(path))
+    .sort();
+  return { added, removed, changed, total: added.length + removed.length + changed.length };
+}
+
+/** Что предлагает проверка обновления. */
+export type UpdatePlanKind = UpdateVerdict | "refresh";
+
+export interface UpdatePlan {
+  kind: UpdatePlanKind;
+  /** Файлы, которые приедут: заполняется для `refresh`. */
+  diff: FilesDiff;
+}
+
+/**
+ * Что делать с найденной сборкой.
+ *
+ * Номера вперёд: если они выросли — обычное обновление. Если совпали, но
+ * опубликованные файлы другие и собраны позже — это пересборка того же
+ * поколения (`refresh`), её тоже надо показать: иначе багфикс ядра просто не
+ * доедет до тех, у кого уже стоит этот номер.
+ */
+export function planUpdate(
+  local: BuildInfo | null,
+  remote: UpdateManifest,
+  fallbackVersion: string,
+): UpdatePlan {
+  const empty = filesDiff();
+  const verdict = updateVerdict(local?.version ?? fallbackVersion, remote.version);
+  if (verdict !== "none") return { kind: verdict, diff: empty };
+  const diff = filesDiff(local?.files, remote.files);
+  if (!diff.total) return { kind: "none", diff };
+  return { kind: remoteIsNewerBuild(local, remote) ? "refresh" : "none", diff };
+}
+
+/** Опубликованная папка собрана позже этой? Неизвестное время — не повод молчать. */
+function remoteIsNewerBuild(local: BuildInfo | null, remote: UpdateManifest): boolean {
+  const mine = local?.builtAt ? Date.parse(local.builtAt) : NaN;
+  const theirs = remote.builtAt ? Date.parse(remote.builtAt) : NaN;
+  if (Number.isNaN(theirs)) return false;
+  if (Number.isNaN(mine)) return true;
+  return theirs > mine;
 }
 
 /** Папка, из которой берутся файлы: адрес манифеста без имени файла. */
@@ -351,6 +412,16 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
   }
   return btoa(binary);
+}
+
+/**
+ * Ключ пропуска: версия плюс коммит.
+ *
+ * Пересборка с тем же номером — другой коммит, и спросить о ней стоит снова;
+ * иначе «пропустить версию» навсегда скрыло бы и багфикс.
+ */
+export function skipKey(manifest: UpdateManifest): string {
+  return manifest.commit ? `${manifest.version}@${manifest.commit}` : manifest.version;
 }
 
 /** Версия, которую пользователь попросил больше не предлагать. */

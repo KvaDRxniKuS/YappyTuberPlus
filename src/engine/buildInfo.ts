@@ -13,6 +13,15 @@
  */
 import { SLOT_INFO, SLOT_ORDER, VERSION, parseVersion, type VersionSlot } from "../version";
 
+/** Файл папки сборки: что лежит рядом с `index.html` и чем он проверяется. */
+export interface BuildFile {
+  /** Путь относительно папки сборки. */
+  path: string;
+  size: number;
+  /** SHA-256 содержимого: по нему приложение понимает, тот ли это файл. */
+  sha256: string;
+}
+
 export interface BuildInfo {
   /** Машинная запись: `1.0.21.3.1.1.1`. */
   version: string;
@@ -24,6 +33,13 @@ export interface BuildInfo {
   commit?: string | null;
   /** Поколение самого формата `build.json`. */
   schema?: number;
+  /**
+   * Состав папки с размерами и отпечатками. По нему видно, что папка в
+   * репозитории отличается от этой — даже когда номер версии тот же.
+   */
+  files?: BuildFile[];
+  /** Собранное приложение, если оно лежало в папке (для нативного обновления). */
+  app?: BuildFile;
 }
 
 /** Читает паспорт папки; `null` — файла нет (разработка) или он нечитаем. */

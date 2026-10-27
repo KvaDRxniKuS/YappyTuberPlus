@@ -11,8 +11,8 @@
   "version": "1.0.21.3.1.1.1",
   "acceptsFrom": 16,
   "packaging": "1.0.0",
-  "builtAt": "2026-10-27T19:39:17.223Z",
-  "commit": "ac9d22f",
+  "builtAt": "2026-10-27T20:30:10.368Z",
+  "commit": "0290eca",
   "schema": 1,
   "files": [
     {
@@ -91,9 +91,9 @@
       "sha256": "e85c6bdc958741bdb61b10c5634639d1e518a1686ae7642112803b26e0919291"
     },
     {
-      "path": "assets/studio-DT68f1eJ.js",
-      "size": 748347,
-      "sha256": "40dd0e397f9828c405c1d23b820227435f5c7371669c518fcef76b5c6361139f"
+      "path": "assets/studio-C97tDRjw.js",
+      "size": 750391,
+      "sha256": "86435e90aed860ba3f4580d937329a6b508aa23937a0be0a398695899be0b3c8"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "1addbfa0423c6b33b330bfa16b3d7f1a3ba39f34c6791a2d3db4a10315a553db"
+      "sha256": "8c419bd8cf750f8de03793ce7f3579d12200bce047291eaa30bf939345e3eac9"
     },
     {
       "path": "modules/autoblink.json",

@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { DEFAULT_BASE, type RigPreset } from "../../src/types";
 import {
-  fetchUpdateManifest, skippedUpdate, skipUpdate, updateIssues, updateSummary, updateVerdict,
-  type UpdateManifest,
+  fetchUpdateManifest, filesDiff, planUpdate, skipKey, skippedUpdate, skipUpdate, updateIssues,
+  updateSummary, updateVerdict, type UpdateManifest,
 } from "../../src/engine/update";
 import { VERSION, versionString } from "../../src/version";
 
@@ -118,6 +118,80 @@ test("совместимость: сцена и граница ядра дают
   expect(updateIssues(raised, null, ACCEPTS_FROM)).toHaveLength(0);
 });
 
+test("состав папки сравнивается по отпечаткам", () => {
+  const before = [
+    { path: "index.html", size: 10, sha256: "aa" },
+    { path: "rig_core.wasm", size: 20, sha256: "bb" },
+    { path: "modules/index.json", size: 5, sha256: "cc" },
+  ];
+  const after = [
+    { path: "index.html", size: 10, sha256: "aa" },
+    // Пересобранное ядро: тот же путь, другой отпечаток.
+    { path: "rig_core.wasm", size: 21, sha256: "dd" },
+    { path: "assets/new.js", size: 7, sha256: "ee" },
+  ];
+  const diff = filesDiff(before, after);
+  expect(diff.changed).toEqual(["rig_core.wasm"]);
+  expect(diff.added).toEqual(["assets/new.js"]);
+  expect(diff.removed).toEqual(["modules/index.json"]);
+  expect(diff.total).toBe(3);
+
+  // Одинаковые списки и отсутствие списка — не повод что-то предлагать.
+  expect(filesDiff(before, before).total).toBe(0);
+  expect(filesDiff(undefined, after).total).toBe(0);
+});
+
+test("план обновления: новые числа, пересборка того же номера и тишина", () => {
+  const local = {
+    version: "1.0.21.3.1.1.1",
+    builtAt: "2026-01-01T00:00:00.000Z",
+    files: [
+      { path: "index.html", size: 10, sha256: "aa" },
+      { path: "rig_core.wasm", size: 20, sha256: "bb" },
+    ],
+  };
+  // Числа выросли — обычное обновление.
+  const newer = manifest({ version: "1.0.22.3.1.1.1", core: 22 });
+  expect(planUpdate(local, newer, local.version).kind).toBe("newer");
+
+  // Числа те же, файлы другие и собрано позже — пересборка.
+  const refresh = manifest({
+    version: local.version,
+    core: VERSION.core,
+    builtAt: "2026-02-01T00:00:00.000Z",
+    files: [
+      { path: "index.html", size: 10, sha256: "aa" },
+      { path: "rig_core.wasm", size: 20, sha256: "zz" },
+    ],
+  });
+  const plan = planUpdate(local, refresh, local.version);
+  expect(plan.kind).toBe("refresh");
+  expect(plan.diff.changed).toEqual(["rig_core.wasm"]);
+
+  // Те же числа, те же файлы — ничего.
+  const same = manifest({
+    version: local.version,
+    core: VERSION.core,
+    files: local.files,
+  });
+  expect(planUpdate(local, same, local.version).kind).toBe("none");
+
+  // Те же числа, но опубликованная папка собрана раньше — не предлагаем откат.
+  const older = manifest({
+    version: local.version,
+    core: VERSION.core,
+    builtAt: "2025-12-01T00:00:00.000Z",
+    files: [{ path: "index.html", size: 10, sha256: "aa" }],
+  });
+  expect(planUpdate(local, older, local.version).kind).toBe("none");
+});
+
+test("пропуск помнит версию вместе с коммитом", () => {
+  // Пересборка того же номера — другой коммит, о ней спросим снова.
+  expect(skipKey(manifest())).toBe("1.0.22.3.1.1.1@abc1234");
+  expect(skipKey(manifest({ commit: null }))).toBe("1.0.22.3.1.1.1");
+});
+
 test("паспорт без сети не ломает проверку", async () => {
   // Адрес заведомо недоступен: функция обязана вернуть null, а не упасть.
   const info = await fetchUpdateManifest("http://127.0.0.1:9/build.json", 500);
@@ -155,7 +229,7 @@ test("диалог: три кнопки, сохранение пресета и 
   await dialog.getByRole("button", { name: "Пропустить версию" }).click();
   await expect(dialog).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem("yappytuberplus.update.skip")))
-    .toBe("1.0.22.3.1.1.1");
+    .toBe("1.0.22.3.1.1.1@abc1234");
 
   // Ручная проверка пропуск игнорирует: попросили — показали.
   await page.locator(".status-check").click();

@@ -16,6 +16,7 @@
     "version:report": "node scripts/version-report.mjs",
     "build:info": "node scripts/build-version.mjs",
     "build:check": "node scripts/build-version.mjs --check",
+    "build:publish": "node scripts/publish-build.mjs",
     "update:agent": "node scripts/update-agent.mjs"
   },
   "dependencies": {

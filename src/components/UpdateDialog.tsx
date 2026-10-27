@@ -7,6 +7,15 @@ import { versionLabel } from "../version";
 
 interface UpdateDialogProps {
   manifest: UpdateManifest;
+  /**
+   * Та же версия, но файлы в репозитории другие: пересборка без нового
+   * поколения ядра (например, исправление внутри ядра).
+   */
+  refresh: boolean;
+  /** Появившиеся и изменённые файлы. */
+  changedFiles: string[];
+  /** Пропавшие файлы: их удалит обновление. */
+  removedFiles: string[];
   /** Что может не работать после обновления: пустой список — всё сочетается. */
   issues: CompatibilityIssue[];
   channel: UpdateChannel;
@@ -35,6 +44,9 @@ type Step = "offer" | "save" | "work" | "done";
  * установкой проверяется, сохранён ли пресет: обновление меняет сборку, и
  * терять несохранённую сцену из-за него не нужно.
  */
+/** Сколько путей показывать в списке: остальное — числом. */
+const FILE_ROWS = 8;
+
 export function UpdateDialog(props: UpdateDialogProps) {
   const [step, setStep] = useState<Step>("offer");
   const [message, setMessage] = useState<string | null>(null);
@@ -89,8 +101,10 @@ export function UpdateDialog(props: UpdateDialogProps) {
           <div className="dialog-title">
             <div className="dialog-icon"><ArrowDownToLine size={17} /></div>
             <div>
-              <span className="eyebrow">ДОСТУПНО ОБНОВЛЕНИЕ</span>
-              <h2>{step === "save" ? "Пресет не сохранён" : "Новая сборка"}</h2>
+              <span className="eyebrow">{props.refresh ? "ПАПКА В РЕПОЗИТОРИИ НОВЕЕ" : "ДОСТУПНО ОБНОВЛЕНИЕ"}</span>
+              <h2>{step === "save"
+                ? "Пресет не сохранён"
+                : props.refresh ? "Та же версия, но файлы новее" : "Новая сборка"}</h2>
             </div>
           </div>
           <button
@@ -112,6 +126,30 @@ export function UpdateDialog(props: UpdateDialogProps) {
               <span>{versionLabel()}</span>
             </li>
           </ul>
+
+          {props.refresh && (
+            <>
+              <p className="dialog-note">
+                Номер версии не изменился, а содержимое папки сборки — да: в
+                репозитории лежит пересборка этого же поколения. Сцена и пресеты
+                останутся на месте, заменятся только файлы программы.
+              </p>
+              {(props.changedFiles.length > 0 || props.removedFiles.length > 0) && (
+                <ul className="module-dialog-list">
+                  <li>
+                    <code>файлы</code>
+                    <span>
+                      {props.changedFiles.slice(0, FILE_ROWS).join(", ")}
+                      {props.changedFiles.length > FILE_ROWS
+                        ? ` и ещё ${props.changedFiles.length - FILE_ROWS}` : ""}
+                      {props.removedFiles.length
+                        ? ` · удалится: ${props.removedFiles.slice(0, FILE_ROWS).join(", ")}` : ""}
+                    </span>
+                  </li>
+                </ul>
+              )}
+            </>
+          )}
 
           {props.issues.length > 0 && (
             <>
