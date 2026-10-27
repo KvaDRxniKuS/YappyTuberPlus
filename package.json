@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "npm run build:wasm && tsc --noEmit && vite build",
+    "build": "npm run build:wasm && tsc --noEmit && vite build && node scripts/build-version.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "build:wasm": "node scripts/build-wasm.mjs",
     "test:rust": "cargo test -p rig-core",
@@ -13,7 +13,9 @@
     "test:e2e": "playwright test",
     "overlay:bridge": "node scripts/overlay-bridge.mjs",
     "test:engine": "node scripts/smoke-engine.mjs",
-    "version:report": "node scripts/version-report.mjs"
+    "version:report": "node scripts/version-report.mjs",
+    "build:info": "node scripts/build-version.mjs",
+    "build:check": "node scripts/build-version.mjs --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",

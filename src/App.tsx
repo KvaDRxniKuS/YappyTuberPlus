@@ -8,6 +8,8 @@ import {
   coreVerdict, modulesMessage, outdatedMessage, versionLabel, versionShort, versionString, versionTitle,
 } from "./version";
 import { needsReport } from "./engine/coreFeatures";
+import { IncompatiblePresetError, presetCompatibility, type CompatibilityReport } from "./engine/presetCheck";
+import { buildInfoLine, buildInfoMessage, loadBuildInfo, type BuildInfo } from "./engine/buildInfo";
 import { TreePanel } from "./components/TreePanel";
 import { Scene, type SceneTool } from "./components/Scene";
 import { Inspector } from "./components/Inspector";
@@ -16,6 +18,7 @@ import { Splitter } from "./components/Splitter";
 import { OverlayDialog } from "./components/OverlayDialog";
 import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { FilesDialog } from "./components/FilesDialog";
+import { PresetIncompatibleDialog } from "./components/PresetIncompatibleDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, groupSpot, isDescendant, makeGroup, makeLight, makeMedia, makeShape, makeSprite, makeText,
@@ -171,6 +174,12 @@ export default function App() {
   });
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  /** Несовместимый пресет: показываем списком, что именно не сойдётся. */
+  const [incompatible, setIncompatible] = useState<
+    { report: CompatibilityReport; fileName: string | null; opened: boolean } | null
+  >(null);
+  /** Паспорт собранной папки: `build.json` рядом с `index.html`. */
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
   const toastTimer = useRef<number | null>(null);
   const notify = useCallback((message: string, ms = 2600) => {
     setToast(message);
@@ -276,6 +285,18 @@ export default function App() {
     coreWarned.current = true;
     notify(coreNote);
   }, [coreNote, notify]);
+  // Паспорт собранной папки: в разработке файла нет, в сборке он рядом с
+  // index.html. Нужен, чтобы поймать смешанную папку (старое ядро + новый код).
+  const buildWarned = useRef(false);
+  useEffect(() => {
+    void loadBuildInfo().then((info) => {
+      setBuildInfo(info);
+      const message = buildInfoMessage(info);
+      if (!message || buildWarned.current) return;
+      buildWarned.current = true;
+      notify(message, 9000);
+    });
+  }, [notify]);
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const primaryId = selection.at(-1) ?? null;
   const selected = preset.objects.find((object) => object.id === primaryId) || null;
@@ -424,18 +445,35 @@ export default function App() {
         : "Оставлен текущий набор модулей");
   }, [pending, commit, notify]);
 
+  /**
+   * Отказ открыть пресет: несовместимую версию показываем диалогом со списком
+   * того, что может не работать, — тост для этого слишком короткий и исчезает.
+   */
+  const explainOpenError = useCallback((reason: unknown, fileName: string | null): boolean => {
+    if (reason instanceof IncompatiblePresetError) {
+      setIncompatible({ report: reason.report, fileName, opened: false });
+      return true;
+    }
+    return false;
+  }, []);
+
   const openFile = useCallback(async () => {
     if (!isTauri()) { presetInput.current?.click(); return; }
     try {
       const result = await openPresetFile();
       applyOpenedPreset(result.preset, result.path);
       notify(withMissing(`Открыт ${fileNameOf(result.path) || "пресет"}`, result.missing));
+      // Открылось, но записано другой сборкой: показываем, что может не работать.
+      if (result.report?.issues.length) {
+        setIncompatible({ report: result.report, fileName: fileNameOf(result.path), opened: true });
+      }
     } catch (reason) {
+      if (explainOpenError(reason, null)) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       if (!/отмен/i.test(message)) notify(message);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyOpenedPreset, notify]);
+  }, [applyOpenedPreset, notify, explainOpenError]);
 
   const togglePause = useCallback(() => {
     setStopped(false);
@@ -1009,13 +1047,20 @@ export default function App() {
   const importPreset = async (file: File | undefined) => {
     if (!file) return;
     try {
-      const parsed = normalizePreset(JSON.parse(await file.text()));
-      if (!parsed) throw new Error("Это не пресет YappyTuberPlus версии 2");
+      const raw: unknown = JSON.parse(await file.text());
+      const parsed = normalizePreset(raw);
+      if (!parsed) {
+        setIncompatible({ report: presetCompatibility(raw), fileName: file.name, opened: false });
+        return;
+      }
       // Файлы пресета распаковываются в хранилище: редактор работает со ссылками.
       const extracted = await externalizePreset(migrateDemoPreset(parsed));
       applyOpenedPreset(extracted.preset, null);
       notify("Пресет загружен из файла");
+      const report = presetCompatibility(raw);
+      if (report.issues.length) setIncompatible({ report, fileName: file.name, opened: true });
     } catch (reason) {
+      if (explainOpenError(reason, file.name)) return;
       notify(reason instanceof Error ? reason.message : "Ошибка загрузки пресета");
     }
   };
@@ -1344,7 +1389,8 @@ export default function App() {
               слоты — в подсказке, а клик копирует машинную запись целиком. */}
           <button
             className="status-version"
-            title={`${versionTitle()}\nСцена: ей нужно ядро ${sceneNeeds}`}
+            title={`${versionTitle()}\nСцена: ей нужно ядро ${sceneNeeds}`
+              + `${buildInfoLine(buildInfo) ? `\n${buildInfoLine(buildInfo)}` : ""}`}
             onClick={() => {
               void navigator.clipboard?.writeText(versionString())
                 .then(() => notify(`Скопировано: ${versionString()}`, 5000))
@@ -1371,6 +1417,12 @@ export default function App() {
         onApply={() => resolvePending("apply")}
         onKeep={() => resolvePending("keep")}
         onDisable={() => resolvePending("disable")}
+      />}
+      {incompatible && <PresetIncompatibleDialog
+        report={incompatible.report}
+        fileName={incompatible.fileName}
+        opened={incompatible.opened}
+        onClose={() => setIncompatible(null)}
       />}
       {filesOpen && <FilesDialog
         usedIds={usedAssetIds}

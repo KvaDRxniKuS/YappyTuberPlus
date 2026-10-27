@@ -1,5 +1,6 @@
 import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
+import { IncompatiblePresetError, presetCompatibility, type CompatibilityReport } from "./presetCheck";
 import { withBuildStamp } from "../version";
 import { needsCore } from "./coreFeatures";
 import {
@@ -48,6 +49,12 @@ export interface OpenResult {
   backend: FileBackendKind;
   /** Объекты, чьих файлов не оказалось ни в хранилище, ни в папке пресета. */
   missing: string[];
+  /**
+   * Чем файл расходится с редактором. Пустой список — файл свой, говорить
+   * нечего. Непустой при удачном открытии значит «открылось, но часть может
+   * не работать»: это показывается списком, а не плашкой.
+   */
+  report?: CompatibilityReport;
 }
 
 /** Паспорт файла из `index.json` папки пресета. */
@@ -235,13 +242,29 @@ export async function openPresetFile(): Promise<OpenResult> {
   // Файлы переезжают в хранилище webview: в редакторе остаются короткие ссылки.
   const extracted = await externalizePreset(parsed);
   const missing = await ensureAssetsOfPresetSettled(extracted.preset);
-  return { preset: extracted.preset, path, backend: "tauri", missing };
+  // Отчёт считается по исходному JSON, а не по нормализованному пресету:
+  // нормализация уже превратила незнакомый вид объекта в спрайт и подняла
+  // формат до текущего, и рассказывать о расхождении было бы нечего.
+  let report: CompatibilityReport | undefined;
+  try {
+    report = presetCompatibility(JSON.parse(text));
+  } catch {
+    report = undefined;
+  }
+  return { preset: extracted.preset, path, backend: "tauri", missing, report };
 }
 
 export function parsePreset(text: string): RigPreset {
-  const normalized = normalizePreset(JSON.parse(text));
-  if (!normalized) throw new Error("Это не пресет YappyTuberPlus версии 2");
-  return normalized;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error("Файл не читается: это не JSON пресета");
+  }
+  const normalized = normalizePreset(raw);
+  if (normalized) return normalized;
+  // Не просто «не открылось»: считаем, чем файл новее, и показываем списком.
+  throw new IncompatiblePresetError(presetCompatibility(raw));
 }
 
 /** Браузерный запасной путь — только для разработки. */
