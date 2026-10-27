@@ -109,6 +109,8 @@ export function useRigEngine(
     if (!backend) return;
     let active = true;
     let ownHandle: number | null = null;
+    // Счётчик кадров, пришедших в паузе: повод повторно погасить планировщик.
+    let strayFrames = 0;
     setStatus("loading");
     setError(null);
     const current = presetRef.current;
@@ -159,10 +161,22 @@ export function useRigEngine(
           inputsRef,
           fpsMode: () => presetRef.current.runtime.fpsMode,
           fpsLimit: () => presetRef.current.runtime.fpsLimit,
+          paused: () => pausedRef.current,
           onFrame: (frameResponse) => {
             const deliver = deliverRef.current;
             if (!deliver) return;
-            if (pausedRef.current) return;
+            if (pausedRef.current) {
+              // Кадр, пришедший в паузе, — признак того, что планировщик не
+              // встал (например, его пересоздали в «Стопе»). Гасим его ещё раз:
+              // иначе окно разбирает кадры, которые само же и отбрасывает, и
+              // жжёт процессор при неподвижной картинке.
+              if (strayFrames < 3) {
+                strayFrames += 1;
+                nativeRef.current?.pause(true);
+              }
+              return;
+            }
+            strayFrames = 0;
             deliver(frameResponse, performance.now());
           },
           onError: (message) => {

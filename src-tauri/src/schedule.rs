@@ -104,13 +104,18 @@ pub fn rig_schedule_start(
     inputs: Value,
     limited: bool,
     fps_limit: f64,
+    paused: Option<bool>,
 ) -> Result<Value, String> {
     let shared = state.inner().clone();
     {
         let mut inner = shared.inner.lock().map_err(|_| "планировщик занят".to_string())?;
         inner.handle = Some(handle);
         inner.inputs = inputs;
-        inner.paused = false;
+        // Паузу задаёт окно, и только оно. Раньше запуск всегда снимал её: после
+        // «Стопа» движок пересоздаётся, планировщик поднимался заново и мог
+        // остаться работать при стоящем интерфейсе — окно разбирало кадры,
+        // которые само же и отбрасывало, и жгло процессор впустую.
+        inner.paused = paused.unwrap_or(inner.paused);
         inner.reset_clock = true;
         inner.interval = Shared::interval_for(limited, fps_limit);
     }
@@ -212,8 +217,10 @@ fn run(app: AppHandle, shared: Arc<Shared>) {
             continue;
         };
         if paused {
+            // В паузе поток только проверяет флаг: редких пробуждений хватает,
+            // а частые грели бы процессор при неподвижном риге.
             next_due = Instant::now();
-            thread::sleep(Duration::from_millis(8));
+            thread::sleep(Duration::from_millis(25));
             continue;
         }
 

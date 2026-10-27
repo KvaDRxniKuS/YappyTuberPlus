@@ -24,6 +24,8 @@ export interface NativeScheduleOptions {
   inputsRef: { current: InputValues };
   fpsMode: () => "limited" | "display";
   fpsLimit: () => number;
+  /** Пауза на момент запуска: движок пересоздают и в паузе (например, «Стоп»). */
+  paused: () => boolean;
   onFrame: (response: EngineResponse) => void;
   onError: (message: string) => void;
 }
@@ -107,7 +109,7 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
   let disposed = false;
   let unlisten: (() => void) | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
-  let paused = false;
+  let paused = options.paused();
   // Частота экрана для режима «Экран»: измеряем один раз на запуск.
   const displayHz = options.fpsMode() === "display" ? await measureDisplayHz() : 60;
   const rate = () => options.fpsMode() === "display"
@@ -134,6 +136,9 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
       inputs: snapshot(),
       limited: initial.limited,
       fpsLimit: initial.fpsLimit,
+      // Планировщик сразу знает про паузу: иначе он начинал считать кадры, а
+      // окно их отбрасывало — окно в паузе разбирало кадры вхолостую.
+      paused,
     });
   } catch (error) {
     unlisten?.();
@@ -145,7 +150,8 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
     if (disposed) return;
     void invoke("rig_schedule_inputs", { inputs: snapshot() }).catch(() => undefined);
   };
-  timer = setInterval(push, INPUT_INTERVAL_MS);
+  // Кадров нет — входы никому не нужны: таймер заводится на продолжении.
+  if (!paused) timer = setInterval(push, INPUT_INTERVAL_MS);
 
   return {
     pause(next: boolean) {
@@ -172,6 +178,9 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
         inputs: snapshot(),
         limited: next.limited,
         fpsLimit: next.fpsLimit,
+        // Пауза едет вместе с настройками: смена лимита FPS не должна
+        // «продолжать» остановленный движок.
+        paused,
       }).catch((error: unknown) => options.onError(reason(error)));
     },
     resetClock() {
