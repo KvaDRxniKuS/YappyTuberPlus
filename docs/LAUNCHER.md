@@ -135,6 +135,10 @@ chmod +x start-yappytuber.sh
 - `GET http://127.0.0.1:17802/health` → `{ "ok": true, "folder": "…/dist", "version": "1.0.21.3.1.1.1" }`
 - `POST /apply` с телом `{ "manifest": "https://raw.githubusercontent.com/…/dist/build.json" }`
 
+Разрешены только паспорта этого репозитория с любой ветки:
+`https://raw.githubusercontent.com/KvaDRxniKuS/YappyTuberPlus/<ветка>/dist/build.json`
+(и адрес из `UPDATE_MANIFEST`, если он задан). Всё остальное — отказ.
+
 Порядок работы агента: скачать паспорт → проверить, что он с разрешённого адреса →
 скачать **все** файлы и сверить каждый с `sha256` из паспорта → только после этого
 записать их в папку и обновить `build.json`. Недокачанное обновление не попадает
@@ -151,7 +155,7 @@ chmod +x start-yappytuber.sh
 | `UPDATE_FOLDER` | `dist` | папка, которую можно заменять |
 | `UPDATE_AGENT_PORT` | `17802` | порт агента |
 | `UPDATE_AGENT_HOST` | `127.0.0.1` | адрес прослушивания |
-| `UPDATE_MANIFEST` | паспорт `dist` этого репозитория | единственный разрешённый источник |
+| `UPDATE_MANIFEST` | — | дополнительный разрешённый адрес паспорта (свой сервер, локальная проверка) |
 
 Выключить агент можно флагом `--no-update` (`start-yappytuber.bat --no-update`).
 Тогда обновление папки сделает сам лаунчер при следующем запуске: он тянет

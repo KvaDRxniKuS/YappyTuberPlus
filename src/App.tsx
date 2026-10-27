@@ -13,7 +13,8 @@ import {
 } from "./engine/presetCheck";
 import { buildInfoLine, buildInfoMessage, loadBuildInfo, type BuildInfo } from "./engine/buildInfo";
 import {
-  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, skippedUpdate, skipUpdate, updateChannel,
+  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, manifestBaseUrl, skippedUpdate, skipUpdate,
+  updateChannel,
   updateIssues, updateVerdict, type UpdateChannel, type UpdateManifest,
 } from "./engine/update";
 import { TreePanel } from "./components/TreePanel";
@@ -189,7 +190,10 @@ export default function App() {
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
   /** Предложение обновления: версия, список расхождений и способ установки. */
   const [updateOffer, setUpdateOffer] = useState<
-    { manifest: UpdateManifest; issues: CompatibilityIssue[]; channel: UpdateChannel } | null
+    {
+      manifest: UpdateManifest; /** адрес паспорта: от него считается папка файлов */ base: string;
+      issues: CompatibilityIssue[]; channel: UpdateChannel;
+    } | null
   >(null);
   const toastTimer = useRef<number | null>(null);
   const notify = useCallback((message: string, ms = 2600) => {
@@ -331,11 +335,12 @@ export default function App() {
       if (manual) notify("Нет сети: проверить обновления не получилось", 6000);
       return;
     }
-    const manifest = await fetchUpdateManifest();
-    if (!manifest) {
+    const source = await fetchUpdateManifest();
+    if (!source) {
       if (manual) notify("Репозиторий не ответил: проверить обновления не удалось", 6000);
       return;
     }
+    const { manifest, url } = source;
     const local = buildInfoRef.current?.version ?? versionString();
     const verdict = updateVerdict(local, manifest.version);
     if (verdict !== "newer") {
@@ -353,6 +358,7 @@ export default function App() {
     const channel = await updateChannel();
     setUpdateOffer({
       manifest,
+      base: manifestBaseUrl(url),
       issues: updateIssues(manifest, presetRef.current, acceptsFromRef.current ?? 1),
       channel,
     });
@@ -368,12 +374,12 @@ export default function App() {
   const installUpdate = useCallback(async (): Promise<string | null> => {
     if (!updateOffer) return null;
     if (updateOffer.channel === "agent") {
-      await applyUpdateWithAgent();
+      await applyUpdateWithAgent(updateOffer.base + "build.json");
       window.setTimeout(() => window.location.reload(), 600);
       return null;
     }
     if (updateOffer.channel === "app") {
-      await applyUpdateApp(updateOffer.manifest);
+      await applyUpdateApp(updateOffer.manifest, updateOffer.base);
       return null;
     }
     return `Закройте это окно и снова запустите start-yappytuber.bat: лаунчер подтянет `

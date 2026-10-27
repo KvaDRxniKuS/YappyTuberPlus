@@ -57,9 +57,24 @@ export interface UpdateManifest extends BuildInfo {
   app?: UpdateFile;
 }
 
-/** Где лежит опубликованная сборка. Меняется здесь, а не в коде интерфейса. */
-export const UPDATE_MANIFEST_URL =
-  "https://raw.githubusercontent.com/KvaDRxniKuS/YappyTuberPlus/main/dist/build.json";
+/**
+ * Где лежит опубликованная сборка. Меняется здесь, а не в коде интерфейса.
+ *
+ * Адресов несколько, потому что ветка разработки переезжает от сессии к сессии,
+ * а `main` может отставать. Читается первый ответ, который вообще есть:
+ *
+ * 1. ветка этой сессии — самая свежая;
+ * 2. `HEAD` — ветка по умолчанию, как её видит GitHub;
+ * 3. `main` — на случай, если ветку уже слили и переименовали.
+ */
+export const UPDATE_MANIFEST_URLS = [
+  "https://raw.githubusercontent.com/KvaDRxniKuS/YappyTuberPlus/arena/e287965b-yappytuberplus/dist/build.json",
+  "https://raw.githubusercontent.com/KvaDRxniKuS/YappyTuberPlus/HEAD/dist/build.json",
+  "https://raw.githubusercontent.com/KvaDRxniKuS/YappyTuberPlus/main/dist/build.json",
+];
+
+/** Адрес по умолчанию: первый из списка. */
+export const UPDATE_MANIFEST_URL = UPDATE_MANIFEST_URLS[0];
 
 /** Локальный агент обновления: его поднимает лаунчер рядом с собранной папкой. */
 export const UPDATE_AGENT_URL = "/update";
@@ -102,11 +117,15 @@ export function manifestBaseUrl(manifestUrl = UPDATE_MANIFEST_URL): string {
   return cut < 0 ? manifestUrl : manifestUrl.slice(0, cut + 1);
 }
 
+/** Прочитанный паспорт и адрес, по которому он ответил. */
+export interface UpdateSource {
+  manifest: UpdateManifest;
+  /** Адрес паспорта: по нему же считается папка с файлами. */
+  url: string;
+}
+
 /** Читает паспорт опубликованной сборки; `null` — сети нет или ответ не тот. */
-export async function fetchUpdateManifest(
-  manifestUrl = UPDATE_MANIFEST_URL,
-  timeoutMs = 8000,
-): Promise<UpdateManifest | null> {
+async function fetchOne(manifestUrl: string, timeoutMs: number): Promise<UpdateManifest | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -121,6 +140,21 @@ export async function fetchUpdateManifest(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Читает паспорт опубликованной сборки, перебирая адреса по порядку.
+ * `null` — ни один адрес не ответил: сети нет или репозиторий недоступен.
+ */
+export async function fetchUpdateManifest(
+  urls: string | string[] = UPDATE_MANIFEST_URLS,
+  timeoutMs = 8000,
+): Promise<UpdateSource | null> {
+  for (const url of typeof urls === "string" ? [urls] : urls) {
+    const manifest = await fetchOne(url, timeoutMs);
+    if (manifest) return { manifest, url };
+  }
+  return null;
 }
 
 /**
@@ -223,11 +257,11 @@ export async function sha256Hex(bytes: ArrayBuffer | Uint8Array): Promise<string
 /** Скачивает файлы обновления и проверяет каждый по хешу из паспорта. */
 export async function downloadUpdate(
   manifest: UpdateManifest,
+  base = manifestBaseUrl(),
   onProgress?: (done: number, total: number, path: string) => void,
 ): Promise<Map<string, Uint8Array>> {
   const files = manifest.files ?? [];
   if (!files.length) throw new Error("В паспорте новой сборки нет списка файлов");
-  const base = manifestBaseUrl();
   const result = new Map<string, Uint8Array>();
   let done = 0;
   for (const file of files) {
@@ -292,10 +326,13 @@ export async function applyUpdateWithAgent(manifestUrl = UPDATE_MANIFEST_URL): P
  * запись и подмена — в Rust: работающий `.exe` на Windows заблокирован, файл
  * меняет вспомогательный скрипт после выхода процесса.
  */
-export async function applyUpdateApp(manifest: UpdateManifest): Promise<void> {
+export async function applyUpdateApp(
+  manifest: UpdateManifest,
+  base = manifestBaseUrl(),
+): Promise<void> {
   const app = manifest.app;
   if (!app) throw new Error("В паспорте нет файла приложения — обновитесь установщиком");
-  const response = await fetch(`${manifestBaseUrl()}${app.path}`, { cache: "no-store" });
+  const response = await fetch(`${base}${app.path}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`${app.path}: ответ ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (app.size && bytes.length !== app.size) throw new Error("Файл приложения скачался не целиком");

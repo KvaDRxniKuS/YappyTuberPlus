@@ -31,8 +31,23 @@ import { dirname, join, resolve, sep } from "node:path";
 const port = Number(process.env.UPDATE_AGENT_PORT || 17802);
 const host = process.env.UPDATE_AGENT_HOST || "127.0.0.1";
 const folder = resolve(process.env.UPDATE_FOLDER || "dist");
-const defaultManifest = "https://raw.githubusercontent.com/KvaDRxniKuS/YappyTuberPlus/main/dist/build.json";
-const allowedManifest = process.env.UPDATE_MANIFEST || defaultManifest;
+const REPO = "KvaDRxniKuS/YappyTuberPlus";
+/** Единственный разрешённый хост: сырые файлы этого репозитория. */
+const allowedHost = "raw.githubusercontent.com";
+/** Паспорт разрешён с любой ветки репозитория: ветка разработки переезжает. */
+const allowedPath = new RegExp(`^/${REPO}/[^/]+(/[^/]+)*/dist/build\\.json$`);
+const extraManifest = process.env.UPDATE_MANIFEST || "";
+
+/** Разрешён ли этот адрес паспорта: свой репозиторий и папка сборки. */
+function allowed(url) {
+  if (extraManifest && url === extraManifest) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.host === allowedHost && allowedPath.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
 const maxBody = 64 * 1024;
 
 const text = (res, status, payload) => {
@@ -133,8 +148,8 @@ const server = createServer((request, response) => {
       void (async () => {
         try {
           const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
-          const manifestUrl = typeof body.manifest === "string" ? body.manifest : allowedManifest;
-          if (manifestUrl !== allowedManifest) {
+          const manifestUrl = typeof body.manifest === "string" ? body.manifest : "";
+          if (!allowed(manifestUrl)) {
             text(response, 403, { ok: false, error: "источник обновления не разрешён" });
             return;
           }
