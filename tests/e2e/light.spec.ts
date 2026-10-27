@@ -7,7 +7,7 @@ import {
 import { makeLight, normalizePreset } from "../../src/engine/preset";
 import { collect, multiplyAffine, normalSample, objectMatrix } from "../../src/render/rigCanvas";
 import {
-  createCollector, lightingAvailable, NORMAL_COVERAGE_DARK, NORMAL_COVERAGE_LIT, resetCollector, shadeLayer,
+  createCollector, lightingAvailable, NORMAL_COVERAGE_DARK, NORMAL_COVERAGE_LIT, resetCollector, shadeLayer, viewportOf,
 } from "../../src/render/lighting";
 import { DEFAULT_BASE, DEFAULT_LIGHT, type RigObject, type RigPreset } from "../../src/types";
 import { DEFAULT_BEHAVIOUR, behaviourBlock, readBehaviour, writeBehaviour } from "../../src/engine/behaviour";
@@ -424,4 +424,35 @@ test("объём: чёрное и прозрачное в карте — «зд�
   expect(source).toContain("smoothstep(0.02, 0.5, map.a)");
   // Покрытие уходит в синий канал: его читает проход объёма.
   expect(source).toContain("vec4(xy * 0.5 + 0.5, len * cover, 1.0)");
+});
+
+/*
+ * Куда проход объёма пишет в кадровом буфере.
+ *
+ * У холста Y растёт вниз, у кадрового буфера — вверх. Вьюпорт с `y = 0` кладёт
+ * рамку объекта в низ буфера, а `drawImage` читает сверху: объект подменялся
+ * прозрачностью и пропадал при любой силе объёма больше нуля. Здесь закреплено
+ * соответствие «строки холста ↔ строки буфера», чтобы это не вернулось.
+ */
+test("объём: вьюпорт рамки совпадает с рамкой холста, а не с началом координат", () => {
+  // Рамка 300×200 в точке (100, 120) на холсте высотой 800.
+  expect(viewportOf({ x: 100, y: 120, width: 300, height: 200 }, 800)).toEqual({ x: 100, y: 480, width: 300, height: 200 });
+  // Рамка у нижнего края: буфер считает строки от низа, значит y = 0.
+  expect(viewportOf({ x: 0, y: 600, width: 50, height: 200 }, 800).y).toBe(0);
+  // Рамка у верхнего края садится в последние строки буфера.
+  expect(viewportOf({ x: 0, y: 0, width: 50, height: 200 }, 800).y).toBe(600);
+  // Рамка выше холста прижимается к нулю, а не уезжает в отрицательные строки.
+  expect(viewportOf({ x: 0, y: 10, width: 50, height: 2000 }, 800).y).toBe(0);
+  // Сумма «строка буфера + смещение» всегда равна высоте холста.
+  for (const box of [{ x: 0, y: 0, width: 10, height: 10 }, { x: 5, y: 130, width: 10, height: 40 }]) {
+    const view = viewportOf(box, 512);
+    expect(view.y + box.y + box.height).toBe(512);
+  }
+
+  const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
+  // Оба прохода ставят вьюпорт по рамке, а не в (0, 0).
+  expect(source.match(/gl\.viewport\(viewport\.x, viewport\.y, viewport\.width, viewport\.height\)/g)).toHaveLength(2);
+  expect(source).not.toContain("gl.viewport(0, 0, width, height)");
+  // Читается ровно та область буфера, куда рисовали.
+  expect(source).toContain("context.drawImage(gl.canvas, viewport.x, viewport.y, width, height, box.x, box.y, width, height);");
 });

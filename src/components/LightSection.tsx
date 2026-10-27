@@ -7,7 +7,7 @@ import {
 } from "../render/light";
 import { blobToDataUrl, storeFile } from "../engine/assets";
 import { fileKind } from "../engine/importFile";
-import { useAssetUrl } from "../hooks/useAssets";
+import { useAssetMissing, useAssetUrl } from "../hooks/useAssets";
 // Поле с подписью и шагом живёт в общем компоненте: им пользуются и вкладка
 // «Объект», и вкладка «Фигура».
 import { LabeledNumberField as NumberField } from "./NumberField";
@@ -147,6 +147,7 @@ export function NormalSection({ object, normal, onChange }: {
   const fileInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const preview = useAssetUrl(normal?.src);
+  const missing = useAssetMissing(normal?.src);
   const update = (patch: Partial<NormalMapSpec>) => onChange({
     ...object,
     normal: { strength: 100, animate: true, ...normal, src: normal?.src ?? null, ...patch },
@@ -212,6 +213,14 @@ export function NormalSection({ object, normal, onChange }: {
             Объём виден от светов сцены: добавьте объект «Свет» и поставьте его рядом.
             Сила 0 — поверхность плоская, 100 — как нарисовано на карте.
           </p>
+          {/* Молча пропавший объём выглядит как поломка рендера: если файла нет,
+              так и говорим и предлагаем выбрать его заново. */}
+          {missing && (
+            <p className="inline-error">
+              Файл карты не найден: он остался в другом хранилище. Выберите карту заново —
+              объём появится сразу.
+            </p>
+          )}
         </>
       )}
     </div>

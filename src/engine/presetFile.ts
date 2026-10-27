@@ -146,7 +146,14 @@ export async function attachPresetDisk(path: string | null): Promise<void> {
 async function writeSidecar(preset: RigPreset, path: string): Promise<string[]> {
   const owners = new Map<string, string[]>();
   for (const object of preset.objects) {
-    for (const source of [object.image, object.media?.src]) {
+    // Маска и карта нормалей — такие же файлы объекта: без них папка
+    // `<имя>.assets` переезжает без них, и после переноса объём и маска гаснут.
+    for (const source of [
+      object.image,
+      object.media?.src,
+      object.mask?.kind === "file" ? object.mask.file : null,
+      object.normal?.src,
+    ]) {
       const id = assetIdOf(source);
       if (!id) continue;
       owners.set(id, [...(owners.get(id) ?? []), object.name]);

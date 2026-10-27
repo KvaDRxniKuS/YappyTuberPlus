@@ -439,6 +439,23 @@ export interface ShadeBox {
   height: number;
 }
 
+/**
+ * Где в кадровом буфере WebGL лежит рамка объекта.
+ *
+ * Две системы координат не совпадают: у холста Y растёт вниз, у кадрового
+ * буфера — вверх. Вьюпорт с `y = 0` кладёт содержимое в **низ** буфера, а
+ * `drawImage` читает сверху, поэтому объект подменялся прозрачностью и пропадал.
+ * Функция переводит строки холста в строки буфера; она же в тестах — чтобы
+ * арифметика не разъехалась с рендером.
+ *
+ * Если рамка выше буфера, она прижимается к нулю: читать всё равно нечего.
+ */
+export function viewportOf(box: ShadeBox, canvasHeight: number): { x: number; y: number; width: number; height: number } {
+  const height = Math.min(box.height, canvasHeight);
+  const y = Math.max(0, canvasHeight - box.y - height);
+  return { x: Math.max(0, box.x), y, width: box.width, height };
+}
+
 /** Копия рамки слоя: в WebGL уходит только она, а не весь холст. */
 let scratch: HTMLCanvasElement | null = null;
 
@@ -499,9 +516,13 @@ export function shadeLayer(
     }
     ensureSize(state, layer.width, layer.height);
 
+    // Вьюпорт ставится туда, где рамка лежит в кадровом буфере: иначе объём
+    // рисуется в низ буфера, а читается сверху — объект подменяется пустотой.
+    const viewport = viewportOf(box, layer.height);
+
     // 1. Карта нормалей объекта в его рамке.
     gl.bindFramebuffer(gl.FRAMEBUFFER, state.normalFramebuffer);
-    gl.viewport(0, 0, width, height);
+    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.disable(gl.BLEND);
@@ -521,7 +542,7 @@ export function shadeLayer(
 
     // 2. Слой объекта: текстура, обратно — с объёмом от светильников сцены.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, width, height);
+    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
     gl.useProgram(state.volume);
     gl.bindBuffer(gl.ARRAY_BUFFER, state.quad);
     gl.enableVertexAttribArray(0);
@@ -573,7 +594,8 @@ export function shadeLayer(
     context.clip();
     context.globalAlpha = 1;
     context.globalCompositeOperation = "copy";
-    context.drawImage(gl.canvas, 0, 0, width, height, box.x, box.y, width, height);
+    // Источник — та же строки, что занимает вьюпорт: буфер читается сверху.
+    context.drawImage(gl.canvas, viewport.x, viewport.y, width, height, box.x, box.y, width, height);
     context.restore();
     disposeSceneTexture(gl);
     return true;

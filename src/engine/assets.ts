@@ -171,6 +171,12 @@ export function acceptAssetData(id: string, dataUrl: string): void {
 }
 
 /** Файлы, для которых URL ещё не готов: их нужно спросить у редактора. */
+/** Файла точно нет: его искали и не нашли (загрузка ещё идёт — не «нет»). */
+export function assetMissing(source: string | null | undefined): boolean {
+  const id = assetIdOf(source);
+  return !!id && missing.has(id);
+}
+
 export function unresolvedAssetIds(ids: Iterable<string>): string[] {
   const result: string[] = [];
   for (const id of ids) if (!urls.has(id)) result.push(id);
@@ -190,6 +196,9 @@ function sourcesOf(object: RigObject): Array<string | null> {
     object.image,
     object.media?.src ?? null,
     object.mask?.kind === "file" ? object.mask.file : null,
+    // Карта нормалей — такой же файл объекта. Без неё она не загружалась при
+    // открытии пресета и не попадала в сохранение: объект виден, объёма нет.
+    object.normal?.src ?? null,
   ];
 }
 
@@ -566,6 +575,12 @@ export async function extractAssets(preset: RigPreset): Promise<{ preset: RigPre
       const ref = await storeBlob(dataUrlToBlob(next.mask.file), `${next.id}-mask.${extensionOf(next.mask.file)}`);
       if (ref) { next = { ...next, mask: { ...next.mask, file: ref } }; changed = true; }
     }
+    // Карта нормалей: без этого data URL из чужого пресета оставался в файле,
+    // а при следующем сохранении карта и вовсе терялась.
+    if (next.normal?.src && isDataUrl(next.normal.src)) {
+      const ref = await storeBlob(dataUrlToBlob(next.normal.src), `${next.id}-normal.${extensionOf(next.normal.src)}`);
+      if (ref) { next = { ...next, normal: { ...next.normal, src: ref } }; changed = true; }
+    }
     objects.push(next);
   }
   return changed ? { preset: { ...preset, objects }, changed } : { preset, changed };
@@ -636,6 +651,11 @@ export async function inlineAssets(preset: RigPreset): Promise<{ preset: RigPres
       const source = await inlineSource(next.mask.file);
       if (source) { next = { ...next, mask: { ...next.mask, file: source } }; changed = true; }
       else missing.push(`${object.name} (маска)`);
+    }
+    if (next.normal?.src && isAssetRef(next.normal.src)) {
+      const source = await inlineSource(next.normal.src);
+      if (source) { next = { ...next, normal: { ...next.normal, src: source } }; changed = true; }
+      else missing.push(`${object.name} (карта нормалей)`);
     }
     objects.push(next);
   }
