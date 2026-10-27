@@ -1,4 +1,5 @@
 import { DEFAULT_BASE, DEFAULT_MODULES, DEFAULT_OVERLAY, type BasePose, type RigObject, type RigPreset } from "../types";
+import { PRESET_FORMAT } from "../version";
 
 export const rootScript = (overrides: Partial<Record<string, string>> = {}) => `
 x = 0
@@ -61,7 +62,7 @@ const object = (
 /** Пустой пресет для кнопки «Создать»: без демо-персонажа и модулей. */
 export function createEmptyPreset(name = "Без названия"): RigPreset {
   return {
-    version: 2,
+    version: PRESET_FORMAT,
     name,
     canvas: { width: 1000, height: 600 },
     globals: "",
@@ -74,7 +75,7 @@ export function createEmptyPreset(name = "Без названия"): RigPreset {
 
 export function createDemoPreset(): RigPreset {
   return {
-    version: 2,
+    version: PRESET_FORMAT,
     name: "Mochi — стартовый риг",
     canvas: { width: 1000, height: 600 },
     globals: `blink = auto.blink

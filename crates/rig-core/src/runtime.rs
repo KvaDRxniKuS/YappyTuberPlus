@@ -2960,6 +2960,8 @@ enum Request {
     Dispose {
         handle: u32,
     },
+    /// Поколение ядра: по нему редактор видит, что WASM пора пересобрать.
+    Version,
 }
 
 /// Скрипт объекта для проверки конфликтов имён.
@@ -3169,6 +3171,7 @@ impl RuntimeStore {
                 }
                 Err(error) => json!({"ok": false, "error": error}),
             },
+            Request::Version => json!({"ok": true, "core": crate::CORE_GENERATION}),
             Request::Validate { config } => match Rig::new(config) {
                 Ok(_) => json!({"ok": true, "diagnostics": []}),
                 Err(error) => json!({"ok": false, "error": error}),
@@ -4198,5 +4201,15 @@ mod tests {
         let mut store = RuntimeStore::default();
         let result = store.call_json("not json");
         assert!(result.contains("\"ok\":false"));
+    }
+
+    /// Редактор сверяет поколение ядра со своим: без ответа он не отличит
+    /// старое WASM от нового, а различить надо — иначе новые формулы тихо ноль.
+    #[test]
+    fn version_request_reports_core_generation() {
+        let mut store = RuntimeStore::default();
+        let answer: JsonValue = serde_json::from_str(&store.call_json("{\"op\":\"version\"}")).unwrap();
+        assert_eq!(answer["ok"], serde_json::json!(true));
+        assert_eq!(answer["core"], serde_json::json!(crate::CORE_GENERATION));
     }
 }

@@ -8,6 +8,8 @@ export interface OverlayHostState {
   /** Frame sink that the engine loop calls after every produced frame. */
   sinkRef: RefObject<((frame: RigFrame) => void) | null>;
   viewers: string[];
+  /** Подключённые оверлеи другой сборки: им нужно обновить страницу. */
+  staleViewers: string[];
   transport: string;
   bridgeUrl: string | null;
   bridgeReady: boolean;
@@ -40,6 +42,8 @@ function transportOptions(bridgeUrl: string | null) {
  */
 export function useOverlayHost(preset: RigPreset): OverlayHostState {
   const [viewers, setViewers] = useState<string[]>([]);
+  /** Оверлеи другой сборки: их страницу нужно перезагрузить. */
+  const [staleViewers, setStaleViewers] = useState<string[]>([]);
   const [transport, setTransport] = useState("подключение…");
   const [bridgeReady, setBridgeReady] = useState(false);
   const [bridgeUrl, setBridgeUrl] = useState<string | null>(null);
@@ -67,7 +71,11 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
       busRef.current = bus;
       const host = new OverlayHost(bus, {
         hostName: presetRef.current.name,
-        onViewers: (ids) => { if (!disposed) setViewers(ids); },
+        onViewers: (ids) => {
+          if (disposed) return;
+          setViewers(ids);
+          setStaleViewers(hostRef.current?.staleViewerIds ?? []);
+        },
       });
       host.start();
       host.setPreset(presetRef.current);
@@ -105,5 +113,5 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
     hostRef.current?.setFrozen(frozen, preset ?? presetRef.current);
   }, []);
 
-  return { sinkRef, viewers, transport, bridgeUrl, bridgeReady, setFrozen };
+  return { sinkRef, viewers, staleViewers, transport, bridgeUrl, bridgeReady, setFrozen };
 }

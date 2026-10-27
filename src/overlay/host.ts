@@ -25,6 +25,14 @@ export interface OverlayHostOptions {
 export class OverlayHost {
   readonly id = `host-${Math.random().toString(36).slice(2, 10)}`;
   private viewers = new Map<string, number>();
+  /**
+   * Оверлеи, которые говорят на другом протоколе.
+   *
+   * Страница источника в OBS кэшируется браузером, поэтому после обновления
+   * редактора там может остаться оверлей прошлой сборки. Молча это выглядит
+   * как «кадры перестали обновляться» — лучше сказать прямо.
+   */
+  private stale = new Set<string>();
   private scene: OverlayScene | null = null;
   private sceneVersion = 0;
   private config: OverlayConfig | null = null;
@@ -49,6 +57,11 @@ export class OverlayHost {
 
   get viewerIds(): string[] {
     return [...this.viewers.keys()];
+  }
+
+  /** Подключённые оверлеи другой сборки: им нужно обновить страницу. */
+  get staleViewerIds(): string[] {
+    return [...this.viewers.keys()].filter((id) => this.stale.has(id));
   }
 
   get sceneVersionValue(): number {
@@ -137,6 +150,7 @@ export class OverlayHost {
     this.unsubscribe = null;
     this.bus.post({ t: "bye", sender: this.id, role: "host" });
     this.viewers.clear();
+    this.stale.clear();
   }
 
   private receive(message: WireMessage): void {
@@ -144,7 +158,14 @@ export class OverlayHost {
     if (message.t === "hello") {
       const hello = message as HelloMessage;
       const known = this.viewers.has(hello.sender);
+      const wasStale = this.stale.has(hello.sender);
+      const stale = Number(hello.protocol) !== OVERLAY_PROTOCOL;
+      if (stale) this.stale.add(hello.sender);
+      else this.stale.delete(hello.sender);
       this.registerViewer(hello.sender);
+      // Оверлей мог обновиться и заговорить на нашем протоколе (или наоборот):
+      // об этом надо сказать один раз, а не на каждом hello.
+      if (known && stale !== wasStale) this.notifyViewers();
       this.publishAnnounce();
       // Full payload only for new viewers or viewers that were rebuilt and lost
       // the scene; otherwise the periodic frame stream is enough.
@@ -164,6 +185,7 @@ export class OverlayHost {
       return;
     }
     if (message.t === "bye" && message.role === "viewer") {
+      this.stale.delete(message.sender);
       if (this.viewers.delete(message.sender)) this.notifyViewers();
       return;
     }

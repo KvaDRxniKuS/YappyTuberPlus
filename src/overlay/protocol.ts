@@ -1,4 +1,5 @@
 import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
+import { PRESET_FORMAT } from "../version";
 
 /**
  * Wire protocol between the editor (single owner of the Rust runtime) and any
@@ -199,7 +200,7 @@ export function scenePreset(
   config: OverlayConfig,
 ): RigPreset {
   return {
-    version: 2,
+    version: PRESET_FORMAT,
     name: scene.name,
     canvas: scene.canvas,
     globals: "",

@@ -10,6 +10,8 @@ export interface EngineResponse {
   scriptError?: import("../types").ScriptErrorInfo | null;
   /** Ответ `check`: все ошибки с местом и вторым объявлением, если оно есть. */
   scriptIssues?: import("../types").ScriptIssueInfo[];
+  /** Ответ `version`: поколение ядра. Старое WASM такого запроса не знает. */
+  core?: number;
 }
 
 export interface EngineBackend {

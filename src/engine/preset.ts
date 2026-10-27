@@ -13,6 +13,7 @@ import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
 import { normalizeWarp } from "../render/warp";
+import { PRESET_FORMAT, PRESET_FORMATS_READABLE } from "../version";
 import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
 import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
@@ -287,9 +288,15 @@ export function normalizeText(raw: unknown): TextSpec {
 export function normalizePreset(value: unknown): RigPreset | null {
   if (!value || typeof value !== "object") return null;
   const preset = value as Partial<RigPreset>;
-  if (preset.version !== 2 || !Array.isArray(preset.objects) || !preset.canvas) return null;
+  // Старые поколения формата читаются: чего в них не было, получает значения
+  // по умолчанию. Новое поколение сюда не пустим — иначе редактор молча
+  // потерял бы при сохранении то, чего не понял.
+  if (!PRESET_FORMATS_READABLE.includes(Number(preset.version))
+    || !Array.isArray(preset.objects) || !preset.canvas) return null;
   return ensureModules({
-    version: 2,
+    version: PRESET_FORMAT,
+    // Штамп сборки переезжает как есть: по нему видно, чем файл записан.
+    ...(typeof preset.built === "string" && preset.built ? { built: preset.built } : {}),
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
     objects: preset.objects.map((object) => {

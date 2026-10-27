@@ -2,7 +2,9 @@ import { test, expect } from "@playwright/test";
 import { BroadcastChannelBus, CompositeBus } from "../../src/overlay/bus";
 import { OverlayClient } from "../../src/overlay/client";
 import { OverlayHost } from "../../src/overlay/host";
-import { overlayBackground, scenePreset, structureSignature, toOverlayScene } from "../../src/overlay/protocol";
+import {
+  OVERLAY_PROTOCOL, overlayBackground, scenePreset, structureSignature, toOverlayScene,
+} from "../../src/overlay/protocol";
 import { normalizeOverlay } from "../../src/engine/preset";
 import { viewTransform } from "../../src/render/rigCanvas";
 import { createDemoPreset } from "../../src/data/demoPreset";
@@ -252,4 +254,25 @@ test("сцена для оверлея несёт маску, фигуру и д
   expect(scene.version).toBe(7);
   // Скрипты в оверлей не едут: их исполняет ядро редактора.
   expect(scene.objects.every((object) => object.script === "")).toBe(true);
+});
+
+test("протокол моста: оверлей другой сборки виден редактору", async () => {
+  const { hostBus, viewerBus } = channelPair(`overlay-stale-${Date.now()}`);
+  const host = new OverlayHost(hostBus, { hostName: "Стенд", announceIntervalMs: 50, viewerTimeoutMs: 5000 });
+  try {
+    host.start();
+    host.setPreset(createDemoPreset());
+    // Так говорит оверлей прошлой сборки: тот же канал, другая версия моста.
+    viewerBus.post({ t: "hello", sender: "старый", role: "viewer", protocol: OVERLAY_PROTOCOL + 1, sceneVersion: 0 } as never);
+    await expect.poll(() => host.staleViewerIds, { timeout: 4000 }).toEqual(["старый"]);
+
+    // Современный оверлей в том же канале числится нормальным.
+    viewerBus.post({ t: "hello", sender: "новый", role: "viewer", protocol: OVERLAY_PROTOCOL, sceneVersion: 0 } as never);
+    await expect.poll(() => host.viewerIds.sort(), { timeout: 4000 }).toEqual(["новый", "старый"]);
+    expect(host.staleViewerIds).toEqual(["старый"]);
+  } finally {
+    host.dispose();
+    hostBus.close();
+    viewerBus.close();
+  }
 });

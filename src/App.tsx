@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen,
   Gauge, HardDrive, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
-  Undo2, X,
+  TriangleAlert, Undo2, X,
 } from "lucide-react";
+import { coreMessage, outdatedMessage, versionString, versionTitle } from "./version";
 import { TreePanel } from "./components/TreePanel";
 import { Scene, type SceneTool } from "./components/Scene";
 import { Inspector } from "./components/Inspector";
@@ -177,6 +178,8 @@ export default function App() {
   const library = useModuleLibrary();
   // В «Стопе» расстановка: живые входы не нужны, и микрофон не держим.
   const moduleInputs = useModuleInputs(preset.modules, library.version, !stopped);
+  /** «Пресет новее сборки» и «ядро старше» — постоянные подсказки в статусе. */
+  const presetOutdated = useMemo(() => outdatedMessage(preset.built), [preset.built]);
   // Пресет нормализуется до того, как прочитана папка modules, поэтому поля
   // настроек (режим, границы) дозаполняются один раз, когда шаблоны появились.
   const modulesNormalized = useRef(false);
@@ -246,6 +249,15 @@ export default function App() {
   const engine = useRigEngine(
     preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef, moduleInputs.marks,
   );
+  const coreNote = engine.core === undefined ? null : coreMessage(engine.core);
+  // О расхождении ядра говорим один раз вслух: подсказку в статусе легко не
+  // заметить, а последствие (нули вместо формул) — уже потом.
+  const coreWarned = useRef(false);
+  useEffect(() => {
+    if (!coreNote || coreWarned.current) return;
+    coreWarned.current = true;
+    notify(coreNote);
+  }, [coreNote, notify]);
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const primaryId = selection.at(-1) ?? null;
   const selected = preset.objects.find((object) => object.id === primaryId) || null;
@@ -1294,7 +1306,20 @@ export default function App() {
         <div className="status-right">
           <button onClick={() => setOverlayOpen(true)} className={overlay.viewers.length ? "overlay-live" : undefined}><MonitorPlay size={12} /> Оверлей{overlay.viewers.length ? ` · ${overlay.viewers.length}` : ""}</button>
           <button onClick={() => { commit(createDemoPreset(), { label: "Демо-риг" }); setSelection(["head"]); notify("Демо-риг восстановлен · Ctrl+Z для отмены"); }}><RotateCcw size={12} /> Демо</button>
-          <span>{primaryId ? `${primaryId}${selection.length > 1 ? ` +${selection.length - 1}` : ""}` : "—"}</span><span>Windows · Tauri 2</span><b>MVP 0.1</b>
+          <span>{primaryId ? `${primaryId}${selection.length > 1 ? ` +${selection.length - 1}` : ""}` : "—"}</span><span>Windows · Tauri 2</span>
+          {/* Пресет новее сборки: часть настроек ему неизвестна — говорим сразу,
+              а не после того, как сохранение их потеряет. */}
+          {presetOutdated && <span className="status-warn" title={presetOutdated}><TriangleAlert size={11} /> пресет новее</span>}
+          {/* Оверлей другой сборки: страница источника в OBS кэшируется и
+              остаётся от прошлого раза — кадры молча перестают обновляться. */}
+          {overlay.staleViewers.length > 0 && (
+            <span className="status-warn" title="Оверлей говорит на другом протоколе (мост): перезагрузите страницу источника в OBS">
+              <TriangleAlert size={11} /> оверлей старой сборки
+            </span>
+          )}
+          {/* Ядро старше редактора: новые формулы вернут 0, картинка не выдаст. */}
+          {coreNote && <span className="status-warn" title={coreNote}><TriangleAlert size={11} /> ядро</span>}
+          <b title={versionTitle()}>{versionString()}</b>
         </div>
       </footer>
 

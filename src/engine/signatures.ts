@@ -132,7 +132,9 @@ export interface SignatureHint {
 /**
  * Какая функция и какой аргумент окружают позицию курсора.
  * Считаем скобки назад от курсора: так подсказка работает и в многострочных
- * вызовах, и во вложенных (`spring(clamp(x, 0, 1), 8, 0.6)`).
+ * вызовах, и во вложенных (`spring(limit(x, 0, 1), 8, 0.6)`). У `clamp` четыре
+ * аргумента — `clamp(x, ref, lo, hi)`, — поэтому в коротком примере он не
+ * участвует: три аргумента ядро отвергает.
  */
 export function signatureAt(text: string, position: number): SignatureHint | null {
   const cursor = Math.max(0, Math.min(position, text.length));

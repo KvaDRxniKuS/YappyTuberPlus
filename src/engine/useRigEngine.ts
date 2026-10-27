@@ -29,6 +29,12 @@ export function useRigEngine(
   marks?: () => Record<string, InputMark[]>,
 ) {
   const [backend, setBackend] = useState<EngineBackend | null>(null);
+  /**
+   * Поколение ядра, которое ответило: `null` — ядро не знает запроса версии,
+   * то есть собрано раньше и заведомо старше редактора.
+   */
+  // `undefined` — ещё не спрашивали, `null` — ядро не знает запроса версии.
+  const [core, setCore] = useState<number | null | undefined>(undefined);
   const [status, setStatus] = useState<EngineStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   // Смена эпохи пересоздаёт движок: это сбрасывает состояние smooth/spring/autoblink.
@@ -59,6 +65,11 @@ export function useRigEngine(
     let active = true;
     getEngineBackend().then((value) => {
       if (active) setBackend(value);
+      // Сверка поколения: без неё старое WASM молча считает новые формулы
+      // нулём, и понять это по картинке невозможно.
+      void value.call({ op: "version" })
+        .then((answer) => { if (active) setCore(typeof answer.core === "number" ? answer.core : null); })
+        .catch(() => { if (active) setCore(null); });
     }).catch((reason: unknown) => {
       if (!active) return;
       setStatus("error");
@@ -394,6 +405,8 @@ export function useRigEngine(
     status,
     error,
     actualFps,
+    /** Поколение ответившего ядра: `null` — старое WASM без запроса версии. */
+    core,
     backendLabel: backend?.label || "Rust · загрузка",
     resetTimeline,
     checkScript,

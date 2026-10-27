@@ -1,6 +1,6 @@
 import type { BasePose, OverlayConfig, RigFrame } from "../types";
 import type { CompositeBus } from "./bus";
-import type { OverlayScene, WireMessage } from "./protocol";
+import { OVERLAY_PROTOCOL, type OverlayScene, type WireMessage } from "./protocol";
 import { acceptAssetData } from "../engine/assets";
 
 export type OverlayStatus = "connecting" | "waiting" | "live" | "stale";
@@ -116,7 +116,7 @@ export class OverlayClient {
 
   private hello(): void {
     this.bus.post({
-      t: "hello", sender: this.id, role: "viewer", protocol: 1,
+      t: "hello", sender: this.id, role: "viewer", protocol: OVERLAY_PROTOCOL,
       sceneVersion: this.scene?.version ?? 0,
     });
   }

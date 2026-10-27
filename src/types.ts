@@ -1,3 +1,5 @@
+import { PRESET_FORMAT } from "./version";
+
 export type ParamName =
   | "x" | "y" | "rotation" | "sizeX" | "sizeY"
   | "skewX" | "skewY" | "opacity" | "visible" | "layer"
@@ -255,6 +257,9 @@ export const DEFAULT_LIGHT: LightSpec = {
   blend: "normal",
 };
 
+/** Поколение формата пресета: тип поля `RigPreset.version`. */
+export type PresetFormat = typeof PRESET_FORMAT;
+
 export interface RigObject {
   id: string;
   name: string;
@@ -336,7 +341,19 @@ export interface OverlayConfig {
 }
 
 export interface RigPreset {
-  version: 2;
+  /**
+   * Поколение формата файла (`PRESET_FORMAT`). Растёт, когда в пресете
+   * появляется то, чего старый редактор прочитать не может: он потерял бы
+   * такие данные при сохранении.
+   */
+  version: PresetFormat;
+  /**
+   * Версия сборки, которая записала файл: `0.1.2.3.1.1`.
+   *
+   * Нужна, чтобы при открытии честно сказать «этот пресет новее редактора»,
+   * а не терять настройки молча. Условия совместимости — `docs/VERSIONS.md`.
+   */
+  built?: string;
   name: string;
   canvas: { width: number; height: number };
   objects: RigObject[];

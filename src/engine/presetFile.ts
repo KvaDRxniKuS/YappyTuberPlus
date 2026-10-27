@@ -1,5 +1,6 @@
 import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
+import { withBuildStamp } from "../version";
 import {
   assetIdOf,
   assetInfo,
@@ -97,7 +98,9 @@ async function defaultDirectory(): Promise<string | null> {
  */
 export async function presetFileContents(preset: RigPreset): Promise<{ text: string; missing: string[] }> {
   const { preset: inlined, missing } = await inlineAssets(preset);
-  return { text: JSON.stringify(inlined, null, 2), missing };
+  // Штамп сборки ставится в момент записи: в памяти пресет остаётся прежним,
+  // поэтому сохранение не создаёт шаг истории и не трогает автосохранение.
+  return { text: JSON.stringify(withBuildStamp(inlined), null, 2), missing };
 }
 
 /**
@@ -161,7 +164,7 @@ async function writeSidecar(preset: RigPreset, path: string): Promise<string[]> 
 
 /** Запись пресета на диск: короткий JSON со ссылками плюс папка файлов рядом. */
 async function writePresetFile(preset: RigPreset, path: string): Promise<string[]> {
-  await tauriInvoke<void>("preset_write", { path, contents: JSON.stringify(preset, null, 2) });
+  await tauriInvoke<void>("preset_write", { path, contents: JSON.stringify(withBuildStamp(preset), null, 2) });
   return writeSidecar(preset, path);
 }
 
