@@ -502,7 +502,7 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
             )}
             <Row label="Мёртвая зона" hint="дрожание рядом с центром" unit="%" value={Math.round(behaviour.followMouseDead * 100)}
               min={0} max={90} step={1} onCommit={(value) => patch({ followMouseDead: value / 100 })} />
-            <Row label="Сглаживание" hint="0 — мгновенно" unit="мс" value={behaviour.followMouseSmooth}
+            <Row label="Сглаживание положения" hint="0 — мгновенно" unit="мс" value={behaviour.followMouseSmooth}
               min={0} max={1000} step={10} onCommit={(followMouseSmooth) => patch({ followMouseSmooth })} />
             <div className="behaviour-state">
               <span>Тянуться по X<small>выключите — движение останется только по Y</small></span>
@@ -516,6 +516,23 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
               <span>Инверсия<small>объект уходит от курсора</small></span>
               <Switch checked={behaviour.followMouseInvert} onChange={(followMouseInvert) => patch({ followMouseInvert })} title="Обратное следование: от курсора, а не за ним" />
             </div>
+
+            <div className="section-title follow-subtitle"><span>Доворот за мышью</span><small>ГРАДУСЫ НА КРАЙ</small></div>
+            <p className="behaviour-hint">
+              Мышь по X поворачивает объект, по Y — наклоняет. Ноль — не поворачивать этой осью.
+              Доворот ограничен пределами из секции «Поворот» и сглаживается отдельно от позиции.
+            </p>
+            <Row label="Поворот по X" hint="край области справа" unit="°" value={behaviour.followMouseRotX}
+              min={-180} max={180} step={1} onCommit={(followMouseRotX) => patch({ followMouseRotX })} />
+            <Row label="Наклон по Y" hint="край области снизу" unit="°" value={behaviour.followMouseRotY}
+              min={-180} max={180} step={1} onCommit={(followMouseRotY) => patch({ followMouseRotY })} />
+            <Row label="Сглаживание поворота" hint="0 — мгновенно" unit="мс" value={behaviour.followMouseRotSmooth}
+              min={0} max={1000} step={10} onCommit={(followMouseRotSmooth) => patch({ followMouseRotSmooth })} />
+            <p className="behaviour-hint">
+              {behaviour.rotationalLimitLeft > 0 || behaviour.rotationalLimitRight > 0
+                ? `Пределы сустава сейчас ${behaviour.rotationalLimitLeft}° влево и ${behaviour.rotationalLimitRight}° вправо — доворот не выходит за них.`
+                : "Пределы сустава не заданы (оба нуля), поэтому доворот ничем не ограничен — задайте их в секции «Поворот»."}
+            </p>
           </>
         )}
       </section>

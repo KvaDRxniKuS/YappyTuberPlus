@@ -394,6 +394,9 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .behaviour-section .section-title span { display: flex; align-items: center; gap: 6px; }
 .behaviour-hint { margin: 0 0 8px; color: #6b7681; font-size: 10.5px; line-height: 1.45; }
 
+/* Подзаголовок внутри секции: «Доворот за мышью» в следовании за курсором. */
+.behaviour-section .section-title.follow-subtitle { margin-top: 12px; padding-top: 10px; border-top: 1px solid #2c333b; }
+
 /* Предупреждение в настройках поведения: модуль убрали, а формулы остались. */
 .behaviour-warning { color: #d8a878; }
 .behaviour-warning code { color: #cfd8de; font-size: 10px; }

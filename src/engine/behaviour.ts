@@ -143,6 +143,19 @@ export interface Behaviour {
   /** Инверсия: объект уходит от курсора, а не за ним. */
   followMouseInvert: boolean;
   /**
+   * Доворот за мышью: сколько градусов даёт край области по горизонтали.
+   *
+   * Мышь по X — это «повернуться», по Y — «наклониться»: курсор правее центра
+   * поворачивает объект вправо, ниже центра — наклоняет. Градусы ограничены
+   * теми же пределами сустава, что и покачивание, поэтому поворот за мышью не
+   * вылетает из разрешённого диапазона.
+   */
+  followMouseRotX: number;
+  /** Доворот за мышью по вертикали, градусы на край области. */
+  followMouseRotY: number;
+  /** Сглаживание доворота, мс: 0 — мгновенно. */
+  followMouseRotSmooth: number;
+  /**
    * Мерцание света: форма волны, амплитуда и частота.
    *
    * Яркость пятна считается через обычный `opacity`, поэтому своя частота у
@@ -202,6 +215,9 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   followMouseAxisX: true,
   followMouseAxisY: true,
   followMouseInvert: false,
+  followMouseRotX: 0,
+  followMouseRotY: 0,
+  followMouseRotSmooth: 120,
   flickerStyle: "sine",
   flickerAmplitude: 0,
   flickerSpeed: 2.5,
@@ -283,6 +299,7 @@ export function isDefault(behaviour: Behaviour): boolean {
     && behaviour.mouth === "none" && behaviour.eye === "none"
     && behaviour.physRotation === null && behaviour.physSpace === "world"
     && behaviour.followMouseModule === ""
+    && behaviour.followMouseRotX === 0 && behaviour.followMouseRotY === 0
     && behaviour.flickerAmplitude === 0;
 }
 
@@ -350,6 +367,9 @@ export function readBehaviour(script: string): Behaviour {
       merged.followMouseAxisX = source.followMouseAxisX !== false;
       merged.followMouseAxisY = source.followMouseAxisY !== false;
       merged.followMouseInvert = merged.followMouseInvert === true;
+      merged.followMouseRotX = clampNumber(merged.followMouseRotX, -180, 180, 0);
+      merged.followMouseRotY = clampNumber(merged.followMouseRotY, -180, 180, 0);
+      merged.followMouseRotSmooth = clampNumber(merged.followMouseRotSmooth, 0, 2000, 120);
       merged.flickerStyle = merged.flickerStyle === "noise" ? "noise" : "sine";
       merged.flickerAmplitude = clampNumber(merged.flickerAmplitude, 0, 1, 0);
       merged.flickerSpeed = clampNumber(merged.flickerSpeed, 0.05, 30, 2.5);
@@ -438,10 +458,18 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
    * центром области, и только потом начинает тянуться. Без неё мелкое дрожание
    * мыши дёргало бы спрайт постоянно.
    */
+  // Пределы сустава: они ограничивают и покачивание, и доворот за мышью.
+  const limitLeft = Math.max(0, behaviour.rotationalLimitLeft);
+  const limitRight = Math.max(0, behaviour.rotationalLimitRight);
+  const limits = limitLeft > 0 || limitRight > 0;
+
   const followModule = behaviour.followMouseModule.trim();
+  const followRotX = Math.min(180, Math.max(-180, behaviour.followMouseRotX));
+  const followRotY = Math.min(180, Math.max(-180, behaviour.followMouseRotY));
+  const followRotate = followModule !== "" && (followRotX !== 0 || followRotY !== 0);
   const followOn = followModule !== ""
-    && behaviour.followMouseStrength > 0
-    && (behaviour.followMouseAxisX || behaviour.followMouseAxisY);
+    && ((behaviour.followMouseStrength > 0
+      && (behaviour.followMouseAxisX || behaviour.followMouseAxisY)) || followRotate);
   const follow = (() => {
     if (!followOn) return null;
     const strength = Math.min(1, Math.max(0, behaviour.followMouseStrength));
@@ -474,9 +502,34 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     }
     const ms = Math.min(2000, Math.max(0, behaviour.followMouseSmooth));
     const wrap = (expression: string) => (ms > 0 ? `smooth(${expression}, ${num(ms)})` : expression);
+
+    /**
+     * Доворот за мышью.
+     *
+     * Горизонталь и вертикаль складываются: курсор справа-снизу и поворачивает
+     * вправо, и наклоняет. Сглаживание своё — поворот обычно вязче позиции,
+     * иначе голова дёргается на каждом движении мыши. Пределы сустава
+     * действуют на доворот так же, как на покачивание: доворот входит в общее
+     * отклонение, а `limit` ниже держит его внутри сустава.
+     */
+    let rotation: string | null = null;
+    if (followRotate) {
+      const parts = [
+        followRotX !== 0 ? `${travel("x")} * ${num(followRotX)}` : null,
+        followRotY !== 0 ? `${travel("y")} * ${num(followRotY)}` : null,
+      ].filter(Boolean) as string[];
+      const rotMs = Math.min(2000, Math.max(0, behaviour.followMouseRotSmooth));
+      let expression = parts.join(" + ");
+      if (rotMs > 0) expression = `smooth(${expression}, ${num(rotMs)})`;
+      // Свой `limit` тут не нужен: пределы сустава ставятся ниже на всё
+      // отклонение от покоя, вместе с покачиванием и доворотом от речи.
+      rotation = expression;
+    }
+
     return {
-      x: behaviour.followMouseAxisX ? wrap(x) : null,
-      y: behaviour.followMouseAxisY ? wrap(y) : null,
+      x: behaviour.followMouseStrength > 0 && behaviour.followMouseAxisX ? wrap(x) : null,
+      y: behaviour.followMouseStrength > 0 && behaviour.followMouseAxisY ? wrap(y) : null,
+      rotation,
     };
   })();
 
@@ -511,9 +564,6 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     body.push(`y = ${filtered(parts.join(" "))}`);
   }
 
-  const limitLeft = Math.max(0, behaviour.rotationalLimitLeft);
-  const limitRight = Math.max(0, behaviour.rotationalLimitRight);
-  const limits = limitLeft > 0 || limitRight > 0;
   const drag = behaviour.dragAngle > 0;
   const rotFilter = behaviour.rotationSmooth > 0 || behaviour.rotationSpring > 0;
   const heavy = heavyAngle(object.pivot);
@@ -545,7 +595,8 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       : num(behaviour.dragAngle)
   } * ${dragDirection()}`;
   const dragPush = `mic.speak * ${dragAmount}`;
-  const deviation = [drag ? dragPush : null, wiggleRot].filter(Boolean) as string[];
+  const followTurn = follow?.rotation ?? null;
+  const deviation = [drag ? dragPush : null, wiggleRot, followTurn].filter(Boolean) as string[];
 
   // Фильтр поворота — отдельная функция: он ставится и на наследуемый угол,
   // и на собственное отклонение. Две независимые цепочки (у каждой свой узел
@@ -595,7 +646,10 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       const reach = limits ? Math.min(behaviour.dragAngle, Math.min(...room)) : behaviour.dragAngle;
       const impulse = drag ? `${kick} * ${num(reach)} * ${dragDirection()}` : null;
       const push = [impulse, wiggleRot].filter(Boolean).join(" + ");
-      const inner = `spring(${rest}${push ? ` + ${push}` : ""}, ${num(frequency)}, ${num(damping)})`;
+      // Доворот за мышью входит в цель мотора: пружина тянется к нему и не
+      // спорит с ней, а предел ниже ограничивает уже полное отклонение.
+      const aimTarget = [push, followTurn].filter(Boolean).join(" + ");
+      const inner = `spring(${rest}${aimTarget ? ` + ${aimTarget}` : ""}, ${num(frequency)}, ${num(damping)})`;
       // С физикой работает только сглаживание — как трение после мотора.
       // «Пружина поворота» тут не участвует: второй пружинный контур подряд
       // гасит первый. Предел — на отклонение от родителя.

@@ -275,3 +275,54 @@ test("мерцание: волна пишется в opacity и читается
     flickerAmplitude: 1, flickerSpeed: 0.05,
   });
 });
+
+test("следование за мышью: доворот в градусах ограничен пределами сустава", () => {
+  const head = makeLight("head", "Голова", 400, 300, { radius: 120 });
+  const base = { ...DEFAULT_BEHAVIOUR, followMouseModule: "mouse", followMouseRotSmooth: 0 };
+
+  // Ноль по обеим осям — доворота нет: поворот не пишется вовсе.
+  expect(behaviourBlock(base, head)).not.toContain("rotation =");
+
+  // Край области справа даёт +30°, снизу — −10°: X поворачивает, Y наклоняет.
+  const turned = { ...base, followMouseRotX: 30, followMouseRotY: -10, followMouseStrength: 0 };
+  const block = behaviourBlock(turned, head);
+  expect(block).toContain("* 30");
+  expect(block).toContain("* -10");
+  expect(block).toContain("mouse.x");
+  expect(block).toContain("mouse.y");
+  // Позиция выключена силой 0 — формулы для x и y не появляются.
+  expect(block).not.toMatch(/^x = /m);
+  expect(block).not.toMatch(/^y = /m);
+
+  // Пределы сустава ограничивают доворот: limit стоит на отклонении от покоя.
+  const limited = { ...turned, rotationalLimitLeft: 20, rotationalLimitRight: 40 };
+  expect(behaviourBlock(limited, head)).toContain(
+    "rotation = 0 + limit(0 + ((mouse.x - 0.5) * 2) * 30 + ((mouse.y - 0.5) * 2) * -10 - (0), -20, 40)",
+  );
+  const withSmooth = { ...limited, followMouseRotSmooth: 150 };
+  const smoothBlock = behaviourBlock(withSmooth, head);
+  expect(smoothBlock).toContain("smooth(");
+  expect(smoothBlock).toContain("150");
+  expect(smoothBlock).toContain("limit(");
+  expect(smoothBlock).toContain("-20");
+  expect(smoothBlock).toContain("40");
+
+  // Мёртвая зона и инверсия действуют и на доворот: это тот же ход курсора.
+  expect(behaviourBlock({ ...base, followMouseRotX: 30, followMouseDead: 0.5 }, head)).toContain("max(abs(");
+  expect(behaviourBlock({ ...base, followMouseRotX: 30, followMouseInvert: true }, head)).toContain("(-((");
+  // Одна ось — по второй доворота нет (позиция при этом выключена силой 0).
+  const onlyX = behaviourBlock({ ...base, followMouseStrength: 0, followMouseRotX: 30 }, head);
+  expect(onlyX).toContain("rotation = 0 + ((mouse.x - 0.5) * 2) * 30");
+  expect(onlyX).not.toContain("mouse.y");
+
+  // Настройки переживают запись и чтение блока.
+  const written = writeBehaviour(head.script, withSmooth, head).script;
+  const back = readBehaviour(written);
+  expect(back.followMouseRotX).toBe(30);
+  expect(back.followMouseRotY).toBe(-10);
+  expect(back.followMouseRotSmooth).toBe(150);
+  // Битые значения зажимаются в границы, а не превращаются в текст скрипта.
+  expect(readBehaviour(`// @behaviour {"followMouseRotX":900,"followMouseRotY":-900}`)).toMatchObject({
+    followMouseRotX: 180, followMouseRotY: -180,
+  });
+});
