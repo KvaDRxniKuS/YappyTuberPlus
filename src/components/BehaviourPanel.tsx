@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
+import { MousePointer2, Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
 import type { ModuleInstance, RigObject, TextSpec } from "../types";
 import { normalizeText } from "../engine/preset";
 import { hasQuotedPlaceholder, quotePlaceholders, unquotePlaceholders } from "../render/text";
@@ -250,6 +250,18 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
 
   const heavy = heavyAngle(object.pivot);
 
+  /**
+   * Модули мыши пресета: из них берётся имя входа для формул.
+   *
+   * Следование включается именем модуля: без модуля в пресете входа `mouse.x`
+   * нет, и ядро писало бы «неизвестное имя». Если модуль убрали после
+   * включения, секция показывает предупреждение и выключает следование одним
+   * нажатием — молча оставлять сломанную формулу нельзя.
+   */
+  const mouseModules = (modules ?? []).filter((module) => module.type === "mouse");
+  const followModule = behaviour.followMouseModule;
+  const followMissing = followModule !== "" && !mouseModules.some((module) => module.name === followModule);
+
   return (
     <div className="behaviour-panel">
       <div className="behaviour-head">
@@ -434,6 +446,78 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
           min={0} max={8} step={0.1} onCommit={(wiggleRotFreq) => patch({ wiggleRotFreq })} />
         <Row label="Поворот · амплитуда" unit="°" value={behaviour.wiggleRotAmp}
           min={0} max={90} step={0.5} onCommit={(wiggleRotAmp) => patch({ wiggleRotAmp })} />
+      </section>
+
+      <section className="behaviour-section">
+        <div className="section-title">
+          <span><MousePointer2 size={13} /> Следование за мышью</span>
+          <Switch
+            checked={followModule !== "" && !followMissing}
+            onChange={(on) => patch({ followMouseModule: on ? (mouseModules[0]?.name ?? "") : "" })}
+            title={mouseModules.length ? "Объект тянется за курсором" : "Сначала добавьте модуль «Mouse» во вкладке «Модули»"}
+          />
+        </div>
+        <p className="behaviour-hint">
+          Объект тянется к курсору и не уходит дальше заданного предела. Середина области —
+          положение покоя: смещение считается от неё, поэтому «мёртвая зона» гасит дрожание
+          мыши рядом с центром.
+        </p>
+        {mouseModules.length === 0 && (
+          <p className="behaviour-hint behaviour-warning">
+            Модуль мыши не добавлен: во вкладке «Модули» выберите «Mouse». Без него входов
+            <code> mouse.x</code> и <code>mouse.y</code> в скрипте нет.
+          </p>
+        )}
+        {followMissing && (
+          <p className="behaviour-hint behaviour-warning">
+            Модуль «{followModule}» больше не в пресете — формулы ссылаются на несуществующий вход.
+            {" "}
+            <button className="link-button" onClick={() => patch({ followMouseModule: "" })}>Выключить следование</button>
+          </p>
+        )}
+        {followModule !== "" && !followMissing && (
+          <>
+            <div className="segmented small dense" title="Форма предела: круг радиуса или прямоугольник по осям">
+              <button
+                className={behaviour.followMouseLimit === "circle" ? "active" : ""}
+                onClick={() => patch({ followMouseLimit: "circle" })}
+              >круг</button>
+              <button
+                className={behaviour.followMouseLimit === "box" ? "active" : ""}
+                onClick={() => patch({ followMouseLimit: "box" })}
+              >по осям</button>
+            </div>
+            <Row label="Сила" hint="доля пути к курсору" unit="%" value={Math.round(behaviour.followMouseStrength * 100)}
+              min={0} max={100} step={1} onCommit={(value) => patch({ followMouseStrength: value / 100 })} />
+            {behaviour.followMouseLimit === "circle" ? (
+              <Row label="Предел" hint="радиус от базы" unit="px" value={behaviour.followMouseRadius}
+                min={1} max={1500} step={1} onCommit={(followMouseRadius) => patch({ followMouseRadius })} />
+            ) : (
+              <>
+                <Row label="Предел по X" unit="px" value={behaviour.followMouseRangeX}
+                  min={1} max={1500} step={1} onCommit={(followMouseRangeX) => patch({ followMouseRangeX })} />
+                <Row label="Предел по Y" unit="px" value={behaviour.followMouseRangeY}
+                  min={1} max={1500} step={1} onCommit={(followMouseRangeY) => patch({ followMouseRangeY })} />
+              </>
+            )}
+            <Row label="Мёртвая зона" hint="дрожание рядом с центром" unit="%" value={Math.round(behaviour.followMouseDead * 100)}
+              min={0} max={90} step={1} onCommit={(value) => patch({ followMouseDead: value / 100 })} />
+            <Row label="Сглаживание" hint="0 — мгновенно" unit="мс" value={behaviour.followMouseSmooth}
+              min={0} max={1000} step={10} onCommit={(followMouseSmooth) => patch({ followMouseSmooth })} />
+            <div className="behaviour-state">
+              <span>Тянуться по X<small>выключите — движение останется только по Y</small></span>
+              <Switch checked={behaviour.followMouseAxisX} onChange={(followMouseAxisX) => patch({ followMouseAxisX })} title="Следовать по горизонтали" />
+            </div>
+            <div className="behaviour-state">
+              <span>Тянуться по Y<small>выключите — движение останется только по X</small></span>
+              <Switch checked={behaviour.followMouseAxisY} onChange={(followMouseAxisY) => patch({ followMouseAxisY })} title="Следовать по вертикали" />
+            </div>
+            <div className="behaviour-state">
+              <span>Инверсия<small>объект уходит от курсора</small></span>
+              <Switch checked={behaviour.followMouseInvert} onChange={(followMouseInvert) => patch({ followMouseInvert })} title="Обратное следование: от курсора, а не за ним" />
+            </div>
+          </>
+        )}
       </section>
 
       <section className="behaviour-section">

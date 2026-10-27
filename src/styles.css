@@ -388,6 +388,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .behaviour-section .section-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: #adb6bf; font-size: 11.5px; font-weight: 650; }
 .behaviour-section .section-title span { display: flex; align-items: center; gap: 6px; }
 .behaviour-hint { margin: 0 0 8px; color: #6b7681; font-size: 10.5px; line-height: 1.45; }
+
+/* Предупреждение в настройках поведения: модуль убрали, а формулы остались. */
+.behaviour-warning { color: #d8a878; }
+.behaviour-warning code { color: #cfd8de; font-size: 10px; }
 /* Настройки текста во вкладке «Поведение»: те же поля, что в инспекторе. */
 .behaviour-text-section .text-property { margin-bottom: 6px; }
 .behaviour-text-source { width: 100%; margin-bottom: 8px; }

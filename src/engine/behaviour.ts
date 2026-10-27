@@ -114,6 +114,34 @@ export interface Behaviour {
   physForce: number;
   /** Условия видимости по пресетам одежды и эмоций. */
   presets: PresetRule[];
+  /**
+   * Имя модуля мыши, за которой следует объект. Пусто — следование выключено.
+   *
+   * Имя хранится снимком, как у пресетов: генератору нужно написать
+   * `mouse.x`, а списка модулей у него нет. Если модуль из пресета убрать,
+   * следование надо выключить — иначе ядро ругалось бы на неизвестный вход.
+   */
+  followMouseModule: string;
+  /** Доля пути к курсору: 1 — у края области объект уходит на весь предел. */
+  followMouseStrength: number;
+  /** Форма ограничения: круг радиуса или прямоугольник по осям. */
+  followMouseLimit: "circle" | "box";
+  /** Радиус ограничения, пиксели холста. */
+  followMouseRadius: number;
+  /** Предел по X для прямоугольного ограничения, пиксели. */
+  followMouseRangeX: number;
+  /** Предел по Y для прямоугольного ограничения, пиксели. */
+  followMouseRangeY: number;
+  /** Мёртвая зона: доля хода курсора, в которой объект стоит на месте. */
+  followMouseDead: number;
+  /** Сглаживание следования, мс. 0 — без фильтра. */
+  followMouseSmooth: number;
+  /** Следовать по горизонтали. */
+  followMouseAxisX: boolean;
+  /** Следовать по вертикали. */
+  followMouseAxisY: boolean;
+  /** Инверсия: объект уходит от курсора, а не за ним. */
+  followMouseInvert: boolean;
 }
 
 export const DEFAULT_BEHAVIOUR: Behaviour = {
@@ -152,6 +180,17 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   physSmooth: 0.4,
   physForce: 0.4,
   presets: [],
+  followMouseModule: "",
+  followMouseStrength: 1,
+  followMouseLimit: "circle",
+  followMouseRadius: 120,
+  followMouseRangeX: 200,
+  followMouseRangeY: 120,
+  followMouseDead: 0,
+  followMouseSmooth: 120,
+  followMouseAxisX: true,
+  followMouseAxisY: true,
+  followMouseInvert: false,
 };
 
 const START = "// ── поведение: вкладка «Поведение» ──";
@@ -228,7 +267,8 @@ export function isDefault(behaviour: Behaviour): boolean {
     && behaviour.wiggleXAmp === 0 && behaviour.wiggleYAmp === 0
     && behaviour.wiggleRotAmp === 0
     && behaviour.mouth === "none" && behaviour.eye === "none"
-    && behaviour.physRotation === null && behaviour.physSpace === "world";
+    && behaviour.physRotation === null && behaviour.physSpace === "world"
+    && behaviour.followMouseModule === "";
 }
 
 /** Настройки из скрипта: JSON-строка комментария. */
@@ -279,6 +319,22 @@ export function readBehaviour(script: string): Behaviour {
       merged.physSmooth = clampNumber(merged.physSmooth, 0, 1, 0.4);
       merged.bounceOnce = merged.bounceOnce === true;
       merged.dragInRange = merged.dragInRange === true;
+      // Следование за мышью: без имени модуля оно выключено, числа — в своих
+      // границах. Битое имя (пробелы, кириллица) отбрасываем: оно станет
+      // текстом скрипта.
+      merged.followMouseModule = typeof source.followMouseModule === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(source.followMouseModule.trim())
+        ? source.followMouseModule.trim()
+        : "";
+      merged.followMouseLimit = merged.followMouseLimit === "box" ? "box" : "circle";
+      merged.followMouseStrength = clampNumber(merged.followMouseStrength, 0, 1, 1);
+      merged.followMouseRadius = clampNumber(merged.followMouseRadius, 1, 4000, 120);
+      merged.followMouseRangeX = clampNumber(merged.followMouseRangeX, 1, 4000, 200);
+      merged.followMouseRangeY = clampNumber(merged.followMouseRangeY, 1, 4000, 120);
+      merged.followMouseDead = clampNumber(merged.followMouseDead, 0, 0.9, 0);
+      merged.followMouseSmooth = clampNumber(merged.followMouseSmooth, 0, 2000, 120);
+      merged.followMouseAxisX = source.followMouseAxisX !== false;
+      merged.followMouseAxisY = source.followMouseAxisY !== false;
+      merged.followMouseInvert = merged.followMouseInvert === true;
       // Пресеты: битые записи (старые пресеты, ручная правка JSON) отбрасываем,
       // иначе генератор написал бы в скрипт бессмысленное условие.
       merged.presets = Array.isArray(source.presets)
@@ -348,13 +404,75 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     return result;
   };
 
-  const target = (axis: "x" | "y") => (hasParent ? `inherit + follow(offset, parent).${axis}` : "0");
+  /**
+   * Следование за мышью.
+   *
+   * Входы модуля — доли 0…1 внутри выбранной области, поэтому середина
+   * области означает «стоять на месте»: смещение считается от 0.5 и
+   * нормируется в −1…1. Дальше его ограничивает форма:
+   *
+   * - **круг** — вектор смещения укорачивается до радиуса, поэтому объект
+   *   ходит по кругу, а не по квадрату;
+   * - **прямоугольник** — свой предел по каждой оси, тогда можно разрешить
+   *   движение только вбок.
+   *
+   * «Мёртвая зона» вырезает середину хода: объект стоит, пока курсор рядом с
+   * центром области, и только потом начинает тянуться. Без неё мелкое дрожание
+   * мыши дёргало бы спрайт постоянно.
+   */
+  const followModule = behaviour.followMouseModule.trim();
+  const followOn = followModule !== ""
+    && behaviour.followMouseStrength > 0
+    && (behaviour.followMouseAxisX || behaviour.followMouseAxisY);
+  const follow = (() => {
+    if (!followOn) return null;
+    const strength = Math.min(1, Math.max(0, behaviour.followMouseStrength));
+    const dead = Math.min(0.9, Math.max(0, behaviour.followMouseDead));
+    const circle = behaviour.followMouseLimit !== "box";
+    const radius = Math.max(1, behaviour.followMouseRadius);
+    const rangeX = Math.max(1, behaviour.followMouseRangeX);
+    const rangeY = Math.max(1, behaviour.followMouseRangeY);
+    /** Ход одной оси: −1…1, с мёртвой зоной и инверсией. */
+    const travel = (axis: "x" | "y"): string => {
+      const raw = `((${followModule}.${axis} - 0.5) * 2)`;
+      const signed = behaviour.followMouseInvert ? `(-${raw})` : raw;
+      if (dead <= 0) return signed;
+      // После вырезания середины остаток растягивается на весь ход: иначе
+      // край области так и не давал бы полного смещения.
+      return `sign(${signed}) * max(abs(${signed}) - ${num(dead)}, 0) / ${num(1 - dead)}`;
+    };
+    let x = behaviour.followMouseAxisX ? `${travel("x")} * ${num(circle ? radius : rangeX)} * ${num(strength)}` : "0";
+    let y = behaviour.followMouseAxisY ? `${travel("y")} * ${num(circle ? radius : rangeY)} * ${num(strength)}` : "0";
+    if (circle) {
+      // Длина вектора и его укорачивание: круг честный, а не «квадрат с
+      // закруглёнными числами». Делитель защищён от нуля.
+      const length = `sqrt((${x}) * (${x}) + (${y}) * (${y}))`;
+      const scale = `min(1, ${num(radius)} / max(${length}, 0.0001))`;
+      x = `(${x}) * ${scale}`;
+      y = `(${y}) * ${scale}`;
+    } else {
+      x = `limit(${x}, ${num(-rangeX)}, ${num(rangeX)})`;
+      y = `limit(${y}, ${num(-rangeY)}, ${num(rangeY)})`;
+    }
+    const ms = Math.min(2000, Math.max(0, behaviour.followMouseSmooth));
+    const wrap = (expression: string) => (ms > 0 ? `smooth(${expression}, ${num(ms)})` : expression);
+    return {
+      x: behaviour.followMouseAxisX ? wrap(x) : null,
+      y: behaviour.followMouseAxisY ? wrap(y) : null,
+    };
+  })();
 
-  if (position || wiggleX) {
+  const target = (axis: "x" | "y") => {
+    const base = hasParent ? `inherit + follow(offset, parent).${axis}` : "0";
+    const extra = follow ? follow[axis] : null;
+    return extra ? `${base} + (${extra})` : base;
+  };
+
+  if (position || wiggleX || follow?.x) {
     const parts = [target("x"), wiggleX].filter(Boolean).join(" + ");
     body.push(`x = ${filtered(parts)}`);
   }
-  if (position || wiggleY || bounce) {
+  if (position || wiggleY || bounce || follow?.y) {
     const parts = [target("y")];
     if (bounce) {
       // Скорость подъёма задаётся отдельно от фильтра позиции, поэтому

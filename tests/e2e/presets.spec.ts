@@ -171,3 +171,52 @@ test("поведение: условие по пресетам дописыва�
   const written = writeBehaviour(object.script, only, object).script;
   expect(readBehaviour(written).presets).toEqual(only.presets);
 });
+
+test("поведение: следование за мышью с ограничениями", () => {
+  const object: RigObject = {
+    id: "tail", name: "Хвост", kind: "sprite", enabled: true, image: null, parentId: null,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE }, script: "", width: 100, height: 100,
+  };
+  // Без имени модуля формулы нет: вход `mouse.x` существует только с модулем.
+  expect(behaviourBlock(DEFAULT_BEHAVIOUR, object)).not.toContain("mouse.");
+
+  const circle = { ...DEFAULT_BEHAVIOUR, followMouseModule: "mouse", followMouseRadius: 100, followMouseSmooth: 0 };
+  const circleBlock = behaviourBlock(circle, object);
+  // Круг: длина вектора укорачивается до радиуса, а не режется по осям.
+  expect(circleBlock).toContain("sqrt(");
+  expect(circleBlock).toContain("min(1, 100 / max(");
+  expect(circleBlock).toContain("mouse.x");
+  expect(circleBlock).toContain("mouse.y");
+
+  // Прямоугольник: свой предел по каждой оси.
+  const box = { ...circle, followMouseLimit: "box" as const, followMouseRangeX: 60, followMouseRangeY: 20 };
+  const boxBlock = behaviourBlock(box, object);
+  expect(boxBlock).toContain("limit(");
+  expect(boxBlock).toContain("60");
+  expect(boxBlock).toContain("20");
+  expect(boxBlock).not.toContain("sqrt(");
+
+  // Одна ось: по второй объект не двигается вовсе.
+  const onlyX = { ...box, followMouseAxisY: false };
+  expect(behaviourBlock(onlyX, object)).not.toContain("mouse.y");
+
+  // Мёртвая зона растягивает остаток хода: край области по-прежнему даёт предел.
+  const dead = { ...circle, followMouseDead: 0.5 };
+  expect(behaviourBlock(dead, object)).toContain("max(abs(");
+  expect(behaviourBlock(dead, object)).toContain("/ 0.5");
+
+  // Инверсия меняет знак хода.
+  expect(behaviourBlock({ ...circle, followMouseInvert: true }, object)).toContain("(-((");
+
+  // Сглаживание — снаружи смещения.
+  expect(behaviourBlock({ ...circle, followMouseSmooth: 90 }, object)).toContain("smooth(");
+
+  // Настройки переживают запись и чтение блока.
+  const written = writeBehaviour(object.script, dead, object).script;
+  const back = readBehaviour(written);
+  expect(back.followMouseModule).toBe("mouse");
+  expect(back.followMouseRadius).toBe(100);
+  expect(back.followMouseDead).toBe(0.5);
+  // Битое имя модуля не превращается в текст скрипта.
+  expect(readBehaviour(`// @behaviour {"followMouseModule":"мышь"}`).followMouseModule).toBe("");
+});
