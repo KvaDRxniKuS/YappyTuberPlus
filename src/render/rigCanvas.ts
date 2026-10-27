@@ -1,4 +1,4 @@
-import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
+import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
 import { frontness, structurePaths } from "../engine/structure";
@@ -6,10 +6,10 @@ import { DEFAULT_MEDIA, MediaAssets, MaskMedia } from "./media";
 import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
-import { drawWarpedImage, warpEnabled } from "./warp";
+import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
 import { paintLight } from "./light";
 import { DEFAULT_LIGHT } from "../types";
-import type { LightingCollector } from "./lighting";
+import { shadeLayer, type LightingCollector, type NormalSample } from "./lighting";
 import type { MaskSpec, ShapeSpec } from "../types";
 
 /**
@@ -204,16 +204,23 @@ export function drawRig(
   // Камера и масштаб экрана: свет и нормали нужны в пикселях холста, а не в
   // координатах сцены, поэтому трансформация снимается один раз на кадр.
   const view = options.lighting ? ctx.getTransform() : null;
-  for (const object of orderedObjects(preset, frame)) {
+  // Свет собирается до отрисовки: объём каждому объекту считается сразу после
+  // его собственной отрисовки (см. drawShaded), поэтому объект, нарисованный
+  // раньше светильника, всё равно должен получить от него объём. Условия те же,
+  // что были у прохода по кадру: скрытое, прозрачное и нулевое света не даёт.
+  const objects = orderedObjects(preset, frame).map((object) => {
     const values = frame?.objects[object.id] || staticValues(object);
     const ghost = values.visible === 0 && options.ghosts === true && scriptHidden(object, values);
-    if (values.visible === 0 && !ghost) continue;
     const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
-    if (opacity === 0 || values.sizeX === 0 || values.sizeY === 0) continue;
+    const drawn = (values.visible !== 0 || ghost) && opacity !== 0 && values.sizeX !== 0 && values.sizeY !== 0;
     const matrix = objectMatrix(object, values);
+    if (drawn && view && !ghost) collect(options.lighting!, view, object, values, matrix);
+    return { object, values, ghost, opacity, drawn, matrix };
+  });
+  for (const { object, values, ghost, opacity, drawn, matrix } of objects) {
+    if (!drawn) continue;
     const left = -object.pivot.x * object.width;
     const top = -object.pivot.y * object.height;
-    if (view && !ghost) collect(options.lighting!, view, object, values, matrix, left, top);
     const alpha = ghost ? opacity * ghostAlpha : opacity;
     // Маска работает через отдельный холст: объект рисуется в него, маска
     // вырезается композитом, и только потом результат ложится на сцену.
@@ -224,6 +231,15 @@ export function drawRig(
     // целиком, дробное значение смешивает два варианта. Кадр старого ядра
     // этого параметра не знает — тогда маска работает как настроена.
     const strength = masked ? maskStrength(values) : 0;
+    // Объём принадлежит объекту: он считается в отдельном слое сразу после
+    // отрисовки, поэтому всё нарисованное выше его перекрывает. Общий буфер на
+    // весь холст так не умеет — объём нижнего объекта просвечивал сквозь верхние.
+    const sample = view && !ghost ? normalSample(view, object, matrix, left, top) : null;
+    if (sample && options.lighting?.lights.length) {
+      if (drawShaded(ctx, preset, frame, assets, options, object, matrix, left, top, alpha, masked, strength, sample)) {
+        continue;
+      }
+    }
     if (masked && strength > 0) {
       drawMasked(ctx, preset, frame, assets, options, object, matrix, left, top, alpha * strength);
       if (strength >= 1) continue;
@@ -263,8 +279,6 @@ export function collect(
   object: RigObject,
   values: ObjectFrame,
   matrix: Affine,
-  left: number,
-  top: number,
 ): void {
   if (object.enabled === false) return;
   const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
@@ -290,22 +304,119 @@ export function collect(
     });
     return;
   }
-  if (object.kind !== "sprite" && object.kind !== "media") return;
+}
+
+/**
+ * Матрица карты нормалей объекта: локальные координаты картинки → пиксели холста.
+ *
+ * Считается на объект в момент его отрисовки: объём принадлежит своему объекту
+ * (см. `shadeLayer`), поэтому общий список нормалей на кадр больше не нужен.
+ */
+export function normalSample(
+  view: ViewMatrix,
+  object: RigObject,
+  matrix: Affine,
+  left: number,
+  top: number,
+): NormalSample | null {
+  if (object.enabled === false) return null;
+  if (object.kind !== "sprite" && object.kind !== "media") return null;
   const normal = object.normal;
-  if (!normal?.src || normal.strength <= 0) return;
-  if (object.width <= 0 || object.height <= 0) return;
-  collector.normals.push({
+  if (!normal?.src || normal.strength <= 0) return null;
+  if (object.width <= 0 || object.height <= 0) return null;
+  const combined = view.multiply(matrix);
+  return {
     matrix: [combined.a, combined.b, 0, combined.c, combined.d, 0, combined.e, combined.f, 1],
     rect: [left, top, object.width, object.height],
     src: normal.src,
     strength: normal.strength,
-  });
+  };
 }
 
 export function maskStrength(values: ObjectFrame): number {
   const value = values.mask;
   if (!Number.isFinite(value)) return 1;
   return Math.min(1, Math.max(0, value));
+}
+
+/** Отдельный холст для объёма: у маски свой, у объёма свой — они не спорят. */
+let volumeCanvas: HTMLCanvasElement | null = null;
+
+function volumeLayer(main: HTMLCanvasElement): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (typeof document === "undefined") return null;
+  if (!volumeCanvas) volumeCanvas = document.createElement("canvas");
+  if (volumeCanvas.width !== main.width || volumeCanvas.height !== main.height) {
+    volumeCanvas.width = main.width;
+    volumeCanvas.height = main.height;
+  }
+  const ctx = volumeCanvas.getContext("2d");
+  return ctx ? { canvas: volumeCanvas, ctx } : null;
+}
+
+/**
+ * Объект с картой нормалей: свой слой → объём → на сцену.
+ *
+ * Слой содержит только этот объект, поэтому объём ложится на его пиксели и не
+ * задевает то, что нарисовано выше: верхние объекты перекроют его как обычно,
+ * а прозрачные пиксели не подсветят соседей снизу. Работа идёт в рамке объекта,
+ * так что цена зависит от его размера, а не от размера холста.
+ *
+ * Возвращает `false`, если слой недоступен: тогда объект рисуется обычным путём.
+ */
+function drawShaded(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  assets: SpriteAssets,
+  options: DrawRigOptions,
+  object: RigObject,
+  matrix: Affine,
+  left: number,
+  top: number,
+  alpha: number,
+  masked: boolean,
+  strength: number,
+  sample: NormalSample,
+): boolean {
+  const layer = volumeLayer(ctx.canvas);
+  if (!layer) return false;
+  const { canvas, ctx: layerCtx } = layer;
+  const view = ctx.getTransform();
+  const feather = object.mask?.feather ?? 0;
+  // Деформированный объект выходит за свою рамку: объём нужен по всей картинке,
+  // иначе край деформации обрежется по слою.
+  const quad = warpEnabled(object) ? warpQuad(object, frame?.objects[object.id]) : null;
+  const box = contentBox(view, matrix, object, canvas.width, canvas.height, left, top, feather, quad);
+  if (!box) return false;
+
+  // Содержимое рисуется только внутри рамки: снаружи её нечего ни стирать, ни
+  // склеивать, а именно это и было главной ценой полноэкранных проходов.
+  layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+  layerCtx.clearRect(box.x, box.y, box.width, box.height);
+  layerCtx.setTransform(view);
+  layerCtx.globalAlpha = 1;
+  layerCtx.globalCompositeOperation = "source-over";
+  if (masked && strength > 0) {
+    drawMasked(layerCtx, preset, frame, assets, options, object, matrix, left, top, alpha * strength);
+    if (strength < 1) {
+      // Проявление маски: вторая копия кладётся поверх первой, как и на сцене.
+      drawPlain(layerCtx, object, frame, assets, options, options.lineScale ?? 1, matrix, left, top, alpha * (1 - strength));
+    }
+  } else {
+    drawPlain(layerCtx, object, frame, assets, options, options.lineScale ?? 1, matrix, left, top, alpha);
+  }
+
+  // Не собралось (нет WebGL2, карта грузится) — слой остаётся без объёма,
+  // но объект всё равно попадает на сцену: картинка не пропадает.
+  shadeLayer(canvas, sample, options.lighting?.lights ?? [], box);
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.drawImage(canvas, box.x, box.y, box.width, box.height, box.x, box.y, box.width, box.height);
+  ctx.restore();
+  return true;
 }
 
 /** Обычная отрисовка объекта: трансформа, содержимое, без маски. */
@@ -521,16 +632,22 @@ function contentBox(
   left: number,
   top: number,
   feather: number,
+  quad: Vec2[] | null = null,
 ): { x: number; y: number; width: number; height: number } | null {
   const combined = multiplyAffine({
     a: transform.a, b: transform.b, c: transform.c, d: transform.d, e: transform.e, f: transform.f,
   }, matrix);
-  const corners = [
-    [left, top],
-    [left + object.width, top],
-    [left, top + object.height],
-    [left + object.width, top + object.height],
-  ].map(([x, y]) => transformPoint(combined, x, y));
+  // Углы считаются в координатах объекта: деформация живёт от угла картинки,
+  // поэтому её четырёхугольник сдвигается туда же, где нарисована картинка.
+  const sources = quad
+    ? quad.map((point) => [left + point.x, top + point.y] as const)
+    : [
+      [left, top] as const,
+      [left + object.width, top] as const,
+      [left, top + object.height] as const,
+      [left + object.width, top + object.height] as const,
+    ];
+  const corners = sources.map(([x, y]) => transformPoint(combined, x, y));
   const scale = Math.max(
     Math.hypot(combined.a, combined.b),
     Math.hypot(combined.c, combined.d),

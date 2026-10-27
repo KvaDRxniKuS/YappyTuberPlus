@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
-import { applyVolume, createCollector, resetCollector } from "../render/lighting";
+import { createCollector, resetCollector } from "../render/lighting";
 import { MediaAssets, MaskMedia } from "../render/media";
 import { assetIdsOfPreset, ensureAssetsOfPreset, onAssetsChanged, unresolvedAssetIds } from "../engine/assets";
 import { createOverlayBus } from "./bus";
@@ -195,8 +195,6 @@ export function OverlayApp() {
         media: mediaAssets.current, maskMedia: maskMedia.current, lighting,
       });
       ctx.restore();
-      // Объём от карт нормалей — тем же проходом, что и в редакторе.
-      applyVolume(element, lighting);
       if (guide) {
         ctx.save();
         ctx.strokeStyle = "#82d5c1aa";

@@ -6,7 +6,7 @@ import {
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
-import { applyVolume, createCollector, resetCollector } from "../render/lighting";
+import { createCollector, resetCollector } from "../render/lighting";
 import {
   drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
@@ -257,9 +257,8 @@ export function Scene(props: SceneProps) {
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
       lighting: lighting.current,
     });
-    // Объём от карт нормалей: холст уходит в WebGL2 и возвращается с тенью от
-    // светов. Направляющие и выделение рисуются после — они не должны темнеть.
-    applyVolume(element, lighting.current);
+    // Объём от карт нормалей считается внутри drawRig: каждый объект получает
+    // свой объём в своём слое, поэтому верхние слои его перекрывают.
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "frame");

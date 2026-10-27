@@ -5,8 +5,8 @@ import {
   alphaOf, gradientRadius, lightBounds, normalizeLight, normalizeNormal, paintLight, solidOf, traceLight, withAlpha,
 } from "../../src/render/light";
 import { makeLight, normalizePreset } from "../../src/engine/preset";
-import { collect, multiplyAffine, objectMatrix } from "../../src/render/rigCanvas";
-import { applyVolume, createCollector, lightingAvailable, resetCollector } from "../../src/render/lighting";
+import { collect, multiplyAffine, normalSample, objectMatrix } from "../../src/render/rigCanvas";
+import { createCollector, lightingAvailable, resetCollector, shadeLayer } from "../../src/render/lighting";
 import { DEFAULT_BASE, DEFAULT_LIGHT, type RigObject, type RigPreset } from "../../src/types";
 import { DEFAULT_BEHAVIOUR, behaviourBlock, readBehaviour, writeBehaviour } from "../../src/engine/behaviour";
 
@@ -187,7 +187,7 @@ test("свет и нормали: пресет хранит их только у
   expect(normalizeNormal({ src: "asset:x", strength: 900 })!.strength).toBe(200);
 });
 
-test("объём: свет и нормали собираются в пикселях холста", () => {
+test("объём: свет собирается в пикселях холста, карта нормалей — у своего объекта", () => {
   const collector = createCollector();
   // Камера: сдвиг и масштаб — так свет попадает в экранные пиксели.
   const camera = { a: 0.5, b: 0, c: 0, d: 0.5, e: 100, f: 40 };
@@ -196,7 +196,7 @@ test("объём: свет и нормали собираются в пиксе�
   const lamp = makeLight("lamp", "Лампа", 400, 300, { radius: 200, angle: 90, shape: "sector" }, { width: 1000, height: 2000 });
   // Поворот объекта на 90° должен повернуть и пятно.
   const turned = { ...lamp, base: { ...lamp.base, rotation: 90 } };
-  collect(collector, view, turned, frameValues(), objectMatrix(turned, frameValues()), -200, -200);
+  collect(collector, view, turned, frameValues(), objectMatrix(turned, frameValues()));
   expect(collector.lights).toHaveLength(1);
   const light = collector.lights[0];
   // Центр: (400, 300) → ×0.5 + (100, 40).
@@ -215,32 +215,42 @@ test("объём: свет и нормали собираются в пиксе�
     script: "", width: 200, height: 100,
     normal: { src: "asset:normal", strength: 150, animate: false },
   };
-  collect(collector, view, face, frameValues(), objectMatrix(face, frameValues()), -100, -50);
-  expect(collector.normals).toHaveLength(1);
-  const normal = collector.normals[0];
+  // Нормали в общий сбор не попадают: объект получает объём в своём слое.
+  collect(collector, view, face, frameValues(), objectMatrix(face, frameValues()));
+  expect(collector.lights).toHaveLength(1);
+  const normal = normalSample(view, face, objectMatrix(face, frameValues()), -100, -50)!;
   expect(normal.matrix).toEqual([0.5, 0, 0, 0, 0.5, 0, 300, 190, 1]);
   expect(normal.rect).toEqual([-100, -50, 200, 100]);
   expect(normal.strength).toBe(150);
 
   // Свет без яркости и объект без карты в проход не попадают.
   const dim = { ...lamp, light: { ...lamp.light!, brightness: 0 } };
-  collect(collector, view, dim, frameValues(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 0, 0);
+  collect(collector, view, dim, frameValues(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
   expect(collector.lights).toHaveLength(1);
   const plain = { ...face, normal: { ...face.normal!, strength: 0 } };
-  collect(collector, view, plain, frameValues(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 0, 0);
-  expect(collector.normals).toHaveLength(1);
+  expect(normalSample(view, plain, objectMatrix(plain, frameValues()), -100, -50)).toBeNull();
+  // Карта есть только у спрайта и медиа: свету и фигуре она не положена.
+  expect(normalSample(view, turned, objectMatrix(turned, frameValues()), -200, -200)).toBeNull();
 
   // Сброс перед кадром: буфер не растёт от кадра к кадру.
   resetCollector(collector);
   expect(collector.lights).toHaveLength(0);
-  expect(collector.normals).toHaveLength(0);
 });
 
-test("объём: без WebGL2 проход молчит, холст остаётся как есть", () => {
+test("объём: без WebGL2 проход молчит, слой остаётся как есть", () => {
   expect(lightingAvailable()).toBe(false);
-  const collector = createCollector();
-  // Пустой сбор — сразу «нечего считать», даже без холста.
-  expect(applyVolume({ width: 40, height: 40 } as HTMLCanvasElement, collector)).toBe(false);
+  const layer = { width: 40, height: 40 } as HTMLCanvasElement;
+  const box = { x: 0, y: 0, width: 40, height: 40 };
+  const sample = { matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1], rect: [0, 0, 40, 40] as [number, number, number, number], src: "asset:normal", strength: 100 };
+  // Нет света — считать нечего.
+  expect(shadeLayer(layer, sample, [], box)).toBe(false);
+  // Свет есть, но WebGL2 в тестах нет — тихий отказ, картинка не пропадает.
+  const light = {
+    x: 20, y: 20, radius: 40, rotation: 0, shape: "circle" as const, angle: 360,
+    softness: 50, colorStart: "rgba(255, 255, 255, 1)", colorEnd: "rgba(0, 0, 0, 0)",
+    brightness: 100, blend: "normal" as const,
+  };
+  expect(shadeLayer(layer, sample, [light], box)).toBe(false);
 });
 
 function frameValues() {
@@ -344,13 +354,47 @@ test("следование за мышью: доворот в градусах �
  */
 test("объём: карта нормалей пишется в буфер сверху вниз, как холст", () => {
   const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
-  // Вершинный шейдер нормалей: верх объекта (device.y = 0) идёт в строку 0.
-  expect(source).toContain("device.y / uCanvas.y * 2.0 - 1.0");
-  expect(source).not.toContain("1.0 - device.y / uCanvas.y");
+  // Вершинный шейдер нормалей: верх объекта идёт в первую строку буфера.
+  expect(source).toContain("inside.y / uViewport.y * 2.0 - 1.0");
+  expect(source).not.toContain("1.0 - device.y");
   // Проход объёма: vUv.y = 0 — верх экрана, и обе текстуры читаются этим vUv.
   expect(source).toContain("1.0 - aPos.y * 2.0");
   expect(source).toContain("texture(uScene, vUv)");
   expect(source).toContain("texture(uNormals, vUv)");
   // Холст льётся без переворота — иначе поехала бы вся сцена, а не карта.
   expect(source).toContain("gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);\n  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);");
+});
+
+/*
+ * Объём и слои.
+ *
+ * Объём принадлежит объекту: он считается в слое этого объекта сразу после его
+ * отрисовки, поэтому всё нарисованное выше перекрывает его как обычно. Раньше
+ * буфер нормалей был общим на весь холст и закрашивал пиксели, уже занятые
+ * верхними объектами, — объём нижнего просвечивал сквозь них.
+ *
+ * Проверяем порядок вызовов и способ композита: браузерного WebGL в тестах нет,
+ * а именно эта последовательность и создаёт слоистость.
+ */
+test("объём: считается по объекту, а не по готовой сцене", () => {
+  const rig = readFileSync(join(process.cwd(), "src", "render", "rigCanvas.ts"), "utf8");
+  const loop = rig.slice(rig.indexOf("for (const { object, values, ghost, opacity, drawn, matrix } of objects)"));
+  expect(loop.length).toBeGreaterThan(0);
+  // Сэмпл нормалей и объём — внутри цикла отрисовки, до следующего объекта.
+  expect(loop.indexOf("normalSample(view, object")).toBeGreaterThan(0);
+  expect(loop.indexOf("drawShaded(")).toBeGreaterThan(loop.indexOf("normalSample(view, object"));
+  // Слой объекта уходит в объём целиком, вместе с рамкой работы.
+  expect(rig).toContain("shadeLayer(canvas, sample, options.lighting?.lights ?? [], box);");
+  // Объект попадает на сцену один раз: слоем, обычным наложением.
+  expect(rig).toContain('ctx.globalCompositeOperation = "source-over";');
+  // Общего прохода по готовому холсту больше нет ни в редакторе, ни в оверлее.
+  for (const file of ["src/components/Scene.tsx", "src/overlay/OverlayApp.tsx"]) {
+    expect(readFileSync(join(process.cwd(), file), "utf8")).not.toContain("applyVolume");
+  }
+  // В слое объём заменяет рамку целиком («copy» внутри отсечения), иначе
+  // полупрозрачные края сложились бы дважды.
+  const lighting = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
+  expect(lighting).toContain('context.globalCompositeOperation = "copy";');
+  expect(lighting).toContain("context.rect(box.x, box.y, width, height);");
+  expect(lighting).toContain("context.clip();");
 });

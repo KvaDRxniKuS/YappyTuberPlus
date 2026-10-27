@@ -47,19 +47,23 @@ export interface NormalSample {
   strength: number;
 }
 
-/** Что собрал проход отрисовки: светильники и объекты с нормалями. */
+/**
+ * Что собрал проход отрисовки: светильники сцены.
+ *
+ * Объектов с картой нормалей здесь нет: объём считается каждому объекту сразу
+ * после его отрисовки, в его собственном слое (`shadeLayer`), иначе он
+ * просвечивал бы сквозь объекты выше.
+ */
 export interface LightingCollector {
   lights: LightSample[];
-  normals: NormalSample[];
 }
 
 export function createCollector(): LightingCollector {
-  return { lights: [], normals: [] };
+  return { lights: [] };
 }
 
 export function resetCollector(collector: LightingCollector): void {
   collector.lights.length = 0;
-  collector.normals.length = 0;
 }
 
 /** Сколько светильников уходит в шейдер: больше — лишние не считаются. */
@@ -69,18 +73,22 @@ const NORMAL_VERTEX = `#version 300 es
 in vec2 aPos;
 uniform mat3 uMatrix;
 uniform vec4 uRect;
-uniform vec2 uCanvas;
+uniform vec2 uViewport;
+uniform vec2 uOrigin;
 out vec2 vUv;
 void main() {
   vUv = aPos;
   vec2 local = uRect.xy + aPos * uRect.zw;
   vec3 device = uMatrix * vec3(local, 1.0);
+  // Матрица объекта считается в пикселях всего холста, а рисуем мы только его
+  // рамку: начало координат переносится в угол рамки, размер равен её размеру.
+  vec2 inside = device.xy - uOrigin;
   // Y не переворачивается, хотя в кадре он растёт вниз: кадровый буфер хранит
   // строки снизу вверх, а холст и его текстура — сверху вниз. Поэтому «верх
   // объекта» попадает в первую строку буфера и читается тем же vUv, что и
   // сцена. С «1.0 -» карта ложится зеркалом по вертикали: она перестаёт
   // держаться за объект и уезжает вместе с камерой.
-  gl_Position = vec4(device.x / uCanvas.x * 2.0 - 1.0, device.y / uCanvas.y * 2.0 - 1.0, 0.0, 1.0);
+  gl_Position = vec4(inside.x / uViewport.x * 2.0 - 1.0, inside.y / uViewport.y * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
 const NORMAL_FRAGMENT = `#version 300 es
@@ -113,6 +121,8 @@ in vec2 vUv;
 uniform sampler2D uScene;
 uniform sampler2D uNormals;
 uniform vec2 uCanvas;
+uniform vec2 uOrigin;
+uniform vec2 uSize;
 uniform int uCount;
 uniform vec4 uColor0[MAX_LIGHTS];
 uniform vec4 uColor1[MAX_LIGHTS];
@@ -138,7 +148,8 @@ void main() {
   float volume = nrm.a * nrm.b * 2.0;
   if (uCount == 0 || volume <= 0.001) { outColor = scene; return; }
 
-  vec2 p = vUv * uCanvas;
+  // Пиксели всего холста: vUv считается внутри рамки объекта.
+  vec2 p = uOrigin + vUv * uSize;
   vec2 nxy = nrm.rg * 2.0 - 1.0;
   vec3 n = vec3(nxy, max(sqrt(max(1.0 - dot(nxy, nxy), 0.0)), 0.05));
   float accum = 0.0;
@@ -398,37 +409,75 @@ function ensureSize(target: Programs, width: number, height: number): void {
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
-/**
- * Добавить объём: сцена → текстура → WebGL2 → обратно в холст.
- *
- * Возвращает `true`, если объём посчитан. Любая неготовность (нет WebGL2,
- * карта ещё грузится, шейдер не собрался) — это `false`, и холст остаётся
- * ровно таким, каким его нарисовал Canvas 2D.
- */
-export function applyVolume(canvas: HTMLCanvasElement, collector: LightingCollector | null): boolean {
-  if (!collector) return false;
-  if (!collector.lights.length || !collector.normals.length) return false;
-  if (!lightingAvailable() || !state) return false;
-  const gl = state.gl;
-  const width = canvas.width;
-  const height = canvas.height;
-  if (width < 2 || height < 2) return false;
+/** Рамка работы в пикселях холста: объём считается только внутри неё. */
+export interface ShadeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
-  // Карты нормалей грузятся асинхронно: пока файла нет, объёма просто нет.
-  const maps: Array<{ sample: NormalSample; texture: TextureSource }> = [];
-  for (const sample of collector.normals) {
-    const texture = sourceOf(sample.src, true);
-    if (!texture || !ready(texture)) return false;
-    maps.push({ sample, texture });
-  }
-  if (!maps.length) return false;
+/** Копия рамки слоя: в WebGL уходит только она, а не весь холст. */
+let scratch: HTMLCanvasElement | null = null;
+
+function scratchOf(source: HTMLCanvasElement, box: ShadeBox): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  if (!scratch) scratch = document.createElement("canvas");
+  if (scratch.width !== box.width) scratch.width = box.width;
+  if (scratch.height !== box.height) scratch.height = box.height;
+  const ctx = scratch.getContext("2d");
+  if (!ctx) return null;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, box.width, box.height);
+  ctx.drawImage(source, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);
+  return scratch;
+}
+
+/**
+ * Объём одного объекта: его слой → текстура → WebGL2 → обратно в тот же слой.
+ *
+ * Объём считается **по объекту**, а не по готовой сцене. Причина в слоях:
+ * общий буфер нормалей на весь холст закрашивал пиксели, которые уже заняты
+ * объектами выше, и объём нижнего объекта просвечивал сквозь них. Здесь слой
+ * содержит только сам объект, поэтому объём принадлежит ему: всё, что нарисуют
+ * после, его перекрывает, а прозрачные пиксели ничего не подсвечивают.
+ *
+ * Работа ограничена рамкой объекта (`box`), поэтому цена кадра зависит от
+ * размера объекта, а не от размера холста.
+ *
+ * Возвращает `true`, если объём посчитан. Любая неготовность (нет WebGL2, карта
+ * ещё грузится, шейдер не собрался) — это `false`, и слой остаётся ровно таким,
+ * каким его нарисовал Canvas 2D.
+ */
+export function shadeLayer(
+  layer: HTMLCanvasElement,
+  sample: NormalSample,
+  lights: LightSample[],
+  box: ShadeBox,
+): boolean {
+  if (!lights.length) return false;
+  if (!(sample.strength > 0) || !sample.src) return false;
+  if (box.width < 2 || box.height < 2) return false;
+  if (!lightingAvailable() || !state) return false;
+  const texture = sourceOf(sample.src, true);
+  if (!texture || !ready(texture)) return false;
+  const source = scratchOf(layer, box);
+  if (!source) return false;
+  const gl = state.gl;
+  const width = box.width;
+  const height = box.height;
 
   try {
-    gl.canvas.width = width;
-    gl.canvas.height = height;
-    ensureSize(state, width, height);
+    // Буферы держим размером холста: рамка объекта гуляет с камерой, и
+    // пересоздавать текстуры на каждый её сдвиг незачем. Меняется только
+    // вьюпорт — в него и пишем, из него и читаем.
+    if (gl.canvas.width !== layer.width || gl.canvas.height !== layer.height) {
+      gl.canvas.width = layer.width;
+      gl.canvas.height = layer.height;
+    }
+    ensureSize(state, layer.width, layer.height);
 
-    // 1. Карты нормалей: каждый объект рисуется своим прямоугольником.
+    // 1. Карта нормалей объекта в его рамке.
     gl.bindFramebuffer(gl.FRAMEBUFFER, state.normalFramebuffer);
     gl.viewport(0, 0, width, height);
     gl.clearColor(0, 0, 0, 0);
@@ -438,24 +487,17 @@ export function applyVolume(canvas: HTMLCanvasElement, collector: LightingCollec
     gl.bindBuffer(gl.ARRAY_BUFFER, state.quad);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    const normalMatrix = gl.getUniformLocation(state.normal, "uMatrix");
-    const normalRect = gl.getUniformLocation(state.normal, "uRect");
-    const normalCanvas = gl.getUniformLocation(state.normal, "uCanvas");
-    const normalMap = gl.getUniformLocation(state.normal, "uMap");
-    const normalStrength = gl.getUniformLocation(state.normal, "uStrength");
-    gl.uniform2f(normalCanvas, width, height);
-    gl.uniform1i(normalMap, 0);
+    gl.uniform2f(gl.getUniformLocation(state.normal, "uViewport"), width, height);
+    gl.uniform2f(gl.getUniformLocation(state.normal, "uOrigin"), box.x, box.y);
+    gl.uniformMatrix3fv(gl.getUniformLocation(state.normal, "uMatrix"), false, new Float32Array(sample.matrix));
+    gl.uniform4f(gl.getUniformLocation(state.normal, "uRect"), sample.rect[0], sample.rect[1], sample.rect[2], sample.rect[3]);
+    gl.uniform1f(gl.getUniformLocation(state.normal, "uStrength"), Math.min(2, Math.max(0, sample.strength / 100)));
+    gl.uniform1i(gl.getUniformLocation(state.normal, "uMap"), 0);
     gl.activeTexture(gl.TEXTURE0);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    for (const { sample, texture } of maps) {
-      gl.bindTexture(gl.TEXTURE_2D, createMapTexture(gl, `${sample.src}|${texture.live}`, texture));
-      gl.uniformMatrix3fv(normalMatrix, false, new Float32Array(sample.matrix));
-      gl.uniform4f(normalRect, sample.rect[0], sample.rect[1], sample.rect[2], sample.rect[3]);
-      gl.uniform1f(normalStrength, Math.min(2, Math.max(0, sample.strength / 100)));
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    }
+    gl.bindTexture(gl.TEXTURE_2D, createMapTexture(gl, `${sample.src}|${texture.live}`, texture));
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    // 2. Сцена: холст целиком уходит текстурой, обратно — с объёмом.
+    // 2. Слой объекта: текстура, обратно — с объёмом от светильников сцены.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, width, height);
     gl.useProgram(state.volume);
@@ -463,19 +505,22 @@ export function applyVolume(canvas: HTMLCanvasElement, collector: LightingCollec
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, sceneTexture(gl, canvas));
+    gl.bindTexture(gl.TEXTURE_2D, sceneTexture(gl, source));
     gl.uniform1i(gl.getUniformLocation(state.volume, "uScene"), 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, state.normalTexture);
     gl.uniform1i(gl.getUniformLocation(state.volume, "uNormals"), 1);
-    gl.uniform2f(gl.getUniformLocation(state.volume, "uCanvas"), width, height);
+    // Размер всего холста нужен только форме «весь экран»: её радиус — диагональ.
+    gl.uniform2f(gl.getUniformLocation(state.volume, "uCanvas"), layer.width, layer.height);
+    gl.uniform2f(gl.getUniformLocation(state.volume, "uOrigin"), box.x, box.y);
+    gl.uniform2f(gl.getUniformLocation(state.volume, "uSize"), width, height);
 
-    const lights = collector.lights.slice(0, MAX_LIGHTS);
+    const used = lights.slice(0, MAX_LIGHTS);
     const color0 = new Float32Array(MAX_LIGHTS * 4);
     const color1 = new Float32Array(MAX_LIGHTS * 4);
     const geom = new Float32Array(MAX_LIGHTS * 4);
     const shape = new Float32Array(MAX_LIGHTS * 4);
-    lights.forEach((light, index) => {
+    used.forEach((light, index) => {
       const start = colorParts(light.colorStart);
       const end = colorParts(light.colorEnd);
       const level = Math.min(2, Math.max(0, light.brightness / 100));
@@ -489,26 +534,29 @@ export function applyVolume(canvas: HTMLCanvasElement, collector: LightingCollec
         polarity(light.colorStart),
       ], index * 4);
     });
-    gl.uniform1i(gl.getUniformLocation(state.volume, "uCount"), lights.length);
+    gl.uniform1i(gl.getUniformLocation(state.volume, "uCount"), used.length);
     gl.uniform4fv(gl.getUniformLocation(state.volume, "uColor0"), color0);
     gl.uniform4fv(gl.getUniformLocation(state.volume, "uColor1"), color1);
     gl.uniform4fv(gl.getUniformLocation(state.volume, "uGeom"), geom);
     gl.uniform4fv(gl.getUniformLocation(state.volume, "uShape"), shape);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    // 3. Обратно в холст: сцена уже нарисована, объём ложится поверх.
-    const context = canvas.getContext("2d");
+    // 3. Обратно в слой: рамка заменяется целиком, «copy» внутри отсечения.
+    const context = layer.getContext("2d");
     if (!context) return false;
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
+    context.beginPath();
+    context.rect(box.x, box.y, width, height);
+    context.clip();
     context.globalAlpha = 1;
     context.globalCompositeOperation = "copy";
-    context.drawImage(gl.canvas, 0, 0);
+    context.drawImage(gl.canvas, 0, 0, width, height, box.x, box.y, width, height);
     context.restore();
     disposeSceneTexture(gl);
     return true;
   } catch (reason) {
-    console.warn("Объём от карт нормалей пропущен:", reason);
+    console.warn("Объём от карты нормалей пропущен:", reason);
     return false;
   }
 }
