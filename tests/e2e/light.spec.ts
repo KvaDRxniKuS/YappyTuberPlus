@@ -357,7 +357,7 @@ test("следование за мышью: доворот в градусах �
 test("объём: карта нормалей пишется в буфер сверху вниз, как холст", () => {
   const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
   // Вершинный шейдер нормалей: верх объекта идёт в первую строку буфера.
-  expect(source).toContain("inside.y / uViewport.y * 2.0 - 1.0");
+  expect(source).toContain("inside.y / uSize.y * 2.0 - 1.0");
   expect(source).not.toContain("1.0 - device.y");
   // Проход объёма: vUv.y = 0 — верх экрана, и обе текстуры читаются этим vUv.
   expect(source).toContain("1.0 - aPos.y * 2.0");
@@ -450,9 +450,90 @@ test("объём: вьюпорт рамки совпадает с рамкой �
   }
 
   const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
-  // Оба прохода ставят вьюпорт по рамке, а не в (0, 0).
-  expect(source.match(/gl\.viewport\(viewport\.x, viewport\.y, viewport\.width, viewport\.height\)/g)).toHaveLength(2);
-  expect(source).not.toContain("gl.viewport(0, 0, width, height)");
-  // Читается ровно та область буфера, куда рисовали.
-  expect(source).toContain("context.drawImage(gl.canvas, viewport.x, viewport.y, width, height, box.x, box.y, width, height);");
+  // Проход объёма рисует по рамке: строки буфера считаются снизу.
+  expect(source.match(/gl\.viewport\(viewport\.x, viewport\.y, viewport\.width, viewport\.height\)/g)).toHaveLength(1);
+  // Текстура нормалей читается по рамке (vUv от 0 до 1), поэтому её проход
+  // занимает весь буфер — иначе карта берётся из чужих строк.
+  expect(source).toContain("gl.viewport(0, 0, layer.width, layer.height)");
+  // Обратное чтение — копия рамки один к одному: два разворота гасят друг
+  // друга. Чтение по viewport.y уводило объект в сторону, обратную камере.
+  expect(source).toContain("context.drawImage(gl.canvas, box.x, box.y, width, height, box.x, box.y, width, height);");
+  expect(source).not.toContain("context.drawImage(gl.canvas, viewport.x");
+});
+
+/*
+ * Стык «куда нарисовали — откуда прочитали».
+ *
+ * Здесь ошибиться легко, и оба раза это ломалось по-разному: объект пропадал
+ * (читали пустую область) или уезжал по вертикали в сторону, обратную камере
+ * (читали зеркальную строку). Поэтому у каждого прохода своя привязка, и обе
+ * проверяются отдельно:
+ *
+ * - нормали: рамка объекта растянута на весь буфер, потому что проход объёма
+ *   читает карту координатой vUv по рамке;
+ * - объём: вьюпорт стоит там, где рамка лежит в буфере (снизу вверх);
+ * - обратно: копия рамки один к одному, без смещения по строкам.
+ *
+ * Смещение, посчитанное не в ту сторону, всегда равно «высота холста − y −
+ * высота рамки»: при чтении по этой строке объект сдвигается ровно настолько,
+ * насколько он далёк от середины, то есть тем сильнее, чем дальше камера.
+ */
+test("объём: привязка проходов — своя у каждого, обратное чтение без смещения", () => {
+  const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
+  const body = source.slice(source.indexOf("export function shadeLayer"));
+  const normalPass = body.slice(body.indexOf("state.normalFramebuffer"), body.indexOf("2. Слой объекта"));
+  const volumePass = body.slice(body.indexOf("2. Слой объекта"), body.indexOf("3. Обратно в слой"));
+
+  // Нормали: весь буфер, размеры рамки уходят в шейдер.
+  expect(normalPass).toContain("gl.viewport(0, 0, layer.width, layer.height)");
+  expect(normalPass).toContain('"uSize"');
+  expect(normalPass).not.toContain("viewport.y");
+
+  // Объём: вьюпорт по рамке, координаты пикселей холста считаются от её угла.
+  expect(volumePass).toContain("gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height)");
+  expect(volumePass).toContain('"uOrigin"');
+  expect(volumePass).toContain('"uSize"');
+
+  // Обратно: рамка копируется один к одному — иначе объект уезжает.
+  expect(body).toContain("context.drawImage(gl.canvas, box.x, box.y, width, height, box.x, box.y, width, height);");
+});
+
+/*
+ * Круг «карта → объём → обратно» в строках холста.
+ *
+ * Это не греп по коду, а арифметика: где окажется строка r объекта после того,
+ * как её проведут через буфер нормалей, вьюпорт объёма и обратное чтение. На
+ * этом круге я ошибался дважды — сначала объект пропадал, потом уезжал в
+ * сторону, обратную камере. Правильный ответ один: строка возвращается на своё
+ * место (в пределах пикселя).
+ */
+function roundTrip(boxY: number, height: number, canvasHeight: number): number[] {
+  const view = viewportOf({ x: 0, y: boxY, width: 1, height }, canvasHeight);
+  const rows: number[] = [];
+  for (let r = 0; r < height; r += 1) {
+    // Нормали: строка r внутри рамки растягивается на всю текстуру, v = r / h.
+    const v = r / height;
+    // Объём: фрагмент с vUv.y = aPos.y попадает в NDC 1 − 2·vUv вьюпорта.
+    const fromBottom = view.y + ((1 - 2 * v + 1) / 2) * height;
+    rows.push(canvasHeight - fromBottom - 1);
+  }
+  return rows;
+}
+
+test("объём: строка объекта возвращается на своё место после прохода", () => {
+  // Три положения: у верхнего края, по центру, у нижнего.
+  for (const boxY of [40, 300, 620]) {
+    const rows = roundTrip(boxY, 160, 800);
+    rows.forEach((row, r) => expect(Math.abs(row - (boxY + r))).toBeLessThanOrEqual(1));
+  }
+
+  // А так выглядело чтение по строке буфера (`viewport.y` вместо `box.y`):
+  // рамка подменялась её отражением, и смещение равно «высота − 2·y − высота
+  // рамки». В центре оно нулевое — потому баг и не виден сразу, — а у края
+  // растёт, и объект уезжает тем сильнее, чем дальше камера.
+  const shift = (boxY: number, height: number, canvasHeight: number) =>
+    viewportOf({ x: 0, y: boxY, width: 1, height }, canvasHeight).y - boxY;
+  expect(shift(320, 160, 800)).toBe(0);
+  expect(Math.abs(shift(40, 160, 800))).toBeGreaterThan(Math.abs(shift(320, 160, 800)));
+  expect(Math.abs(shift(620, 160, 800))).toBeGreaterThan(Math.abs(shift(320, 160, 800)));
 });

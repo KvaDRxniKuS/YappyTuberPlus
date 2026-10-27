@@ -87,7 +87,7 @@ const NORMAL_VERTEX = `#version 300 es
 in vec2 aPos;
 uniform mat3 uMatrix;
 uniform vec4 uRect;
-uniform vec2 uViewport;
+uniform vec2 uSize;
 uniform vec2 uOrigin;
 out vec2 vUv;
 void main() {
@@ -97,12 +97,11 @@ void main() {
   // Матрица объекта считается в пикселях всего холста, а рисуем мы только его
   // рамку: начало координат переносится в угол рамки, размер равен её размеру.
   vec2 inside = device.xy - uOrigin;
-  // Y не переворачивается, хотя в кадре он растёт вниз: кадровый буфер хранит
-  // строки снизу вверх, а холст и его текстура — сверху вниз. Поэтому «верх
-  // объекта» попадает в первую строку буфера и читается тем же vUv, что и
-  // сцена. С «1.0 -» карта ложится зеркалом по вертикали: она перестаёт
-  // держаться за объект и уезжает вместе с камерой.
-  gl_Position = vec4(inside.x / uViewport.x * 2.0 - 1.0, inside.y / uViewport.y * 2.0 - 1.0, 0.0, 1.0);
+  // Рамка объекта растягивается на всю текстуру нормалей: проход объёма читает
+  // её координатой vUv от 0 до 1, то есть по рамке, а не по холсту. Y не
+  // переворачивается: у кадрового буфера строка 0 — низ, у текстуры v = 0 —
+  // та же строка, поэтому «верх объекта» и vUv.y = 0 оказываются вместе.
+  gl_Position = vec4(inside.x / uSize.x * 2.0 - 1.0, inside.y / uSize.y * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
 const NORMAL_FRAGMENT = `#version 300 es
@@ -516,13 +515,16 @@ export function shadeLayer(
     }
     ensureSize(state, layer.width, layer.height);
 
-    // Вьюпорт ставится туда, где рамка лежит в кадровом буфере: иначе объём
-    // рисуется в низ буфера, а читается сверху — объект подменяется пустотой.
+    // Проход объёма рисует в том месте кадрового буфера, где рамка лежит на
+    // холсте: буфер считает строки снизу, холст — сверху. Без перевода объект
+    // подменялся пустотой, а с перепутанным чтением — уезжал в другую сторону.
     const viewport = viewportOf(box, layer.height);
 
-    // 1. Карта нормалей объекта в его рамке.
+    // 1. Карта нормалей объекта. Текстуру нормалей проход объёма читает по
+    // рамке объекта (vUv от 0 до 1), поэтому рамка занимает весь буфер: иначе
+    // карта берётся из чужих строк и объём ложится не туда.
     gl.bindFramebuffer(gl.FRAMEBUFFER, state.normalFramebuffer);
-    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+    gl.viewport(0, 0, layer.width, layer.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.disable(gl.BLEND);
@@ -530,7 +532,7 @@ export function shadeLayer(
     gl.bindBuffer(gl.ARRAY_BUFFER, state.quad);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    gl.uniform2f(gl.getUniformLocation(state.normal, "uViewport"), width, height);
+    gl.uniform2f(gl.getUniformLocation(state.normal, "uSize"), width, height);
     gl.uniform2f(gl.getUniformLocation(state.normal, "uOrigin"), box.x, box.y);
     gl.uniformMatrix3fv(gl.getUniformLocation(state.normal, "uMatrix"), false, new Float32Array(sample.matrix));
     gl.uniform4f(gl.getUniformLocation(state.normal, "uRect"), sample.rect[0], sample.rect[1], sample.rect[2], sample.rect[3]);
@@ -594,8 +596,12 @@ export function shadeLayer(
     context.clip();
     context.globalAlpha = 1;
     context.globalCompositeOperation = "copy";
-    // Источник — та же строки, что занимает вьюпорт: буфер читается сверху.
-    context.drawImage(gl.canvas, viewport.x, viewport.y, width, height, box.x, box.y, width, height);
+    // Копия рамки один к одному. Два разворота гасят друг друга: вьюпорт кладёт
+    // содержимое объекта туда, где рамка лежит на холсте, а чтение `drawImage`
+    // идёт сверху — в итоге строки совпадают с рамкой, а не с её отражением.
+    // Читать по `viewport.y` нельзя: это строка буфера снизу, и объект уезжает
+    // по вертикали в обратную сторону от камеры.
+    context.drawImage(gl.canvas, box.x, box.y, width, height, box.x, box.y, width, height);
     context.restore();
     disposeSceneTexture(gl);
     return true;
