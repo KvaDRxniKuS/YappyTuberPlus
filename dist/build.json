@@ -11,14 +11,14 @@
   "version": "1.0.21.3.1.1.1",
   "acceptsFrom": 16,
   "packaging": "1.0.0",
-  "builtAt": "2026-10-27T21:36:06.547Z",
-  "commit": "cf41096",
+  "builtAt": "2026-10-27T21:51:01.574Z",
+  "commit": "f66b435",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-CfLeBAr8.js",
-      "size": 391462,
-      "sha256": "bb20f58f3766126ae2d994d594dcbfa8d80d37acffbe5439b19c573a9506155f"
+      "path": "assets/bus-D4mS41Aj.js",
+      "size": 392248,
+      "sha256": "18cee8cb2eacb279784a3ae11057aca8008c6f5ab6b63b07953e991f73c4c7b6"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,19 +76,19 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-BUOV3ow0.js",
-      "size": 8921,
-      "sha256": "3ca31b2b72a65b574ddd349e04d6c37353c07d9e3873e11d23d2629948807990"
-    },
-    {
       "path": "assets/overlay-DT7yrNH-.css",
       "size": 2724,
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
     },
     {
-      "path": "assets/studio-CXA8TujF.js",
-      "size": 753242,
-      "sha256": "375bb0ced2bda51f45a166a288d474c7639fc589090e804ab5ac24c288971fd2"
+      "path": "assets/overlay-lcA5tCZq.js",
+      "size": 8921,
+      "sha256": "5a60e641c0c96b025d29c08a2d05ba83205457927b816ffadad7095eb4831655"
+    },
+    {
+      "path": "assets/studio-Ckc3aCaS.js",
+      "size": 753453,
+      "sha256": "077d5be7947ac72e72024469df8a94f082455b1ad56fb4f3c2d58240f80f2fa1"
     },
     {
       "path": "assets/studio-DJhJV7fK.css",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "297dd502d251407e3b282c3147d82920e23b7c93d4e051bcbcd1654d5910d442"
+      "sha256": "324057e71be8094fc8ffd6bf30230c3e6b4e93ac4a64049528a3be51a79ce19d"
     },
     {
       "path": "modules/autoblink.json",
@@ -173,7 +173,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "1ca4dd48a06d40f784858f330d89ba7f3910bab8b8be82370493399ec1dffc27"
+      "sha256": "d22ecfc106270be061a4f8e68b056e108d10403ea386abd7cfc889d92627b6f6"
     },
     {
       "path": "rig_core.wasm",

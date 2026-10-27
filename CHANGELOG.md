@@ -197,7 +197,7 @@
 ### Проверки
 
 - `npx tsc --noEmit` — чисто.
-- `npx playwright test` — 267 проверок в 38 файлах (237 headless и 30 браузерных).
+- `npx playwright test` — 268 проверок в 38 файлах (238 headless и 30 браузерных).
   Из них отдельные наборы: свет и объём (`tests/e2e/light.spec.ts`), следование за
   мышью, версии и формат (`tests/e2e/version.spec.ts`), оверлей и его «зависание»
   (`overlay-freeze.spec.ts`), расхождение протокола моста
