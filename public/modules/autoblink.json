@@ -3,6 +3,7 @@
   "title": "AutoBlink",
   "description": "Моргание по таймеру: интервал, длительность закрытия и разброс, чтобы не было метронома.",
   "kind": "autoblink",
+  "format": 1,
   "audio": false,
   "inputs": [
     { "name": "blink", "label": "Моргание", "kind": "level", "min": 0, "max": 1 }

@@ -3,6 +3,7 @@
   "title": "Key",
   "description": "Одна клавиша: нажата ли, сколько держится и сколько раз нажали.",
   "kind": "key",
+  "format": 1,
   "audio": false,
   "inputs": [
     {

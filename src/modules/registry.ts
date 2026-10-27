@@ -1,4 +1,5 @@
 import type { ModuleConfig, ModuleInstance, ModuleKind } from "../types";
+import { MODULE_FORMAT } from "../version";
 
 /** Тип поля настроек: из него панель рисует контрол без ручного кода. */
 export type ModuleFieldType = "number" | "flag" | "select" | "device" | "monitor";
@@ -61,6 +62,16 @@ export interface ModuleDefinition {
   title: string;
   description: string;
   kind: ModuleKind;
+  /**
+   * Поколение контракта шаблона (`format` в JSON, по умолчанию 1).
+   *
+   * Слот «модули» в версии проекта: шаблон новее редактора означает, что его
+   * вид или поля настроек здесь не поймут. Без этого числа незнакомый вид
+   * тихо превращался бы в «Manual» и молчал о потере.
+   */
+  format: number;
+  /** Вид модуля незнаком этой сборке: он станет «Manual». */
+  unknownKind?: boolean;
   /** Модуль умеет брать значения с микрофона. */
   audio?: boolean;
   inputs: ModuleInputSpec[];
@@ -75,6 +86,7 @@ const FALLBACK: ModuleDefinition = {
   title: "Модуль",
   description: "Шаблон модуля не найден в папке modules.",
   kind: "manual",
+  format: MODULE_FORMAT,
   inputs: [],
   fields: [],
   defaults: {},
@@ -178,12 +190,15 @@ export function normalizeDefinition(raw: unknown): ModuleDefinition | null {
     ? source.fields.map(normalizeField).filter((field): field is ModuleField => field !== null)
     : [];
   const known: ModuleKind[] = ["loudness", "manual", "autoblink", "viseme", "keyboard", "key", "mouse", "external", "presets"];
-  const kind = known.includes(source.kind as ModuleKind) ? (source.kind as ModuleKind) : "manual";
+  const unknownKind = !known.includes(source.kind as ModuleKind);
+  const kind = unknownKind ? "manual" : source.kind as ModuleKind;
   return {
     id,
     title: typeof source.title === "string" ? source.title : id,
     description: typeof source.description === "string" ? source.description : "",
     kind,
+    format: readNumber(source.format) ?? MODULE_FORMAT,
+    unknownKind,
     audio: source.audio === true || kind === "loudness",
     inputs,
     fields,

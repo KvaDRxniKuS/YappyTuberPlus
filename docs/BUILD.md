@@ -229,7 +229,7 @@ Tauri сам выполнит `npm run build` (WASM-ядро → `tsc` → `vite
 
 ```text
 src-tauri/target/release/yappytuberplus.exe          # само приложение
-src-tauri/target/release/bundle/nsis/YappyTuberPlus_0.1.0_x64-setup.exe   # установщик
+src-tauri/target/release/bundle/nsis/YappyTuberPlus_1.0.0_x64-setup.exe   # установщик
 ```
 
 Установщик NSIS при первом запуске скачивает свою утилиту из интернета; полностью

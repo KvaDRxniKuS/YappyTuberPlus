@@ -3,6 +3,7 @@
   "title": "Manual",
   "description": "Ручной вход: тумблер 0/1, число с границами или состояния (enum) для режимов персонажа.",
   "kind": "manual",
+  "format": 1,
   "audio": false,
   "inputs": [
     { "name": "value", "label": "Значение", "kind": "level", "min": 0, "max": 1 }

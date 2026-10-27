@@ -3,6 +3,7 @@
   "title": "Loudness",
   "description": "Уровень речи с микрофона: пик, сглаженная громкость, децибелы и флаг разговора.",
   "kind": "loudness",
+  "format": 1,
   "audio": true,
   "inputs": [
     {

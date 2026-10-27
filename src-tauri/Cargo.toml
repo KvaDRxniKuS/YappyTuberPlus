@@ -1,6 +1,6 @@
 [package]
 name = "yappytuberplus"
-version = "0.1.0"
+version = "1.0.0"
 description = "High-performance PNG sprite rig studio"
 edition = "2021"
 rust-version = "1.77.2"

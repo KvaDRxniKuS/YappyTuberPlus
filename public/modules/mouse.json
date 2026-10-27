@@ -3,6 +3,7 @@
   "title": "Mouse",
   "description": "Курсор на экране, смещение за кадр в пикселях, кнопки и колесо.",
   "kind": "mouse",
+  "format": 1,
   "audio": false,
   "inputs": [
     {

@@ -578,6 +578,14 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .icon-button.stop.active { color: var(--danger); background: #df8d9114; }
 .status-file { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 260px; padding-left: 9px; border-left: 1px solid #30363d; color: #6f7f88; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-stopped { display: flex; align-items: center; gap: 4px; color: var(--danger); font-size: 10px; }
+/* Паспорт версии в строке состояния: релиз и поколение ядра. */
+.status-version {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 1px 6px; border: 1px solid #2f3640;
+  border-radius: 5px; background: #22272e; color: #adb6bf; font: inherit; font-size: 10px; cursor: pointer;
+}
+.status-version:hover { border-color: #3d4653; color: #cfd8de; }
+.status-version b { color: #d8c69a; font-size: 10.5px; }
+.status-version span { color: #6b7681; }
 /* Расхождение версий: пресет новее сборки или ядро старше редактора. */
 .status-warn { display: flex; align-items: center; gap: 4px; color: #d8a878; font-size: 10px; cursor: help; }
 

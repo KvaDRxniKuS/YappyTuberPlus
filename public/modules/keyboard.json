@@ -3,6 +3,7 @@
   "title": "Keyboard",
   "description": "Клавиши как входы: клавиша добавляется в настройках, вход равен 1, пока она нажата.",
   "kind": "keyboard",
+  "format": 1,
   "audio": false,
   "inputs": [],
   "fields": [],

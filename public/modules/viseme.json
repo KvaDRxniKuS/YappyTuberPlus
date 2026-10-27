@@ -3,6 +3,7 @@
   "title": "Viseme",
   "description": "Похожесть звука на записанные эталоны: свои звуки, варианты произношения, нормализация суммы.",
   "kind": "viseme",
+  "format": 1,
   "audio": true,
   "inputs": [],
   "fields": [

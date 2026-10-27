@@ -3,6 +3,7 @@
   "title": "Twitch",
   "description": "События канала: чат, награды за баллы, bits, фолловы. Вход по коду; текст чата читается в скрипте как twitch.chat.message(0), (-1) — предыдущее сообщение, twitch.chat.user(-1) — его автор, twitch.chat.min/max — границы входа.",
   "kind": "external",
+  "format": 1,
   "audio": false,
   "inputs": [
     {

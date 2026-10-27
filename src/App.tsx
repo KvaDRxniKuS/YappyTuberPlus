@@ -4,7 +4,9 @@ import {
   Gauge, HardDrive, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
   TriangleAlert, Undo2, X,
 } from "lucide-react";
-import { coreMessage, outdatedMessage, versionString, versionTitle } from "./version";
+import {
+  coreMessage, modulesMessage, outdatedMessage, versionLabel, versionShort, versionString, versionTitle,
+} from "./version";
 import { TreePanel } from "./components/TreePanel";
 import { Scene, type SceneTool } from "./components/Scene";
 import { Inspector } from "./components/Inspector";
@@ -169,17 +171,18 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
-  const notify = useCallback((message: string) => {
+  const notify = useCallback((message: string, ms = 2600) => {
     setToast(message);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+    toastTimer.current = window.setTimeout(() => setToast(null), ms);
   }, []);
   const presetRef = useRef(preset);
   const library = useModuleLibrary();
   // В «Стопе» расстановка: живые входы не нужны, и микрофон не держим.
   const moduleInputs = useModuleInputs(preset.modules, library.version, !stopped);
-  /** «Пресет новее сборки» и «ядро старше» — постоянные подсказки в статусе. */
+  /** «Пресет новее сборки», «ядро», «модули» — постоянные подсказки в статусе. */
   const presetOutdated = useMemo(() => outdatedMessage(preset.built), [preset.built]);
+  const modulesNote = useMemo(() => modulesMessage(library.definitions), [library.definitions]);
   // Пресет нормализуется до того, как прочитана папка modules, поэтому поля
   // настроек (режим, границы) дозаполняются один раз, когда шаблоны появились.
   const modulesNormalized = useRef(false);
@@ -1318,8 +1321,22 @@ export default function App() {
             </span>
           )}
           {/* Ядро старше редактора: новые формулы вернут 0, картинка не выдаст. */}
+          {modulesNote && <span className="status-warn" title={modulesNote}><TriangleAlert size={11} /> модули</span>}
           {coreNote && <span className="status-warn" title={coreNote}><TriangleAlert size={11} /> ядро</span>}
-          <b title={versionTitle()}>{versionString()}</b>
+          {/* Паспорт версии: релиз и поколение ядра видны сразу, остальные
+              слоты — в подсказке, а клик копирует машинную запись целиком. */}
+          <button
+            className="status-version"
+            title={versionTitle()}
+            onClick={() => {
+              void navigator.clipboard?.writeText(versionString())
+                .then(() => notify(`Скопировано: ${versionString()}`, 5000))
+                .catch(() => notify(`${versionString()} · ${versionLabel()}`, 6000));
+            }}
+          >
+            <b>{versionShort()}</b>
+            <span>ядро {engine.core ?? "—"}</span>
+          </button>
         </div>
       </footer>
 
