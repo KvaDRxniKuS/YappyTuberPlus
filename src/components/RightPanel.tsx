@@ -72,8 +72,9 @@ interface RightPanelProps {
 
 /**
  * Порядок вкладок: сначала то, чем пользуются каждый день (поведение, входы,
- * модули), в конце — сложное (скрипт объекта и глобальный скрипт). «Фигура»
- * появляется только у объекта-фигуры и стоит рядом со скриптом объекта.
+ * модули), затем настройки самого объекта, в конце — сложное (скрипт объекта и
+ * глобальный скрипт). «Фигура» появляется только у объекта-фигуры и стоит
+ * перед скриптом: её контуры правят чаще, чем код.
  */
 type Tab = "behaviour" | "inputs" | "modules" | "object" | "shape" | "globals";
 
@@ -167,10 +168,10 @@ export function RightPanel(props: RightPanelProps) {
         <button className={tab === "behaviour" ? "active" : ""} onClick={() => setTab("behaviour")}><Spline size={14} /> Поведение</button>
         <button className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}><SlidersHorizontal size={14} /> Входы</button>
         <button className={tab === "modules" ? "active" : ""} onClick={() => setTab("modules")}><Blocks size={14} /> Модули</button>
-        <button className={tab === "object" ? "active" : ""} onClick={() => setTab("object")}><Braces size={14} /> Объект</button>
         {isShape && (
           <button className={tab === "shape" ? "active" : ""} onClick={() => setTab("shape")}><Shapes size={14} /> Фигура</button>
         )}
+        <button className={tab === "object" ? "active" : ""} onClick={() => setTab("object")}><Braces size={14} /> Объект</button>
         <button className={tab === "globals" ? "active" : ""} onClick={() => setTab("globals")}><Globe2 size={14} /> Глобальные</button>
       </div>
 
