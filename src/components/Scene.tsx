@@ -6,6 +6,7 @@ import {
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
+import { applyVolume, createCollector, resetCollector } from "../render/lighting";
 import {
   drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
@@ -134,6 +135,8 @@ export function Scene(props: SceneProps) {
   const camera = useRef<Camera>({ zoom: 0.8, x: 80, y: 40 });
   const [zoomLabel, setZoomLabel] = useState(80);
   const assets = useRef(new SpriteAssets());
+  /** Свет и нормали текущего кадра для прохода объёма. */
+  const lighting = useRef(createCollector());
   const mediaAssets = useRef(new MediaAssets());
   /** Видео-маски: маской может быть фильм, тогда видно его текущий кадр. */
   const maskMedia = useRef(new MaskMedia());
@@ -248,10 +251,15 @@ export function Scene(props: SceneProps) {
     // отрисовки, чтобы видео показало именно текущий кадр.
     mediaAssets.current.sync(preset, frame);
     maskMedia.current.sync(maskSources(preset));
+    resetCollector(lighting.current);
     drawRig(ctx, preset, frame, assets.current, {
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
+      lighting: lighting.current,
     });
+    // Объём от карт нормалей: холст уходит в WebGL2 и возвращается с тенью от
+    // светов. Направляющие и выделение рисуются после — они не должны темнеть.
+    applyVolume(element, lighting.current);
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "frame");

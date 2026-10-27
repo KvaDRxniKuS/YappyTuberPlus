@@ -8,6 +8,8 @@ import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled } from "./warp";
 import { paintLight } from "./light";
+import { DEFAULT_LIGHT } from "../types";
+import type { LightingCollector } from "./lighting";
 import type { MaskSpec, ShapeSpec } from "../types";
 
 /**
@@ -171,6 +173,11 @@ export interface DrawRigOptions {
   maskMedia?: MaskMedia;
   /** Текстовый канал модулей: подстановки в шаблоне текстового объекта. */
   texts?: TextChannel;
+  /**
+   * Сбор данных для прохода объёма: светильники и объекты с картой нормалей в
+   * пикселях холста. Без него отрисовка та же — просто без объёма.
+   */
+  lighting?: LightingCollector;
 }
 
 /**
@@ -194,6 +201,9 @@ export function drawRig(
 ): void {
   const zoom = options.lineScale ?? 1;
   const ghostAlpha = options.ghostAlpha ?? 0.25;
+  // Камера и масштаб экрана: свет и нормали нужны в пикселях холста, а не в
+  // координатах сцены, поэтому трансформация снимается один раз на кадр.
+  const view = options.lighting ? ctx.getTransform() : null;
   for (const object of orderedObjects(preset, frame)) {
     const values = frame?.objects[object.id] || staticValues(object);
     const ghost = values.visible === 0 && options.ghosts === true && scriptHidden(object, values);
@@ -203,6 +213,7 @@ export function drawRig(
     const matrix = objectMatrix(object, values);
     const left = -object.pivot.x * object.width;
     const top = -object.pivot.y * object.height;
+    if (view && !ghost) collect(options.lighting!, view, object, values, matrix, left, top);
     const alpha = ghost ? opacity * ghostAlpha : opacity;
     // Маска работает через отдельный холст: объект рисуется в него, маска
     // вырезается композитом, и только потом результат ложится на сцену.
@@ -231,6 +242,66 @@ export function drawRig(
  * Кадр старого ядра параметра не знает: тогда маска работает так, как
  * настроена в инспекторе, а не исчезает.
  */
+/**
+ * Собрать свет и нормали для прохода объёма.
+ *
+ * Трансформация холста умножается на трансформацию объекта: свету нужен центр
+ * и радиус в пикселях экрана, а карте нормалей — матрица, которая кладёт
+ * картинку ровно туда же, где её нарисовал Canvas 2D. Маски, слои и
+ * прозрачность остаются делом обычной отрисовки: объём только затемняет и
+ * подсвечивает уже нарисованное.
+ */
+/** Трансформация холста: в жизни это DOMMatrix, в тестах — та же арифметика. */
+export interface ViewMatrix {
+  /** У DOMMatrix на входе тот же набор полей, поэтому тесты передают числа. */
+  multiply(matrix: { a: number; b: number; c: number; d: number; e: number; f: number }): Affine;
+}
+
+export function collect(
+  collector: LightingCollector,
+  view: ViewMatrix,
+  object: RigObject,
+  values: ObjectFrame,
+  matrix: Affine,
+  left: number,
+  top: number,
+): void {
+  if (object.enabled === false) return;
+  const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
+  if (opacity <= 0.001) return;
+  const combined = view.multiply(matrix);
+  const scale = Math.hypot(combined.a, combined.b) || 1;
+  if (object.kind === "light") {
+    const spec = object.light ?? DEFAULT_LIGHT;
+    const brightness = spec.brightness * opacity;
+    if (brightness <= 0.5) return;
+    collector.lights.push({
+      x: combined.e,
+      y: combined.f,
+      radius: Math.max(1, spec.radius * scale),
+      rotation: Math.atan2(combined.b, combined.a),
+      shape: spec.shape,
+      angle: spec.angle,
+      softness: spec.softness,
+      colorStart: spec.colorStart,
+      colorEnd: spec.colorEnd,
+      brightness,
+      blend: spec.blend,
+    });
+    return;
+  }
+  if (object.kind !== "sprite" && object.kind !== "media") return;
+  const normal = object.normal;
+  if (!normal?.src || normal.strength <= 0) return;
+  if (object.width <= 0 || object.height <= 0) return;
+  collector.normals.push({
+    matrix: [combined.a, combined.b, 0, combined.c, combined.d, 0, combined.e, combined.f, 1],
+    rect: [left, top, object.width, object.height],
+    src: normal.src,
+    strength: normal.strength,
+  });
+}
+
 export function maskStrength(values: ObjectFrame): number {
   const value = values.mask;
   if (!Number.isFinite(value)) return 1;

@@ -3,7 +3,9 @@ import {
   alphaOf, gradientRadius, lightBounds, normalizeLight, normalizeNormal, paintLight, solidOf, traceLight, withAlpha,
 } from "../../src/render/light";
 import { makeLight, normalizePreset } from "../../src/engine/preset";
-import { DEFAULT_LIGHT, type RigObject, type RigPreset } from "../../src/types";
+import { collect, multiplyAffine, objectMatrix } from "../../src/render/rigCanvas";
+import { applyVolume, createCollector, lightingAvailable, resetCollector } from "../../src/render/lighting";
+import { DEFAULT_BASE, DEFAULT_LIGHT, type RigObject, type RigPreset } from "../../src/types";
 
 /*
  * Свет и карты нормалей проверяются без браузера: путь пятна и градиент
@@ -177,3 +179,66 @@ test("свет и нормали: пресет хранит их только у
   expect(normalizeNormal({ strength: 100 })).toBeUndefined();
   expect(normalizeNormal({ src: "asset:x", strength: 900 })!.strength).toBe(200);
 });
+
+test("объём: свет и нормали собираются в пикселях холста", () => {
+  const collector = createCollector();
+  // Камера: сдвиг и масштаб — так свет попадает в экранные пиксели.
+  const camera = { a: 0.5, b: 0, c: 0, d: 0.5, e: 100, f: 40 };
+  // В браузере это DOMMatrix холста; здесь — та же матрица без DOM.
+  const view = { multiply: (matrix: { a: number; b: number; c: number; d: number; e: number; f: number }) => multiplyAffine(camera, matrix) };
+  const lamp = makeLight("lamp", "Лампа", 400, 300, { radius: 200, angle: 90, shape: "sector" }, { width: 1000, height: 2000 });
+  // Поворот объекта на 90° должен повернуть и пятно.
+  const turned = { ...lamp, base: { ...lamp.base, rotation: 90 } };
+  collect(collector, view, turned, frameValues(), objectMatrix(turned, frameValues()), -200, -200);
+  expect(collector.lights).toHaveLength(1);
+  const light = collector.lights[0];
+  // Центр: (400, 300) → ×0.5 + (100, 40).
+  expect(light.x).toBeCloseTo(300, 5);
+  expect(light.y).toBeCloseTo(190, 5);
+  // Радиус и поворот масштабируются вместе с камерой.
+  expect(light.radius).toBeCloseTo(100, 5);
+  expect(light.rotation).toBeCloseTo(Math.PI / 2, 5);
+  expect(light.shape).toBe("sector");
+  expect(light.angle).toBe(90);
+
+  // Нормали: матрица ведёт локальные координаты картинки в тот же экран.
+  const face = {
+    id: "face", name: "Лицо", kind: "sprite" as const, enabled: true, image: "asset:face",
+    parentId: null, pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE, x: 400, y: 300 },
+    script: "", width: 200, height: 100,
+    normal: { src: "asset:normal", strength: 150, animate: false },
+  };
+  collect(collector, view, face, frameValues(), objectMatrix(face, frameValues()), -100, -50);
+  expect(collector.normals).toHaveLength(1);
+  const normal = collector.normals[0];
+  expect(normal.matrix).toEqual([0.5, 0, 0, 0, 0.5, 0, 300, 190, 1]);
+  expect(normal.rect).toEqual([-100, -50, 200, 100]);
+  expect(normal.strength).toBe(150);
+
+  // Свет без яркости и объект без карты в проход не попадают.
+  const dim = { ...lamp, light: { ...lamp.light!, brightness: 0 } };
+  collect(collector, view, dim, frameValues(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 0, 0);
+  expect(collector.lights).toHaveLength(1);
+  const plain = { ...face, normal: { ...face.normal!, strength: 0 } };
+  collect(collector, view, plain, frameValues(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 0, 0);
+  expect(collector.normals).toHaveLength(1);
+
+  // Сброс перед кадром: буфер не растёт от кадра к кадру.
+  resetCollector(collector);
+  expect(collector.lights).toHaveLength(0);
+  expect(collector.normals).toHaveLength(0);
+});
+
+test("объём: без WebGL2 проход молчит, холст остаётся как есть", () => {
+  expect(lightingAvailable()).toBe(false);
+  const collector = createCollector();
+  // Пустой сбор — сразу «нечего считать», даже без холста.
+  expect(applyVolume({ width: 40, height: 40 } as HTMLCanvasElement, collector)).toBe(false);
+});
+
+function frameValues() {
+  return {
+    x: 0, y: 0, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0,
+    opacity: 1, visible: 1, layer: 0,
+  };
+}
