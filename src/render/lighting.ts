@@ -69,6 +69,20 @@ export function resetCollector(collector: LightingCollector): void {
 /** Сколько светильников уходит в шейдер: больше — лишние не считаются. */
 export const MAX_LIGHTS = 8;
 
+/**
+ * Порог «тёмный тексель — это не нормаль, а пустое место».
+ *
+ * У единичной нормали максимум компоненты не меньше 1/√3 ≈ 0.577, а в карте
+ * каждая компонента закодирована как (n + 1) / 2, то есть самая тёмная
+ * допустимая нормаль ярче 0.79. Значит всё, что темнее 0.25, нормалью быть не
+ * может: это заливка «здесь ничего нет». Такую зону карта отдаёт как
+ * прозрачную — она не даёт объёма и не перекрывает чужие карты.
+ */
+export const NORMAL_COVERAGE_DARK = 0.08;
+
+/** Верхняя граница того же порога: темнее — пусто, светлее — нормаль. */
+export const NORMAL_COVERAGE_LIT = 0.25;
+
 const NORMAL_VERTEX = `#version 300 es
 in vec2 aPos;
 uniform mat3 uMatrix;
@@ -98,12 +112,20 @@ uniform sampler2D uMap;
 uniform float uStrength;
 out vec4 outColor;
 void main() {
-  vec3 texel = texture(uMap, vUv).rgb * 2.0 - 1.0;
+  vec4 map = texture(uMap, vUv);
+  // Чёрная или прозрачная зона карты — «здесь пусто»: объёма нет, соседние
+  // карты она не перекрывает. Порог безопасен: любая настоящая нормаль ярче
+  // 0.79, потому что у единичного вектора максимум компоненты больше 1/√3.
+  float level = max(max(map.r, map.g), map.b);
+  float cover = smoothstep(${NORMAL_COVERAGE_DARK.toFixed(2)}, ${NORMAL_COVERAGE_LIT.toFixed(2)}, level);
+  // Карта без альфы приходит с alpha = 1 — правило ей не мешает.
+  cover *= smoothstep(0.02, 0.5, map.a);
+  vec3 texel = map.rgb * 2.0 - 1.0;
   // В карте нормалей +Y смотрит вверх, а на холсте Y растёт вниз.
   vec2 xy = vec2(texel.x, -texel.y) * uStrength;
   float len = length(xy);
   if (len > 1.0) { xy /= len; len = 1.0; }
-  outColor = vec4(xy * 0.5 + 0.5, len, 1.0);
+  outColor = vec4(xy * 0.5 + 0.5, len * cover, 1.0);
 }`;
 
 const VOLUME_VERTEX = `#version 300 es

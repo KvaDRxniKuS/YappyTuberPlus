@@ -6,7 +6,9 @@ import {
 } from "../../src/render/light";
 import { makeLight, normalizePreset } from "../../src/engine/preset";
 import { collect, multiplyAffine, normalSample, objectMatrix } from "../../src/render/rigCanvas";
-import { createCollector, lightingAvailable, resetCollector, shadeLayer } from "../../src/render/lighting";
+import {
+  createCollector, lightingAvailable, NORMAL_COVERAGE_DARK, NORMAL_COVERAGE_LIT, resetCollector, shadeLayer,
+} from "../../src/render/lighting";
 import { DEFAULT_BASE, DEFAULT_LIGHT, type RigObject, type RigPreset } from "../../src/types";
 import { DEFAULT_BEHAVIOUR, behaviourBlock, readBehaviour, writeBehaviour } from "../../src/engine/behaviour";
 
@@ -397,4 +399,29 @@ test("объём: считается по объекту, а не по гото�
   expect(lighting).toContain('context.globalCompositeOperation = "copy";');
   expect(lighting).toContain("context.rect(box.x, box.y, width, height);");
   expect(lighting).toContain("context.clip();");
+});
+
+/*
+ * Чёрная зона карты нормалей.
+ *
+ * В карте нормалей цвет — это направление поверхности, и «чёрный» там ничего не
+ * значит: у единичной нормали максимум компоненты не меньше 1/√3, а после
+ * кодирования (n + 1) / 2 самая тёмная допустимая нормаль ярче 0.79. Поэтому
+ * тёмный и прозрачный тексель трактуется как «здесь пусто»: зона не даёт
+ * объёма и не перекрывает чужие карты.
+ */
+test("объём: чёрное и прозрачное в карте — «здесь пусто», а не нормаль", () => {
+  // Порог обязан быть заметно ниже самой тёмной валидной нормали.
+  const darkest = (1 / Math.sqrt(3) + 1) / 2;
+  expect(darkest).toBeGreaterThan(0.78);
+  expect(NORMAL_COVERAGE_LIT).toBeLessThan(darkest);
+  expect(NORMAL_COVERAGE_DARK).toBeLessThan(NORMAL_COVERAGE_LIT);
+
+  const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
+  // Пороги подставляются в шейдер из тех же чисел: второго источника нет.
+  expect(source).toContain("smoothstep(${NORMAL_COVERAGE_DARK.toFixed(2)}, ${NORMAL_COVERAGE_LIT.toFixed(2)}, level)");
+  // Прозрачные пиксели карты — тоже пусто; карта без альфы даёт 1.
+  expect(source).toContain("smoothstep(0.02, 0.5, map.a)");
+  // Покрытие уходит в синий канал: его читает проход объёма.
+  expect(source).toContain("vec4(xy * 0.5 + 0.5, len * cover, 1.0)");
 });
