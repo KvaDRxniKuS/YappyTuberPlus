@@ -144,8 +144,10 @@ function saveStep(label: string, value: number): void {
 /** `0.1` вместо `0.10000000000000001`. */
 const formatStep = (value: number) => String(Number(value.toFixed(4)));
 
-export function LabeledNumberField({ label, value, step = 1, onCommit, suffix }: {
+export function LabeledNumberField({ label, value, step = 1, onCommit, suffix, className }: {
   label: string; value: number; step?: number; suffix?: string; onCommit: (value: number) => void;
+  /** Дополнительный класс: им поле ставится на нужное место в сетке. */
+  className?: string;
 }) {
   const [draft, setDraft] = useState(String(Number(value.toFixed(4))));
   const [focused, setFocused] = useState(false);
@@ -174,7 +176,7 @@ export function LabeledNumberField({ label, value, step = 1, onCommit, suffix }:
     setStepDraft(null);
   };
   return (
-    <label className="number-field">
+    <label className={`number-field ${className ?? ""}`.trim()}>
       <span className="number-label">{label}</span>
       <div className="number-stepper">
         <input

@@ -213,11 +213,20 @@ export function Inspector(props: InspectorProps) {
             <NumberField label="Позиция X" value={object.base.x} step={1} onCommit={(x) => updateBase({ x })} />
             <NumberField label="Позиция Y" value={object.base.y} step={1} onCommit={(y) => updateBase({ y })} />
             <NumberField label="Поворот" value={object.base.rotation} step={1} suffix="°" onCommit={(rotation) => updateBase({ rotation })} />
-            <NumberField label="Слой" value={object.base.layer} step={1} onCommit={(layer) => {
-              onChange({ ...object, base: { ...object.base, layer }, script: setScriptValue(object.script, "layer", String(layer)) });
-            }} />
+            {/* Порядок в сетке: позиция, поворот, масштаб — и «Слой» третьим в
+                своей строке. Сетка трёхколоночная, поэтому масштаб встаёт
+                ровно под позицией, а слой — под поворотом. */}
             <NumberField label="Масштаб X" value={object.base.sizeX} step={0.05} onCommit={(sizeX) => updateBase({ sizeX })} />
             <NumberField label="Масштаб Y" value={object.base.sizeY} step={0.05} onCommit={(sizeY) => updateBase({ sizeY })} />
+            <NumberField
+              className="field-layer"
+              label="Слой"
+              value={object.base.layer}
+              step={1}
+              onCommit={(layer) => {
+                onChange({ ...object, base: { ...object.base, layer }, script: setScriptValue(object.script, "layer", String(layer)) });
+              }}
+            />
           </div>
           <label className="range-property">
             <span>Непрозрачность <b>{Math.round(object.base.opacity * 100)}%</b></span>

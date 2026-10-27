@@ -181,6 +181,9 @@ input, select { color: var(--text); }
 .section-title small { color: #59636d; font-size: 9.5px; letter-spacing: .8px; }
 .property-grid { display: grid; grid-template-columns: repeat(3, minmax(94px, 1fr)); gap: 7px 9px; }
 .property-grid.two-columns { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
+/* «Слой» держится третьей колонки: в базовой позе так масштаб стоит ровно под
+   позицией, а слой — под поворотом, и числа не съезжают при смене ширины панели. */
+.property-grid > .field-layer { grid-column: 3; }
 .number-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .number-field > span { color: #737e89; font-size: 10px; }
 .number-field > div { height: 26px; display: flex; align-items: center; border: 1px solid #313740; background: #181b20; border-radius: 4px; }
