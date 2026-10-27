@@ -179,69 +179,11 @@ if errorlevel 1 goto bad_dir
 git remote get-url origin >nul 2>&1
 if errorlevel 1 git remote add origin "%REPO_URL%"
 echo.
-echo == Получение обновлений
-git fetch origin --prune >nul 2>&1
-if errorlevel 1 echo ** git fetch не удался, работаю с локальной копией.
-
-rem Берём ту из двух веток, где последний коммит новее: сессионную или main.
-set "HAS_BRANCH="
-set "HAS_MAIN="
-git rev-parse --verify --quiet "origin/%BRANCH%" >nul 2>&1
-if not errorlevel 1 set "HAS_BRANCH=1"
-git rev-parse --verify --quiet "origin/%FALLBACK_BRANCH%" >nul 2>&1
-if not errorlevel 1 set "HAS_MAIN=1"
-if not defined HAS_BRANCH if not defined HAS_MAIN goto update_skipped
-if not defined HAS_BRANCH (
-  set "TARGET=%FALLBACK_BRANCH%"
-  goto target_ready
-)
-if not defined HAS_MAIN (
-  set "TARGET=%BRANCH%"
-  goto target_ready
-)
-set "STAMP_BRANCH=0"
-set "STAMP_MAIN=0"
-for /f "delims=" %%i in ('git log -1 --format=%%ct "origin/%BRANCH%"') do set "STAMP_BRANCH=%%i"
-for /f "delims=" %%i in ('git log -1 --format=%%ct "origin/%FALLBACK_BRANCH%"') do set "STAMP_MAIN=%%i"
-set "TARGET=%BRANCH%"
-if %STAMP_MAIN% GTR %STAMP_BRANCH% set "TARGET=%FALLBACK_BRANCH%"
-:target_ready
-echo Ветка обновления: %TARGET%
-
-set "DIRTY="
-git rev-parse --verify --quiet HEAD >nul 2>&1
-if errorlevel 1 goto check_branch
-rem Только правки отслеживаемых файлов: новые файлы пользователя не трогаем.
-for /f "delims=" %%i in ('git status --porcelain --untracked-files=no') do set "DIRTY=1"
-if defined DIRTY (
-  echo ** Правки файлов репозитория сохраняю в git stash - yappytuber auto-backup.
-  git stash push -m "yappytuber auto-backup" >nul 2>&1
-)
-
-:check_branch
-set "CURRENT="
-for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CURRENT=%%i"
-if /i "%CURRENT%"=="%TARGET%" goto branch_ready
-if not defined CURRENT goto first_checkout
-git checkout "%TARGET%" >nul 2>&1
-if errorlevel 1 git checkout -b "%TARGET%" "origin/%TARGET%" >nul 2>&1
-goto branch_ready
-
-:first_checkout
-rem Репозиторий без коммитов (например, после git init): ставим ветку и файлы.
-git symbolic-ref HEAD "refs/heads/%TARGET%" >nul 2>&1
-git reset --hard "origin/%TARGET%" >nul 2>&1
-if errorlevel 1 goto update_failed
-
-:branch_ready
-git merge --ff-only "origin/%TARGET%" >nul 2>&1
-if errorlevel 1 (
-  echo ** Ветка разошлась с удалённой - выполняю жёсткий сброс на origin/%TARGET%.
-  echo    Прежнее состояние можно вернуть через: git reflog
-  git reset --hard "origin/%TARGET%"
-  if errorlevel 1 goto update_failed
-)
-for /f "delims=" %%i in ('git log -1 --oneline') do echo Коммит: %%i
+rem Вся работа с git - в scripts/sync-repo.mjs: он забирает ветку, уводит
+rem правки исходников в git stash и сохраняет свою папку сборки, чтобы
+rem обновление не заменило её версией из репозитория.
+node scripts\sync-repo.mjs --branch "%BRANCH%" --fallback "%FALLBACK_BRANCH%"
+if errorlevel 1 echo ** Обновление не удалось - работаю с текущими файлами.
 goto deps
 
 
@@ -372,15 +314,6 @@ goto fail
 :no_node
 echo.
 echo ОШИБКА: не найден Node.js. Установите Node.js 20 или новее: https://nodejs.org/
-goto fail
-
-:update_skipped
-echo ** Ветки не получены с удалённого репозитория - продолжаю без обновления.
-goto deps
-
-:update_failed
-echo.
-echo ОШИБКА: не удалось обновить ветку %TARGET%.
 goto fail
 
 :npm_failed
