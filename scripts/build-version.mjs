@@ -133,6 +133,92 @@ const SLOTS = [
   ["shell", "оболочка"],
 ];
 
+/** Любой git-вызов без падения: нужен ответ, а не исключение. */
+function gitQuiet(gitArgs) {
+  try {
+    return execFileSync("git", gitArgs, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Сверка папки с её же паспортом: все ли файлы из `files[]` на месте и те ли
+ * это байты.
+ *
+ * Номера версий отвечают на вопрос «из какого кода собрано», а этот список — на
+ * вопрос «та ли это папка». Разница видна, когда файл потеряли при копировании,
+ * дописали в него что-то руками или подложили чужой `rig_core.wasm` с тем же
+ * поколением. Хеши считаются только по паспорту: без него проверять нечего.
+ *
+ * Пропавший или изменённый файл — ошибка (такую папку раздавать нельзя).
+ * Лишний файл — только предупреждение: он не входит в обновление и ничего не
+ * ломает, но о нём стоит знать.
+ */
+function compareContents(folder, info) {
+  const problems = [];
+  const notices = [];
+  if (!Array.isArray(info.files) || info.files.length === 0) {
+    notices.push("в паспорте нет списка файлов — сверка содержимого пропущена");
+    return { problems, notices };
+  }
+  const listed = new Map(info.files.map((file) => [file.path, file]));
+  const extra = [];
+  for (const file of listFiles(folder)) {
+    const known = listed.get(file.name);
+    if (!known) {
+      // Временный файл недокачанного обновления — мусор, а не расхождение.
+      if (!file.name.endsWith(".update")) extra.push(file.name);
+      continue;
+    }
+    listed.delete(file.name);
+    const size = statSync(file.path).size;
+    if (typeof known.size === "number" && known.size !== size) {
+      problems.push(`${file.name}: ${size} байт вместо ${known.size}`);
+      continue;
+    }
+    if (known.sha256 && sha256(file.path) !== known.sha256) {
+      problems.push(`${file.name}: содержимое не совпало с отпечатком в паспорте`);
+    }
+  }
+  for (const path of listed.keys()) problems.push(`${path}: файла нет в папке`);
+  if (extra.length) {
+    notices.push(`лишние файлы (в обновление не входят): ${extra.slice(0, 5).join(", ")}`
+      + `${extra.length > 5 ? ` и ещё ${extra.length - 5}` : ""}`);
+  }
+  return { problems, notices };
+}
+
+/**
+ * Отстал ли код от собранной папки.
+ *
+ * Молчать нельзя: папка, собранная неделю назад, выглядит «совпадающей», если
+ * поколения не двигались. Но и ругаться на каждый запуск тоже незачем —
+ * публикация папки сама создаёт коммит, и он ничего не значит. Поэтому
+ * сравниваются только изменения **кода**: если между коммитом сборки и `HEAD`
+ * трогали лишь `dist` и `public/rig_core.wasm`, предупреждения нет.
+ */
+function compareCommit(info) {
+  const head = commitHash();
+  if (!head || !info.commit) return null;
+  if (head === info.commit) return null;
+  if (gitQuiet(["cat-file", "-e", `${info.commit}^{commit}`]) === null) {
+    return `папка собрана из коммита ${info.commit}, которого нет в этой копии репозитория`;
+  }
+  // Только то, что реально попадает в папку сборки. Документация, тесты и
+  // скрипты публикации сборку не меняют — из-за них предупреждать незачем.
+  const code = gitQuiet(["diff", "--name-only", info.commit, "HEAD", "--",
+    "src", "crates", "public", "index.html", "overlay.html", "vite.config.ts",
+    "package.json", "tsconfig.json", "scripts/build-wasm.mjs"]);
+  // null — сравнить не удалось (например, коммит пришёл из другой истории).
+  if (code === null || code === "") return null;
+  const ahead = gitQuiet(["rev-list", "--count", `${info.commit}..HEAD`]) ?? "несколько";
+  const files = code.split("\n").filter(Boolean);
+  return `папка собрана из коммита ${info.commit}, а код с тех пор менялся `
+    + `(${files.length} файлов, например ${files.slice(0, 3).join(", ")}) — `
+    + `после таких правок папку пересобирают (всего коммитов после сборки: ${ahead})`;
+}
+
 /** Сравнение папки с репозиторием: по слоям, а не одной строкой. */
 function compare(folder, info, current) {
   const lines = [];
@@ -153,13 +239,31 @@ function compare(folder, info, current) {
     differs = true;
     lines.push(`${label}: в папке ${info[key]}, в репозитории ${current[key]} — папка ${direction}`);
   }
+  const contents = compareContents(folder, info);
+  const commitNote = compareCommit(info);
+  if (contents.problems.length) differs = true;
+
   console.log(`папка:       ${folder}`);
   console.log(`сборка:      ${info.version ?? "—"} · ${humanTime(info.builtAt)}`
     + `${info.commit ? ` · коммит ${info.commit}` : ""}`);
   console.log(`репозиторий: ${current.version}`);
-  console.log(differs ? "\nПапка не совпадает с репозиторием:" : "\nСовпадает: папку можно раздавать.");
-  for (const line of lines) console.log(`  ${line}`);
-  if (differs) console.log("\nПересоберите: npm run build.");
+  if (lines.length) {
+    console.log("\nСлои версий не совпадают с репозиторием:");
+    for (const line of lines) console.log(`  ${line}`);
+  }
+  if (contents.problems.length) {
+    console.log("\nСостав папки не совпадает с паспортом:");
+    for (const line of contents.problems.slice(0, 12)) console.log(`  ${line}`);
+    if (contents.problems.length > 12) console.log(`  … и ещё ${contents.problems.length - 12}`);
+  }
+  for (const notice of contents.notices) console.log(`\nЗамечание: ${notice}`);
+  if (commitNote) console.log(`\nЗамечание: ${commitNote}`);
+
+  if (differs) {
+    console.log("\nПапка не совпадает с репозиторием — пересоберите: npm run build.");
+  } else {
+    console.log("\nСовпадает: папку можно раздавать.");
+  }
   return !differs;
 }
 

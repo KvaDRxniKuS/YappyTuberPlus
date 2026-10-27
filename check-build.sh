@@ -25,7 +25,7 @@ fi
 
 if ! node scripts/build-version.mjs --check "$FOLDER"; then
   echo
-  echo "Проверка не прошла: папка не совпадает с репозиторием."
+  echo "Проверка не прошла: версия или состав файлов не совпадают с паспортом."
   echo "Пересоберите её: npm run build"
   read -r -p "Нажмите Enter, чтобы закрыть..." _ || true
   exit 1

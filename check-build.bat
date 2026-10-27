@@ -35,7 +35,7 @@ if errorlevel 1 (
 node scripts\build-version.mjs --check "%FOLDER%"
 if errorlevel 1 (
   echo.
-  echo Проверка не прошла: папка не совпадает с репозиторием.
+  echo Проверка не прошла: версия или состав файлов не совпадают с паспортом.
   echo Пересоберите её - npm run build или build-yappytuber.bat.
   echo.
   pause

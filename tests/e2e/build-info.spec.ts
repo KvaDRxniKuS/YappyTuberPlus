@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,6 +15,29 @@ import { VERSION, parseVersion, versionString } from "../../src/version";
  */
 
 const root = process.cwd();
+
+/**
+ * Копия готовой папки во временном месте: файлы те же, паспорт новый.
+ * `--out` пишет только паспорт, поэтому файлы копируются заранее — иначе
+ * в списке `files[]` было бы пусто и сверять состав было бы не с чем.
+ */
+function builtFolder(): string {
+  const folder = mkdtempSync(join(tmpdir(), "yappy-contents-"));
+  cpSync(join(root, "dist"), folder, { recursive: true });
+  execFileSync("node", ["scripts/build-version.mjs", "--out", folder], { cwd: root, encoding: "utf8" });
+  return folder;
+}
+
+/** Запуск проверки: код возврата и весь её вывод. */
+function check(folder: string): { code: number; out: string } {
+  try {
+    const out = execFileSync("node", ["scripts/build-version.mjs", "--check", folder], { cwd: root, encoding: "utf8" });
+    return { code: 0, out };
+  } catch (reason) {
+    const error = reason as { status?: number; stdout?: string; stderr?: string };
+    return { code: error.status ?? 1, out: `${error.stdout ?? ""}${error.stderr ?? ""}` };
+  }
+}
 
 test("сборка: числа в build.json совпадают с редактором", () => {
   const folder = mkdtempSync(join(tmpdir(), "yappy-build-"));
@@ -77,4 +100,52 @@ test("сборка: смешанная папка видна по слоям", (
   expect(message).toContain("другой версии");
   expect(message).toContain(`ядро: в папке ${current.core - 3}, в коде ${current.core}`);
   expect(message).toContain("npm run build");
+});
+
+test("проверка папки: изменённый файл виден по отпечатку", () => {
+  const folder = builtFolder();
+  // Дописали байт в шаблон модуля: размер и хеш разошлись с паспортом.
+  writeFileSync(join(folder, "modules", "key.json"), " ", { flag: "a" });
+  const result = check(folder);
+  expect(result.code).toBe(1);
+  expect(result.out).toContain("Состав папки не совпадает с паспортом");
+  expect(result.out).toContain("modules/key.json");
+  expect(result.out).toContain("npm run build");
+});
+
+test("проверка папки: пропавший файл останавливает, лишний — только замечание", () => {
+  const missing = builtFolder();
+  rmSync(join(missing, "modules", "manual.json"));
+  const gone = check(missing);
+  expect(gone.code).toBe(1);
+  expect(gone.out).toContain("modules/manual.json: файла нет в папке");
+
+  const extra = builtFolder();
+  writeFileSync(join(extra, "modules", "чужой.json"), "{}", "utf8");
+  const stray = check(extra);
+  expect(stray.code).toBe(0);
+  expect(stray.out).toContain("лишние файлы");
+  expect(stray.out).toContain("modules/чужой.json");
+  // Временный файл недокачанного обновления мусором не считается.
+  const temporary = builtFolder();
+  writeFileSync(join(temporary, "app.update"), "x", "utf8");
+  expect(check(temporary).out).not.toContain("лишние файлы");
+});
+
+test("проверка папки: отставший код виден, но не мешает", () => {
+  const folder = builtFolder();
+  const info = JSON.parse(readFileSync(join(folder, "build.json"), "utf8"));
+  const rootCommit = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  // Папка «собрана» из самого первого коммита: код с тех пор точно менялся.
+  writeFileSync(join(folder, "build.json"), JSON.stringify({ ...info, commit: rootCommit }), "utf8");
+  const result = check(folder);
+  expect(result.code).toBe(0);
+  expect(result.out).toContain("код с тех пор менялся");
+  expect(result.out).toContain(rootCommit);
+
+  // Коммита нет в этой копии — тоже замечание, а не отказ.
+  writeFileSync(join(folder, "build.json"), JSON.stringify({ ...info, commit: "deadbee" }), "utf8");
+  const foreign = check(folder);
+  expect(foreign.code).toBe(0);
+  expect(foreign.out).toContain("которого нет в этой копии");
 });

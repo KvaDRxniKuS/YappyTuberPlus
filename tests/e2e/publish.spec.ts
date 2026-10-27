@@ -30,6 +30,15 @@ function git(cwd: string, args: string[]): string {
 }
 
 /**
+ * «Пересобрать» папку: поменять файл и переписать паспорт под новое содержимое.
+ * Так выглядит настоящая сборка — манифест всегда описывает то, что лежит рядом.
+ */
+function rebuild(dir: string, file = "index.html", body = "<!doctype html><title>новая</title>"): void {
+  writeFileSync(join(dir, "dist", file), body, "utf8");
+  execFileSync("node", ["scripts/build-version.mjs", "--out", "dist"], { cwd: dir, encoding: "utf8" });
+}
+
+/**
  * Небольшая копия репозитория с готовой папкой сборки и своим «удалённым»
  * репозиторием: публикация проверяется целиком, включая коммит и пуш.
  */
@@ -72,7 +81,7 @@ test("публикация: без изменений ничего не дела
 
 test("публикация: изменённая папка уезжает в репозиторий", () => {
   const { dir, remote } = makeRepo();
-  writeFileSync(join(dir, "dist", "index.html"), "<!doctype html><title>пересборка</title>", "utf8");
+  rebuild(dir);
 
   // «--check» показывает, что уедет, но не отправляет.
   const check = publish(dir, ["--check"]);
@@ -94,8 +103,8 @@ test("публикация: изменённая папка уезжает в р
 
 test("публикация: незакоммиченные исходники останавливают", () => {
   const { dir } = makeRepo();
+  rebuild(dir, "index.html", "<!doctype html><title>x</title>");
   writeFileSync(join(dir, "src", "version.ts"), "\n// правка\n", { flag: "a" });
-  writeFileSync(join(dir, "dist", "index.html"), "<!doctype html><title>x</title>", "utf8");
 
   const result = publish(dir);
   expect(result.code).toBe(1);
@@ -112,11 +121,23 @@ test("публикация: пустая папка и отсутствие до
   expect(missing.out).toContain("нет build.json");
 
   const { dir } = makeRepo();
-  writeFileSync(join(dir, "dist", "index.html"), "<!doctype html><title>y</title>", "utf8");
+  rebuild(dir, "index.html", "<!doctype html><title>y</title>");
   git(dir, ["remote", "set-url", "origin", join(dir, "ничего-нет.git")]);
   const noAccess = publish(dir);
   expect(noAccess.code).toBe(1);
   expect(noAccess.out).toContain("нет доступа");
+});
+
+test("публикация: папка, изменённая в обход паспорта, не уезжает", () => {
+  const { dir } = makeRepo();
+  // Файл поправили руками, паспорт остался от сборки: содержимое и хеши разошлись.
+  writeFileSync(join(dir, "dist", "index.html"), "<!doctype html><title>правка руками</title>", "utf8");
+  const result = publish(dir);
+  expect(result.code).toBe(1);
+  expect(result.out).toContain("Состав папки не совпадает с паспортом");
+  // Пути в паспорте — относительно папки сборки.
+  expect(result.out).toContain("index.html");
+  expect(git(dir, ["log", "--oneline"])).not.toContain("Сборка");
 });
 
 test("публикация: двойной клик без консоли", () => {
