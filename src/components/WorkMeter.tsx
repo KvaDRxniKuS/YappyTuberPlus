@@ -10,11 +10,26 @@ interface Ambient {
   longTasks: number;
   /** Занятая JS-куча в мегабайтах: чья память — наша или чужая, видно сразу. */
   heap: number;
+  /** Сколько холстов в документе и сколько памяти занимают их битмапы. */
+  canvases: number;
+  canvasMb: number;
 }
 
 const EMPTY: WorkRates & Ambient = {
   draws: 0, frames: 0, arrivals: 0, animations: 0, playing: 0, longTasks: 0, heap: 0,
+  canvases: 0, canvasMb: 0,
 };
+
+/** Память битмапов всех холстов документа: 4 байта на пиксель. */
+function canvasMemory(): { canvases: number; canvasMb: number } {
+  let canvases = 0;
+  let bytes = 0;
+  for (const canvas of Array.from(document.querySelectorAll("canvas"))) {
+    canvases += 1;
+    bytes += canvas.width * canvas.height * 4;
+  }
+  return { canvases, canvasMb: Math.round(bytes / (1024 * 1024)) };
+}
 
 /**
  * Живая работа окна в строке статуса.
@@ -52,7 +67,7 @@ export function WorkMeter() {
       }
       const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
       const heap = memory ? Math.round(memory.usedJSHeapSize / (1024 * 1024)) : 0;
-      setWork({ ...rates, animations, playing, longTasks: longTasks.current, heap });
+      setWork({ ...rates, animations, playing, longTasks: longTasks.current, heap, ...canvasMemory() });
       longTasks.current = 0;
     }, 1000);
     return () => window.clearInterval(timer);
@@ -66,6 +81,7 @@ export function WorkMeter() {
     >
       {work.draws} рис · {work.frames} кадр · {work.arrivals} вход · {work.animations} аним · {work.playing} медиа
       {work.heap > 0 ? ` · ${work.heap} МБ` : ""}
+      {` · ${work.canvases} холст ${work.canvasMb} МБ`}
       {work.longTasks > 0 ? ` · ${work.longTasks} задерж` : ""}
     </span>
   );

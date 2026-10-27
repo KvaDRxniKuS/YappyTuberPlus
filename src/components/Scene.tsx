@@ -204,6 +204,13 @@ export function Scene(props: SceneProps) {
   };
 
   const draw = () => {
+    // Свёрнутое или скрытое окно не рисуем вовсе: кадры всё равно не видны, а
+    // каждый из них — работа процессора и память под композитный кадр. Кадры
+    // движка при этом продолжают идти, поэтому сцену разбудим на возвращении.
+    if (typeof document !== "undefined" && document.hidden) {
+      dirty.current = true;
+      return;
+    }
     countDraw();
     const element = canvas.current;
     const host = viewport.current;
@@ -366,6 +373,13 @@ export function Scene(props: SceneProps) {
     window.addEventListener("keydown", keyDown);
     window.addEventListener("keyup", keyUp);
     return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); };
+  }, []);
+
+  useEffect(() => {
+    const wake = () => { if (!document.hidden) markDirty(); };
+    document.addEventListener("visibilitychange", wake);
+    return () => document.removeEventListener("visibilitychange", wake);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
