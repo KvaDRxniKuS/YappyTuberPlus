@@ -7,6 +7,7 @@ import {
   type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
 import { DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL, lightHeight, DEFAULT_LIGHT } from "../../src/types";
+import { NEUTRAL_PARAMS } from "../../src/engine/frame";
 import * as peer from "../../scripts/material-math.mjs";
 
 /*
@@ -231,4 +232,28 @@ test("материал: шейдер считает по той же модел�
   expect(source).toContain("float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);");
   // Высота света участвует в направлении на свет.
   expect(source).toContain("normalize(vec3(flatDir, max(uLightExtra[i].x, 1.0)))");
+});
+
+test("материал: имена в редакторе совпадают с ядром", () => {
+  // Список параметров для подсказок — это подпись ядра в интерфейсе. Если он
+  // отстанет, скрипт с `roughness` будет выглядеть ошибкой автора, а не новой
+  // возможностью.
+  const editor = readFileSync(join(process.cwd(), "src", "components", "ScriptEditor.tsx"), "utf8");
+  const block = editor.slice(editor.indexOf("const PARAMETERS = ["), editor.indexOf("const TEXT_PARAMETER"));
+  for (const name of ["roughness", "metallic", "ao", "emissive"]) {
+    expect(block).toContain(`"${name}"`);
+    expect(NEUTRAL_PARAMS[name]).toBe(name === "emissive" ? 0 : -1);
+  }
+  // Ядро знает те же слова: таблица признаков — источник поколения.
+  const features = readFileSync(join(process.cwd(), "src", "engine", "coreFeatures.ts"), "utf8");
+  expect(features).toContain('words: ["roughness", "metallic", "ao", "emissive"]');
+  expect(features).toContain('since: 22');
+  // И Rust-часть: имена параметров и поколение.
+  const model = readFileSync(join(process.cwd(), "crates", "rig-core", "src", "model.rs"), "utf8");
+  for (const name of ["Roughness", "Metallic", "Ao", "Emissive"]) {
+    expect(model).toContain(`Param::${name}`);
+  }
+  expect(model).toContain('"roughness" => Param::Roughness');
+  const core = readFileSync(join(process.cwd(), "crates", "rig-core", "src", "lib.rs"), "utf8");
+  expect(core).toContain("CORE_GENERATION: u32 = 22");
 });

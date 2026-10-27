@@ -11,8 +11,8 @@
   "version": "1.1.22.4.1.1.1",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-10-27T23:32:28.620Z",
-  "commit": "9e5ef54",
+  "builtAt": "2026-10-27T23:34:20.485Z",
+  "commit": "4d1d026",
   "schema": 1,
   "files": [
     {
@@ -86,14 +86,14 @@
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
     },
     {
-      "path": "assets/studio-BP4R-nch.js",
-      "size": 763974,
-      "sha256": "baafc71c4d2454b6b3e3276c6191e46c61cd205a94a39acf55be3a43c0268297"
-    },
-    {
       "path": "assets/studio-DFhKmlYi.css",
       "size": 68520,
       "sha256": "193f0f4eff4deb83c6b10855497c563ca6e5dd1ab34c2515c79f3c5b77d29df5"
+    },
+    {
+      "path": "assets/studio-e_TB7UCw.js",
+      "size": 764013,
+      "sha256": "424f9cae97ba3e0de021eef4badf1e817e8faa64a573326ea8bcf4a440c336d8"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "b39808db14707d33bbcfe3ff1e1a0e33343d041501e2050ea152a680851caa6d"
+      "sha256": "4c943a888ef9648321adec6322a81c27b69cdfb658aff7d5b264df1fc86637ef"
     },
     {
       "path": "modules/autoblink.json",
