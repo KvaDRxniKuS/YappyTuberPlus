@@ -1244,15 +1244,41 @@ function drawMarquee(ctx: CanvasRenderingContext2D, marquee: Marquee | null) {
   ctx.restore();
 }
 
-function drawTransparency(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  const size = 24;
-  ctx.save();
-  ctx.fillStyle = "#292f35";
-  for (let y = 0; y < height; y += size) {
-    for (let x = (y / size) % 2 === 0 ? 0 : size; x < width; x += size * 2) {
-      ctx.fillRect(x, y, Math.min(size, width - x), Math.min(size, height - y));
-    }
+/**
+ * Шахматка прозрачности: плитка 48×48, залитая одним прямоугольником.
+ *
+ * Раньше клетки рисовались поштучно — на холст 1920×1080 это около 1800
+ * `fillRect` на каждый кадр, то есть сотня тысяч вызовов в секунду при живой
+ * анимации. Плитка и узор кешируются на контекст: кадр стоит одного `fillRect`.
+ */
+let transparencyTile: HTMLCanvasElement | null = null;
+const transparencyPatterns = new WeakMap<CanvasRenderingContext2D, CanvasPattern>();
+
+function transparencyPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  const cached = transparencyPatterns.get(ctx);
+  if (cached) return cached;
+  if (typeof document === "undefined") return null;
+  if (!transparencyTile) {
+    const tile = document.createElement("canvas");
+    tile.width = 48;
+    tile.height = 48;
+    const paint = tile.getContext("2d");
+    if (!paint) return null;
+    paint.fillStyle = "#292f35";
+    paint.fillRect(0, 0, 24, 24);
+    paint.fillRect(24, 24, 24, 24);
+    transparencyTile = tile;
   }
+  const pattern = ctx.createPattern(transparencyTile, "repeat");
+  if (pattern) transparencyPatterns.set(ctx, pattern);
+  return pattern;
+}
+
+function drawTransparency(ctx: CanvasRenderingContext2D, width: number, height: number) {
+  const pattern = transparencyPattern(ctx);
+  ctx.save();
+  ctx.fillStyle = pattern ?? "#292f35";
+  ctx.fillRect(0, 0, width, height);
   ctx.restore();
 }
 

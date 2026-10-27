@@ -8,9 +8,13 @@ interface Ambient {
   playing: number;
   /** Задачи главного потока дольше 50 мс за секунду. */
   longTasks: number;
+  /** Занятая JS-куча в мегабайтах: чья память — наша или чужая, видно сразу. */
+  heap: number;
 }
 
-const EMPTY: WorkRates & Ambient = { draws: 0, frames: 0, arrivals: 0, animations: 0, playing: 0, longTasks: 0 };
+const EMPTY: WorkRates & Ambient = {
+  draws: 0, frames: 0, arrivals: 0, animations: 0, playing: 0, longTasks: 0, heap: 0,
+};
 
 /**
  * Живая работа окна в строке статуса.
@@ -46,7 +50,9 @@ export function WorkMeter() {
       for (const element of Array.from(document.querySelectorAll("audio, video"))) {
         if (!(element as HTMLMediaElement).paused) playing += 1;
       }
-      setWork({ ...rates, animations, playing, longTasks: longTasks.current });
+      const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+      const heap = memory ? Math.round(memory.usedJSHeapSize / (1024 * 1024)) : 0;
+      setWork({ ...rates, animations, playing, longTasks: longTasks.current, heap });
       longTasks.current = 0;
     }, 1000);
     return () => window.clearInterval(timer);
@@ -56,9 +62,10 @@ export function WorkMeter() {
   return (
     <span
       className={`work-meter ${idle ? "idle" : "busy"}`}
-      title="Живая работа окна в секунду: отрисовки сцены · кадры движка · кадры от планировщика · запущенные анимации · играющие видео и звук · долгие задачи главного потока. В паузе и стопе — нули."
+      title="Живая работа окна в секунду: отрисовки сцены · кадры движка · кадры от планировщика · запущенные анимации · играющие видео и звук · занятая JS-куча · долгие задачи главного потока. В паузе и стопе — нули."
     >
       {work.draws} рис · {work.frames} кадр · {work.arrivals} вход · {work.animations} аним · {work.playing} медиа
+      {work.heap > 0 ? ` · ${work.heap} МБ` : ""}
       {work.longTasks > 0 ? ` · ${work.longTasks} задерж` : ""}
     </span>
   );
