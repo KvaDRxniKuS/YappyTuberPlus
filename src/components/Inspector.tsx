@@ -4,7 +4,7 @@ import {
   Lightbulb, RotateCcw, Shapes, Trash2, Type,
 } from "lucide-react";
 import type {
-  BasePose, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
+  BasePose, EnvironmentSpec, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
   ShapeItemKind, ShapeSpec, TextSpec, Vec2, WarpCorner, WarpFrame, WarpSpec,
 } from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
@@ -22,6 +22,7 @@ import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
 import { fileKind } from "../engine/importFile";
 import { MaskSection } from "./MaskSection";
 import { LightSection, NormalSection } from "./LightSection";
+import { MaterialSection } from "./MaterialSection";
 // Поле с подписью и шагом живёт в общем компоненте: им пользуются и вкладка
 // «Объект», и вкладка «Фигура».
 import { LabeledNumberField as NumberField } from "./NumberField";
@@ -47,6 +48,9 @@ interface InspectorProps {
   /** Перо: какой контур фигуры рисуется на сцене. */
   pen?: { objectId: string; itemId: string } | null;
   onPen?: (pen: { objectId: string; itemId: string } | null) => void;
+  /** Окружение сцены: общее для всех материалов, поэтому правится из инспектора. */
+  environment?: EnvironmentSpec;
+  onEnvironment?: (environment: EnvironmentSpec) => void;
 }
 
 /** Поле относительного сдвига: значение применяется по Enter и сразу очищается. */
@@ -71,7 +75,7 @@ function DeltaField({ label, onApply }: { label: string; onApply: (value: number
 }
 
 export function Inspector(props: InspectorProps) {
-  const { object, selection, objects, canvas, frame, onChange } = props;
+  const { object, selection, objects, canvas, frame, onChange, environment, onEnvironment } = props;
   // Превью берёт готовый URL из хранилища файлов: ссылка `asset:<id>` читается
   // асинхронно, поэтому хуки стоят до ранних выходов и вызываются всегда.
   const preview = useAssetUrl(object?.image);
@@ -299,6 +303,17 @@ export function Inspector(props: InspectorProps) {
 
         {(object.kind === "sprite" || object.kind === "media") && (
           <NormalSection object={object} normal={object.normal} onChange={onChange} />
+        )}
+
+        {/* Материал — сразу под картой нормалей: там же, где поверхность. */}
+        {(object.kind === "sprite" || object.kind === "media" || object.kind === "shape") && onEnvironment && (
+          <MaterialSection
+            object={object}
+            material={object.material}
+            environment={environment}
+            onChange={onChange}
+            onEnvironment={onEnvironment}
+          />
         )}
 
         {object.kind === "text" && (

@@ -834,6 +834,9 @@ impl Rig {
                     // Маска по умолчанию работает: объект с маской на сцене
                     // выглядит так, как настроено в инспекторе.
                     Param::Mask => 1.0,
+                    // Материал: −1 значит «из инспектора», свечение — 0.
+                    Param::Roughness | Param::Metallic | Param::Ao => -1.0,
+                    Param::Emissive => 0.0,
                     Param::Visible => object.base.visible,
                     Param::Layer => object.base.layer,
                     Param::Play => {
@@ -1510,6 +1513,8 @@ impl Rig {
             return match param {
                 Param::SizeX | Param::SizeY | Param::Opacity => 1.0,
                 Param::Mask => 1.0,
+                Param::Roughness | Param::Metallic | Param::Ao => -1.0,
+                Param::Emissive => 0.0,
                 Param::Visible => self.preset.objects[index].base.visible,
                 Param::Layer => self.preset.objects[index].base.layer,
                 _ => 0.0,

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { ImageUp, Lightbulb, Sparkles, Trash2 } from "lucide-react";
 import type { LightShape, LightSpec, NormalMapSpec, RigObject } from "../types";
-import { DEFAULT_LIGHT } from "../types";
+import { DEFAULT_LIGHT, lightHeight } from "../types";
 import {
   LIGHT_SHAPES, alphaOf, lightBounds, normalizeLight, solidOf, withAlpha,
 } from "../render/light";
@@ -99,6 +99,39 @@ export function LightSection({ object, light, canvas, onChange }: {
         <p className="behaviour-hint">
           Обычно свет идёт от цвета к прозрачности: тогда край пятна растворяется. Если у края
           тоже цвет — получится кольцо или ровное пятно без мягкого спада.
+        </p>
+      </div>
+
+      {/* Высота нужна блику: пятно лежит на холсте, а блик зависит от того,
+          насколько лампа поднята над ним. На само пятно высота не влияет. */}
+      <div className="property-section compact-section">
+        <div className="section-title"><span>Высота света</span><small>ДЛЯ БЛИКОВ</small></div>
+        <label className="check-line">
+          <input
+            type="checkbox"
+            checked={light.heightMode === "auto"}
+            onChange={(event) => update({ heightMode: event.target.checked ? "auto" : "manual" })}
+          />
+          <span>Половина радиуса</span>
+        </label>
+        <label className="number-field">
+          <span>Высота</span>
+          <div>
+            <input
+              type="number" min={1} step={10}
+              value={Math.round(lightHeight(light))}
+              disabled={light.heightMode === "auto"}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isFinite(value) && value > 0) update({ height: value, heightMode: "manual" });
+              }}
+            />
+            <em>px</em>
+          </div>
+        </label>
+        <p className="behaviour-hint">
+          Чем ниже лампа, тем шире и ближе к краю пятна блик; чем выше — тем он уже и ярче.
+          Значение выше считается от плоскости холста.
         </p>
       </div>
     </>

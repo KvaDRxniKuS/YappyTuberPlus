@@ -41,10 +41,10 @@ function labels(report: { issues: Array<{ label: string; detail: string }> }): s
 }
 
 test("совместимость: файл новее — объясняем, что не сойдётся", () => {
-  const future = file({ version: PRESET_FORMAT + 1, built: `1.0.${VERSION.core}.${PRESET_FORMAT + 1}.1.1.1` });
+  const future = file({ version: PRESET_FORMAT + 1, built: `${VERSION.release.join(".")}.${VERSION.core}.${PRESET_FORMAT + 1}.1.1.1` });
   const report = presetCompatibility(future);
   expect(report.canOpen).toBe(false);
-  expect(report.fileVersion).toBe(`1.0.${VERSION.core}.${PRESET_FORMAT + 1}.1.1.1`);
+  expect(report.fileVersion).toBe(`${VERSION.release.join(".")}.${VERSION.core}.${PRESET_FORMAT + 1}.1.1.1`);
   expect(labels(report)).toContain(`формат файла ${PRESET_FORMAT + 1}`);
   // Каждый пункт объясняет последствие, а не просто констатирует версию.
   for (const issue of report.issues) expect(issue.detail.length).toBeGreaterThan(20);
@@ -97,7 +97,7 @@ test("совместимость: незнакомый вид объекта и 
 
 test("совместимость: остальные слои видны по штампу сборки", () => {
   const newer = file({
-    built: `1.0.${VERSION.core}.${PRESET_FORMAT}.${VERSION.bridge + 1}.${VERSION.modules + 1}.${VERSION.shell + 1}`,
+    built: `${VERSION.release.join(".")}.${VERSION.core}.${PRESET_FORMAT}.${VERSION.bridge + 1}.${VERSION.modules + 1}.${VERSION.shell + 1}`,
   });
   const report = presetCompatibility(newer);
   expect(labels(report)).toContain("мост");

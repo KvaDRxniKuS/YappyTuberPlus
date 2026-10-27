@@ -5,7 +5,7 @@ import {
   alphaOf, gradientRadius, lightBounds, normalizeLight, normalizeNormal, paintLight, solidOf, traceLight, withAlpha,
 } from "../../src/render/light";
 import { makeLight, normalizePreset } from "../../src/engine/preset";
-import { collect, multiplyAffine, normalSample, objectMatrix } from "../../src/render/rigCanvas";
+import { collect, multiplyAffine, objectMatrix, shadeSample } from "../../src/render/rigCanvas";
 import {
   createCollector, lightingAvailable, NORMAL_COVERAGE_DARK, NORMAL_COVERAGE_LIT, resetCollector, shadeLayer, viewportOf,
 } from "../../src/render/lighting";
@@ -220,19 +220,20 @@ test("объём: свет собирается в пикселях холста
   // Нормали в общий сбор не попадают: объект получает объём в своём слое.
   collect(collector, view, face, frameValues(), objectMatrix(face, frameValues()));
   expect(collector.lights).toHaveLength(1);
-  const normal = normalSample(view, face, objectMatrix(face, frameValues()), -100, -50)!;
-  expect(normal.matrix).toEqual([0.5, 0, 0, 0, 0.5, 0, 300, 190, 1]);
-  expect(normal.rect).toEqual([-100, -50, 200, 100]);
-  expect(normal.strength).toBe(150);
+  const sample = shadeSample(view, face, objectMatrix(face, frameValues()), -100, -50)!;
+  expect(sample.matrix).toEqual([0.5, 0, 0, 0, 0.5, 0, 300, 190, 1]);
+  expect(sample.rect).toEqual([-100, -50, 200, 100]);
+  expect(sample.normal?.strength).toBe(150);
+  expect(sample.material).toBeNull();
 
   // Свет без яркости и объект без карты в проход не попадают.
   const dim = { ...lamp, light: { ...lamp.light!, brightness: 0 } };
   collect(collector, view, dim, frameValues(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
   expect(collector.lights).toHaveLength(1);
   const plain = { ...face, normal: { ...face.normal!, strength: 0 } };
-  expect(normalSample(view, plain, objectMatrix(plain, frameValues()), -100, -50)).toBeNull();
+  expect(shadeSample(view, plain, objectMatrix(plain, frameValues()), -100, -50)).toBeNull();
   // Карта есть только у спрайта и медиа: свету и фигуре она не положена.
-  expect(normalSample(view, turned, objectMatrix(turned, frameValues()), -200, -200)).toBeNull();
+  expect(shadeSample(view, turned, objectMatrix(turned, frameValues()), -200, -200)).toBeNull();
 
   // Сброс перед кадром: буфер не растёт от кадра к кадру.
   resetCollector(collector);
@@ -383,8 +384,8 @@ test("объём: считается по объекту, а не по гото�
   const loop = rig.slice(rig.indexOf("for (const { object, values, ghost, opacity, drawn, matrix } of objects)"));
   expect(loop.length).toBeGreaterThan(0);
   // Сэмпл нормалей и объём — внутри цикла отрисовки, до следующего объекта.
-  expect(loop.indexOf("normalSample(view, object")).toBeGreaterThan(0);
-  expect(loop.indexOf("drawShaded(")).toBeGreaterThan(loop.indexOf("normalSample(view, object"));
+  expect(loop.indexOf("shadeSample(view, object")).toBeGreaterThan(0);
+  expect(loop.indexOf("drawShaded(")).toBeGreaterThan(loop.indexOf("shadeSample(view, object"));
   // Слой объекта уходит в объём целиком, вместе с рамкой работы.
   expect(rig).toContain("shadeLayer(canvas, sample, options.lighting?.lights ?? [], box);");
   // Объект попадает на сцену один раз: слоем, обычным наложением.

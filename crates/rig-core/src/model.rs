@@ -224,10 +224,21 @@ pub enum Param {
     WarpBRy,
     WarpBLx,
     WarpBLy,
+    /// Материал: шероховатость 0..1. По умолчанию −1 — «не задано», и тогда
+    /// работает значение из инспектора. Так скрипт может менять поверхность,
+    /// не перебивая настройку, пока сам этого не захочет.
+    Roughness,
+    /// Материал: металл 0..1. −1 — «не задано».
+    Metallic,
+    /// Материал: окклюзия 0..1. −1 — «не задано».
+    Ao,
+    /// Материал: сила свечения. Прибавляется к настройке инспектора, поэтому
+    /// пульсация пишется как `emissive = sin(time * 6) * 0.5 + 0.5`.
+    Emissive,
 }
 
 impl Param {
-    pub const ALL: [Param; 22] = [
+    pub const ALL: [Param; 26] = [
         Param::X,
         Param::Y,
         Param::Rotation,
@@ -250,6 +261,10 @@ impl Param {
         Param::WarpBRy,
         Param::WarpBLx,
         Param::WarpBLy,
+        Param::Roughness,
+        Param::Metallic,
+        Param::Ao,
+        Param::Emissive,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -276,6 +291,10 @@ impl Param {
             Param::WarpBRy => "warpBRy",
             Param::WarpBLx => "warpBLx",
             Param::WarpBLy => "warpBLy",
+            Param::Roughness => "roughness",
+            Param::Metallic => "metallic",
+            Param::Ao => "ao",
+            Param::Emissive => "emissive",
         }
     }
 
@@ -312,6 +331,11 @@ impl Param {
             "warpBRy" => Param::WarpBRy,
             "warpBLx" => Param::WarpBLx,
             "warpBLy" => Param::WarpBLy,
+            // Материал: абсолютные свойства поверхности и сила свечения.
+            "roughness" => Param::Roughness,
+            "metallic" => Param::Metallic,
+            "ao" => Param::Ao,
+            "emissive" => Param::Emissive,
             _ => return None,
         })
     }

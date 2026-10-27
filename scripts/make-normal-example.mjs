@@ -23,6 +23,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
+import { shadePoint } from "./material-math.mjs";
 
 const SIZE = 512;
 const SS = 3; // сглаживание краёв: 3×3 подпикселя на пиксель
@@ -290,6 +291,9 @@ const FONT = {
   H: [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
   I: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f],
   L: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
+  M: [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
+  S: [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
+  U: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
   N: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
   O: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
   P: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
@@ -300,6 +304,10 @@ const FONT = {
   2: [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
   3: [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
   4: [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
+  5: [0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e],
+  6: [0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e],
+  7: [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
+  8: [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
 };
 
 function text(canvas, x, y, value, scale, [r, g, b]) {
@@ -358,6 +366,43 @@ paintEdges(color);
 writeFileSync(join(OUT, "cube.png"), encodePng(SIZE, SIZE, toPixels(color)));
 writeFileSync(join(OUT, "cube-normal.png"), encodePng(SIZE, SIZE, toPixels(normalMap)));
 
+/*
+ * Карты материала. У кубика поверхности ровные, поэтому каналы задаются по
+ * граням: верх — глянцевый металл, левая — матовая, правая — пластик. Так на
+ * одном объекте видно сразу все три поведения и легко заметить, что канал
+ * читается не оттуда.
+ */
+function paintMaterialMaps(orm, emissive) {
+  for (let y = 0; y < SIZE; y += 1) {
+    for (let x = 0; x < SIZE; x += 1) {
+      const face = visibleFaceAt(x, y);
+      if (!face) continue;
+      const name = face.name;
+      // ORM: R — шероховатость, G — металл, B — окклюзия.
+      const spec = name === "+Y"
+        ? { roughness: 0.18, metallic: 1, ao: 1 }
+        : name === "+Z"
+          ? { roughness: 0.75, metallic: 0, ao: 1 }
+          : { roughness: 0.35, metallic: 0, ao: 0.85 };
+      over(orm, x, y, [spec.roughness, spec.metallic, spec.ao], 1);
+      // Свечение: только верхняя грань, слабо — чтобы правило «свечение не
+      // зависит от светов» было видно в темноте.
+      const glow = name === "+Y" ? 0.35 : 0;
+      over(emissive, x, y, [glow, glow * 0.6, glow * 1.2 > 1 ? 1 : glow * 1.2], glow > 0 ? 1 : 0);
+    }
+  }
+}
+
+/** Какая грань накрывает пиксель: та же геометрия, что у картинки. */
+function visibleFaceAt(x, y) {
+  let best = null;
+  for (const face of visible) {
+    if (!inside(face.points, x + 0.5, y + 0.5)) continue;
+    if (!best || face.view[2] > best.view[2]) best = face;
+  }
+  return best;
+}
+
 const panels = [
   { caption: "1 COLOR", image: color },
   { caption: "2 LIGHT TOP", image: lit(color, normalMap, [SIZE / 2, -1400], false) },
@@ -388,6 +433,91 @@ panels.forEach((panel, index) => {
 });
 
 writeFileSync(join(OUT, "cube-debug.png"), encodePng(width, height, toPixels(sheet)));
+
+const orm = blank(SIZE, SIZE);
+const emissive = blank(SIZE, SIZE);
+paintMaterialMaps(orm, emissive);
+writeFileSync(join(OUT, "cube-orm.png"), encodePng(SIZE, SIZE, toPixels(orm)));
+writeFileSync(join(OUT, "cube-emissive.png"), encodePng(SIZE, SIZE, toPixels(emissive)));
+
+/*
+ * Лист материалов: один и тот же кубик под одним и тем же светом, меняется
+ * только материал. Считается той же функцией, что и в редакторе, поэтому лист
+ * — эталон, а не иллюстрация.
+ */
+const LIGHT = {
+  L: (() => {
+    const [dx, dy] = [180, -260];
+    const flat = Math.hypot(dx, dy);
+    return [dx / flat * 0.72, dy / flat * 0.72, 0.7];
+  })(),
+  color: [1, 0.96, 0.9],
+  polarity: 1,
+  specular: 1,
+};
+
+function shadeSheet(name, material) {
+  const out = blank(SIZE, SIZE);
+  const albedoMap = color.data;
+  const ormMap = orm.data;
+  const glowMap = emissive.data;
+  for (let y = 0; y < SIZE; y += 1) {
+    for (let x = 0; x < SIZE; x += 1) {
+      const i = (y * SIZE + x) * 4;
+      const alpha = albedoMap[i + 3];
+      if (alpha <= 0.01) continue;
+      const normal = [0, 0, 1];
+      const point = {
+        albedo: [albedoMap[i], albedoMap[i + 1], albedoMap[i + 2]],
+        normal,
+        roughness: ormMap[i] || 0.5,
+        metallic: ormMap[i + 1] || 0,
+        ao: ormMap[i + 2] || 1,
+        // Свечение берём из карты только там, где панель про свечение:
+        // иначе верхняя грань светилась бы во всех четырёх панелях.
+        emissive: material.emissive ? material.emissive : [0, 0, 0],
+        emissiveMap: [glowMap[i], glowMap[i + 1], glowMap[i + 2]],
+        specular: 1,
+        environment: { color: [0.55, 0.6, 0.7], level: 0.45 },
+        ...material,
+      };
+      const rgb = shadePoint(point, [LIGHT], { normalStrength: 1, material: true });
+      out.data[i] = Math.min(1, rgb[0]);
+      out.data[i + 1] = Math.min(1, rgb[1]);
+      out.data[i + 2] = Math.min(1, rgb[2]);
+      out.data[i + 3] = alpha;
+      void name;
+    }
+  }
+  return out;
+}
+
+const materials = [
+  { caption: "5 MATTE", material: { roughness: 0.9, metallic: 0 } },
+  { caption: "6 PLASTIC", material: { roughness: 0.3, metallic: 0 } },
+  { caption: "7 METAL", material: { roughness: 0.18, metallic: 1 } },
+  {
+    caption: "8 NEON",
+    material: { roughness: 0.5, metallic: 0, emissive: [0.1, 0.55, 0.9] },
+  },
+];
+
+const sheet2 = blank(width, height);
+bar(sheet2, 0, 0, width, height, [0.09, 0.1, 0.12], 1);
+materials.forEach((panel, index) => {
+  const x = GAP + (index % 2) * (SIZE + GAP);
+  const y = GAP + Math.floor(index / 2) * (SIZE + GAP);
+  const image = shadeSheet(panel.caption, panel.material);
+  for (let dy = 0; dy < SIZE; dy += 1) {
+    for (let dx = 0; dx < SIZE; dx += 1) {
+      const s = (dy * SIZE + dx) * 4;
+      over(sheet2, x + dx, y + dy, [image.data[s], image.data[s + 1], image.data[s + 2]], image.data[s + 3]);
+    }
+  }
+  bar(sheet2, x, y, SIZE, 26, [0.09, 0.1, 0.12], 0.82);
+  text(sheet2, x + 8, y + 7, panel.caption, 2, [0.92, 0.93, 0.95]);
+});
+writeFileSync(join(OUT, "cube-materials.png"), encodePng(width, height, toPixels(sheet2)));
 
 const normals = visible.map((face) => `${face.name}: [${face.view.map((v) => v.toFixed(3)).join(", ")}]`);
 console.log("visible faces:\n  " + normals.join("\n  "));

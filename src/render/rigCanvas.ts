@@ -1,4 +1,4 @@
-import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
+import type { EnvironmentSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
 import { frontness, structurePaths } from "../engine/structure";
@@ -8,8 +8,9 @@ import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
 import { paintLight } from "./light";
-import { DEFAULT_LIGHT } from "../types";
-import { shadeLayer, type LightingCollector, type NormalSample } from "./lighting";
+import { DEFAULT_LIGHT, lightHeight } from "../types";
+import { shadeLayer, type LightingCollector, type ShadeSample } from "./lighting";
+import { materialBinding } from "./material";
 import type { MaskSpec, ShapeSpec } from "../types";
 
 /**
@@ -178,6 +179,8 @@ export interface DrawRigOptions {
    * пикселях холста. Без него отрисовка та же — просто без объёма.
    */
   lighting?: LightingCollector;
+  /** Окружение сцены: нужно материалу, у которого нет диффузной части. */
+  environment?: EnvironmentSpec;
 }
 
 /**
@@ -234,7 +237,9 @@ export function drawRig(
     // Объём принадлежит объекту: он считается в отдельном слое сразу после
     // отрисовки, поэтому всё нарисованное выше его перекрывает. Общий буфер на
     // весь холст так не умеет — объём нижнего объекта просвечивал сквозь верхние.
-    const sample = view && !ghost ? normalSample(view, object, matrix, left, top) : null;
+    const sample = view && !ghost
+      ? shadeSample(view, object, matrix, left, top, options.environment, values)
+      : null;
     if (sample && options.lighting?.lights.length) {
       if (drawShaded(ctx, preset, frame, assets, options, object, matrix, left, top, alpha, masked, strength, sample)) {
         continue;
@@ -301,35 +306,46 @@ export function collect(
       colorEnd: spec.colorEnd,
       brightness,
       blend: spec.blend,
+      // Высота в пикселях холста: масштаб камеры тот же, что у радиуса.
+      height: lightHeight(spec) * scale,
+      specular: spec.specular,
     });
     return;
   }
 }
 
 /**
- * Матрица карты нормалей объекта: локальные координаты картинки → пиксели холста.
+ * Что нужно проходу объёма от объекта: матрица, рамка, карта нормалей, материал.
  *
  * Считается на объект в момент его отрисовки: объём принадлежит своему объекту
  * (см. `shadeLayer`), поэтому общий список нормалей на кадр больше не нужен.
+ *
+ * `undefined` — объекту нечего считать: ни карты нормалей, ни материала.
  */
-export function normalSample(
+export function shadeSample(
   view: ViewMatrix,
   object: RigObject,
   matrix: Affine,
   left: number,
   top: number,
-): NormalSample | null {
+  environment?: EnvironmentSpec,
+  values?: ObjectFrame,
+): ShadeSample | null {
   if (object.enabled === false) return null;
-  if (object.kind !== "sprite" && object.kind !== "media") return null;
-  const normal = object.normal;
-  if (!normal?.src || normal.strength <= 0) return null;
+  if (object.kind !== "sprite" && object.kind !== "media" && object.kind !== "shape") return null;
   if (object.width <= 0 || object.height <= 0) return null;
+  const normal = object.normal;
+  const withNormal = !!normal?.src && normal.strength > 0;
+  const material = object.material;
+  // Ни карты, ни материала — считать нечего: объект рисуется как обычно.
+  if (!withNormal && !material) return null;
   const combined = view.multiply(matrix);
   return {
     matrix: [combined.a, combined.b, 0, combined.c, combined.d, 0, combined.e, combined.f, 1],
     rect: [left, top, object.width, object.height],
-    src: normal.src,
-    strength: normal.strength,
+    normal: withNormal ? { src: normal!.src!, strength: normal!.strength } : null,
+    material: material ? materialBinding(material, environment, values) : null,
+    strength: withNormal ? Math.min(2, Math.max(0, normal!.strength / 100)) : 0,
   };
 }
 
@@ -376,7 +392,7 @@ function drawShaded(
   alpha: number,
   masked: boolean,
   strength: number,
-  sample: NormalSample,
+  sample: ShadeSample,
 ): boolean {
   const layer = volumeLayer(ctx.canvas);
   if (!layer) return false;

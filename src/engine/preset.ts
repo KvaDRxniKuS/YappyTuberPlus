@@ -12,6 +12,7 @@ import {
 import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
+import { normalizeEnvironment, normalizeMaterial } from "../render/material";
 import { normalizeWarp } from "../render/warp";
 import { PRESET_FORMAT, PRESET_FORMATS_READABLE } from "../version";
 import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
@@ -302,6 +303,9 @@ export function normalizePreset(value: unknown): RigPreset | null {
     ...(typeof preset.needs === "number" && Number.isFinite(preset.needs) ? { needs: preset.needs } : {}),
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
+    // Окружение есть только когда задано: у простых пресетов его нет вовсе,
+    // поэтому файл остаётся таким же коротким, как раньше.
+    ...(preset.environment ? { environment: normalizeEnvironment(preset.environment) } : {}),
     objects: preset.objects.map((object) => {
       const kind: ObjectKind = object.kind === "group" || object.kind === "media" || object.kind === "text"
         || object.kind === "shape" || object.kind === "light"
@@ -325,6 +329,11 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // нормали только у того, что рисует картинку (спрайт и медиа).
         light: kind === "light" ? normalizeLight(object.light) : undefined,
         normal: kind === "sprite" || kind === "media" ? normalizeNormal(object.normal) : undefined,
+        // Материал — тоже только у того, что рисует картинку или заполняет
+        // форму: у группы нет поверхности.
+        material: kind === "sprite" || kind === "media" || kind === "shape"
+          ? normalizeMaterial(object.material)
+          : undefined,
         // Маска — свойство любого объекта: одна фигура может вырезать сразу
         // несколько спрайтов, поэтому ссылка живёт на объекте, а не в фигуре.
         mask: normalizeMask(object.mask),

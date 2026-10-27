@@ -65,15 +65,16 @@ export const SLOT_INFO: Record<VersionSlot, SlotInfo> = {
 /**
  * Поколение формата пресета.
  *
- * 2 — пресеты до света и карт нормалей, 3 — текущие (вид `light`, поле
- * `normal`). Старые номера принимаются при чтении: чего в них не было, получает
- * значения по умолчанию. Новый номер старый редактор не поймёт — он молча
- * потерял бы свет, поэтому формат растёт вместе с такими видами.
+ * 2 — пресеты до света и карт нормалей, 3 — вид `light` и поле `normal`,
+ * 4 — материал объекта (`material`) и окружение сцены. Старые номера
+ * принимаются при чтении: чего в них не было, получает значения по умолчанию.
+ * Новый номер старый редактор не поймёт — он молча потерял бы свет или
+ * материал, поэтому формат растёт вместе с такими полями.
  */
-export const PRESET_FORMAT = 3;
+export const PRESET_FORMAT = 4;
 
 /** Форматы, которые этот редактор ещё читает. Здесь только старые поколения. */
-export const PRESET_FORMATS_READABLE: readonly number[] = [2, PRESET_FORMAT];
+export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, PRESET_FORMAT];
 
 /** Поколение контракта шаблонов модулей: `public/modules/*.json`. */
 export const MODULE_FORMAT = 1;
@@ -106,8 +107,8 @@ export interface ProjectVersion {
  * объявляется: приложение не может быть старше самого себя.
  */
 export const VERSION: ProjectVersion = {
-  release: [1, 0],
-  core: 21,
+  release: [1, 1],
+  core: 22,
   format: PRESET_FORMAT,
   bridge: 1,
   modules: MODULE_FORMAT,

@@ -32,6 +32,11 @@ export function normalizeLight(raw: unknown): LightSpec {
     softness: clamp(Number(source.softness ?? DEFAULT_LIGHT.softness), 0, 100),
     brightness: clamp(Number(source.brightness ?? DEFAULT_LIGHT.brightness), 0, 200),
     blend: source.blend === "add" ? "add" : "normal",
+    // Высота: галка «половина радиуса» либо своё число. Старые пресеты о ней
+    // не знают — получают авто, и блик выглядит естественно без настройки.
+    heightMode: source.heightMode === "manual" ? "manual" : "auto",
+    height: clamp(Number(source.height ?? DEFAULT_LIGHT.height) || DEFAULT_LIGHT.height, 1, 20000),
+    specular: clamp(Number(source.specular ?? DEFAULT_LIGHT.specular), 0, 200),
   };
 }
 

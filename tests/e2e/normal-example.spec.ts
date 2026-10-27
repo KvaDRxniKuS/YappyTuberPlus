@@ -118,3 +118,44 @@ test("пример: лист-дебаг показывает свет сверх
   // Перед правкой исходника подпись панели тоже видна: цвет картинки.
   expect(top(0)[0]).toBeCloseTo(sideOf(0)[0], 2);
 });
+
+test("пример: карта ORM разложена по стандарту, а свечение — только на верху", () => {
+  const orm = decode("cube-orm.png");
+  expect(orm.width).toBe(512);
+  // Верх: полированный металл. Правая грань: матовый диэлектрик.
+  const top = at(orm, 256, 150);
+  const right = at(orm, 370, 340);
+  expect(top[0]).toBeCloseTo(0.18, 1); // R — шероховатость
+  expect(top[1]).toBeCloseTo(1, 1); // G — металл
+  expect(right[0]).toBeCloseTo(0.75, 1);
+  expect(right[1]).toBeCloseTo(0, 1);
+  // B — окклюзия: у левой грани в углу темнее, чем у верха.
+  expect(at(orm, 150, 340)[2]).toBeLessThan(top[2]);
+  // Вне куба — прозрачно: карта не светится на пустом месте.
+  expect(at(orm, 4, 4)[3]).toBe(0);
+
+  const glow = decode("cube-emissive.png");
+  expect(glow.width).toBe(512);
+  expect(at(glow, 256, 150)[0]).toBeGreaterThan(0.1);
+  expect(at(glow, 370, 340)[0]).toBe(0);
+  expect(at(glow, 4, 4)[3]).toBe(0);
+});
+
+test("пример: лист материалов — металл темнее пластика без окружения", () => {
+  const sheet = decode("cube-materials.png");
+  expect(sheet.width).toBe(512 * 2 + 24 * 3);
+  // Панели: 5 матовый, 6 пластик, 7 металл, 8 неон.
+  const panel = (index: number, x: number, y: number) => at(
+    sheet,
+    24 + (index % 2) * (512 + 24) + x,
+    24 + Math.floor(index / 2) * (512 + 24) + y,
+  );
+  const side = (index: number) => panel(index, 370, 340);
+  // Один и тот же кубик и один свет: матовый не даёт узкого блика, пластик
+  // даёт, металл без окружения тёмный (это физика), неон светится сам.
+  expect(side(2)[0]).toBeGreaterThan(0);
+  expect(side(2)[0]).toBeLessThan(side(1)[0]);
+  expect(side(3)[2]).toBeGreaterThan(0.5); // неон: синий канал высокий
+  // Все четыре панели нарисованы: в каждой есть непрозрачные пиксели.
+  for (let index = 0; index < 4; index += 1) expect(panel(index, 256, 300)[3]).toBe(1);
+});

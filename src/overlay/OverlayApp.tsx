@@ -193,6 +193,7 @@ export function OverlayApp() {
       resetCollector(lighting);
       drawRig(ctx, current, frame, assets.current, {
         media: mediaAssets.current, maskMedia: maskMedia.current, lighting,
+        environment: current.environment,
       });
       ctx.restore();
       if (guide) {

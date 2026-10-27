@@ -1643,3 +1643,17 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   font-family: inherit;
   resize: vertical;
 }
+
+/* Материал: строки каналов, файлы и общая полоса свечения. */
+.material-kinds { flex-wrap: wrap; gap: 4px; }
+.material-channel { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid #262b31; }
+.material-channel:first-of-type { border-top: none; }
+.material-channel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.material-channel-head > span { color: #c8ced6; }
+.material-file { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.material-packed { padding-top: 6px; border-top: 1px solid #262b31; }
+.material-packed-channel { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.material-packed-channel select { background: #1b1f24; color: #dfe4ea; border: 1px solid #333a42; border-radius: 5px; padding: 2px 6px; }
+.emissive-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.emissive-row .range-property { flex: 1 1 120px; }
+.color-input { width: 34px; height: 26px; padding: 0; border: 1px solid #333a42; border-radius: 5px; background: #1b1f24; }

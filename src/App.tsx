@@ -62,7 +62,7 @@ import { WorkMeter } from "./components/WorkMeter";
 import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
-  DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout,
+  DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout, type EnvironmentSpec,
   type ModuleInstance, type RigObject, type RigPreset, type Vec2, type WarpSpec,
 } from "./types";
 
@@ -826,6 +826,11 @@ export default function App() {
     commit({ ...current, objects }, { label: "Смещение выделения", coalesce: "multi-offset" });
   }, [commit]);
 
+  /** Окружение сцены: общее для всех материалов, поэтому хранится в пресете. */
+  const setEnvironment = useCallback((environment: EnvironmentSpec) => {
+    commit((current) => ({ ...current, environment }), { label: "Окружение сцены", coalesce: "environment" });
+  }, [commit]);
+
   const setSelectedLayer = useCallback((layer: number) => {
     const current = presetRef.current;
     const ids = new Set(selectionRef.current);
@@ -1451,6 +1456,8 @@ export default function App() {
               onDuplicate={duplicateSelected}
               pen={pen}
               onPen={startPen}
+              environment={preset.environment}
+              onEnvironment={setEnvironment}
             />
           )}
         /></div>

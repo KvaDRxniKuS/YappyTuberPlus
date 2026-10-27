@@ -31,7 +31,7 @@ test("требование: простая сцена просит миниму�
 
   // Требование растёт только вслед за содержимым, а не вслед за редактором.
   expect(needsCore(preset([{ kind: "shape" }]))).toBe(20);
-  expect(needsCore(preset([{ kind: "light" }]))).toBe(VERSION.core);
+  expect(needsCore(preset([{ kind: "light" }]))).toBe(21);
   expect(needsCore(preset([], "x = count(mic.talking.up)"))).toBe(16);
   expect(needsCore(preset([{ script: "y = near(x, 1, 0.1) * 5" }]))).toBe(9);
   expect(needsCore(preset([{ mask: { src: null } } as Partial<RigObject>]))).toBe(19);
@@ -94,15 +94,21 @@ test("требование: у числа есть причина, и она н�
   expect(needsReason(mask)).toContain("маска");
 
   const light = needsReport(preset([{ kind: "light" }]));
-  expect(light.needs).toBe(VERSION.core);
+  expect(light.needs).toBe(21);
   expect(needsReason(light)).toContain("свет");
+
+  // Материал поднимает требование до текущего поколения, и причина называет его.
+  const material = needsReport(preset([{ kind: "sprite", material: { roughness: { value: 0.3 } } } as Partial<RigObject>]));
+  expect(material.needs).toBe(VERSION.core);
+  expect(needsReason(material)).toContain("материал");
 
   // Незнакомый вызов важнее подписей: он и есть причина текущего поколения.
   expect(needsReason(needsReport(preset([{ script: "x = mystery(1)" }])))).toContain("mystery()");
 });
 
 test("требование: файл уносит его с собой", () => {
-  const scene = preset([{ kind: "light" }]);
+  // Материал — самая новая механика: именно он держит сцену на текущем ядре.
+  const scene = preset([{ kind: "sprite", material: { roughness: { value: 0.4 } } } as Partial<RigObject>]);
   const stamped = stampPreset(scene);
   expect(stamped.built).toContain(VERSION.core.toString());
   expect(stamped.needs).toBe(VERSION.core);

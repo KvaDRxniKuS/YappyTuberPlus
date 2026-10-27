@@ -20,6 +20,10 @@ export const NEUTRAL_PARAMS: ObjectFrame = {
   // имеет только у тех, где включена галочка «Деформация».
   warpTLx: 0, warpTLy: 0, warpTRx: 0, warpTRy: 0,
   warpBRx: 0, warpBRy: 0, warpBLx: 0, warpBLy: 0,
+  // Материал: −1 значит «значение из инспектора» — так кадр старого ядра, где
+  // этих параметров нет, читается как «материал настроен вручную», а не как
+  // «шероховатость 0».
+  roughness: -1, metallic: -1, ao: -1, emissive: 0,
 };
 
 /**

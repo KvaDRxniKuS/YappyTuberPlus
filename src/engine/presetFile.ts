@@ -1,5 +1,6 @@
 import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
+import { materialSources } from "../render/material";
 import { IncompatiblePresetError, presetCompatibility, type CompatibilityReport } from "./presetCheck";
 import { withBuildStamp } from "../version";
 import { needsCore } from "./coreFeatures";
@@ -146,13 +147,15 @@ export async function attachPresetDisk(path: string | null): Promise<void> {
 async function writeSidecar(preset: RigPreset, path: string): Promise<string[]> {
   const owners = new Map<string, string[]>();
   for (const object of preset.objects) {
-    // Маска и карта нормалей — такие же файлы объекта: без них папка
-    // `<имя>.assets` переезжает без них, и после переноса объём и маска гаснут.
+    // Маска, карта нормалей и карты материала — такие же файлы объекта: без них
+    // папка `<имя>.assets` переезжает без них, и после переноса объём, маска и
+    // материал гаснут молча.
     for (const source of [
       object.image,
       object.media?.src,
       object.mask?.kind === "file" ? object.mask.file : null,
       object.normal?.src,
+      ...materialSources(object.material),
     ]) {
       const id = assetIdOf(source);
       if (!id) continue;

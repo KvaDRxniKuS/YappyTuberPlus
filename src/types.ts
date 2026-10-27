@@ -20,7 +20,14 @@ export type ParamName =
    * угол можно двигать формулой и ловить событиями.
    */
   | "warpTLx" | "warpTLy" | "warpTRx" | "warpTRy"
-  | "warpBRx" | "warpBRy" | "warpBLx" | "warpBLy";
+  | "warpBRx" | "warpBRy" | "warpBLx" | "warpBLy"
+  /**
+   * Материал: шероховатость, металл и окклюзия 0..1. Значение `-1` значит
+   * «не задано» — тогда работает настройка из инспектора, а не ноль.
+   */
+  | "roughness" | "metallic" | "ao"
+  /** Материал: сила свечения. Прибавляется к настройке инспектора. */
+  | "emissive";
 
 export interface Vec2 { x: number; y: number }
 
@@ -243,6 +250,25 @@ export interface LightSpec {
   brightness: number;
   /** Наложение: обычное (тень и подсветка) или аддитивное (свечение). */
   blend: "normal" | "add";
+  /**
+   * Как задаётся высота света над холстом.
+   *
+   * `auto` — половина радиуса: лампа «висит» над своим пятном, и при смене
+   * радиуса ничего не надо перенастраивать. `manual` — своё число пикселей:
+   * плоский свет плашмя (малая высота) даёт блик у самого пятна, высокий —
+   * узкий и яркий.
+   */
+  heightMode: "auto" | "manual";
+  /** Высота над холстом в пикселях: читается при `heightMode: "manual"`. */
+  height: number;
+  /** Сила блика от этого света 0…200 %: 0 — только тень и подсветка. */
+  specular: number;
+}
+
+/** Высота света по настройке: половина радиуса либо своё число. */
+export function lightHeight(spec: LightSpec): number {
+  if (spec.heightMode === "manual") return Math.max(1, spec.height);
+  return Math.max(1, spec.radius / 2);
 }
 
 /** Значения по умолчанию: тёплое пятно, гаснущее к краю. */
@@ -255,6 +281,11 @@ export const DEFAULT_LIGHT: LightSpec = {
   softness: 60,
   brightness: 100,
   blend: "normal",
+  // Половина радиуса — так свет «висит» над своим пятном, и блик виден без
+  // настройки. Сила блика 100 значит «как в физике», без множителя.
+  heightMode: "auto",
+  height: 120,
+  specular: 100,
 };
 
 /** Поколение формата пресета: тип поля `RigPreset.version`. */
@@ -292,6 +323,8 @@ export interface RigObject {
   light?: LightSpec;
   /** Карта нормалей: картинка или видео с нормалями поверхности. */
   normal?: NormalMapSpec;
+  /** Материал: шероховатость, металл, окклюзия, свечение. Нет — старый вид. */
+  material?: MaterialSpec;
   /** Маска видимости: у любого объекта, кроме группы. */
   mask?: MaskSpec;
   /** Деформация крайних точек: есть у спрайта и медиа-картинки. */
@@ -313,6 +346,78 @@ export interface NormalMapSpec {
   /** Видео-карта играет: у видео объём обычно живой. */
   animate: boolean;
 }
+
+/** Канал упакованной карты: какой буквой он лежит. */
+export type PackedChannel = "r" | "g" | "b" | "a";
+
+/**
+ * Один канал материала: константа, свой файл или канал упакованной карты.
+ *
+ * Три способа — не избыточность: константа нужна «просто пластику», файл —
+ * когда карты лежат отдельными файлами (так их отдают почти все редакторы), а
+ * упакованная карта читает готовые наборы ORM/MRA без пересборки.
+ */
+export interface ChannelSpec {
+  /** Константа, когда `from: "value"`. */
+  value: number;
+  /** Свой файл канала. */
+  file: string | null;
+  from: "value" | "file" | "packed";
+  /** Какая буква упакованной карты отвечает за этот канал. */
+  packedChannel: PackedChannel;
+}
+
+/** Свечение: собственный цвет, сила и необязательная карта. */
+export interface EmissiveSpec {
+  color: string;
+  /** Сила свечения 0…200 %: 0 — не светится. */
+  strength: number;
+  file: string | null;
+}
+
+/**
+ * Материал объекта: то, что делает картинку поверхностью.
+ *
+ * Пока материала нет, объект считается по прежней формуле (объём от нормалей
+ * в пятне света) — так все старые пресеты выглядят ровно как раньше. Материал
+ * включает полный расчёт: GGX-блик, металл, окклюзия, свечение.
+ */
+export interface MaterialSpec {
+  /** Шероховатость 0…1 (константа, файл или канал упаковки). */
+  roughness: ChannelSpec;
+  /** Металл 0…1: 0 — диэлектрик, 1 — металл. */
+  metallic: ChannelSpec;
+  /** Окклюзия 0…1: гасит диффузную часть, блик не трогает. */
+  ao: ChannelSpec;
+  emissive: EmissiveSpec;
+  /** Упакованная карта: один файл, каналы выбираются буквами. */
+  packed: string | null;
+  /** Сила блика 0…200 %: общий множитель спекуляра материала. */
+  specular: number;
+}
+
+/** Упаковка по умолчанию — ORM, как в glTF: R шероховатость, G металл, B окклюзия. */
+export const DEFAULT_CHANNEL = (value: number, packedChannel: PackedChannel): ChannelSpec => ({
+  value, file: null, from: "value", packedChannel,
+});
+
+export const DEFAULT_MATERIAL: MaterialSpec = {
+  roughness: DEFAULT_CHANNEL(0.6, "r"),
+  metallic: DEFAULT_CHANNEL(0, "g"),
+  ao: DEFAULT_CHANNEL(1, "b"),
+  emissive: { color: "#ffffff", strength: 0, file: null },
+  packed: null,
+  specular: 100,
+};
+
+/** Окружение сцены: без него металл чёрный — у него нет диффузной части. */
+export interface EnvironmentSpec {
+  color: string;
+  /** Уровень 0…200 %: 0 — окружения нет, вид как до материала. */
+  level: number;
+}
+
+export const DEFAULT_ENVIRONMENT: EnvironmentSpec = { color: "#ffffff", level: 0 };
 
 export interface RuntimeConfig {
   fpsMode: "limited" | "display";
@@ -366,6 +471,8 @@ export interface RigPreset {
   needs?: number;
   name: string;
   canvas: { width: number; height: number };
+  /** Окружение сцены: без него металл чёрный. Уровень 0 — вид как раньше. */
+  environment?: EnvironmentSpec;
   objects: RigObject[];
   globals: string;
   runtime: RuntimeConfig;

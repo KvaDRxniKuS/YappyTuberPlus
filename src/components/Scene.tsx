@@ -256,6 +256,7 @@ export function Scene(props: SceneProps) {
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
       lighting: lighting.current,
+      environment: preset.environment,
     });
     // Объём от карт нормалей считается внутри drawRig: каждый объект получает
     // свой объём в своём слое, поэтому верхние слои его перекрывают.

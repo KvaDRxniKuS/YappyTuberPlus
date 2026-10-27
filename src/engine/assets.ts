@@ -1,3 +1,4 @@
+import { materialSources } from "../render/material";
 import type { RigObject, RigPreset } from "../types";
 
 /**
@@ -199,6 +200,8 @@ function sourcesOf(object: RigObject): Array<string | null> {
     // Карта нормалей — такой же файл объекта. Без неё она не загружалась при
     // открытии пресета и не попадала в сохранение: объект виден, объёма нет.
     object.normal?.src ?? null,
+    // Материал: упакованная карта, каналы из файлов и карта свечения.
+    ...materialSources(object.material),
   ];
 }
 
@@ -581,6 +584,24 @@ export async function extractAssets(preset: RigPreset): Promise<{ preset: RigPre
       const ref = await storeBlob(dataUrlToBlob(next.normal.src), `${next.id}-normal.${extensionOf(next.normal.src)}`);
       if (ref) { next = { ...next, normal: { ...next.normal, src: ref } }; changed = true; }
     }
+    // Карты материала из чужого пресета: в файле остаётся ссылка, не data URL.
+    if (next.material) {
+      const store = async (src: string | null, suffix: string) => {
+        if (!src || !isDataUrl(src)) return null;
+        return storeBlob(dataUrlToBlob(src), `${next.id}-${suffix}.${extensionOf(src)}`);
+      };
+      const base = next.material;
+      let material = base;
+      const packed = await store(base.packed, "orm");
+      if (packed) material = { ...material, packed };
+      const emissive = await store(base.emissive.file, "emissive");
+      if (emissive) material = { ...material, emissive: { ...material.emissive, file: emissive } };
+      for (const key of ["roughness", "metallic", "ao"] as const) {
+        const stored = await store(material[key].file, key);
+        if (stored) material = { ...material, [key]: { ...material[key], file: stored } };
+      }
+      if (material !== base) { next = { ...next, material }; changed = true; }
+    }
     objects.push(next);
   }
   return changed ? { preset: { ...preset, objects }, changed } : { preset, changed };
@@ -656,6 +677,29 @@ export async function inlineAssets(preset: RigPreset): Promise<{ preset: RigPres
       const source = await inlineSource(next.normal.src);
       if (source) { next = { ...next, normal: { ...next.normal, src: source } }; changed = true; }
       else missing.push(`${object.name} (карта нормалей)`);
+    }
+    // Материал: каждая его карта — такой же файл объекта, как картинка.
+    const material = next.material;
+    if (material) {
+      const inline = async (src: string | null) => (src && isAssetRef(src) ? inlineSource(src) : null);
+      const packed = await inline(material.packed);
+      if (packed) { next = { ...next, material: { ...material, packed } }; changed = true; }
+      else if (material.packed && isAssetRef(material.packed)) missing.push(`${object.name} (упакованная карта)`);
+      const emissive = await inline(material.emissive.file);
+      if (emissive) { next = { ...next, material: { ...(next.material ?? material), emissive: { ...material.emissive, file: emissive } } }; changed = true; }
+      else if (material.emissive.file && isAssetRef(material.emissive.file)) missing.push(`${object.name} (карта свечения)`);
+      const channels = ["roughness", "metallic", "ao"] as const;
+      for (const key of channels) {
+        const channel = (next.material ?? material)[key];
+        const source = channel.from === "file" ? await inline(channel.file) : null;
+        if (source) {
+          const base = next.material ?? material;
+          next = { ...next, material: { ...base, [key]: { ...base[key], file: source } } };
+          changed = true;
+        } else if (channel.from === "file" && channel.file && isAssetRef(channel.file)) {
+          missing.push(`${object.name} (${key === "roughness" ? "шероховатость" : key === "metallic" ? "металл" : "окклюзия"})`);
+        }
+      }
     }
     objects.push(next);
   }

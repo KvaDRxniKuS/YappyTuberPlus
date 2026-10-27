@@ -33,17 +33,55 @@ export interface LightSample {
   colorEnd: string;
   brightness: number;
   blend: "normal" | "add";
+  /** Высота света над холстом в пикселях холста: без неё блик плоский. */
+  height: number;
+  /** Сила блика этого света 0…200 %. */
+  specular: number;
 }
 
 /** Объект с картой нормалей: матрица «локальные координаты → пиксели холста». */
-export interface NormalSample {
+/**
+ * Канал материала для шейдера.
+ *
+ * `mode`: 0 — константа из инспектора, 1 — свой файл канала, 2 — буква
+ * упакованной карты. Режим решает рендер (`rigCanvas`), а не шейдер: там же,
+ * где известно, есть ли файл на самом деле.
+ */
+export interface ChannelBinding {
+  mode: 0 | 1 | 2;
+  /** Буква упакованной карты: 0 R, 1 G, 2 B, 3 A. */
+  channel: number;
+  value: number;
+  /** Свой файл канала (`mode: 1`). */
+  src: string | null;
+}
+
+/** Материал объекта в проходе объёма. */
+export interface MaterialBinding {
+  roughness: ChannelBinding;
+  metallic: ChannelBinding;
+  ao: ChannelBinding;
+  /** Цвет свечения 0…1 и сила 0…2. */
+  emissive: { color: [number, number, number]; strength: number; src: string | null };
+  /** Упакованная карта: из неё читаются каналы с `mode: 2`. */
+  packed: string | null;
+  /** Общая сила блика материала 0…2. */
+  specular: number;
+  /** Окружение сцены: цвет 0…1 и уровень 0…2. */
+  environment: { color: [number, number, number]; level: number };
+}
+
+/** Всё, что нужно проходу: карта нормалей и (необязательно) материал. */
+export interface ShadeSample {
   /** Матрица 3×3 по столбцам: [a, b, 0, c, d, 0, e, f, 1]. */
   matrix: number[];
   /** Рамка картинки в локальных координатах: left, top, width, height. */
   rect: [number, number, number, number];
-  /** Файл карты нормалей. */
-  src: string;
-  /** Сила объёма 0…200 %. */
+  /** Карта нормалей; `null` — поверхность плоская. */
+  normal: { src: string; strength: number } | null;
+  /** Материал; `null` — прежний вид (объём от нормалей). */
+  material: MaterialBinding | null;
+  /** Сила нормалей 0…2: общая для обоих режимов. */
   strength: number;
 }
 
@@ -139,8 +177,15 @@ const VOLUME_FRAGMENT = `#version 300 es
 precision highp float;
 #define MAX_LIGHTS ${MAX_LIGHTS}
 in vec2 vUv;
+
 uniform sampler2D uScene;
 uniform sampler2D uNormals;
+uniform sampler2D uPacked;
+uniform sampler2D uRoughTex;
+uniform sampler2D uMetalTex;
+uniform sampler2D uAoTex;
+uniform sampler2D uEmissiveTex;
+
 uniform vec2 uCanvas;
 uniform vec2 uOrigin;
 uniform vec2 uSize;
@@ -149,6 +194,32 @@ uniform vec4 uColor0[MAX_LIGHTS];
 uniform vec4 uColor1[MAX_LIGHTS];
 uniform vec4 uGeom[MAX_LIGHTS];
 uniform vec4 uShape[MAX_LIGHTS];
+/** x — высота света над холстом, y — сила блика этого света 0…2. */
+uniform vec4 uLightExtra[MAX_LIGHTS];
+
+/** 0 — прежний объём от нормалей, 1 — материал (GGX). */
+uniform int uMaterial;
+uniform int uHasNormal;
+uniform float uNormalStrength;
+
+/** Канал: 0 — константа, 1 — свой файл, 2 — канал упакованной карты. */
+uniform int uRoughMode;
+uniform int uMetalMode;
+uniform int uAoMode;
+uniform int uRoughChannel;
+uniform int uMetalChannel;
+uniform int uAoChannel;
+uniform float uRoughValue;
+uniform float uMetalValue;
+uniform float uAoValue;
+uniform float uSpecular;
+
+uniform int uEmissiveMode;
+uniform vec3 uEmissiveColor;
+uniform float uEmissiveStrength;
+/** Окружение: rgb — цвет, w — уровень 0…2. */
+uniform vec4 uEnvironment;
+
 out vec4 outColor;
 
 // Знаковая площадь внутри треугольника: > 0 значит «внутри».
@@ -162,18 +233,60 @@ float triangleInside(vec2 p) {
   return min(d1, min(d2, d3));
 }
 
+/** Значение канала в точке: константа, свой файл или буква упакованной карты. */
+float channelValue(int mode, int channel, float constant, sampler2D own) {
+  if (mode == 0) return constant;
+  if (mode == 1) return texture(own, vUv).r;
+  vec4 packed = texture(uPacked, vUv);
+  if (channel == 0) return packed.r;
+  if (channel == 1) return packed.g;
+  if (channel == 2) return packed.b;
+  return packed.a;
+}
+
+/** Распределение GGX: чем меньше шероховатость, тем уже и ярче блик. */
+float ggx(float NdotH, float roughness) {
+  float alpha = max(roughness * roughness, 0.002);
+  float a2 = alpha * alpha;
+  float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
+  return a2 / (3.14159265 * d * d);
+}
+
 void main() {
   vec4 scene = texture(uScene, vUv);
   vec4 nrm = texture(uNormals, vUv);
   // Покрытие × сила: без карты нормалей объёма нет.
   float volume = nrm.a * nrm.b * 2.0;
-  if (uCount == 0 || volume <= 0.001) { outColor = scene; return; }
+  bool material = uMaterial == 1;
 
-  // Пиксели всего холста: vUv считается внутри рамки объекта.
+  // Нормаль поверхности. Без карты — плоская, без всяких «−1».
+  vec2 nxy = uHasNormal == 1 ? (nrm.rg * 2.0 - 1.0) * uNormalStrength : vec2(0.0);
+  float nlen = length(nxy);
+  if (nlen > 1.0) { nxy /= nlen; nlen = 1.0; }
+  vec3 n = vec3(nxy, sqrt(max(1.0 - nlen * nlen, 0.05)));
+
+  if (!material && (uCount == 0 || volume <= 0.001)) { outColor = scene; return; }
+  if (material && scene.a <= 0.001) { outColor = scene; return; }
+
   vec2 p = uOrigin + vUv * uSize;
-  vec2 nxy = nrm.rg * 2.0 - 1.0;
-  vec3 n = vec3(nxy, max(sqrt(max(1.0 - dot(nxy, nxy), 0.0)), 0.05));
   float accum = 0.0;
+  // Материал: накопленное освещение, тень от тёмных светов и блики.
+  vec3 lightSum = vec3(0.0);
+  float shadowSum = 0.0;
+  vec3 specSum = vec3(0.0);
+
+  // Каналы материала читаются один раз на точку, а не в каждом свете.
+  float roughness = 1.0;
+  float metallic = 0.0;
+  float occlusion = 1.0;
+  vec3 F0 = vec3(0.04);
+  if (material) {
+    roughness = clamp(channelValue(uRoughMode, uRoughChannel, uRoughValue, uRoughTex), 0.02, 1.0);
+    metallic = clamp(channelValue(uMetalMode, uMetalChannel, uMetalValue, uMetalTex), 0.0, 1.0);
+    occlusion = clamp(channelValue(uAoMode, uAoChannel, uAoValue, uAoTex), 0.0, 1.0);
+    // Металл красит отражение цветом объекта, диэлектрик отражает 4 %.
+    F0 = mix(vec3(0.04), scene.rgb, metallic);
+  }
 
   for (int i = 0; i < MAX_LIGHTS; i++) {
     if (i >= uCount) break;
@@ -215,20 +328,57 @@ void main() {
     float a = mix(color0.a, color1.a, t) * cover;
     if (a <= 0.0005) continue;
 
-    // Направление на свет в плоскости экрана плюс «в глаз»: наклон поверхности
-    // относительно этого направления и даёт объём.
+    // Направление на свет: по плоскости экрана и с высотой над холстом.
+    // Без высоты свет лежит плашмя, и блик получается плоским.
     vec2 toLight = center - p;
-    float dist = length(toLight);
-    vec2 flatDir = dist > 0.001 ? toLight / dist : vec2(0.0);
-    vec3 lightDir = normalize(vec3(flatDir * 0.85, 1.0));
+    float flat = length(toLight);
+    vec2 flatDir = flat > 0.001 ? toLight / flat : vec2(0.0);
+    vec3 lightDir = normalize(vec3(flatDir, max(uLightExtra[i].x, 1.0)));
     float delta = dot(n, lightDir) - lightDir.z;
     accum += delta * a * polarity;
+
+    if (material) {
+      float NdotL = dot(n, lightDir);
+      if (polarity < 0.5) {
+        // Тёмный свет — тень: блика не даёт, только гасит диффузную часть.
+        shadowSum += a * 0.9;
+      } else if (NdotL > 0.0) {
+        vec3 H = normalize(lightDir + vec3(0.0, 0.0, 1.0));
+        float NdotH = max(dot(n, H), 1e-4);
+        float VdotH = max(H.z, 0.0);
+        float D = ggx(NdotH, roughness);
+        float k = pow(1.0 - VdotH, 5.0);
+        vec3 F = F0 + (1.0 - F0) * k;
+        float denom = 4.0 * max(NdotL, 1e-4) * max(n.z, 1e-4);
+        float gain = (D / denom) * uSpecular * uLightExtra[i].y;
+        lightSum += color0.rgb * a * NdotL;
+        specSum += color0.rgb * F * (gain * a);
+      }
+    }
   }
 
-  if (abs(accum) <= 0.0005) { outColor = scene; return; }
-  // Больше единицы — не выбеливать: предел объема держим мягким.
-  float scale = 1.0 + clamp(accum, -0.9, 2.0) * volume;
-  outColor = vec4(clamp(scene.rgb * max(scale, 0.0), 0.0, 1.0), scene.a);
+  if (!material) {
+    if (abs(accum) <= 0.0005) { outColor = scene; return; }
+    // Больше единицы — не выбеливать: предел объёма держим мягким.
+    float scale = 1.0 + clamp(accum, -0.9, 2.0) * volume;
+    outColor = vec4(clamp(scene.rgb * max(scale, 0.0), 0.0, 1.0), scene.a);
+    return;
+  }
+
+  // Окклюзия гасит диффузную часть и окружение, блик не трогает.
+  float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);
+  vec3 ambient = uEnvironment.rgb * uEnvironment.w;
+  // Окружение — отражение: у металла красится его цветом (F0), у диэлектрика
+  // даёт свои 4 %. Иначе металл был бы чёрным даже в светлой комнате.
+  vec3 ambientReflect = F0 * ambient + scene.rgb * (1.0 - metallic) * ambient;
+  vec3 diffuse = scene.rgb * (1.0 - metallic) * lightSum;
+  vec3 emissive = vec3(0.0);
+  if (uEmissiveStrength > 0.0) {
+    emissive = uEmissiveColor * uEmissiveStrength;
+    if (uEmissiveMode == 1) emissive *= texture(uEmissiveTex, vUv).rgb;
+  }
+  vec3 rgb = (diffuse + ambientReflect) * shade + specSum * uSpecular + emissive;
+  outColor = vec4(clamp(rgb, 0.0, 8.0), scene.a);
 }`;
 
 interface Programs {
@@ -489,82 +639,149 @@ function scratchOf(source: HTMLCanvasElement, box: ShadeBox): HTMLCanvasElement 
  */
 export function shadeLayer(
   layer: HTMLCanvasElement,
-  sample: NormalSample,
+  sample: ShadeSample,
   lights: LightSample[],
   box: ShadeBox,
 ): boolean {
   if (!lights.length) return false;
-  if (!(sample.strength > 0) || !sample.src) return false;
   if (box.width < 2 || box.height < 2) return false;
   if (!lightingAvailable() || !state) return false;
-  const texture = sourceOf(sample.src, true);
-  if (!texture || !ready(texture)) return false;
+  if (!sample.normal && !sample.material) return false;
+  const program = state;
   const source = scratchOf(layer, box);
   if (!source) return false;
-  const gl = state.gl;
+
+  // Каждая карта грузится асинхронно: пока файла нет, объёма просто нет, а
+  // объект остаётся на месте. Материал без карт работает по константам.
+  const normalSource = sample.normal;
+  const normalStrength = normalSource ? normalSource.strength / 100 : 0;
+  const normalTexture = normalSource && normalSource.strength > 0
+    ? readySource(normalSource.src)
+    : null;
+  if (normalSource && normalSource.strength > 0 && !normalTexture) return false;
+  const material = sample.material;
+  const bindings = material
+    ? [material.roughness, material.metallic, material.ao].map((channel) => (
+      channel.mode === 1 ? readySource(channel.src) : null
+    ))
+    : [];
+  if (material && bindings.some((entry, index) => material[channelName(index)].mode === 1 && !entry)) return false;
+
+  const gl = program.gl;
   const width = box.width;
   const height = box.height;
 
   try {
     // Буферы держим размером холста: рамка объекта гуляет с камерой, и
-    // пересоздавать текстуры на каждый её сдвиг незачем. Меняется только
-    // вьюпорт — в него и пишем, из него и читаем.
+    // пересоздавать текстуры на каждый её сдвиг незачем. Вьюпорт и размеры
+    // рамки уходят в шейдер.
     if (gl.canvas.width !== layer.width || gl.canvas.height !== layer.height) {
       gl.canvas.width = layer.width;
       gl.canvas.height = layer.height;
     }
-    ensureSize(state, layer.width, layer.height);
+    ensureSize(program, layer.width, layer.height);
 
     // Проход объёма рисует в том месте кадрового буфера, где рамка лежит на
-    // холсте: буфер считает строки снизу, холст — сверху. Без перевода объект
-    // подменялся пустотой, а с перепутанным чтением — уезжал в другую сторону.
+    // холсте: буфер считает строки снизу, холст — сверху.
     const viewport = viewportOf(box, layer.height);
 
     // 1. Карта нормалей объекта. Текстуру нормалей проход объёма читает по
-    // рамке объекта (vUv от 0 до 1), поэтому рамка занимает весь буфер: иначе
-    // карта берётся из чужих строк и объём ложится не туда.
+    // рамке объекта (vUv от 0 до 1), поэтому рамка занимает весь буфер.
     gl.bindFramebuffer(gl.FRAMEBUFFER, state.normalFramebuffer);
     gl.viewport(0, 0, layer.width, layer.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.disable(gl.BLEND);
-    gl.useProgram(state.normal);
-    gl.bindBuffer(gl.ARRAY_BUFFER, state.quad);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    gl.uniform2f(gl.getUniformLocation(state.normal, "uSize"), width, height);
-    gl.uniform2f(gl.getUniformLocation(state.normal, "uOrigin"), box.x, box.y);
-    gl.uniformMatrix3fv(gl.getUniformLocation(state.normal, "uMatrix"), false, new Float32Array(sample.matrix));
-    gl.uniform4f(gl.getUniformLocation(state.normal, "uRect"), sample.rect[0], sample.rect[1], sample.rect[2], sample.rect[3]);
-    gl.uniform1f(gl.getUniformLocation(state.normal, "uStrength"), Math.min(2, Math.max(0, sample.strength / 100)));
-    gl.uniform1i(gl.getUniformLocation(state.normal, "uMap"), 0);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, createMapTexture(gl, `${sample.src}|${texture.live}`, texture));
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (normalTexture) {
+      gl.useProgram(program.normal);
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quad);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.uniform2f(gl.getUniformLocation(program.normal, "uSize"), width, height);
+      gl.uniform2f(gl.getUniformLocation(program.normal, "uOrigin"), box.x, box.y);
+      gl.uniformMatrix3fv(gl.getUniformLocation(program.normal, "uMatrix"), false, new Float32Array(sample.matrix));
+      gl.uniform4f(gl.getUniformLocation(program.normal, "uRect"), sample.rect[0], sample.rect[1], sample.rect[2], sample.rect[3]);
+      gl.uniform1f(gl.getUniformLocation(program.normal, "uStrength"), Math.min(2, Math.max(0, normalStrength)));
+      gl.uniform1i(gl.getUniformLocation(program.normal, "uMap"), 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, createMapTexture(gl, `${normalSource!.src}|${normalTexture.live}`, normalTexture));
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
 
-    // 2. Слой объекта: текстура, обратно — с объёмом от светильников сцены.
+    // 2. Слой объекта: текстура, обратно — с объёмом и материалом.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-    gl.useProgram(state.volume);
+    gl.useProgram(program.volume);
     gl.bindBuffer(gl.ARRAY_BUFFER, state.quad);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, sceneTexture(gl, source));
-    gl.uniform1i(gl.getUniformLocation(state.volume, "uScene"), 0);
+    gl.uniform1i(gl.getUniformLocation(program.volume, "uScene"), 0);
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, state.normalTexture);
-    gl.uniform1i(gl.getUniformLocation(state.volume, "uNormals"), 1);
+    gl.bindTexture(gl.TEXTURE_2D, normalTexture ? program.normalTexture : white(gl));
+    gl.uniform1i(gl.getUniformLocation(program.volume, "uNormals"), 1);
+
+    // Каналы материала: упакованная карта, свои файлы и константы. На каждую
+    // текстуру — свой блок, неиспользованные получают белую заглушку.
+    const packed = material?.packed ? readySource(material.packed) : null;
+    const bindChannel = (index: number, unit: number, name: string, source: TextureSource | null) => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, source
+        ? createMapTexture(gl, `${name}|${source.live}`, source)
+        : white(gl));
+      gl.uniform1i(gl.getUniformLocation(program.volume, name), unit);
+    };
+    bindChannel(0, 2, "uPacked", packed);
+    bindChannel(1, 3, "uRoughTex", bindings[0] ?? null);
+    bindChannel(2, 4, "uMetalTex", bindings[1] ?? null);
+    bindChannel(3, 5, "uAoTex", bindings[2] ?? null);
+    const emissiveTexture = material?.emissive.src ? readySource(material.emissive.src) : null;
+    bindChannel(4, 6, "uEmissiveTex", emissiveTexture);
+
+    gl.uniform1i(gl.getUniformLocation(program.volume, "uMaterial"), material ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(program.volume, "uHasNormal"), normalTexture ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(program.volume, "uNormalStrength"), Math.min(2, Math.max(0, sample.strength)));
+    if (material) {
+      // Режим канала: файла нет — читаем константу, а не пустую текстуру.
+      const modeOf = (channel: ChannelBinding, source: TextureSource | null) => {
+        if (channel.mode === 1) return source ? 1 : 0;
+        if (channel.mode === 2) return packed ? 2 : 0;
+        return 0;
+      };
+      const setChannel = (prefix: string, channel: ChannelBinding, source: TextureSource | null) => {
+        gl.uniform1i(gl.getUniformLocation(program.volume, `u${prefix}Mode`), modeOf(channel, source));
+        gl.uniform1i(gl.getUniformLocation(program.volume, `u${prefix}Channel`), channel.channel);
+        gl.uniform1f(gl.getUniformLocation(program.volume, `u${prefix}Value`), channel.value);
+      };
+      setChannel("Rough", material.roughness, bindings[0] ?? null);
+      setChannel("Metal", material.metallic, bindings[1] ?? null);
+      setChannel("Ao", material.ao, bindings[2] ?? null);
+      gl.uniform1f(gl.getUniformLocation(program.volume, "uSpecular"), Math.min(2, Math.max(0, material.specular)));
+      gl.uniform1i(gl.getUniformLocation(program.volume, "uEmissiveMode"), emissiveTexture ? 1 : 0);
+      gl.uniform3f(
+        gl.getUniformLocation(program.volume, "uEmissiveColor"),
+        material.emissive.color[0], material.emissive.color[1], material.emissive.color[2],
+      );
+      gl.uniform1f(gl.getUniformLocation(program.volume, "uEmissiveStrength"), Math.min(2, Math.max(0, material.emissive.strength)));
+      gl.uniform4f(
+        gl.getUniformLocation(program.volume, "uEnvironment"),
+        material.environment.color[0], material.environment.color[1], material.environment.color[2],
+        Math.min(2, Math.max(0, material.environment.level)),
+      );
+    }
     // Размер всего холста нужен только форме «весь экран»: её радиус — диагональ.
-    gl.uniform2f(gl.getUniformLocation(state.volume, "uCanvas"), layer.width, layer.height);
-    gl.uniform2f(gl.getUniformLocation(state.volume, "uOrigin"), box.x, box.y);
-    gl.uniform2f(gl.getUniformLocation(state.volume, "uSize"), width, height);
+    gl.uniform2f(gl.getUniformLocation(program.volume, "uCanvas"), layer.width, layer.height);
+    gl.uniform2f(gl.getUniformLocation(program.volume, "uOrigin"), box.x, box.y);
+    gl.uniform2f(gl.getUniformLocation(program.volume, "uSize"), width, height);
 
     const used = lights.slice(0, MAX_LIGHTS);
     const color0 = new Float32Array(MAX_LIGHTS * 4);
     const color1 = new Float32Array(MAX_LIGHTS * 4);
     const geom = new Float32Array(MAX_LIGHTS * 4);
     const shape = new Float32Array(MAX_LIGHTS * 4);
+    const extra = new Float32Array(MAX_LIGHTS * 4);
     used.forEach((light, index) => {
       const start = colorParts(light.colorStart);
       const end = colorParts(light.colorEnd);
@@ -578,12 +795,15 @@ export function shadeLayer(
         Math.min(1, Math.max(0, light.softness / 100)),
         polarity(light.colorStart),
       ], index * 4);
+      // Высота света в пикселях холста: она же масштабируется камерой.
+      extra.set([Math.max(1, light.height), Math.min(2, Math.max(0, light.specular / 100)), 0, 0], index * 4);
     });
-    gl.uniform1i(gl.getUniformLocation(state.volume, "uCount"), used.length);
-    gl.uniform4fv(gl.getUniformLocation(state.volume, "uColor0"), color0);
-    gl.uniform4fv(gl.getUniformLocation(state.volume, "uColor1"), color1);
-    gl.uniform4fv(gl.getUniformLocation(state.volume, "uGeom"), geom);
-    gl.uniform4fv(gl.getUniformLocation(state.volume, "uShape"), shape);
+    gl.uniform1i(gl.getUniformLocation(program.volume, "uCount"), used.length);
+    gl.uniform4fv(gl.getUniformLocation(program.volume, "uColor0"), color0);
+    gl.uniform4fv(gl.getUniformLocation(program.volume, "uColor1"), color1);
+    gl.uniform4fv(gl.getUniformLocation(program.volume, "uGeom"), geom);
+    gl.uniform4fv(gl.getUniformLocation(program.volume, "uShape"), shape);
+    gl.uniform4fv(gl.getUniformLocation(program.volume, "uLightExtra"), extra);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     // 3. Обратно в слой: рамка заменяется целиком, «copy» внутри отсечения.
@@ -609,6 +829,33 @@ export function shadeLayer(
     console.warn("Объём от карты нормалей пропущен:", reason);
     return false;
   }
+}
+
+/** Имя канала по порядку: нужно, чтобы не разъехались текстуры и режимы. */
+function channelName(index: number): "roughness" | "metallic" | "ao" {
+  return index === 0 ? "roughness" : index === 1 ? "metallic" : "ao";
+}
+
+/** Готовая текстура файла канала или `null`, если файл ещё не пришёл. */
+function readySource(src: string | null): TextureSource | null {
+  if (!src) return null;
+  const texture = sourceOf(src, true);
+  return texture && ready(texture) ? texture : null;
+}
+
+/** Белая заглушка для неиспользованных сэмплеров: читать из неё безопасно. */
+let whiteTexture: WebGLTexture | null = null;
+
+function white(gl: WebGL2RenderingContext): WebGLTexture {
+  if (!whiteTexture) {
+    whiteTexture = gl.createTexture();
+    if (whiteTexture) {
+      gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+      textureSettings(gl);
+    }
+  }
+  return whiteTexture!;
 }
 
 function textureSettings(gl: WebGL2RenderingContext): void {

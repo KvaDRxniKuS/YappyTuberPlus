@@ -17,19 +17,20 @@ import { DEFAULT_BASE, type RigPreset } from "../../src/types";
 test("паспорт: шесть чисел и подписи слотов", () => {
   // Порядок: релиз, ядро, файл, мост, модули, оболочка.
   expect(versionString()).toBe(
-    `1.0.${VERSION.core}.${PRESET_FORMAT}.${OVERLAY_PROTOCOL}.${MODULE_FORMAT}.${VERSION.shell}`,
+    `${VERSION.release.join(".")}.${VERSION.core}.${PRESET_FORMAT}.${OVERLAY_PROTOCOL}.${MODULE_FORMAT}.${VERSION.shell}`,
   );
-  expect(versionString()).toBe("1.0.21.3.1.1.1");
+  // 1.1 — релиз материала: ядро 22, формат файла 4.
+  expect(versionString()).toBe("1.1.22.4.1.1.1");
   // Мост в паспорте и протокол оверлея — одно число, иначе они разъедутся.
   expect(VERSION.bridge).toBe(OVERLAY_PROTOCOL);
   expect(VERSION.format).toBe(PRESET_FORMAT);
   expect(VERSION.modules).toBe(MODULE_FORMAT);
 
   // Для человека — подписями, в том же порядке.
-  expect(versionLabel()).toBe("1.0 · ядро 21 · файл 3 · мост 1 · модули 1 · оболочка 1");
-  expect(versionShort()).toBe("1.0");
+  expect(versionLabel()).toBe("1.1 · ядро 22 · файл 4 · мост 1 · модули 1 · оболочка 1");
+  expect(versionShort()).toBe("1.1");
   // В установщик уходят только три числа: поколения туда не помещаются.
-  expect(packagingVersion()).toBe("1.0.0");
+  expect(packagingVersion()).toBe("1.1.0");
 
   // У каждого слота есть имя и объяснение: подсказка в строке состояния.
   for (const slot of SLOT_ORDER) {

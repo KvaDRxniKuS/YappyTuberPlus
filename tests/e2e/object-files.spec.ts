@@ -96,3 +96,32 @@ test("файлы объекта: пропавшая карта называет�
   expect(readFileSync(join(process.cwd(), "src", "engine", "assets.ts"), "utf8"))
     .toContain("export function assetMissing");
 });
+
+test("файлы объекта: карты материала тоже входят в список файлов", () => {
+  // Материал — это до пяти файлов: упаковка, три канала и карта свечения.
+  // Пропустить любой из них значит потерять его при переносе пресета.
+  const scene = preset([
+    object({
+      material: {
+        roughness: { value: 0, file: "asset:rough", from: "file", packedChannel: "r" },
+        metallic: { value: 0, file: null, from: "packed", packedChannel: "g" },
+        ao: { value: 1, file: "asset:ao", from: "file", packedChannel: "b" },
+        emissive: { color: "#ffffff", strength: 40, file: "asset:glow" },
+        packed: "asset:orm",
+        specular: 100,
+      },
+    }),
+  ]);
+  expect([...assetIdsOfPreset(scene)].sort()).toEqual([
+    "ao", "face-image", "glow", "orm", "rough",
+  ]);
+
+  // Сохранение и папка `.assets` берут тот же список: одна правда о файлах.
+  const assets = readFileSync(join(process.cwd(), "src", "engine", "assets.ts"), "utf8");
+  expect(assets).toContain("...materialSources(object.material)");
+  expect(assets).toContain("(упакованная карта)");
+  expect(assets).toContain("(карта свечения)");
+  const file = readFileSync(join(process.cwd(), "src", "engine", "presetFile.ts"), "utf8");
+  const sidecar = file.slice(file.indexOf("async function writeSidecar"), file.indexOf("if (files.length)"));
+  expect(sidecar).toContain("...materialSources(object.material)");
+});

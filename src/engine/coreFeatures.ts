@@ -35,7 +35,7 @@ export interface CoreFeature {
   /** Виды объектов, которым признак обязателен. */
   kinds?: ObjectKind[];
   /** Поля объекта: признак нужен, только если поле есть. */
-  fields?: ("mask" | "warp")[];
+  fields?: ("mask" | "warp" | "material" | "normal")[];
   /**
    * Поколение, в котором признак **убран** из языка.
    *
@@ -193,6 +193,13 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
     label: "вид объекта «свет»",
     since: 21,
     kinds: ["light"],
+  },
+  {
+    id: "material",
+    label: "материал (`roughness`, `metallic`, `ao`, `emissive`)",
+    since: 22,
+    words: ["roughness", "metallic", "ao", "emissive"],
+    fields: ["material"],
   },
 ];
 
