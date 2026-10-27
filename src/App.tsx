@@ -766,19 +766,44 @@ export default function App() {
     setSelection([id]);
   };
 
-  /** Перо на сцене: точки контура правятся без отдельной истории на каждую. */
-  const penPoints = useCallback((objectId: string, itemId: string, points: Vec2[], smoothPoints: number[]) => {
+  /**
+   * Открытая тяга мышью (точка пера): состояние для отмены запоминается один
+   * раз, на первом движении, а не на каждое событие мыши. Повторный
+   * `beginLiveEdit` внутри той же тяги ничего не делает — иначе одно
+   * перетаскивание давало бы десятки шагов истории.
+   */
+  const liveEdit = useRef<string | null>(null);
+  const beginLiveEdit = useCallback((label: string) => {
+    if (liveEdit.current) return;
+    liveEdit.current = label;
+    pushUndo(label);
+  }, [pushUndo]);
+  const endLiveEdit = useCallback(() => {
+    if (!liveEdit.current) return;
+    liveEdit.current = null;
+    bumpHistory();
+  }, [bumpHistory]);
+
+  /**
+   * Перо на сцене: точки контура правятся без отдельной истории на каждую.
+   * `live` — движение внутри тяги: пишем историю один раз, дальше только
+   * состояние пресета.
+   */
+  const penPoints = useCallback((
+    objectId: string, itemId: string, points: Vec2[], smoothPoints: number[], live = false,
+  ) => {
     const current = presetRef.current;
     const object = current.objects.find((item) => item.id === objectId);
     if (!object?.shape) return;
     const items = object.shape.items.map((item) => (
       item.id === itemId ? { ...item, points, smoothPoints } : item
     ));
+    if (live) beginLiveEdit("Перетаскивание точки");
     updateObject(
       { ...object, shape: { ...object.shape, items } },
-      { label: "Контур фигуры", coalesce: "pen" },
+      live ? { record: false } : { label: "Контур фигуры", coalesce: "pen" },
     );
-  }, [updateObject]);
+  }, [beginLiveEdit, updateObject]);
 
   /**
    * Сила сглаживания точки из пера (Alt+клик по точке).
@@ -1159,6 +1184,7 @@ export default function App() {
             onWarp={warpObject}
             pen={pen}
             onPenPoints={penPoints}
+            onPenDragEnd={endLiveEdit}
             onPenSmoothing={penSmoothing}
             onPenClosed={penClosed}
           />

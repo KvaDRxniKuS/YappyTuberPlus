@@ -108,3 +108,64 @@ test("object matrix composes base pose, rotation and scale", () => {
   expect(local.x).toBeCloseTo(10);
   expect(local.y).toBeCloseTo(0);
 });
+
+test("маска работает только в рамке объекта, а не по всему холсту", () => {
+  // Раньше под каждую маску чистился и склеивался холст размером со всю сцену:
+  // на 1920×1080 это десятки миллионов пикселей за кадр. Теперь область — рамка
+  // спрайта, и этот тест стережёт, чтобы она не выросла обратно.
+  const preset = { ...createDemoPreset(), canvas: { width: 1920, height: 1080 } };
+  const head = preset.objects.find((object) => object.kind !== "group")!;
+  const shape = {
+    id: "mask_shape_test", kind: "shape" as const, name: "Маска",
+    parentId: null, image: null, script: "", width: 320, height: 220,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...head.base }, enabled: true, warp: null,
+    mask: null, media: null, shape: undefined,
+  };
+  const masked = {
+    ...head, mask: { ...(head.mask ?? {}), kind: "shape" as const, shapeId: shape.id, feather: 4 },
+  } as typeof head;
+  const scene = { ...preset, objects: [...preset.objects.map((object) => (object.id === head.id ? masked : object)), shape] };
+  const frame = frameFor(scene, []);
+
+  const cleared: number[][] = [];
+  const composited: number[][] = [];
+  const layerContext = {
+    globalAlpha: 1, globalCompositeOperation: "source-over", filter: "", fillStyle: "",
+    canvas: { width: 0, height: 0 },
+    setTransform() {}, save() {}, restore() {}, transform() {}, translate() {},
+    clearRect(x: number, y: number, width: number, height: number) { cleared.push([x, y, width, height]); },
+    beginPath() {}, closePath() {}, fill() {}, stroke() {}, drawImage() {},
+    moveTo() {}, lineTo() {}, bezierCurveTo() {}, rect() {}, ellipse() {}, arc() {}, clip() {},
+  };
+  const previous = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = {
+    createElement: () => ({ width: 0, height: 0, getContext: () => layerContext }),
+  };
+  const context = {
+    canvas: { width: 1920, height: 1080 },
+    globalAlpha: 1, fillStyle: "", strokeStyle: "", lineWidth: 1,
+    getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+    save() {}, restore() {}, setTransform() {}, transform() {}, translate() {}, scale() {},
+    clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, closePath() {},
+    moveTo() {}, lineTo() {}, bezierCurveTo() {}, ellipse() {}, rect() {}, clip() {}, stroke() {},
+    fill() {}, arc() {},
+    drawImage(_source: unknown, x: number, y: number, width: number, height: number,
+      sx?: number, sy?: number, sw?: number, sh?: number) {
+      if (sx !== undefined && sw !== undefined && sh !== undefined) composited.push([sx, sy!, sw, sh]);
+      else composited.push([x, y, width, height]);
+    },
+  } as unknown as CanvasRenderingContext2D;
+
+  try {
+    drawRig(context, scene, frame, assets);
+  } finally {
+    (globalThis as { document?: unknown }).document = previous;
+  }
+
+  const composite = composited.at(-1)!;
+  expect(composite[2]).toBeLessThan(1920);
+  expect(composite[3]).toBeLessThan(1080);
+  const area = Math.max(...cleared.map((rect) => rect[2] * rect[3]));
+  // Рамка объекта с запасом на размытие края: заметно меньше кадра целиком.
+  expect(area).toBeLessThan(1920 * 1080 / 4);
+});

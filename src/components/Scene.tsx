@@ -54,8 +54,15 @@ interface SceneProps {
    * точка хватается и переносится — как в графическом редакторе.
    */
   pen?: { objectId: string; itemId: string } | null;
-  /** Перо: точки контура; сглаживание идёт вместе с ними одним шагом истории. */
-  onPenPoints?: (objectId: string, itemId: string, points: Vec2[], smoothPoints: number[]) => void;
+  /**
+   * Перо: точки контура; сглаживание идёт вместе с ними одним шагом истории.
+   *
+   * `live` — это движение мыши внутри одной тяги: запись в историю делается
+   * один раз, на первом движении, а не на каждое событие.
+   */
+  onPenPoints?: (objectId: string, itemId: string, points: Vec2[], smoothPoints: number[], live?: boolean) => void;
+  /** Перо: тяга точки закончилась (кнопка отпущена) — шаг истории закрыт. */
+  onPenDragEnd?: () => void;
   /** Перо: сглаживание точки, 0…100 %. Alt+клик переключает угол и кривую. */
   onPenSmoothing?: (objectId: string, itemId: string, index: number, value: number) => void;
   /** Перо: замкнуть контур кликом по первой точке. */
@@ -156,6 +163,37 @@ export function Scene(props: SceneProps) {
   const markDirty = () => {
     dirty.current = true;
     loop.current?.request();
+  };
+
+  /**
+   * Живые правки мышью (точка пера, угол деформации, перенос объектов).
+   *
+   * Мышь с высоким поллингом шлёт события чаще кадров, а каждая правка — это
+   * новый пресет и перерисовка всего дерева React. Поэтому пачка движений
+   * склеивается в одну правку на кадр: берётся последнее положение курсора.
+   */
+  const live = useRef<{ task: (() => void) | null; frame: number }>({ task: null, frame: 0 });
+  const queueLive = (task: () => void) => {
+    const slot = live.current;
+    slot.task = task;
+    if (slot.frame) return;
+    slot.frame = requestAnimationFrame(() => {
+      slot.frame = 0;
+      const pending = slot.task;
+      slot.task = null;
+      pending?.();
+    });
+  };
+  /** Выполнить отложенную правку сразу: отпускание кнопки не должно её терять. */
+  const flushLive = () => {
+    const slot = live.current;
+    if (slot.frame) {
+      cancelAnimationFrame(slot.frame);
+      slot.frame = 0;
+    }
+    const pending = slot.task;
+    slot.task = null;
+    pending?.();
   };
 
   const setCamera = (next: Camera) => {
@@ -674,17 +712,24 @@ export function Scene(props: SceneProps) {
               return;
             }
             if (current.type === "pen") {
-              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-              const item = object?.shape?.items.find((entry) => entry.id === current.itemId);
-              if (!object || !item) return;
-              const local = shapePoint(object, propsRef.current.frameRef.current, scenePoint(event));
-              propsRef.current.onPenPoints?.(
-                object.id, item.id,
-                item.points.map((point, index) => (
-                  index === current.index ? { x: roundPoint(local.x), y: roundPoint(local.y) } : point
-                )),
-                item.points.map((_, index) => smoothingOf(item, index)),
-              );
+              // Курсор снимаем сразу (событие живёт до конца обработчика), а
+              // считаем — в ближайшем кадре: возьмёт самое свежее положение.
+              const target = scenePoint(event);
+              const { objectId, itemId, index } = current;
+              queueLive(() => {
+                const object = propsRef.current.preset.objects.find((item) => item.id === objectId);
+                const item = object?.shape?.items.find((entry) => entry.id === itemId);
+                if (!object || !item) return;
+                const local = shapePoint(object, propsRef.current.frameRef.current, target);
+                propsRef.current.onPenPoints?.(
+                  object.id, item.id,
+                  item.points.map((point, at) => (
+                    at === index ? { x: roundPoint(local.x), y: roundPoint(local.y) } : point
+                  )),
+                  item.points.map((_, at) => smoothingOf(item, at)),
+                  true,
+                );
+              });
               return;
             }
             if (current.type === "warpCorner" || current.type === "warpFrame" || current.type === "warpRotate") {
@@ -695,7 +740,9 @@ export function Scene(props: SceneProps) {
               if (current.type === "warpRotate") {
                 const angle = Math.atan2(point.y - current.center.y, point.x - current.center.x);
                 const degrees = ((angle - current.start) * 180) / Math.PI;
-                propsRef.current.onWarp(object.id, rotateWarpFrame(current.initial, event.shiftKey ? Math.round(degrees / 15) * 15 : degrees));
+                const next = rotateWarpFrame(current.initial, event.shiftKey ? Math.round(degrees / 15) * 15 : degrees);
+                const id = object.id;
+                queueLive(() => propsRef.current.onWarp(id, next));
                 return;
               }
               // Экранное смещение переводим в координаты картинки: объект может
@@ -716,7 +763,8 @@ export function Scene(props: SceneProps) {
                 : current.handle === "move"
                   ? moveWarpFrame(current.initial, object, dx, dy)
                   : resizeWarpFrame(current.initial, current.handle, object, dx, dy);
-              propsRef.current.onWarp(object.id, next);
+              const id = object.id;
+              queueLive(() => propsRef.current.onWarp(id, next));
               return;
             }
             const point = scenePoint(event);
@@ -726,11 +774,16 @@ export function Scene(props: SceneProps) {
               if (Math.abs(delta.x) >= Math.abs(delta.y)) delta = { x: delta.x, y: 0 };
               else delta = { x: 0, y: delta.y };
             }
-            propsRef.current.onDragObjects(current.ids, current.initial, delta);
+            const { ids, initial } = current;
+            queueLive(() => propsRef.current.onDragObjects(ids, initial, delta));
           }}
           onPointerUp={(event) => {
             const current = interaction.current;
             interaction.current = null;
+            // Отложенная правка могла ещё не примениться: применяем до того,
+            // как закрыть тягу, иначе последнее положение курсора потеряется.
+            flushLive();
+            if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             if (current?.type === "marquee") {
               current.points.push(screenPoint(event));
               finishMarquee(current);
@@ -745,8 +798,10 @@ export function Scene(props: SceneProps) {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            const current = interaction.current;
             interaction.current = null;
             marqueeRef.current = null;
+            if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             markDirty();
           }}
           onWheel={(event) => {

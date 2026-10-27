@@ -248,7 +248,11 @@ export function useRigEngine(
 
   useEffect(() => {
     // В нативном приложении кадры считает Rust-планировщик: здесь rAF не нужен.
-    if (!backend || backend.native) return;
+    // В паузе цикл не нужен тоже: пустой `requestAnimationFrame` заставляет
+    // WebView собирать кадр 60 раз в секунду, хотя картинка не меняется — это и
+    // была основная нагрузка «в простое». Цикл поднимается снова при
+    // продолжении.
+    if (!backend || backend.native || paused) return;
     let animation = 0;
     let nextDue = 0;
     let inFlight = false;
@@ -300,7 +304,9 @@ export function useRigEngine(
       disposed = true;
       cancelAnimationFrame(animation);
     };
-  }, [backend, inputsRef]);
+    // `paused` в зависимостях: пауза гасит цикл, продолжение — поднимает.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend, inputsRef, paused]);
 
   /**
    * Полный сброс таймлайна: новый движок, чистое состояние, время с нуля.

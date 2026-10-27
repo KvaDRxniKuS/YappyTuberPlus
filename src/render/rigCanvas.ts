@@ -401,8 +401,16 @@ function drawMasked(
   // отдельного холста она должна быть точно такой же, иначе маска не совпадёт
   // с объектом.
   const transform = ctx.getTransform();
+  const feather = object.mask?.feather ?? 0;
+  // Область работы — рамка самого объекта в пикселях холста, а не весь холст.
+  // Каждый кадр маска раньше чистила и склеивала все пиксели сцены: на
+  // большом холсте с несколькими масками это и было главной нагрузкой.
+  // Содержимое рисуется только внутри рамки, поэтому снаружи её нечего ни
+  // стирать, ни склеивать; запас нужен лишь на сглаживание и размытие края.
+  const box = contentBox(transform, matrix, object, canvas.width, canvas.height, left, top, feather);
+  if (!box) return;
   layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-  layerCtx.clearRect(0, 0, canvas.width, canvas.height);
+  layerCtx.clearRect(box.x, box.y, box.width, box.height);
   layerCtx.setTransform(transform);
   layerCtx.save();
   layerCtx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
@@ -413,15 +421,55 @@ function drawMasked(
   layerCtx.save();
   layerCtx.setTransform(transform);
   layerCtx.globalCompositeOperation = object.mask?.invert ? "destination-out" : "destination-in";
-  const feather = object.mask?.feather ?? 0;
   if (feather > 0) layerCtx.filter = `blur(${feather}px)`;
   paintMask(layerCtx, preset, frame, assets, object, object.mask!, matrix, left, top, options);
   layerCtx.restore();
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(canvas, 0, 0);
+  // Пиксели переносятся один к одному: источник и приёмник — та же область.
+  ctx.drawImage(canvas, box.x, box.y, box.width, box.height, box.x, box.y, box.width, box.height);
   ctx.restore();
+}
+
+/** Прямоугольник маски в пикселях холста: рамка объекта плюс запас на край. */
+function contentBox(
+  transform: DOMMatrix,
+  matrix: Affine,
+  object: RigObject,
+  canvasWidth: number,
+  canvasHeight: number,
+  left: number,
+  top: number,
+  feather: number,
+): { x: number; y: number; width: number; height: number } | null {
+  const combined = multiplyAffine({
+    a: transform.a, b: transform.b, c: transform.c, d: transform.d, e: transform.e, f: transform.f,
+  }, matrix);
+  const corners = [
+    [left, top],
+    [left + object.width, top],
+    [left, top + object.height],
+    [left + object.width, top + object.height],
+  ].map(([x, y]) => transformPoint(combined, x, y));
+  const scale = Math.max(
+    Math.hypot(combined.a, combined.b),
+    Math.hypot(combined.c, combined.d),
+    0.0001,
+  );
+  // Размытие края живёт в единицах объекта: в пикселях холста оно в `scale` раз
+  // больше. Пара пикселей сверху — на сглаживание самого края картинки.
+  const pad = Math.ceil((feather * 3 + 2) * scale) + 2;
+  const minX = Math.min(...corners.map((point) => point.x)) - pad;
+  const minY = Math.min(...corners.map((point) => point.y)) - pad;
+  const maxX = Math.max(...corners.map((point) => point.x)) + pad;
+  const maxY = Math.max(...corners.map((point) => point.y)) + pad;
+  const x = Math.max(0, Math.floor(minX));
+  const y = Math.max(0, Math.floor(minY));
+  const width = Math.min(canvasWidth, Math.ceil(maxX)) - x;
+  const height = Math.min(canvasHeight, Math.ceil(maxY)) - y;
+  if (width < 1 || height < 1) return null;
+  return { x, y, width, height };
 }
 
 /** Нарисовать саму маску белым: видимость решает её альфа. */

@@ -18,7 +18,6 @@ import type { EngineResponse } from "./backend";
 export const FRAME_EVENT = "rig://frame";
 /** Входы уходят пачкой: чаще кадра всё равно не меняются. */
 const INPUT_INTERVAL_MS = 33;
-const INPUT_INTERVAL_PAUSED_MS = 120;
 
 export interface NativeScheduleOptions {
   handle: number;
@@ -152,10 +151,17 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
     pause(next: boolean) {
       if (disposed || paused === next) return;
       paused = next;
-      if (timer) clearInterval(timer);
-      // На паузе входы всё равно обновляем, чтобы продолжение началось с живых
-      // значений, но реже: кадров нет, спешить некуда.
-      timer = setInterval(push, next ? INPUT_INTERVAL_PAUSED_MS : INPUT_INTERVAL_MS);
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      // На паузе кадров нет, и отдавать входы некуда: интервал выключается
+      // целиком, чтобы окно в простое не тратило процессор на IPC. Продолжение
+      // начинается со свежих значений — их отправляет разовый `push`.
+      if (!next) {
+        push();
+        timer = setInterval(push, INPUT_INTERVAL_MS);
+      }
       void invoke("rig_schedule_pause", { paused: next }).catch((error: unknown) => options.onError(reason(error)));
     },
     settings() {

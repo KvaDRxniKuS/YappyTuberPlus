@@ -156,6 +156,9 @@ export function traceItem(ctx: CanvasRenderingContext2D, item: ShapeItem): void 
  * Ломаная — отрезки как есть. Кривая — Catmull-Rom, переведённый в кубические
  * Безье: линия проходит через все точки, поэтому перо можно вести «по местам»,
  * а не подбирать управляющие ручки, которых в интерфейсе нет.
+ *
+ * Сглаживание задаётся на каждую точку (0…100 %) и действует на её стороне
+ * ребра: точка со 100 % уходит в дугу, соседний угол при этом остаётся углом.
  */
 export function tracePath(
   ctx: CanvasRenderingContext2D,
@@ -181,19 +184,25 @@ export function tracePath(
   for (let index = 0; index < segments; index += 1) {
     const p1 = points[index];
     const p2 = points[(index + 1) % count];
-    // Ребро сглаживается настолько, насколько сглажены обе его точки: угол
-    // рядом с дугой остаётся углом, а сама дуга не ломается.
-    const amount = Math.min(strength(index), strength((index + 1) % count)) / 100;
-    if (amount <= 0.0001) {
+    // Сглаживание — свойство точки, а не ребра: каждая сторона кривой
+    // принадлежит своему концу. Поэтому сглаженная точка уходит в дугу, а угол
+    // рядом с ней остаётся углом. Раньше ребро брало минимум сил концов, и
+    // одиночная кривая точка между углами не давала вообще ничего.
+    const start = strength(index) / 100;
+    const end = strength((index + 1) % count) / 100;
+    if (start <= 0.0001 && end <= 0.0001) {
       ctx.lineTo(p2.x, p2.y);
       continue;
     }
-    const p0 = at(index - 1);
-    const p3 = at(index + 2);
-    // Catmull-Rom, сжатый к концам ребра: при 100 % линия проходит через
-    // точки как настоящая кривая, при 0 % — прямая.
-    const c1 = { x: p1.x + ((p2.x - p0.x) / 6) * amount, y: p1.y + ((p2.y - p0.y) / 6) * amount };
-    const c2 = { x: p2.x - ((p3.x - p1.x) / 6) * amount, y: p2.y - ((p3.y - p1.y) / 6) * amount };
+    // У концов незамкнутого контура соседа с одной стороны нет: наклон берётся
+    // по самому ребру, иначе кривая тянулась бы к противоположному концу.
+    const p0 = closed || index > 0 ? at(index - 1) : p1;
+    const p3 = closed || index + 2 <= count - 1 ? at(index + 2) : p2;
+    // Catmull-Rom, сжатый к своей точке: при 100 % линия проходит через точку
+    // как настоящая кривая, при 0 % — прямой отрезок. Наклоны с двух сторон
+    // точки совпадают, поэтому дуга в ней не ломается.
+    const c1 = { x: p1.x + ((p2.x - p0.x) / 6) * start, y: p1.y + ((p2.y - p0.y) / 6) * start };
+    const c2 = { x: p2.x - ((p3.x - p1.x) / 6) * end, y: p2.y - ((p3.y - p1.y) / 6) * end };
     ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, p2.x, p2.y);
   }
   // У замкнутого контура замыкающее ребро уже нарисовано циклом: у него своё
@@ -275,13 +284,14 @@ export function penAction(item: ShapeItem, target: Vec2, radius: number, alt = f
     return { type: "drag", index };
   }
   const at = insertIndexFor(item.points, target, item.closed);
-  // Сглаживание новой точки — среднее у соседей: вставка не ломает дугу.
+  // Сглаживание новой точки — по более сглаженному соседу: вставка в дугу
+  // оставляет её дугой, а вставка в угол — углом.
   const beforeIndex = at - 1 >= 0 ? at - 1 : item.points.length - 1;
   const afterIndex = at < item.points.length ? at : 0;
   const before = item.points[beforeIndex];
   const after = item.points[afterIndex];
   const smoothing = before && after
-    ? (smoothingOf(item, beforeIndex) + smoothingOf(item, afterIndex)) / 2
+    ? Math.max(smoothingOf(item, beforeIndex), smoothingOf(item, afterIndex))
     : 0;
   return { type: "insert", index: at, smoothing };
 }

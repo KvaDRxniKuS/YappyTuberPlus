@@ -131,11 +131,14 @@ test("перо: сглаживание — свойство точки, а не 
   tracePath(smooth.ctx, square, [100, 100, 100, 100], true);
   expect(smooth.calls.filter((call) => call.startsWith("curve"))).toHaveLength(4);
 
-  // Смешанный контур: ребро сглаживается настолько, насколько сглажены его
-  // концы. Точки 0 и 1 — углы, 2 и 3 — кривые: кривым остаётся только ребро 2-3.
+  // Смешанный контур: сглаживание действует со стороны своей точки, поэтому
+  // дуга появляется у каждого ребра, которое касается кривой точки. Точки 0 и 1
+  // — углы, 2 и 3 — кривые: три ребра из четырёх становятся дугами, а ребро
+  // между двумя углами (0-1) остаётся отрезком.
   const mixed = recorder();
   tracePath(mixed.ctx, square, [0, 0, 100, 100], true);
-  expect(mixed.calls.filter((call) => call.startsWith("curve"))).toHaveLength(1);
+  expect(mixed.calls.filter((call) => call.startsWith("curve"))).toHaveLength(3);
+  expect(mixed.calls.filter((call) => call.startsWith("line"))).toHaveLength(1);
 
   // Сила влияет на контрольные точки: 100 % уводит их дальше, чем 40 %.
   const strong = recorder();
@@ -143,6 +146,33 @@ test("перо: сглаживание — свойство точки, а не 
   tracePath(strong.ctx, square, [100, 100, 100, 100], false);
   tracePath(weak.ctx, square, [40, 40, 40, 40], false);
   expect(strong.calls[1]).not.toBe(weak.calls[1]);
+});
+
+test("перо: одна сглаженная точка между углами даёт дугу", () => {
+  // Ровно тот случай, на который жаловались: ползунок точки двигается, а
+  // картинка не меняется. Теперь дуга идёт от угла к углу через эту точку.
+  const square = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  const one = recorder();
+  tracePath(one.ctx, square, [0, 100, 0, 0], true);
+  const curves = one.calls.filter((call) => call.startsWith("curve"));
+  expect(curves).toHaveLength(2);
+  // Кривая выходит за прямую: контрольные точки смещены от отрезков.
+  expect(curves[0]).not.toBe("curve 0 0 0 0 100 0");
+});
+
+test("перо: дуга проходит через сглаженную точку без излома", () => {
+  const square = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  const smooth = recorder();
+  tracePath(smooth.ctx, square, [0, 100, 0, 0], true);
+  // «curve c1x c1y c2x c2y x y»: у соседних рёбер наклон в точке 1 совпадает,
+  // иначе на месте «кривой» точки был бы излом.
+  const curves = smooth.calls.filter((call) => call.startsWith("curve"));
+  const incoming = curves[0].split(" ").map(Number); // ребро 0-1: «curve c1 c2 точка»
+  const outgoing = curves[1].split(" ").map(Number); // ребро 1-2: «curve c1 …»
+  const point = { x: incoming[5], y: incoming[6] };
+  const inVector = { x: point.x - incoming[3], y: point.y - incoming[4] };
+  const outVector = { x: outgoing[1] - point.x, y: outgoing[2] - point.y };
+  expect(Math.abs(inVector.x * outVector.y - inVector.y * outVector.x)).toBeLessThan(1);
 });
 
 test("перо: новая точка встаёт между двумя ближайшими", () => {
@@ -205,4 +235,11 @@ test("перо: Alt меняет тип точки, мимо точек — вс
   // Alt не мешает обычному клику мимо точек: точка вставляется.
   const inserted = penAction(square, { x: 104, y: 50 }, 12, true);
   expect(inserted).toEqual({ type: "insert", index: 2, smoothing: 100 });
+  // Вставка в дугу остаётся дугой: новая точка берёт силу более сглаженного
+  // соседа, поэтому контур не «выпрямляется» под курсором.
+  const curve = pathItem([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], false, [0, 100, 0]);
+  expect(penAction(curve, { x: 104, y: 50 }, 12)).toEqual({ type: "insert", index: 2, smoothing: 100 });
+  // Вставка в угол углом и остаётся.
+  const corners = pathItem([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], false, [0, 0, 0]);
+  expect(penAction(corners, { x: 104, y: 50 }, 12)).toEqual({ type: "insert", index: 2, smoothing: 0 });
 });
