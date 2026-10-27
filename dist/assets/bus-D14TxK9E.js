@@ -111,7 +111,12 @@ void main() {
   vUv = aPos;
   vec2 local = uRect.xy + aPos * uRect.zw;
   vec3 device = uMatrix * vec3(local, 1.0);
-  gl_Position = vec4(device.x / uCanvas.x * 2.0 - 1.0, 1.0 - device.y / uCanvas.y * 2.0, 0.0, 1.0);
+  // Y не переворачивается, хотя в кадре он растёт вниз: кадровый буфер хранит
+  // строки снизу вверх, а холст и его текстура — сверху вниз. Поэтому «верх
+  // объекта» попадает в первую строку буфера и читается тем же vUv, что и
+  // сцена. С «1.0 -» карта ложится зеркалом по вертикали: она перестаёт
+  // держаться за объект и уезжает вместе с камерой.
+  gl_Position = vec4(device.x / uCanvas.x * 2.0 - 1.0, device.y / uCanvas.y * 2.0 - 1.0, 0.0, 1.0);
 }`,gw=`#version 300 es
 precision highp float;
 in vec2 vUv;
