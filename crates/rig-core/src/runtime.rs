@@ -3171,7 +3171,14 @@ impl RuntimeStore {
                 }
                 Err(error) => json!({"ok": false, "error": error}),
             },
-            Request::Version => json!({"ok": true, "core": crate::CORE_GENERATION}),
+            Request::Version => json!({
+                "ok": true,
+                "core": crate::CORE_GENERATION,
+                // Диапазон совместимости: с какого поколения ядро понимает
+                // сценарии. Редактор сверяет его с требованием сцены, поэтому
+                // «другое поколение» само по себе перестаёт быть ошибкой.
+                "acceptsFrom": crate::ACCEPTS_FROM,
+            }),
             Request::Validate { config } => match Rig::new(config) {
                 Ok(_) => json!({"ok": true, "diagnostics": []}),
                 Err(error) => json!({"ok": false, "error": error}),
@@ -4211,5 +4218,6 @@ mod tests {
         let answer: JsonValue = serde_json::from_str(&store.call_json("{\"op\":\"version\"}")).unwrap();
         assert_eq!(answer["ok"], serde_json::json!(true));
         assert_eq!(answer["core"], serde_json::json!(crate::CORE_GENERATION));
+        assert_eq!(answer["acceptsFrom"], serde_json::json!(crate::ACCEPTS_FROM));
     }
 }

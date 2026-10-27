@@ -35,6 +35,7 @@ export function useRigEngine(
    */
   // `undefined` — ещё не спрашивали, `null` — ядро не знает запроса версии.
   const [core, setCore] = useState<number | null | undefined>(undefined);
+  const [acceptsFrom, setAcceptsFrom] = useState<number | null>(null);
   const [status, setStatus] = useState<EngineStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   // Смена эпохи пересоздаёт движок: это сбрасывает состояние smooth/spring/autoblink.
@@ -68,8 +69,14 @@ export function useRigEngine(
       // Сверка поколения: без неё старое WASM молча считает новые формулы
       // нулём, и понять это по картинке невозможно.
       void value.call({ op: "version" })
-        .then((answer) => { if (active) setCore(typeof answer.core === "number" ? answer.core : null); })
-        .catch(() => { if (active) setCore(null); });
+        .then((answer) => {
+          if (!active) return;
+          setCore(typeof answer.core === "number" ? answer.core : null);
+          // Диапазон совместимости присылает только ядро с этим полем: у более
+          // старого сборщика его нет, и это значит «понимает всё с первого».
+          setAcceptsFrom(typeof answer.acceptsFrom === "number" ? answer.acceptsFrom : null);
+        })
+        .catch(() => { if (active) { setCore(null); setAcceptsFrom(null); } });
     }).catch((reason: unknown) => {
       if (!active) return;
       setStatus("error");
@@ -407,6 +414,8 @@ export function useRigEngine(
     actualFps,
     /** Поколение ответившего ядра: `null` — старое WASM без запроса версии. */
     core,
+    /** Диапазон совместимости ядра: `null` — ядро о нём не сообщает. */
+    acceptsFrom,
     backendLabel: backend?.label || "Rust · загрузка",
     resetTimeline,
     checkScript,

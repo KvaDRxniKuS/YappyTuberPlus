@@ -1,6 +1,7 @@
 import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
 import { withBuildStamp } from "../version";
+import { needsCore } from "./coreFeatures";
 import {
   assetIdOf,
   assetInfo,
@@ -90,6 +91,17 @@ async function defaultDirectory(): Promise<string | null> {
 }
 
 /**
+ * Штамп файла: кто записал (`built`) и что сцене нужно от ядра (`needs`).
+ *
+ * Считается в момент записи, а не хранится в состоянии: правка сцены меняет
+ * требование, и файл должен унести именно его. Ядро при этом может быть
+ * старым — `needs` от него не зависит.
+ */
+export function stampPreset(preset: RigPreset): RigPreset {
+  return { ...withBuildStamp(preset), needs: needsCore(preset) };
+}
+
+/**
  * Текст файла пресета для **экспорта**: ссылки на файлы встроены обратно в
  * data URL, поэтому получается один самодостаточный файл.
  *
@@ -100,7 +112,7 @@ export async function presetFileContents(preset: RigPreset): Promise<{ text: str
   const { preset: inlined, missing } = await inlineAssets(preset);
   // Штамп сборки ставится в момент записи: в памяти пресет остаётся прежним,
   // поэтому сохранение не создаёт шаг истории и не трогает автосохранение.
-  return { text: JSON.stringify(withBuildStamp(inlined), null, 2), missing };
+  return { text: JSON.stringify(stampPreset(inlined), null, 2), missing };
 }
 
 /**
@@ -164,7 +176,7 @@ async function writeSidecar(preset: RigPreset, path: string): Promise<string[]> 
 
 /** Запись пресета на диск: короткий JSON со ссылками плюс папка файлов рядом. */
 async function writePresetFile(preset: RigPreset, path: string): Promise<string[]> {
-  await tauriInvoke<void>("preset_write", { path, contents: JSON.stringify(withBuildStamp(preset), null, 2) });
+  await tauriInvoke<void>("preset_write", { path, contents: JSON.stringify(stampPreset(preset), null, 2) });
   return writeSidecar(preset, path);
 }
 

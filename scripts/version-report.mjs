@@ -12,7 +12,11 @@
  * - какие коммиты трогали `crates/rig-core`, но в таблицу не попали —
  *   их нужно либо записать поколением, либо осознанно пропустить;
  * - совпадает ли число поколений в документе, в `src/version.ts` и в
- *   `crates/rig-core/src/lib.rs` (`CORE_GENERATION`).
+ *   `crates/rig-core/src/lib.rs` (`CORE_GENERATION`);
+ * - не отстала ли таблица признаков (`src/engine/coreFeatures.ts`): каждое имя
+ *   должно существовать в ядре, а каждое поколение — быть в таблице §4;
+ * - нет ли в ядре встроенной функции, которой нет в таблице признаков: иначе
+ *   сцена с ней получила бы требование «самое новое» вместо честного.
  *
  * Запуск: `npm run version:report` (нужен git и полная история: при
  * поверхностном клоне сначала `git fetch --unshallow`).
@@ -60,6 +64,49 @@ function mentionedHashes(text) {
   return found;
 }
 
+/** Таблица признаков: `id`, `since`, имена функций и слов. */
+function coreFeatures() {
+  const text = readFileSync(join(root, "src/engine/coreFeatures.ts"), "utf8");
+  const features = [];
+  const blocks = text.split(/\n  \{\n    id:/).slice(1);
+  for (const block of blocks) {
+    const id = /^\s*"([^"]+)"/.exec(block);
+    const since = /since:\s*(\d+)/.exec(block);
+    if (!id || !since) continue;
+    const names = [];
+    const arrays = block.matchAll(/(?:functions|words):\s*\[([^\]]*)\]/g);
+    for (const array of arrays) {
+      for (const quoted of array[1].matchAll(/"([^"]+)"/g)) names.push(quoted[1]);
+    }
+    const removed = /removed:\s*(\d+)/.exec(block);
+    features.push({
+      id: id[1],
+      since: Number(since[1]),
+      removed: removed ? Number(removed[1]) : null,
+      names,
+    });
+  }
+  const base = /export const BASE_FUNCTIONS[^=]*=\s*\[([\s\S]*?)\];/.exec(text);
+  const baseNames = base ? [...base[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]) : [];
+  return { features, baseNames };
+}
+
+/** Встроенные функции, которые ядро разбирает с ожидаемым числом аргументов. */
+function rustFunctions() {
+  const text = readFileSync(join(root, "crates/rig-core/src/runtime.rs"), "utf8");
+  const start = text.indexOf("let expected = match name {");
+  if (start < 0) return [];
+  const end = text.indexOf("};", start);
+  const block = text.slice(start, end);
+  return [...new Set([...block.matchAll(/"([a-z][a-z0-9_]*)"/g)].map((match) => match[1]))];
+}
+
+/** Все имена, встречающиеся в строках ядра: по ним проверяется существование. */
+function rustSource() {
+  const files = ["lib.rs", "runtime.rs", "parser.rs", "model.rs", "ffi.rs"];
+  return files.map((file) => readFileSync(join(root, "crates/rig-core/src", file), "utf8")).join("\n");
+}
+
 function readNumber(path, pattern) {
   const text = readFileSync(join(root, path), "utf8");
   const match = pattern.exec(text);
@@ -75,13 +122,26 @@ const missing = commits.filter((commit) => !known.has(commit.hash));
 
 const inTs = readNumber("src/version.ts", /core:\s*(\d+)/);
 const inRust = readNumber("crates/rig-core/src/lib.rs", /CORE_GENERATION:\s*u32\s*=\s*(\d+)/);
+const acceptsFrom = readNumber("crates/rig-core/src/lib.rs", /ACCEPTS_FROM:\s*u32\s*=\s*(\d+)/);
+const { features, baseNames } = coreFeatures();
+const rust = rustSource();
+const knownNames = new Set(baseNames);
+for (const feature of features) for (const name of feature.names) knownNames.add(name);
+// Убранные формы остаются в таблице как память о языке: их имён в ядре уже нет,
+// и проверять существование нужно только у живых признаков.
+const liveNames = new Set(baseNames);
+for (const feature of features) {
+  if (feature.removed) continue;
+  for (const name of feature.names) liveNames.add(name);
+}
 const numbered = rows.length ? Math.max(...rows.map((row) => row.generation)) : 0;
 const gaps = rows.map((row) => row.generation).filter((value, index, list) => value !== index + 1);
 
 console.log(`правок ядра в истории: ${commits.length}`);
 console.log(`поколений в таблице:   ${numbered} (строк ${rows.length})`);
 console.log(`src/version.ts:        core ${inTs ?? "—"}`);
-console.log(`lib.rs:                CORE_GENERATION ${inRust ?? "—"}`);
+console.log(`lib.rs:                CORE_GENERATION ${inRust ?? "—"}, ACCEPTS_FROM ${acceptsFrom ?? "—"}`);
+console.log(`признаков в таблице:  ${features.length}`);
 
 let problem = false;
 if (missing.length) {
@@ -102,5 +162,58 @@ if (inTs !== numbered || inRust !== numbered) {
   console.log(`\nЧисла разошлись: таблица ${numbered}, version.ts ${inTs}, lib.rs ${inRust}.`);
 }
 
-console.log(problem ? "\nЕсть расхождения." : "\nВсё сходится: таблица, редактор и ядро на одном поколении.");
+if (acceptsFrom === null || acceptsFrom > (inRust ?? 0) || acceptsFrom < 1) {
+  problem = true;
+  console.log(`\nACCEPTS_FROM ${acceptsFrom ?? "—"} не согласован с CORE_GENERATION ${inRust}.`);
+}
+// Диапазон совместимости — не вкусовое число: это поколение, в котором язык
+// последний раз ломался. Если из таблицы признаков убрали что-то в другом
+// поколении, число в ядре обязано это повторить.
+const expectedAccepts = features.reduce((max, feature) => Math.max(max, feature.removed ?? 0), 1);
+if (acceptsFrom !== expectedAccepts) {
+  problem = true;
+  console.log(`\nACCEPTS_FROM ${acceptsFrom ?? "—"}, а по таблице признаков должно быть `
+    + `${expectedAccepts}: убранное в этом поколении ломает старые сцены.`);
+}
+const generationSet = new Set(rows.map((row) => row.generation));
+const lateFeature = features.filter((feature) => !generationSet.has(feature.since));
+if (lateFeature.length) {
+  problem = true;
+  console.log("\nПризнак ссылается на поколение, которого нет в таблице §4:");
+  for (const feature of lateFeature) console.log(`  ${feature.id} → ${feature.since}`);
+}
+const unknownInCore = [...liveNames].filter((name) => !rust.includes(`"${name}"`));
+// Убранная форма не должна вернуться в разбор функций: именно там ядро
+// объявляет, что оно понимает. Сообщения об ошибках не считаются.
+const dispatch = new Set(rustFunctions());
+const removedStillAlive = features
+  .filter((feature) => feature.removed)
+  .filter((feature) => feature.names.some((name) => dispatch.has(name)));
+if (unknownInCore.length) {
+  problem = true;
+  console.log(`\nИмена из таблицы признаков не найдены в ядре: ${unknownInCore.join(", ")}.`);
+  console.log("Переименование или удаление — повод поправить таблицу и, если поведение");
+  console.log("убрали, поднять ACCEPTS_FROM.");
+}
+if (removedStillAlive.length) {
+  problem = true;
+  console.log("\nПризнак записан убранным, но ядро его всё ещё разбирает:");
+  for (const feature of removedStillAlive) console.log(`  ${feature.id}`);
+}
+const lateRemoval = features.filter((feature) => feature.removed && !generationSet.has(feature.removed));
+if (lateRemoval.length) {
+  problem = true;
+  console.log("\nПризнак убран в поколении, которого нет в таблице §4:");
+  for (const feature of lateRemoval) console.log(`  ${feature.id} → ${feature.removed}`);
+}
+const unlisted = rustFunctions().filter((name) => !knownNames.has(name));
+if (unlisted.length) {
+  problem = true;
+  console.log(`\nВ ядре есть функции вне таблицы признаков: ${unlisted.join(", ")}.`);
+  console.log("Сцена с ними получит требование «текущее ядро» — запишите поколение.");
+}
+
+console.log(problem
+  ? "\nЕсть расхождения."
+  : "\nВсё сходится: таблица, признаки, редактор и ядро согласованы.");
 process.exit(problem ? 1 : 0);

@@ -297,6 +297,9 @@ export function normalizePreset(value: unknown): RigPreset | null {
     version: PRESET_FORMAT,
     // Штамп сборки переезжает как есть: по нему видно, чем файл записан.
     ...(typeof preset.built === "string" && preset.built ? { built: preset.built } : {}),
+    // Требование к ядру из файла: редактор сверит его со своим, а при
+    // сохранении пересчитает по фактической сцене.
+    ...(typeof preset.needs === "number" && Number.isFinite(preset.needs) ? { needs: preset.needs } : {}),
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
     objects: preset.objects.map((object) => {

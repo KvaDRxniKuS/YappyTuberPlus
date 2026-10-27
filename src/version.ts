@@ -36,8 +36,9 @@ export interface SlotInfo {
 export const SLOT_INFO: Record<VersionSlot, SlotInfo> = {
   core: {
     label: "ядро",
-    hint: "Скрипт, параметры кадра и поведение формул. Старое ядро не понимает новую "
-      + "формулу и молча вернёт 0: нужна пересборка `rig_core.wasm`.",
+    hint: "Скрипт, параметры кадра и поведение формул. Ядро объявляет два числа: своё "
+      + "поколение и то, с какого поколения оно ещё понимает сценарии. Сцена просит своё "
+      + "(`needs`), поэтому совпадать числа не обязаны — обязана работать совместимость.",
   },
   format: {
     label: "файл",
@@ -145,11 +146,21 @@ export function parseVersion(text: unknown): ProjectVersion | null {
   return { release: [major, minor], core, format, bridge, modules, shell };
 }
 
+/**
+ * Слоты, по которым «файл новее сборки» имеет смысл.
+ *
+ * Только формат: он один описывает, что лежит в файле. Ядро, мост, модули и
+ * оболочка в штампе — это личность записавшего, а не требование файла. Ядро
+ * сверяется отдельно и честно — по требованию сцены (`needs`), иначе пресет из
+ * одних спрайтов ругался бы на каждую пересборку.
+ */
+const PRESET_SLOTS: readonly VersionSlot[] = ["format"];
+
 /** Слоты, в которых файл новее сборки: их редактор прочитать не обещает. */
 export function outdatedSlots(built: unknown): VersionSlot[] {
   const version = parseVersion(built);
   if (!version) return [];
-  return SLOT_ORDER.filter((slot) => version[slot] > VERSION[slot]);
+  return PRESET_SLOTS.filter((slot) => version[slot] > VERSION[slot]);
 }
 
 /**
@@ -162,7 +173,7 @@ export function outdatedMessage(built: unknown): string | null {
   const version = parseVersion(built)!;
   const names = slots.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`).join(", ");
   return `Пресет сохранён более новой сборкой (${names} против ${versionLabel()}). `
-    + "Обновите редактор или пересоберите ядро — иначе часть настроек потеряется.";
+    + "Обновите редактор — иначе часть настроек потеряется.";
 }
 
 /**
@@ -185,31 +196,128 @@ export function versionTitle(version: ProjectVersion = VERSION): string {
   ].join("\n");
 }
 
-/** Состояние ядра: своё, старое (нет `version`) или новее редактора. */
-export type CoreState = "ready" | "older" | "newer";
-
-/**
- * Сверка поколения ядра с тем, что ожидает редактор.
- *
- * `null` — ядро не ответило: значит, оно собрано до появления запроса версии,
- * то есть заведомо старше. Это не ошибка загрузки (сцена рисуется), но повод
- * сказать «пересоберите ядро»: иначе новые формулы посчитаются нулём.
- */
-export function coreState(core: number | null): CoreState {
-  if (core === null) return "older";
-  return core < VERSION.core ? "older" : core > VERSION.core ? "newer" : "ready";
+/** Что ядро рассказало о себе запросом `{ "op": "version" }`. */
+export interface CoreAnswer {
+  /** Поколение ответившего ядра; `null` — ядро не ответило (собрано до запроса версии). */
+  core: number | null;
+  /**
+   * Старейшее поколение сценариев, которые ядро ещё понимает без потерь.
+   *
+   * Растёт только тогда, когда из языка что-то **убрали**, переименовали или
+   * поменяли смысл. Добавили новое — число не двигается, и старые сцены
+   * продолжают работать на новом ядре. `null` — ядро не сообщило диапазон
+   * (собрано до этого поля); считаем, что понимает всё с первого поколения.
+   */
+  acceptsFrom: number | null;
 }
 
-/** Фраза про ядро для строки состояния; `null` — всё в порядке. */
-export function coreMessage(core: number | null): string | null {
-  const state = coreState(core);
-  if (state === "ready") return null;
-  if (state === "newer") {
-    return `Ядро новее редактора (${core} против ${VERSION.core}): пересоберите редактор, `
-      + "иначе часть возможностей ядра просто не используется";
+/**
+ * Состояние ядра.
+ *
+ * `ready` — считать нечего; `older` — ядро не умеет того, что просит сцена;
+ * `newer` — ядро новее редактора, но совместимо (молча, это не ошибка);
+ * `incompatible` — числа расходятся по существу: что-то удалено.
+ */
+export type CoreState = "ready" | "older" | "newer" | "incompatible";
+
+/** Вердикт по ядру: плашка в строке состояния и подсказка к ней. */
+export interface CoreVerdict {
+  state: CoreState;
+  /** Короткая плашка (`ядро`); `null` — говорить не о чем. */
+  note: string | null;
+  /** Что именно случилось и что делать. Показывается в подсказке. */
+  detail: string | null;
+}
+
+/** Требование сцены: минимум ядра и то, что в языке уже убрано. */
+export interface SceneRequirement {
+  /** Минимальное поколение ядра, при котором сцена посчитается. */
+  needs: number;
+  /** Признаки, которых в языке больше нет: имя и поколение удаления. */
+  removed?: Array<{ label: string; removed: number }>;
+  /** Вызовы, которых нет в таблице признаков: редактор не знает, чьи они. */
+  unknown?: string[];
+}
+
+/**
+ * Совместимость ядра со сценой и с редактором.
+ *
+ * Совпадать поколения не обязаны, и это главное. Проверяется не равенство
+ * чисел, а три вопроса:
+ *
+ * 1. **Сцена не просит больше, чем ядро умеет** — `needs` против поколения.
+ * 2. **В сцене нет того, что из языка убрали** — по списку `removed`; это
+ *    точное знание, поэтому проверяется раньше остальных.
+ * 3. **Ядро новее редактора, но всё ещё понимает то, что редактор пишет** —
+ *    `acceptsFrom` против поколения редактора. Пока это так, тревоги нет:
+ *    просто новые возможности ядра не используются.
+ *
+ * Незнакомые вызовы — отдельный случай: редактор не знает, новая это
+ * конструкция или убранная. Если ядро уже отбрасывает старое
+ * (`acceptsFrom > 1`), честнее предупредить, чем молчать.
+ */
+export function coreVerdict(answer: CoreAnswer, scene?: SceneRequirement | null): CoreVerdict {
+  const own = VERSION.core;
+  const acceptsFrom = answer.acceptsFrom ?? 1;
+  const needs = scene?.needs ?? null;
+  const removed = scene?.removed ?? [];
+  const unknown = scene?.unknown ?? [];
+  if (answer.core === null) {
+    return {
+      state: "older",
+      note: "ядро",
+      detail: "Ядро не ответило на запрос версии: оно собрано раньше и не знает новых "
+        + "формул, поэтому они молча вернут 0. Пересоберите его — `npm run build:wasm`.",
+    };
   }
-  return `Ядро старше редактора${core === null ? "" : ` (${core} против ${VERSION.core})`}: `
-    + "пересоберите его (`npm run build:wasm`), иначе новые формулы вернут 0";
+  if (removed.length) {
+    const names = removed.map((item) => `${item.label} (убрано в ядре ${item.removed})`).join(", ");
+    const oldest = Math.min(...removed.map((item) => item.removed - 1));
+    return {
+      state: "incompatible",
+      note: "ядро",
+      detail: `В сцене используется то, чего в языке больше нет: ${names}. `
+        + `Ядро ${answer.core} этого не разберёт. Перепишите эти места по-новому `
+        + `(вместо \`hold\`/\`relax\` — оператор \`in\`) или соберите ядро `
+        + `поколения не новее ${oldest}.`,
+    };
+  }
+  if (needs !== null && needs > answer.core) {
+    return {
+      state: "older",
+      note: "ядро",
+      detail: `Сцене нужно ядро ${needs}, а у ядра ${answer.core}. `
+        + "Пересоберите его (`npm run build:wasm`), иначе новые формулы вернут 0.",
+    };
+  }
+  if (unknown.length && acceptsFrom > 1) {
+    return {
+      state: "incompatible",
+      note: "ядро",
+      detail: `В сцене есть вызовы, которых нет в таблице признаков: `
+        + `${unknown.map((name) => `\`${name}()\``).join(", ")}. Ядро ${answer.core} `
+        + `понимает сценарии начиная с поколения ${acceptsFrom}, поэтому возможно, что `
+        + "часть из них уже убрана. Проверьте скрипт в редакторе.",
+    };
+  }
+  if (answer.core > own && acceptsFrom > own) {
+    return {
+      state: "incompatible",
+      note: "ядро",
+      detail: `Ядро ${answer.core} новее редактора и понимает сценарии только с поколения `
+        + `${acceptsFrom}, а редактор пишет для ${own}. Обновите редактор — иначе часть `
+        + "формул не посчитается.",
+    };
+  }
+  if (answer.core > own) {
+    return {
+      state: "newer",
+      note: null,
+      detail: `Ядро ${answer.core} новее редактора (${own}), но совместимо: новые возможности `
+        + "просто не используются. Это не ошибка.",
+    };
+  }
+  return { state: "ready", note: null, detail: null };
 }
 
 /**

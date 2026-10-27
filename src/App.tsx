@@ -5,8 +5,9 @@ import {
   TriangleAlert, Undo2, X,
 } from "lucide-react";
 import {
-  coreMessage, modulesMessage, outdatedMessage, versionLabel, versionShort, versionString, versionTitle,
+  coreVerdict, modulesMessage, outdatedMessage, versionLabel, versionShort, versionString, versionTitle,
 } from "./version";
+import { needsReport } from "./engine/coreFeatures";
 import { TreePanel } from "./components/TreePanel";
 import { Scene, type SceneTool } from "./components/Scene";
 import { Inspector } from "./components/Inspector";
@@ -252,7 +253,21 @@ export default function App() {
   const engine = useRigEngine(
     preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef, moduleInputs.marks,
   );
-  const coreNote = engine.core === undefined ? null : coreMessage(engine.core);
+  // Требование сцены к ядру считается по содержимому: правка формулы, не
+  // использующей новых возможностей, требования не поднимает. Требование из
+  // файла учитываем тоже — если сцена пришла из более новой сборки, о нём
+  // лучше знать, чем гадать.
+  const needsReportData = useMemo(() => needsReport(preset), [preset]);
+  const sceneNeeds = Math.max(needsReportData.needs, preset.needs ?? 0);
+  const coreVerdictData = useMemo(
+    () => coreVerdict(
+      { core: engine.core ?? null, acceptsFrom: engine.acceptsFrom },
+      { ...needsReportData, needs: sceneNeeds },
+    ),
+    [engine.core, engine.acceptsFrom, needsReportData, sceneNeeds],
+  );
+  const coreNote = engine.core === undefined ? null : coreVerdictData.detail;
+  const coreBadge = engine.core === undefined ? false : Boolean(coreVerdictData.note);
   // О расхождении ядра говорим один раз вслух: подсказку в статусе легко не
   // заметить, а последствие (нули вместо формул) — уже потом.
   const coreWarned = useRef(false);
@@ -1320,14 +1335,16 @@ export default function App() {
               <TriangleAlert size={11} /> оверлей старой сборки
             </span>
           )}
-          {/* Ядро старше редактора: новые формулы вернут 0, картинка не выдаст. */}
+          {/* Совместимость ядра: плашка горит, только когда числа расходятся по
+              существу — сцена просит больше, чем ядро умеет, или ядро удалило
+              то, чем сцена пользуется. Просто «другое поколение» молчит. */}
           {modulesNote && <span className="status-warn" title={modulesNote}><TriangleAlert size={11} /> модули</span>}
-          {coreNote && <span className="status-warn" title={coreNote}><TriangleAlert size={11} /> ядро</span>}
+          {coreBadge && <span className="status-warn" title={coreNote ?? ""}><TriangleAlert size={11} /> ядро</span>}
           {/* Паспорт версии: релиз и поколение ядра видны сразу, остальные
               слоты — в подсказке, а клик копирует машинную запись целиком. */}
           <button
             className="status-version"
-            title={versionTitle()}
+            title={`${versionTitle()}\nСцена: ей нужно ядро ${sceneNeeds}`}
             onClick={() => {
               void navigator.clipboard?.writeText(versionString())
                 .then(() => notify(`Скопировано: ${versionString()}`, 5000))
@@ -1335,7 +1352,7 @@ export default function App() {
             }}
           >
             <b>{versionShort()}</b>
-            <span>ядро {engine.core ?? "—"}</span>
+            <span>ядро {engine.core ?? "—"} · нужно {sceneNeeds}</span>
           </button>
         </div>
       </footer>

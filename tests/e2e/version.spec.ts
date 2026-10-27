@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import {
   MODULE_FORMAT, PRESET_FORMAT, PRESET_FORMATS_READABLE, SLOT_INFO, SLOT_ORDER, VERSION,
-  coreMessage, coreState, modulesMessage, outdatedMessage, outdatedSlots, packagingVersion,
+  coreVerdict, modulesMessage, outdatedMessage, outdatedSlots, packagingVersion,
   parseVersion, versionLabel, versionShort, versionString, versionTitle, withBuildStamp,
 } from "../../src/version";
 import { normalizePreset } from "../../src/engine/preset";
@@ -62,13 +62,18 @@ test("паспорт: чужой файл — видно, какие слои о
   expect(outdatedMessage(versionString())).toBeNull();
   expect(outdatedMessage(undefined)).toBeNull();
 
-  // Файл из будущего: ядро и файл больше наших.
+  // Файл из будущего: формат больше нашего — читать не обещаем.
   const future = `1.0.${VERSION.core + 1}.${PRESET_FORMAT + 1}.${VERSION.bridge}.${VERSION.modules}.${VERSION.shell}`;
-  expect(outdatedSlots(future)).toEqual(["core", "format"]);
+  expect(outdatedSlots(future)).toEqual(["format"]);
   const message = outdatedMessage(future)!;
   expect(message).toContain("более новой сборкой");
-  expect(message).toContain("ядро");
   expect(message).toContain("файл");
+
+  // Ядро в штампе — личность записавшего, а не требование файла: пресет из
+  // более новой сборки формата не менял, значит читается спокойно.
+  const newerCore = `1.0.${VERSION.core + 5}.${PRESET_FORMAT}.${VERSION.bridge}.${VERSION.modules}.${VERSION.shell}`;
+  expect(outdatedSlots(newerCore)).toEqual([]);
+  expect(outdatedMessage(newerCore)).toBeNull();
 
   // Старший релиз сам по себе не мешает: данные те же, читаем спокойно.
   const newerRelease = `2.5.${VERSION.core}.${VERSION.format}.${VERSION.bridge}.${VERSION.modules}.${VERSION.shell}`;
@@ -76,15 +81,49 @@ test("паспорт: чужой файл — видно, какие слои о
   expect(outdatedMessage("не версия")).toBeNull();
 });
 
-test("паспорт: ядро сверяется отдельно от файла", () => {
-  expect(coreState(VERSION.core)).toBe("ready");
-  expect(coreMessage(VERSION.core)).toBeNull();
-  // Ядра нет в ответе — оно старое и запроса версии не знает.
-  expect(coreState(null)).toBe("older");
-  expect(coreMessage(null)).toContain("пересоберите");
-  expect(coreMessage(VERSION.core - 1)).toContain(`против ${VERSION.core}`);
-  expect(coreState(VERSION.core + 1)).toBe("newer");
-  expect(coreMessage(VERSION.core + 1)).toContain("новее редактора");
+test("ядро: совпадать не обязано, совместимость обязана", () => {
+  const own = { core: VERSION.core, acceptsFrom: 16 };
+  // Своё ядро и сцена без требований — тишина.
+  expect(coreVerdict(own).state).toBe("ready");
+  expect(coreVerdict(own).note).toBeNull();
+  // Сцена из спрайтов просит минимум: на своём ядре её никто не трогает.
+  expect(coreVerdict(own, { needs: 4 }).note).toBeNull();
+  // Старое ядро без запроса версии — только оно и есть повод пересобирать.
+  const silent = coreVerdict({ core: null, acceptsFrom: null });
+  expect(silent.state).toBe("older");
+  expect(silent.detail).toContain("Пересоберите");
+  // Сцена просит новее, чем умеет ядро: говорим точную цифру.
+  const behind = coreVerdict({ core: VERSION.core - 2, acceptsFrom: 1 }, { needs: VERSION.core });
+  expect(behind.state).toBe("older");
+  expect(behind.detail).toContain(`ядро ${VERSION.core}, а у ядра ${VERSION.core - 2}`);
+
+  // Ядро новее редактора, но старое поведение на месте — это не ошибка.
+  const ahead = coreVerdict({ core: VERSION.core + 1, acceptsFrom: 1 }, { needs: 4 });
+  expect(ahead.state).toBe("newer");
+  expect(ahead.note).toBeNull();
+  // Ядро новее и уже не понимает то, что пишет редактор, — вот это ошибка.
+  const alien = coreVerdict({ core: VERSION.core + 5, acceptsFrom: VERSION.core + 2 });
+  expect(alien.state).toBe("incompatible");
+  expect(alien.detail).toContain("Обновите редактор");
+});
+
+test("ядро: убранное из языка видно точнее, чем по числам", () => {
+  const own = { core: VERSION.core, acceptsFrom: 16 };
+  // Сцена пользуется hold, который убрали в 16: поколение сцены при этом
+  // маленькое, и по одним числам расхождения не увидеть.
+  const gone = coreVerdict(own, { needs: 3, removed: [{ label: "`hold`", removed: 16 }] });
+  expect(gone.state).toBe("incompatible");
+  expect(gone.detail).toContain("языке больше нет");
+  expect(gone.detail).toContain("16");
+
+  // Незнакомый вызов при ядре, которое уже ломало язык: честно предупреждаем.
+  const unknown = coreVerdict(own, { needs: VERSION.core, unknown: ["mystery"] });
+  expect(unknown.state).toBe("incompatible");
+  expect(unknown.detail).toContain("mystery");
+
+  // То же на ядре, которое ничего не убирало: молчим, это просто новая сцена.
+  expect(coreVerdict({ core: VERSION.core, acceptsFrom: 1 }, { needs: VERSION.core, unknown: ["mystery"] }).note)
+    .toBeNull();
 });
 
 test("паспорт: модули новее редактора — это видно", () => {
