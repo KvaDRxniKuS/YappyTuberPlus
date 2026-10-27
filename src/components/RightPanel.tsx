@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Blocks, Braces, ChevronRight, CircleAlert, Gauge, Globe2, Shapes, SlidersHorizontal, Spline } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Blocks, Braces, ChevronRight, CircleAlert, Crosshair, Gauge, Globe2, Shapes, SlidersHorizontal, Spline } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
@@ -68,6 +68,14 @@ interface RightPanelProps {
   onProbeSource?: (name: string) => Promise<string>;
   /** Последние тексты источников (чат): видны во «Входах». */
   externalTexts?: Record<string, ExternalTextLine[]>;
+  /**
+   * Инспектор объекта — готовая панель параметров.
+   *
+   * Раньше он жил под сценой и отнимал у неё половину высоты. Параметры нужны
+   * на каждой правке, поэтому он стал вкладкой рядом со скриптом: сцена
+   * занимает весь центр, а инспектор — своё место в правой колонке.
+   */
+  inspector?: ReactNode;
 }
 
 /**
@@ -76,7 +84,7 @@ interface RightPanelProps {
  * «Фигура» появляется только у объекта-фигуры и стоит второй: её контуры
  * правят почти так же часто, как поведение.
  */
-type Tab = "behaviour" | "inputs" | "modules" | "object" | "shape" | "globals";
+type Tab = "behaviour" | "parameters" | "inputs" | "modules" | "object" | "shape" | "globals";
 
 export function RightPanel(props: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("behaviour");
@@ -94,7 +102,8 @@ export function RightPanel(props: RightPanelProps) {
   // Смена выделения не выбивает из «Входов», «Модулей», «Поведения» и
   // «Фигуры»: там как раз удобно переключать объекты подряд.
   useEffect(() => {
-    setTab((current) => (current === "behaviour" || current === "inputs" || current === "modules" || current === "shape" ? current : "object"));
+    setTab((current) => (current === "behaviour" || current === "parameters"
+      || current === "inputs" || current === "modules" || current === "shape" ? current : "object"));
   }, [props.selected?.id]);
   // Значения кадра — свёрнутая секция: скрипт забирает всю высоту колонки,
   // а кадр открывается по клику и не висит пустой третью экрана.
@@ -166,6 +175,9 @@ export function RightPanel(props: RightPanelProps) {
     <aside className="right-panel panel-surface">
       <div className="right-tabs">
         <button className={tab === "behaviour" ? "active" : ""} onClick={() => setTab("behaviour")}><Spline size={14} /> Поведение</button>
+        {/* Параметры — вторая вкладка: позиция, размер, слой и материал нужны
+            не реже поведения, а сцена теперь занимает весь центр. */}
+        <button className={tab === "parameters" ? "active" : ""} onClick={() => setTab("parameters")}><Crosshair size={14} /> Параметры</button>
         {/* «Фигура» стоит сразу после «Поведения»: у фигуры это вторая по
             частоте правка, а вкладка есть только у неё. */}
         {isShape && (
@@ -177,7 +189,9 @@ export function RightPanel(props: RightPanelProps) {
         <button className={tab === "globals" ? "active" : ""} onClick={() => setTab("globals")}><Globe2 size={14} /> Глобальные</button>
       </div>
 
-      {tab === "behaviour" ? (
+      {tab === "parameters" ? (
+        <div className="inspector-slot">{props.inspector}</div>
+      ) : tab === "behaviour" ? (
         <BehaviourPanel
           object={props.selected}
           selection={props.selectedObjects}

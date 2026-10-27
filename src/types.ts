@@ -695,7 +695,12 @@ export function nextGuideMode(mode: GuideMode): GuideMode {
 export interface EditorLayout {
   leftWidth: number;
   rightWidth: number;
-  sceneHeight: number;
+  /**
+   * Высота сцены, когда под ней жил инспектор. Поле больше не используется:
+   * инспектор — вкладка правой панели, а сцена занимает весь центр. Оставлено
+   * только в старых раскладках в localStorage — читаются они без ошибок.
+   */
+  sceneHeight?: number;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   showBounds: GuideMode;
@@ -733,7 +738,7 @@ export const DEFAULT_MODULES: ModuleInstance[] = [
 export const DEFAULT_LAYOUT: EditorLayout = {
   leftWidth: 248,
   rightWidth: 440,
-  sceneHeight: 420,
+
   leftCollapsed: false,
   rightCollapsed: false,
   showBounds: "selected",

@@ -651,7 +651,7 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
             Синус даёт ровное «дыхание» лампы, шум — неровное, как у свечи. Форма, радиус и
             цвета пятна остаются во вкладке «Объект».
           </p>
-          <div className="segmented small dense" title="Форма волны мерцания">
+          <div className="segmented small inline" title="Форма волны мерцания">
             <button className={behaviour.flickerStyle === "sine" ? "active" : ""} onClick={() => patch({ flickerStyle: "sine" })}>синус</button>
             <button className={behaviour.flickerStyle === "noise" ? "active" : ""} onClick={() => patch({ flickerStyle: "noise" })}>шум</button>
           </div>
@@ -837,7 +837,7 @@ function PresetSection({ behaviour, modules, onPatch }: {
               ><Trash2 size={13} /></button>
             </div>
 
-            <div className="segmented small dense">
+            <div className="segmented small inline">
               <button
                 className={rule.mode === "only" ? "active" : ""}
                 title="Объект виден только на выбранных пресетах"

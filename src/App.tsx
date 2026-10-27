@@ -119,11 +119,9 @@ function layoutLimits(layout: { leftWidth: number; rightWidth: number; leftColla
   const rightShown = layout.rightCollapsed ? 0 : layout.rightWidth;
   const maxLeft = Math.max(170, width - SCENE_MIN - rightSplitter - rightShown);
   const maxRight = Math.max(300, width - SCENE_MIN - leftSplitter - leftShown);
-  const height = typeof window === "undefined" ? 900 : window.innerHeight;
   return {
     leftWidth: [170, maxLeft] as const,
     rightWidth: [300, maxRight] as const,
-    sceneHeight: [200, Math.max(220, height - 285)] as const,
   };
 }
 
@@ -1170,7 +1168,7 @@ export default function App() {
     }
   };
 
-  const resize = (key: "leftWidth" | "rightWidth" | "sceneHeight", delta: number) => {
+  const resize = (key: "leftWidth" | "rightWidth", delta: number) => {
     setLayout((current) => {
       const limits = layoutLimits(current);
       const [min, max] = limits[key];
@@ -1188,11 +1186,10 @@ export default function App() {
         ...current,
         leftWidth: clamp(current.leftWidth, limits.leftWidth[0], limits.leftWidth[1]),
         rightWidth: clamp(current.rightWidth, limits.rightWidth[0], limits.rightWidth[1]),
-        sceneHeight: clamp(current.sceneHeight, limits.sceneHeight[0], limits.sceneHeight[1]),
       };
-      return next.leftWidth === current.leftWidth
-        && next.rightWidth === current.rightWidth
-        && next.sceneHeight === current.sceneHeight ? current : next;
+      return next.leftWidth === current.leftWidth && next.rightWidth === current.rightWidth
+        ? current
+        : next;
     });
     window.addEventListener("resize", fit);
     fit();
@@ -1334,7 +1331,9 @@ export default function App() {
         /></div>
         <Splitter className="splitter-left" orientation="vertical" onDelta={(delta) => resize("leftWidth", delta)} onReset={() => setLayout((current) => ({ ...current, leftWidth: DEFAULT_LAYOUT.leftWidth }))} label="Ширина дерева объектов" />
 
-        <main className="center-workspace" style={{ gridTemplateRows: `minmax(190px, ${Math.min(layout.sceneHeight, window.innerHeight - 285)}px) 8px minmax(150px, 1fr)` }}>
+        {/* Центр — только сцена: инспектор переехал вкладкой в правую панель,
+            поэтому обзор сцены больше не делится с ним по высоте. */}
+        <main className="center-workspace">
           <Scene
             preset={preset}
             frameRef={engine.frameRef}
@@ -1388,26 +1387,6 @@ export default function App() {
             onPenSmoothing={penSmoothing}
             onPenClosed={penClosed}
           />
-          <Splitter orientation="horizontal" onDelta={(delta) => resize("sceneHeight", delta)} onReset={() => setLayout((current) => ({ ...current, sceneHeight: DEFAULT_LAYOUT.sceneHeight }))} label="Высота сцены и инспектора" />
-          <Inspector
-            object={selected}
-            selection={selectedObjects}
-            objects={preset.objects}
-            canvas={preset.canvas}
-            frame={engine.snapshot}
-            onChange={updateObject}
-            onSelect={selectOnly}
-            onToggleSelect={toggleSelection}
-            onBases={updateSelectedBases}
-            onPivot={pivotObject}
-            onOffset={offsetSelected}
-            onLayer={setSelectedLayer}
-            onVisible={setSelectedVisible}
-            onDelete={deleteSelected}
-            onDuplicate={duplicateSelected}
-            pen={pen}
-            onPen={startPen}
-          />
         </main>
 
         <Splitter className="splitter-right" orientation="vertical" onDelta={(delta) => resize("rightWidth", -delta)} onReset={() => setLayout((current) => ({ ...current, rightWidth: DEFAULT_LAYOUT.rightWidth }))} label="Ширина панели скрипта" />
@@ -1453,6 +1432,27 @@ export default function App() {
           externalLogs={moduleInputs.externalLogs}
           onProbeSource={moduleInputs.probeSource}
           externalTexts={moduleInputs.externalTexts}
+          inspector={(
+            <Inspector
+              object={selected}
+              selection={selectedObjects}
+              objects={preset.objects}
+              canvas={preset.canvas}
+              frame={engine.snapshot}
+              onChange={updateObject}
+              onSelect={selectOnly}
+              onToggleSelect={toggleSelection}
+              onBases={updateSelectedBases}
+              onPivot={pivotObject}
+              onOffset={offsetSelected}
+              onLayer={setSelectedLayer}
+              onVisible={setSelectedVisible}
+              onDelete={deleteSelected}
+              onDuplicate={duplicateSelected}
+              pen={pen}
+              onPen={startPen}
+            />
+          )}
         /></div>
       </div>
 

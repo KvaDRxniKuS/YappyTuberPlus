@@ -85,7 +85,9 @@ input, select { color: var(--text); }
 .workspace { flex: 1; min-height: 0; display: grid; padding: 7px 7px 5px; }
 .workspace-panel { min-width: 0; min-height: 0; height: 100%; }
 .panel-surface { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; box-shadow: 0 2px 5px #00000012; }
-.center-workspace { min-width: 0; min-height: 0; display: grid; }
+/* Центр — одна сцена на всю высоту: инспектор больше не делит с ней место. */
+.center-workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.center-workspace > .scene-panel { flex: 1 1 auto; }
 .splitter { flex: none; position: relative; z-index: 3; display: grid; place-items: center; touch-action: none; }
 .splitter::before { content: ""; position: absolute; background: transparent; transition: background .15s; }
 .splitter:hover::before, .splitter:focus-visible::before { background: #82d5c155; }
@@ -166,6 +168,10 @@ input, select { color: var(--text); }
 .zoom-control b { width: 35px; text-align: center; color: #929ca6; font-size: 10px; font-variant-numeric: tabular-nums; }
 
 .inspector { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Вкладка «Параметры»: инспектор занимает всю высоту правой панели, прокрутка
+   остаётся внутри него. */
+.inspector-slot { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.inspector-slot > .inspector { flex: 1 1 auto; }
 .inspector-header { min-height: 53px; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-bottom: 1px solid var(--border-soft); }
 .inspector-preview { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border-radius: 6px; background: #292e35; color: #c0a979; overflow: hidden; }
 .inspector-preview img { width: 100%; height: 100%; object-fit: contain; }

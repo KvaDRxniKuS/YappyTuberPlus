@@ -76,7 +76,7 @@ export function LightSection({ object, light, canvas, onChange }: {
           />
         </label>
 
-        <div className="segmented small dense" title="Обычное наложение работает и светом, и тенью; аддитивное — только свечением">
+        <div className="segmented small inline" title="Обычное наложение работает и светом, и тенью; аддитивное — только свечением">
           <button className={light.blend === "normal" ? "active" : ""} onClick={() => update({ blend: "normal" })}>обычное</button>
           <button className={light.blend === "add" ? "active" : ""} onClick={() => update({ blend: "add" })}>свечение</button>
         </div>
