@@ -49,6 +49,24 @@ export function takeWork(): WorkRates {
   return rates;
 }
 
+/**
+ * Захват звука: сколько микрофонов подключено и в каком состоянии контекст.
+ *
+ * Это единственная живая работа, которую не видно ни по кадрам, ни по
+ * отрисовкам: `AudioContext` с анализаторами тянет данные сам, поэтому и в
+ * паузе, и в стопе он греет процессор. Счётчик показывает его прямо в строке
+ * статуса.
+ */
+let capture = { streams: 0, state: "closed" };
+
+export function setCapture(streams: number, state: string): void {
+  capture = { streams, state };
+}
+
+export function readCapture(): { streams: number; state: string } {
+  return capture;
+}
+
 /** Мгновенный сброс метки времени: при смене состояния не мерить «старое» окно. */
 export function resetMeter(): void {
   counters.draws = 0;

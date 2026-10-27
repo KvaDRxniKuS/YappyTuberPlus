@@ -61,7 +61,16 @@ const BLINK_TICK = 33;
  * `AudioContext` вышел из `suspended`, поэтому первое нажатие в приложении
  * дополнительно будит контекст.
  */
-export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): ModuleInputsApi {
+/**
+ * @param capture — держать ли живой захват звука. В «Стопе» (расстановка)
+ *   входы не нужны, а открытый микрофон тянет аудиотракт WebView и в простое:
+ *   захват гасится до продолжения.
+ */
+export function useModuleInputs(
+  modules: ModuleInstance[],
+  libraryVersion = 0,
+  capture = true,
+): ModuleInputsApi {
   const engineRef = useRef<AudioInputEngine | null>(null);
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -159,7 +168,8 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
   useEffect(() => {
     const current = engineRef.current;
     if (!current) return;
-    if (!active) {
+    if (!active || !capture) {
+      // Захват не нужен: гасим потоки, микрофон перестаёт работать в системе.
       current.stop();
       setContextState(current.state);
       setAudio({});
@@ -185,7 +195,7 @@ export function useModuleInputs(modules: ModuleInstance[], libraryVersion = 0): 
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, liveKey]);
+  }, [active, liveKey, capture]);
 
   useEffect(() => {
     if (!active) return;

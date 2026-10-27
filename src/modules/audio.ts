@@ -1,5 +1,6 @@
 import type { ModuleConfig } from "../types";
 import { VISEME_BANDS, bandFrequency, bandWeight, spectrumShape, unitVector } from "./viseme";
+import { setCapture } from "../engine/meter";
 
 export interface DeviceOption {
   id: string;
@@ -111,6 +112,7 @@ export class AudioInputEngine {
   }
 
   async attach(name: string, settings: ModuleConfig, bands = false): Promise<void> {
+    // Отчёт после подключения: строка статуса покажет живой захват.
     if (!this.context) throw new Error("Сначала включите звук");
     const streamKey = settings.deviceId || "default";
     const entry = await this.acquireStream(streamKey, settings);
@@ -134,6 +136,7 @@ export class AudioInputEngine {
       settings,
     });
     this.startTimer();
+    this.report();
   }
 
   /**
@@ -199,6 +202,12 @@ export class AudioInputEngine {
     this.releaseStream(current.streamKey);
     this.analysers.delete(name);
     if (this.analysers.size === 0) this.stopTimer();
+    this.report();
+  }
+
+  /** Захват виден счётчику работы: по нему видно, что микрофон ещё жив. */
+  private report(): void {
+    setCapture(this.streams.size, this.context?.state ?? "closed");
   }
 
   /** Полная остановка: закрывает потоки, микрофон гаснет в системе. */
@@ -209,6 +218,7 @@ export class AudioInputEngine {
       this.streams.delete(key);
     }
     this.stopTimer();
+    this.report();
   }
 
   dispose(): void {

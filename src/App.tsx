@@ -175,7 +175,8 @@ export default function App() {
   }, []);
   const presetRef = useRef(preset);
   const library = useModuleLibrary();
-  const moduleInputs = useModuleInputs(preset.modules, library.version);
+  // В «Стопе» расстановка: живые входы не нужны, и микрофон не держим.
+  const moduleInputs = useModuleInputs(preset.modules, library.version, !stopped);
   // Пресет нормализуется до того, как прочитана папка modules, поэтому поля
   // настроек (режим, границы) дозаполняются один раз, когда шаблоны появились.
   const modulesNormalized = useRef(false);

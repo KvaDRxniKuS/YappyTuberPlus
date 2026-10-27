@@ -202,14 +202,17 @@ fn run(app: AppHandle, shared: Arc<Shared>) {
     let started = Instant::now();
     let mut next_due = Instant::now();
     while shared.running.load(Ordering::SeqCst) {
-        let (handle, paused, reset_clock, interval, inputs) = {
+        // В паузе не копируем входы: словарь с текстами и сигналами может быть
+        // большим, а кадра всё равно не будет. Раньше клон делался до проверки
+        // паузы — сорок копий в секунду на пустом месте.
+        let (handle, paused, reset_clock, interval) = {
             let mut inner = match shared.inner.lock() {
                 Ok(value) => value,
                 Err(_) => break,
             };
             let reset = inner.reset_clock;
             inner.reset_clock = false;
-            (inner.handle, inner.paused, reset, inner.interval, inner.inputs.clone())
+            (inner.handle, inner.paused, reset, inner.interval)
         };
 
         let Some(handle) = handle else {
@@ -223,6 +226,13 @@ fn run(app: AppHandle, shared: Arc<Shared>) {
             thread::sleep(Duration::from_millis(25));
             continue;
         }
+        let inputs = {
+            let inner = match shared.inner.lock() {
+                Ok(value) => value,
+                Err(_) => break,
+            };
+            inner.inputs.clone()
+        };
 
         let request = json!({
             "op": "tick",
