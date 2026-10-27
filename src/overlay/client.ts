@@ -37,6 +37,14 @@ export class OverlayClient {
   host: string | null = null;
   frameCount = 0;
   private lastSeq = -1;
+  /**
+   * Хост, от которого принят последний кадр. Сменился хост (редактор
+   * перезапустили, а источник в OBS остался открыт) — его нумерация начинается
+   * заново, и держать старый номер нельзя: оверлей замер бы навсегда.
+   */
+  private lastSender: string | null = null;
+  /** Хост, от которого пришёл последний анонс: смена — это перезапуск редактора. */
+  private lastHostSender: string | null = null;
   private lastHostSeen = 0;
   private unsubscribe: (() => void) | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -131,6 +139,17 @@ export class OverlayClient {
     if (this.disposed || message.sender === this.id) return;
     switch (message.t) {
       case "announce": {
+        // Редактор перезапустили: у нового хоста своя нумерация и сцены, и
+        // кадров. Старую сцену и старый номер кадра держать нельзя — иначе
+        // источник в OBS навсегда остался бы на последней картинке прошлого
+        // запуска.
+        if (this.lastHostSender !== message.sender) {
+          this.lastHostSender = message.sender;
+          this.scene = null;
+          this.frame = null;
+          this.lastSender = null;
+          this.lastSeq = -1;
+        }
         this.host = message.host;
         this.lastHostSeen = this.now();
         if (!this.scene || message.sceneVersion > this.scene.version) this.hello();
@@ -164,6 +183,12 @@ export class OverlayClient {
           break;
         }
         // Two transports may deliver the same frame; only accept newer sequences.
+        // Номер считается по хосту: у нового хоста (или у пересозданного
+        // движка в нём) счёт начинается заново, и старый номер не мешает.
+        if (this.lastSender !== message.sender) {
+          this.lastSender = message.sender;
+          this.lastSeq = -1;
+        }
         if (message.frame.seq <= this.lastSeq) break;
         this.lastSeq = message.frame.seq;
         this.frame = message.frame;

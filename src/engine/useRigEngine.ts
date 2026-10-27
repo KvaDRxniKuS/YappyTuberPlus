@@ -8,6 +8,7 @@ import { neutralFrame, prepareFrame } from "./frame";
 import { moduleConstants, presetGlobals } from "../modules/presets";
 import { frameProduced } from "./frameSignal";
 import { countArrival, countFrame } from "./meter";
+import { nextFrameSeq } from "./frameSeq";
 import type { TextChannel } from "../render/text";
 
 export type EngineStatus = "loading" | "ready" | "error";
@@ -98,7 +99,7 @@ export function useRigEngine(
     if (!response?.ok || !response.frame) return;
     const current = frameRef.current;
     if (!current) return;
-    const stopped: RigFrame = { ...current, texts: response.frame.texts };
+    const stopped: RigFrame = { ...current, texts: response.frame.texts, seq: nextFrameSeq() };
     frameRef.current = stopped;
     setSnapshot(stopped);
     frameSinkRef?.current?.(stopped);
@@ -244,7 +245,9 @@ export function useRigEngine(
       return;
     }
     countFrame();
-    const gated = prepareFrame(presetRef.current, response.frame, textsRef?.current);
+    // Номер кадра сквозной: движок мог пересоздаться и начать с единицы, а
+    // оверлей отбрасывает «старые» номера и замер бы навсегда.
+    const gated = { ...prepareFrame(presetRef.current, response.frame, textsRef?.current), seq: nextFrameSeq() };
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
     // Окна рисуют не по вечному rAF, а по этому сигналу: новый кадр — новый
@@ -348,6 +351,7 @@ export function useRigEngine(
       // переопределение по reset_clock.
       neutral.texts = { ...live.texts };
     }
+    neutral.seq = nextFrameSeq();
     frameRef.current = neutral;
     setSnapshot(neutral);
     resetClockRef.current = true;

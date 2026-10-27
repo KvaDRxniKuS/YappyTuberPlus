@@ -1,5 +1,6 @@
 import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
 import { neutralFrame } from "../engine/frame";
+import { nextFrameSeq } from "../engine/frameSeq";
 import { assetRef, inlineSource } from "../engine/assets";
 import type { CompositeBus } from "./bus";
 import {
@@ -30,7 +31,6 @@ export class OverlayHost {
   private presetRef: RigPreset | null = null;
   private bases: Record<string, BasePose> | null = null;
   private frozen = false;
-  private neutralSeq = 0;
   private structures = "";
   private poses = "";
   private configs = "";
@@ -107,21 +107,24 @@ export class OverlayHost {
     this.frozen = frozen;
     this.presetRef = preset ?? this.presetRef;
     if (frozen) this.publishNeutral(preset ?? this.presetRef);
-    else this.neutralSeq = 0;
   }
 
   private publishNeutral(preset: RigPreset | null): void {
     if (!preset) return;
-    this.neutralSeq += 1;
+    // Номер берём из того же счётчика, что и живые кадры: иначе свой счётчик
+    // хоста мог совпасть с номером следующего живого кадра, и оверлей отбросил
+    // бы его как повтор — источник замирал бы ровно после «Стопа».
     this.bus.post({
       t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
-      frame: neutralFrame(preset, this.neutralSeq),
+      frame: neutralFrame(preset, nextFrameSeq()),
     });
   }
 
   /** Called by the engine loop after every produced frame. */
   pushFrame(frame: RigFrame): void {
     if (this.disposed || this.frozen || this.viewers.size === 0 || !this.scene) return;
+    // Номер приходит от редактора и не откатывается при пересоздании движка:
+    // оверлей отбрасывает всё, что не новее прошлого кадра.
     this.bus.post({ t: "frame", sender: this.id, frame, sceneVersion: this.sceneVersion });
   }
 
