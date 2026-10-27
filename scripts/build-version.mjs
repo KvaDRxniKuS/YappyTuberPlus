@@ -29,9 +29,10 @@
  * node scripts/build-version.mjs --print         # напечатать паспорт репозитория
  * ```
  */
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { readVersion } from "./lib/version.mjs";
 
 const root = process.cwd();
@@ -61,14 +62,65 @@ function commitHash() {
   }
 }
 
-function buildInfo() {
+/** Все файлы папки, кроме самого манифеста: по ним считается обновление. */
+function listFiles(dir) {
+  const found = [];
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) { walk(path); continue; }
+      if (!entry.isFile()) continue;
+      const name = relative(dir, path).split(sep).join("/");
+      if (name === "build.json") continue;
+      found.push({ path: path, name: name });
+    }
+  };
+  walk(dir);
+  return found.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function sha256(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * Список файлов папки с размерами и хешами.
+ *
+ * Нужен обновлению: приложение скачивает ровно эти файлы и проверяет, что
+ * пришли те байты, а не обрезанный ответ сети или чужая подмена.
+ */
+function fileManifest(out) {
+  if (!existsSync(out)) return [];
+  return listFiles(out).map((file) => ({
+    path: file.name,
+    size: statSync(file.path).size,
+    sha256: sha256(file.path),
+  }));
+}
+
+/** Собранное приложение, если оно есть рядом: exe обновляется отдельно от фронтенда. */
+function exeEntry() {
+  const candidates = [
+    join(root, "src-tauri", "target", "release", "yappytuberplus.exe"),
+    join(root, "src-tauri", "target", "release", "yappytuberplus"),
+  ];
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    return { path: "yappytuberplus.exe", size: statSync(path).size, sha256: sha256(path), source: path };
+  }
+  return null;
+}
+
+function buildInfo(out) {
   const version = readVersion(root);
   return {
     ...version,
     builtAt: new Date().toISOString(),
     commit: commitHash(),
-    /** Поколение формата ядра на случай, если папку будут читать чужие скрипты. */
+    /** Поколение формата самого манифеста. */
     schema: 1,
+    /** Что скачивать обновлению: путь относительно папки, размер, sha256. */
+    files: out ? fileManifest(out) : [],
   };
 }
 
@@ -126,8 +178,21 @@ if (args.includes("--print")) {
   process.exit(compare(folder, info, current) ? 0 : 1);
 } else {
   const out = resolve(root, flagValue("--out") ?? join("dist"));
-  const info = buildInfo();
   mkdirSync(out, { recursive: true });
+  // Список файлов считается до записи манифеста: он сам в него не входит.
+  const info = buildInfo(out);
+  const exe = exeEntry();
+  if (exe) {
+    // Приложение кладём рядом с фронтендом: тогда обновление может заменить и его.
+    const target = join(out, exe.path);
+    writeFileSync(target, readFileSync(exe.source));
+    info.files = [...info.files.filter((file) => file.path !== exe.path), {
+      path: exe.path, size: exe.size, sha256: exe.sha256,
+    }].sort((left, right) => left.path.localeCompare(right.path));
+    info.app = { path: exe.path, size: exe.size, sha256: exe.sha256 };
+  }
   writeFileSync(join(out, "build.json"), `${JSON.stringify(info, null, 2)}\n`, "utf8");
-  console.log(`build.json: ${join(out, "build.json")} → ${info.version}`);
+  console.log(`build.json: ${join(out, "build.json")} → ${info.version}`
+    + `${info.files.length ? ` · файлов ${info.files.length}` : ""}`
+    + `${info.app ? " · с приложением" : ""}`);
 }

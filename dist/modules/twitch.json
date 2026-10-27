@@ -1,0 +1,137 @@
+{
+  "id": "twitch",
+  "title": "Twitch",
+  "description": "События канала: чат, награды за баллы, bits, фолловы. Вход по коду; текст чата читается в скрипте как twitch.chat.message(0), (-1) — предыдущее сообщение, twitch.chat.user(-1) — его автор, twitch.chat.min/max — границы входа.",
+  "kind": "external",
+  "format": 1,
+  "audio": false,
+  "inputs": [
+    {
+      "name": "chat",
+      "label": "Сообщений",
+      "kind": "level",
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "hint": "Счётчик сообщений чата с запуска"
+    },
+    {
+      "name": "reward",
+      "label": "Награда, баллы",
+      "kind": "level",
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "hint": "Сколько баллов стоил предмет; держится 3 с"
+    },
+    {
+      "name": "cheer",
+      "label": "Bits",
+      "kind": "level",
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "hint": "Сколько bits прислали; держится 2,5 с"
+    },
+    {
+      "name": "follow",
+      "label": "Фоллов",
+      "kind": "flag",
+      "min": 0,
+      "max": 1,
+      "step": 1,
+      "hint": "1 четыре секунды после нового фоллова"
+    }
+  ],
+  "fields": [],
+  "editor": {
+    "columns": {
+      "input": 84,
+      "path": 172,
+      "label": 104,
+      "duration": 108
+    }
+  },
+  "defaults": {
+    "source": {
+      "transport": "twitch",
+      "url": "",
+      "intervalMs": 1000,
+      "reconnect": true,
+      "clientId": "",
+      "channel": "",
+      "text": {
+        "path": "$.payload.event.message.text",
+        "authorPath": "$.payload.event.chatter_user_name",
+        "input": "chat",
+        "history": 12,
+        "retainSeconds": 300,
+        "showAuthor": true
+      },
+      "mapping": [
+        {
+          "input": "chat",
+          "path": "$.payload.event.message_id",
+          "label": "Сообщений",
+          "kind": "level",
+          "min": 0,
+          "max": 1000000,
+          "holdMs": 0,
+          "count": true,
+          "event": "channel.chat.message",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.chat.message"
+          },
+          "step": 1
+        },
+        {
+          "input": "reward",
+          "path": "$.payload.event.reward.cost",
+          "label": "Награда, баллы",
+          "kind": "level",
+          "min": 0,
+          "max": 1000000,
+          "holdMs": 3000,
+          "event": "channel.channel_points_custom_reward_redemption.add",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.channel_points_custom_reward_redemption.add"
+          },
+          "step": 1
+        },
+        {
+          "input": "cheer",
+          "path": "$.payload.event.bits",
+          "label": "Bits",
+          "kind": "level",
+          "min": 0,
+          "max": 100000,
+          "holdMs": 2500,
+          "event": "channel.cheer",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.cheer"
+          },
+          "step": 1
+        },
+        {
+          "input": "follow",
+          "path": "$.payload.event.followed_at",
+          "label": "Фоллов",
+          "kind": "flag",
+          "min": 0,
+          "max": 1,
+          "holdMs": 4000,
+          "fallback": 1,
+          "event": "channel.follow",
+          "when": {
+            "path": "$.metadata.subscription_type",
+            "equals": "channel.follow"
+          },
+          "step": 1
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "id": "pulse",
+  "title": "Пульсометр",
+  "description": "Пульс из моста на 127.0.0.1: без железа работает тренажёр «Пульс: мост» (scripts/pulse-bridge.mjs).",
+  "kind": "external",
+  "format": 1,
+  "audio": false,
+  "inputs": [
+    {
+      "name": "hr",
+      "label": "Пульс",
+      "kind": "level",
+      "min": 0,
+      "max": 220,
+      "step": 1,
+      "hint": "Ударов в минуту из поля heart_rate"
+    },
+    {
+      "name": "beat",
+      "label": "Удар",
+      "kind": "flag",
+      "min": 0,
+      "max": 1,
+      "step": 1,
+      "hint": "1 в момент удара, 200 мс"
+    }
+  ],
+  "fields": [],
+  "editor": {
+    "columns": {
+      "input": 64,
+      "path": 132
+    }
+  },
+  "defaults": {
+    "source": {
+      "transport": "ws",
+      "url": "ws://127.0.0.1:17801/inputs",
+      "intervalMs": 1000,
+      "reconnect": true,
+      "mapping": [
+        {
+          "input": "hr",
+          "path": "$.heart_rate",
+          "label": "Пульс",
+          "kind": "level",
+          "min": 0,
+          "max": 220,
+          "holdMs": 0
+        },
+        {
+          "input": "beat",
+          "path": "$.beat",
+          "label": "Удар",
+          "kind": "flag",
+          "min": 0,
+          "max": 1,
+          "holdMs": 200
+        }
+      ]
+    }
+  }
+}

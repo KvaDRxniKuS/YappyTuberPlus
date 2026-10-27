@@ -1,7 +1,9 @@
 node_modules/
-dist/
 target/
 src-tauri/target/
+# Папка сборки лежит в репозитории: из неё приложение берёт обновления
+# (`raw.githubusercontent.com`). Скачанный на ходу файл обновления — мусор.
+dist/*.update
 *.log
 playwright-report/
 test-results/

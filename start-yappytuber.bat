@@ -8,6 +8,7 @@ rem
 rem    --no-open      не открывать браузер
 rem    --no-bridge    не запускать мост для OBS
 rem    --no-serve     только обновить и собрать
+rem    --no-update    не поднимать локальный агент обновлений (порт 17802)
 rem    --app          открыть редактор как приложение: нативное окно Tauri,
 rem                   а без Rust - окно браузера без вкладок
 rem    --tauri        запустить нативное окно Tauri
@@ -26,6 +27,7 @@ set "FALLBACK_BRANCH=main"
 set "OPEN=1"
 set "BRIDGE=1"
 set "SERVE=1"
+set "AGENT=1"
 set "MODE=dev"
 set "PORT=5173"
 set "APP_DIR="
@@ -37,6 +39,7 @@ if /i "%ARG%"=="--no-open" ( set "OPEN=0" & goto next )
 if /i "%ARG%"=="--no-bridge" ( set "BRIDGE=0" & goto next )
 if /i "%ARG%"=="--bridge" ( set "BRIDGE=1" & goto next )
 if /i "%ARG%"=="--no-serve" ( set "SERVE=0" & goto next )
+if /i "%ARG%"=="--no-update" ( set "AGENT=0" & goto next )
 if /i "%ARG%"=="--tauri" ( set "MODE=tauri" & goto next )
 if /i "%ARG%"=="--app" ( set "MODE=app" & goto next )
 if /i "%ARG%"=="--help" goto usage
@@ -278,6 +281,9 @@ rem --- запуск -----------------------------------------------------------
 :serve
 if "%SERVE%"=="0" goto done
 if "%BRIDGE%"=="1" start "YappyTuberPlus OBS bridge" /min cmd /c "npm run overlay:bridge"
+rem Локальный агент обновлений: страница просит его заменить файлы папки сборки.
+rem Без него обновление папки делается только лаунчером при следующем запуске.
+if "%AGENT%"=="1" start "YappyTuberPlus update agent" /min cmd /c "npm run update:agent"
 rem Нативное окно возможно только при установленном Rust: без него --app
 rem откатывается на окно-приложение браузера, а потом на обычный браузер.
 set "TAURI_READY=0"

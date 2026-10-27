@@ -1,0 +1,15 @@
+{
+  "modules": [
+    "loudness",
+    "autoblink",
+    "manual",
+    "viseme",
+    "keyboard",
+    "key",
+    "mouse",
+    "external",
+    "presets",
+    "twitch",
+    "pulse"
+  ]
+}

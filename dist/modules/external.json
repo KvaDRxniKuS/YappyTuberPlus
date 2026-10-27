@@ -1,0 +1,43 @@
+{
+  "id": "external",
+  "title": "Внешний источник",
+  "description": "Значения из сети: WebSocket-мост, игра, пульсомер или бот. Таблица отображения превращает поля JSON во входы модуля.",
+  "kind": "external",
+  "format": 1,
+  "audio": false,
+  "inputs": [
+    {
+      "name": "value",
+      "label": "Значение",
+      "kind": "level",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "hint": "Запасной вход: пока таблица пуста, берётся из него"
+    }
+  ],
+  "fields": [],
+  "editor": {
+    "columns": {
+      "path": 140
+    }
+  },
+  "defaults": {
+    "source": {
+      "transport": "ws",
+      "url": "",
+      "mapping": [
+        {
+          "input": "value",
+          "path": "$.value",
+          "label": "Значение",
+          "kind": "level",
+          "min": 0,
+          "max": 1,
+          "holdMs": 0
+        }
+      ],
+      "reconnect": true
+    }
+  }
+}

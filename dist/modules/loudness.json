@@ -1,0 +1,105 @@
+{
+  "id": "loudness",
+  "title": "Loudness",
+  "description": "Уровень речи с микрофона: пик, сглаженная громкость, децибелы и флаг разговора.",
+  "kind": "loudness",
+  "format": 1,
+  "audio": true,
+  "inputs": [
+    {
+      "name": "speak",
+      "label": "Речь (RMS, сглаженная)",
+      "kind": "level",
+      "min": 0,
+      "max": 1,
+      "hint": "Энергия звука по шкале −52…−18 дБ со сглаживанием: для открытия рта."
+    },
+    {
+      "name": "loudness",
+      "label": "Пик (мгновенный)",
+      "kind": "level",
+      "min": 0,
+      "max": 1,
+      "hint": "Максимальная амплитуда за кадр без сглаживания: для резких движений."
+    },
+    {
+      "name": "db",
+      "label": "Децибелы",
+      "kind": "db",
+      "min": -80,
+      "max": 0,
+      "step": 1
+    },
+    {
+      "name": "talking",
+      "label": "Разговор",
+      "kind": "flag",
+      "min": 0,
+      "max": 1,
+      "step": 1
+    }
+  ],
+  "fields": [
+    {
+      "key": "deviceId",
+      "label": "Устройство",
+      "type": "device",
+      "default": "default"
+    },
+    {
+      "key": "gain",
+      "label": "Усиление",
+      "type": "number",
+      "min": 0.1,
+      "max": 8,
+      "step": 0.1,
+      "default": 1,
+      "suffix": "×"
+    },
+    {
+      "key": "threshold",
+      "label": "Порог речи",
+      "type": "number",
+      "min": -80,
+      "max": 0,
+      "step": 1,
+      "default": -43,
+      "suffix": "дБ"
+    },
+    {
+      "key": "attack",
+      "label": "Атака",
+      "type": "number",
+      "min": 0,
+      "max": 1000,
+      "step": 5,
+      "default": 70,
+      "suffix": "мс",
+      "hint": "Как быстро `speak` догоняет громкий звук. 0 — мгновенно."
+    },
+    {
+      "key": "release",
+      "label": "Спад",
+      "type": "number",
+      "min": 0,
+      "max": 2000,
+      "step": 10,
+      "default": 220,
+      "suffix": "мс",
+      "hint": "Как долго `speak` держится после звука: больше — плавнее закрывается рот."
+    },
+    {
+      "key": "processing",
+      "label": "Шумоподавление",
+      "type": "flag",
+      "default": false
+    }
+  ],
+  "defaults": {
+    "gain": 1,
+    "threshold": -43,
+    "processing": false,
+    "attack": 70,
+    "release": 220
+  }
+}

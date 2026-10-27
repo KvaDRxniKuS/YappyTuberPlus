@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen,
+  Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen, RefreshCw,
   Gauge, HardDrive, ImagePlus, MonitorPlay, Pause, Play, Redo2, RotateCcw, Save, Square,
   TriangleAlert, Undo2, X,
 } from "lucide-react";
@@ -8,8 +8,14 @@ import {
   coreVerdict, modulesMessage, outdatedMessage, versionLabel, versionShort, versionString, versionTitle,
 } from "./version";
 import { needsReport } from "./engine/coreFeatures";
-import { IncompatiblePresetError, presetCompatibility, type CompatibilityReport } from "./engine/presetCheck";
+import {
+  IncompatiblePresetError, presetCompatibility, type CompatibilityIssue, type CompatibilityReport,
+} from "./engine/presetCheck";
 import { buildInfoLine, buildInfoMessage, loadBuildInfo, type BuildInfo } from "./engine/buildInfo";
+import {
+  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, skippedUpdate, skipUpdate, updateChannel,
+  updateIssues, updateVerdict, type UpdateChannel, type UpdateManifest,
+} from "./engine/update";
 import { TreePanel } from "./components/TreePanel";
 import { Scene, type SceneTool } from "./components/Scene";
 import { Inspector } from "./components/Inspector";
@@ -19,6 +25,7 @@ import { OverlayDialog } from "./components/OverlayDialog";
 import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { FilesDialog } from "./components/FilesDialog";
 import { PresetIncompatibleDialog } from "./components/PresetIncompatibleDialog";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
   baseUpdates, groupSpot, isDescendant, makeGroup, makeLight, makeMedia, makeShape, makeSprite, makeText,
@@ -180,6 +187,10 @@ export default function App() {
   >(null);
   /** Паспорт собранной папки: `build.json` рядом с `index.html`. */
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
+  /** Предложение обновления: версия, список расхождений и способ установки. */
+  const [updateOffer, setUpdateOffer] = useState<
+    { manifest: UpdateManifest; issues: CompatibilityIssue[]; channel: UpdateChannel } | null
+  >(null);
   const toastTimer = useRef<number | null>(null);
   const notify = useCallback((message: string, ms = 2600) => {
     setToast(message);
@@ -187,6 +198,12 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), ms);
   }, []);
   const presetRef = useRef(preset);
+  /**
+   * Снимок пресета, который сейчас лежит в файле. Сравнение по ссылке, а не по
+   * JSON: каждая правка создаёт новый объект, значит «есть несохранённое»
+   * видно без сериализации на каждый кадр.
+   */
+  const savedPresetRef = useRef<RigPreset | null>(null);
   const library = useModuleLibrary();
   // В «Стопе» расстановка: живые входы не нужны, и микрофон не держим.
   const moduleInputs = useModuleInputs(preset.modules, library.version, !stopped);
@@ -297,6 +314,72 @@ export default function App() {
       notify(message, 9000);
     });
   }, [notify]);
+  /**
+   * Проверка обновлений.
+   *
+   * Сравнивается паспорт собранной папки с паспортом опубликованной сборки;
+   * если она новее — считается, что именно сломается у открытой сцены, и
+   * только потом предлагается обновление. `manual` — нажали кнопку, поэтому
+   * о результате сообщаем и при «обновлений нет».
+   */
+  const buildInfoRef = useRef(buildInfo);
+  buildInfoRef.current = buildInfo;
+  const acceptsFromRef = useRef(engine.acceptsFrom);
+  acceptsFromRef.current = engine.acceptsFrom;
+  const checkUpdates = useCallback(async (manual: boolean) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      if (manual) notify("Нет сети: проверить обновления не получилось", 6000);
+      return;
+    }
+    const manifest = await fetchUpdateManifest();
+    if (!manifest) {
+      if (manual) notify("Репозиторий не ответил: проверить обновления не удалось", 6000);
+      return;
+    }
+    const local = buildInfoRef.current?.version ?? versionString();
+    const verdict = updateVerdict(local, manifest.version);
+    if (verdict !== "newer") {
+      if (manual) {
+        notify(verdict === "none"
+          ? "Установлена последняя версия"
+          : verdict === "older"
+            ? `В репозитории сборка ${manifest.version} старше вашей (${local})`
+            : "Слои версий разъехались: обновление не предлагаю, разбираться нужно руками",
+        7000);
+      }
+      return;
+    }
+    if (!manual && skippedUpdate() === manifest.version) return;
+    const channel = await updateChannel();
+    setUpdateOffer({
+      manifest,
+      issues: updateIssues(manifest, presetRef.current, acceptsFromRef.current ?? 1),
+      channel,
+    });
+  }, [notify]);
+
+  // Проверка на старте — не сразу: пусть сначала поднимется сцена и ядро.
+  useEffect(() => {
+    const timer = window.setTimeout(() => void checkUpdates(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [checkUpdates]);
+
+  /** Установка: чем умеет — тем и ставим, иначе честная инструкция. */
+  const installUpdate = useCallback(async (): Promise<string | null> => {
+    if (!updateOffer) return null;
+    if (updateOffer.channel === "agent") {
+      await applyUpdateWithAgent();
+      window.setTimeout(() => window.location.reload(), 600);
+      return null;
+    }
+    if (updateOffer.channel === "app") {
+      await applyUpdateApp(updateOffer.manifest);
+      return null;
+    }
+    return `Закройте это окно и снова запустите start-yappytuber.bat: лаунчер подтянет `
+      + `${updateOffer.manifest.version} и пересоберёт проект. Пресеты и файлы останутся на месте.`;
+  }, [updateOffer]);
+
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const primaryId = selection.at(-1) ?? null;
   const selected = preset.objects.find((object) => object.id === primaryId) || null;
@@ -360,21 +443,25 @@ export default function App() {
       : ids));
   }, []);
 
-  const saveCurrent = useCallback(async () => {
+  /** Возвращает `true`, если файл действительно записан: это нужно обновлению. */
+  const saveCurrent = useCallback(async (): Promise<boolean> => {
     try {
       const result = await savePreset(presetRef.current, presetPath);
+      savedPresetRef.current = presetRef.current;
       if (result.downloaded) {
         notify(withMissing(
           "Браузерный режим: файл скачан. В приложении «Сохранить» перезаписывает файл на диске",
           result.missing,
         ));
-        return;
+        return true;
       }
       setPresetPath(result.path);
       setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       notify(withMissing(`Сохранено: ${fileNameOf(result.path) || "пресет"}`, result.missing));
+      return true;
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Не удалось сохранить пресет");
+      return false;
     }
   }, [notify, presetPath]);
 
@@ -399,6 +486,7 @@ export default function App() {
     }
     try {
       const result = await savePresetAs(presetRef.current);
+      savedPresetRef.current = presetRef.current;
       setPresetPath(result.path);
       setSavedAt(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
       notify(withMissing(`Сохранено как: ${fileNameOf(result.path) || "пресет"}`, result.missing));
@@ -418,6 +506,7 @@ export default function App() {
       return;
     }
     commit(next, { label: "Открытие пресета" });
+    savedPresetRef.current = next;
     setPresetPath(path);
     setSavedAt(null);
     setSelection(next.objects[0] ? [next.objects[0].id] : []);
@@ -431,6 +520,7 @@ export default function App() {
         ? presetRef.current.modules
         : [];
     const result: RigPreset = { ...pending.preset, modules };
+    savedPresetRef.current = result;
     setPending(null);
     commit(result, {
       label: choice === "apply" ? "Модули пресета" : choice === "disable" ? "Модули отключены" : "Пресет с текущими модулями",
@@ -1400,6 +1490,11 @@ export default function App() {
             <b>{versionShort()}</b>
             <span>ядро {engine.core ?? "—"} · нужно {sceneNeeds}</span>
           </button>
+          <button
+            className="status-check"
+            title="Проверить обновления"
+            onClick={() => void checkUpdates(true)}
+          ><RefreshCw size={11} /></button>
         </div>
       </footer>
 
@@ -1417,6 +1512,17 @@ export default function App() {
         onApply={() => resolvePending("apply")}
         onKeep={() => resolvePending("keep")}
         onDisable={() => resolvePending("disable")}
+      />}
+      {updateOffer && <UpdateDialog
+        manifest={updateOffer.manifest}
+        issues={updateOffer.issues}
+        channel={updateOffer.channel}
+        needsSave={!presetPath || savedPresetRef.current !== preset}
+        onSave={async () => { await saveCurrent(); }}
+        onInstall={installUpdate}
+        onLater={() => setUpdateOffer(null)}
+        onSkipVersion={() => { skipUpdate(updateOffer.manifest.version); setUpdateOffer(null); }}
+        onClose={() => setUpdateOffer(null)}
       />}
       {incompatible && <PresetIncompatibleDialog
         report={incompatible.report}

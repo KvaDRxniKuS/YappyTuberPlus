@@ -584,6 +584,12 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border-radius: 5px; background: #22272e; color: #adb6bf; font: inherit; font-size: 10px; cursor: pointer;
 }
 .status-version:hover { border-color: #3d4653; color: #cfd8de; }
+/* Ручная проверка обновлений: та же полка, что паспорт версии. */
+.status-check {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px;
+  padding: 0; border: 1px solid #2f3640; border-radius: 5px; background: #22272e; color: #8b959e; cursor: pointer;
+}
+.status-check:hover { border-color: #3d4653; color: #cfd8de; }
 .status-version b { color: #d8c69a; font-size: 10.5px; }
 .status-version span { color: #6b7681; }
 /* Расхождение версий: пресет новее сборки или ядро старше редактора. */

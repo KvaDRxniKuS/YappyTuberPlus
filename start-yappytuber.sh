@@ -7,6 +7,8 @@
 #   ./start-yappytuber.sh                 обновить и запустить
 #   ./start-yappytuber.sh --no-open       не открывать браузер
 #   ./start-yappytuber.sh --no-bridge     не запускать мост для OBS
+#   ./start-yappytuber.sh --no-update     не поднимать локальный агент
+#                                         обновлений (порт 17802)
 #   ./start-yappytuber.sh --no-serve      только обновить и собрать
 #   ./start-yappytuber.sh --app           открыть редактор как приложение:
 #                                         нативное окно Tauri, а если Rust нет —
@@ -25,6 +27,7 @@ FALLBACK_BRANCH="main"
 OPEN=1
 BRIDGE=1
 SERVE=1
+AGENT=1
 MODE="dev"
 PORT=5173
 APP_DIR=""
@@ -57,6 +60,7 @@ while [ $# -gt 0 ]; do
     --no-open) OPEN=0 ;;
     --no-bridge) BRIDGE=0 ;;
     --bridge) BRIDGE=1 ;;
+    --no-update) AGENT=0 ;;
     --no-serve) SERVE=0 ;;
     --tauri) MODE="tauri" ;;
     --app) MODE="app" ;;
@@ -232,6 +236,11 @@ open_browser() {
 if [ "$BRIDGE" = "1" ]; then
   step "Мост для OBS (источник браузера)"
   ( npm run overlay:bridge >/dev/null 2>&1 & ) || warn "мост не запустился — источник браузера в OBS будет недоступен."
+fi
+
+if [ "$AGENT" = "1" ]; then
+  # Локальный агент обновлений: страница просит его заменить файлы папки сборки.
+  ( npm run update:agent >/dev/null 2>&1 & ) || warn "агент обновлений не запустился — обновление папки сделает лаунчер при следующем запуске."
 fi
 
 # Нативное окно возможно только при установленном Rust: без него --app

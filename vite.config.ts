@@ -9,6 +9,14 @@ const bridgeProxy = {
     ws: true,
     changeOrigin: true,
   },
+  // Локальный агент обновления: страница просит заменить файлы собранной
+  // папки, агент делает это на диске. Тот же приём, что у моста: браузер
+  // никогда не ходит на localhost напрямую, только через прокси.
+  "/update": {
+    target: "http://127.0.0.1:17802",
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/update/, ""),
+  },
 };
 
 export default defineConfig({

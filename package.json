@@ -15,7 +15,8 @@
     "test:engine": "node scripts/smoke-engine.mjs",
     "version:report": "node scripts/version-report.mjs",
     "build:info": "node scripts/build-version.mjs",
-    "build:check": "node scripts/build-version.mjs --check"
+    "build:check": "node scripts/build-version.mjs --check",
+    "update:agent": "node scripts/update-agent.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",

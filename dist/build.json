@@ -1,0 +1,184 @@
+{
+  "release": [
+    1,
+    0
+  ],
+  "core": 21,
+  "format": 3,
+  "bridge": 1,
+  "modules": 1,
+  "shell": 1,
+  "version": "1.0.21.3.1.1.1",
+  "acceptsFrom": 16,
+  "packaging": "1.0.0",
+  "builtAt": "2026-10-27T19:36:39.821Z",
+  "commit": "6c18b0a",
+  "schema": 1,
+  "files": [
+    {
+      "path": "assets/bus-CfLeBAr8.js",
+      "size": 391462,
+      "sha256": "bb20f58f3766126ae2d994d594dcbfa8d80d37acffbe5439b19c573a9506155f"
+    },
+    {
+      "path": "assets/core-BUhCcD2K.js",
+      "size": 2695,
+      "sha256": "bd9612a6a3f9b04eb26fc2f333f1dde54b6c0796cb515b6dfbc30aac2db7d176"
+    },
+    {
+      "path": "assets/demo/arm.png",
+      "size": 7974,
+      "sha256": "c7a2793c44f1f7561f5ba6d956ffc69422bae6a0a671c23871d5cf7fe8a4e7c2"
+    },
+    {
+      "path": "assets/demo/body.png",
+      "size": 20016,
+      "sha256": "a3636473b605778a2300d7839ec429ecf943f9128dda3123bd8e193d00c12408"
+    },
+    {
+      "path": "assets/demo/eye.png",
+      "size": 4640,
+      "sha256": "66236017759edf3ef431b09afd51e71d84789cf3f72f6f5cbb7dc48ca5747ff0"
+    },
+    {
+      "path": "assets/demo/head.png",
+      "size": 21965,
+      "sha256": "34e643fa08e29cfdab7fd0aed35d80112ba3cb49cf8a0b14a0cb27ce2ac15924"
+    },
+    {
+      "path": "assets/demo/mouth_closed.png",
+      "size": 419,
+      "sha256": "0ad2cb89b49cf4ddbc1cb4aad781e259491d06519007fb541294c225dacd89df"
+    },
+    {
+      "path": "assets/demo/mouth_open.png",
+      "size": 880,
+      "sha256": "145415488abc4dbc03819e367525a22db41b5a97f652710084bb0488cede1f90"
+    },
+    {
+      "path": "assets/demo/mouth.png",
+      "size": 5012,
+      "sha256": "a8ec1aad7fb6a22c854b7e75fef8669caef0a1cb1fbc69a4269c63fd8d6ee132"
+    },
+    {
+      "path": "assets/dpi-DFPdTJ_w.js",
+      "size": 2072,
+      "sha256": "409db8f975d97d5cd983fd8ba0d9ecbc34566fd5504d55565745fe6a894ac206"
+    },
+    {
+      "path": "assets/event-Cs6lN1fb.js",
+      "size": 1407,
+      "sha256": "e60634ddbf981cc8ffb7e36960744b3c73f7f59f1f7c46d0c5798708b99772b0"
+    },
+    {
+      "path": "assets/index-B_JszPqR.js",
+      "size": 291,
+      "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
+    },
+    {
+      "path": "assets/overlay-BUOV3ow0.js",
+      "size": 8921,
+      "sha256": "3ca31b2b72a65b574ddd349e04d6c37353c07d9e3873e11d23d2629948807990"
+    },
+    {
+      "path": "assets/overlay-DT7yrNH-.css",
+      "size": 2724,
+      "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
+    },
+    {
+      "path": "assets/studio-26JcxuVd.css",
+      "size": 66959,
+      "sha256": "e85c6bdc958741bdb61b10c5634639d1e518a1686ae7642112803b26e0919291"
+    },
+    {
+      "path": "assets/studio-CnhA06ou.js",
+      "size": 747946,
+      "sha256": "88b253242106efdd5fcc0165e92fd90d5a7106b40864c5e7d8ea0b20475ccfb6"
+    },
+    {
+      "path": "assets/webviewWindow-BL5u9mQC.js",
+      "size": 5044,
+      "sha256": "28eca40e77af057a6a607945951b3a47349795b629a98acabd755e6078076595"
+    },
+    {
+      "path": "assets/window-gZ59p9FD.js",
+      "size": 12498,
+      "sha256": "dedc5da0783a2bb26e7f8f6f3f18766e863d017433f7e707fddc8015d74ce20a"
+    },
+    {
+      "path": "index.html",
+      "size": 615,
+      "sha256": "b7ddeee740e95e10e12a4aabdc7bc9bf9afe42aea0aa828cdb69b22c3c274eb1"
+    },
+    {
+      "path": "modules/autoblink.json",
+      "size": 1368,
+      "sha256": "e7590e4d5e70c1112f96b837ee0e85bc3719f98363913f8b3636d03b5321cafb"
+    },
+    {
+      "path": "modules/external.json",
+      "size": 1033,
+      "sha256": "bb2ed8a735e7b1bd8e2ed81d925577eeb7c380469347f809350f95e715938328"
+    },
+    {
+      "path": "modules/index.json",
+      "size": 181,
+      "sha256": "964950e29dc3dff8c81c94811545e260c5f50df56a3af1d4586bd8ec22a1fbef"
+    },
+    {
+      "path": "modules/key.json",
+      "size": 1641,
+      "sha256": "b5ed9427e7e95cb38386082483d3613a1aae6d9eaada2e9ef91576598e45621d"
+    },
+    {
+      "path": "modules/keyboard.json",
+      "size": 387,
+      "sha256": "054686af8df7c0114c0d2da6f4d0c08f1d3587d0ee34843a4e8aad4a29e3a795"
+    },
+    {
+      "path": "modules/loudness.json",
+      "size": 2547,
+      "sha256": "187fceb2793c00d5bfbd6b872ceab2bd1e0efdf58acbc5f23a2606e06265cfc4"
+    },
+    {
+      "path": "modules/manual.json",
+      "size": 1372,
+      "sha256": "f179a7766ed1dbd045133f90fbfb5f949a241f95c4eb380d4929dce2162bf1ed"
+    },
+    {
+      "path": "modules/mouse.json",
+      "size": 3624,
+      "sha256": "bc93dfa84ea88e82753f42602a9b5142b30d18b515599c348c54eec19692e6e7"
+    },
+    {
+      "path": "modules/presets.json",
+      "size": 796,
+      "sha256": "6cc1d537f72f8378235b5c8b4317eccf360a2b622bb18889fca2329f62f82eb0"
+    },
+    {
+      "path": "modules/pulse.json",
+      "size": 1377,
+      "sha256": "cee8943a7646b62c2e0494483d85e0bb1543e62b47582ffafffc2f5b3d85879e"
+    },
+    {
+      "path": "modules/twitch.json",
+      "size": 3763,
+      "sha256": "0ff44f824d94c53209756a4efb629f6fdfbe5fc61ce9776a45776f751136872f"
+    },
+    {
+      "path": "modules/viseme.json",
+      "size": 1876,
+      "sha256": "cfe7077da3cf9078eeeada0f3468cb2fc717fd01394d20efeab990a25118ba42"
+    },
+    {
+      "path": "overlay.html",
+      "size": 671,
+      "sha256": "1ca4dd48a06d40f784858f330d89ba7f3910bab8b8be82370493399ec1dffc27"
+    },
+    {
+      "path": "rig_core.wasm",
+      "size": 387719,
+      "sha256": "8efb5d81935596bac1f92df827206470d4c0b64564f86b43a2d8d574cb1b3a16"
+    }
+  ]
+}

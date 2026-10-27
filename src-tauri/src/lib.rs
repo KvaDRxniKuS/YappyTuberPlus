@@ -360,6 +360,125 @@ fn preset_read_asset(path: String, id: String) -> Result<Option<String>, String>
     )))
 }
 
+/// Кладёт скачанное приложение рядом с работающим и возвращает путь.
+///
+/// Заменить `.exe` на ходу нельзя: Windows держит файл открытым, пока процесс
+/// жив. Поэтому байты сначала ложатся в соседний `….update`, а перестановкой
+/// занимается помощник уже после выхода окна (`update_restart`). Так обновление
+/// не может оставить вместо программы половину файла: пока скачанный файл не
+/// лёг целиком, ничего не меняется.
+#[tauri::command]
+fn update_stage(payload: String) -> Result<String, String> {
+    let bytes = base64_decode(&payload)?;
+    if bytes.len() < 1024 * 256 {
+        return Err("скачанный файл слишком маленький: загрузка не удалась".into());
+    }
+    #[cfg(target_os = "windows")]
+    if !bytes.starts_with(b"MZ") {
+        return Err("скачанный файл не похож на программу Windows".into());
+    }
+    let current = std::env::current_exe().map_err(|error| error.to_string())?;
+    let staged = current.with_extension("update");
+    std::fs::write(&staged, &bytes).map_err(|error| write_error(&staged, &error.to_string()))?;
+    Ok(staged.to_string_lossy().into_owned())
+}
+
+/// Скрипт-помощник: ждёт выхода программы, подменяет файл и запускает новый.
+///
+/// Отдельный процесс нужен потому, что сам себя заменить нельзя. Скрипт лежит
+/// во временной папке и удаляет себя в конце, поэтому мусора не остаётся.
+#[cfg(target_os = "windows")]
+fn update_helper(staged: &Path, target: &Path) -> Result<PathBuf, String> {
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("yappytuberplus.exe");
+    let script = std::env::temp_dir().join(format!("yappytuberplus-update-{}.bat", std::process::id()));
+    let text = format!(
+        "@echo off\r\n\
+         :wait\r\n\
+         tasklist /FI \"PID eq {pid}\" /NH | find /I \"{name}\" >nul\r\n\
+         if not errorlevel 1 (\r\n\
+         \x20 timeout /t 1 /nobreak >nul\r\n\
+         \x20 goto wait\r\n\
+         )\r\n\
+         move /y \"{staged}\" \"{target}\" >nul\r\n\
+         if errorlevel 1 (\r\n\
+         \x20 timeout /t 3 /nobreak >nul\r\n\
+         \x20 move /y \"{staged}\" \"{target}\" >nul\r\n\
+         )\r\n\
+         start \"\" \"{target}\"\r\n\
+         del \"%~f0\"\r\n",
+        pid = std::process::id(),
+        name = name,
+        staged = staged.display(),
+        target = target.display(),
+    );
+    std::fs::write(&script, text).map_err(|error| write_error(&script, &error.to_string()))?;
+    Ok(script)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn update_helper(staged: &Path, target: &Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let script = std::env::temp_dir().join(format!("yappytuberplus-update-{}.sh", std::process::id()));
+    let text = format!(
+        "#!/bin/sh\n\
+         while kill -0 {pid} 2>/dev/null; do sleep 1; done\n\
+         mv -f \"{staged}\" \"{target}\" && chmod 755 \"{target}\"\n\
+         \"{target}\" >/dev/null 2>&1 &\n\
+         rm -f \"$0\"\n",
+        pid = std::process::id(),
+        staged = staged.display(),
+        target = target.display(),
+    );
+    std::fs::write(&script, text).map_err(|error| write_error(&script, &error.to_string()))?;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    Ok(script)
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_helper(script: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW: помощник не должен мигать консолью поверх студии.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(script)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_helper(script: &Path) -> Result<(), String> {
+    std::process::Command::new("sh")
+        .arg(script)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Запускает помощника и закрывает программу: обновление закончится без неё.
+#[tauri::command]
+fn update_restart(app: tauri::AppHandle, staged: String) -> Result<(), String> {
+    let target = std::env::current_exe().map_err(|error| error.to_string())?;
+    let staged = PathBuf::from(staged);
+    if !staged.is_file() {
+        return Err(format!("скачанный файл не найден: {}", staged.display()));
+    }
+    // Защита от чужого пути: обновлять можно только свою программу.
+    if staged.parent() != target.parent() {
+        return Err("скачанный файл лежит не рядом с программой".into());
+    }
+    let script = update_helper(&staged, &target)?;
+    spawn_helper(&script)?;
+    app.exit(0);
+    Ok(())
+}
+
 fn write_error(path: &Path, reason: &str) -> String {
     format!("{}: {}", path.display(), reason)
 }
@@ -394,6 +513,8 @@ pub fn run() {
             preset_clean_assets,
             preset_read_asset,
             preset_asset_index,
+            update_stage,
+            update_restart,
             schedule::rig_schedule_start,
             schedule::rig_schedule_inputs,
             schedule::rig_schedule_pause,

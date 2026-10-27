@@ -30,6 +30,10 @@ export function readVersion(root) {
   const format = number(/export const PRESET_FORMAT\s*=\s*(\d+)/, versionText);
   const modules = number(/export const MODULE_FORMAT\s*=\s*(\d+)/, versionText);
   const bridge = number(/OVERLAY_PROTOCOL\s*=\s*(\d+)/, protocolText);
+  // Диапазон совместимости ядра: по нему обновление понимает, не сломает ли
+  // новая сборка уже открытую сцену.
+  const coreText = readFileSync(join(root, "crates", "rig-core", "src", "lib.rs"), "utf8");
+  const acceptsFrom = number(/ACCEPTS_FROM:\s*u32\s*=\s*(\d+)/, coreText, 1);
   if ([core, shell, format, modules, bridge].some((value) => value === null)) {
     throw new Error("не удалось прочитать все поколения версии");
   }
@@ -43,6 +47,8 @@ export function readVersion(root) {
     shell,
     /** Машинная запись: `1.0.21.3.1.1.1`. */
     version: [major, minor, core, format, bridge, modules, shell].join("."),
+    /** Старейшее поколение сценариев, которое понимает это ядро. */
+    acceptsFrom,
     /** Версия для установщика: `1.0.0` (MSI и NSIS принимают три числа). */
     packaging: `${major}.${minor}.0`,
   };
