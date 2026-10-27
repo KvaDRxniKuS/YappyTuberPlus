@@ -86,6 +86,10 @@ pub enum ObjectKind {
     /// редактора в каждом пресете, и без варианта здесь не собирается вообще
     /// ничего: serde отвергает весь пресет целиком.
     Shape,
+    /// Освещение: пятно поверх сцены. Ядро считает его позу, прозрачность и
+    /// видимость как у обычного объекта — форма и цвета пятна живут в
+    /// редакторе и оверлее.
+    Light,
 }
 
 impl ObjectKind {
@@ -110,6 +114,7 @@ mod kind_tests {
             ("\"media\"", ObjectKind::Media),
             ("\"text\"", ObjectKind::Text),
             ("\"shape\"", ObjectKind::Shape),
+            ("\"light\"", ObjectKind::Light),
         ] {
             let parsed: ObjectKind = serde_json::from_str(json).expect(json);
             assert_eq!(parsed, expected);

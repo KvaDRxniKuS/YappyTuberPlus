@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, PenTool,
-  RotateCcw, Shapes, Trash2, Type,
+  Lightbulb, RotateCcw, Shapes, Trash2, Type,
 } from "lucide-react";
 import type {
   BasePose, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
 import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
+import { normalizeLight } from "../render/light";
 import {
   defaultMask, defaultShape, formatPoints, makeItem, parsePoints, uniqueItemId,
 } from "../render/shape";
@@ -20,6 +21,7 @@ import { useAssetUrl } from "../hooks/useAssets";
 import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
 import { fileKind } from "../engine/importFile";
 import { MaskSection } from "./MaskSection";
+import { LightSection, NormalSection } from "./LightSection";
 // Поле с подписью и шагом живёт в общем компоненте: им пользуются и вкладка
 // «Объект», и вкладка «Фигура».
 import { LabeledNumberField as NumberField } from "./NumberField";
@@ -28,6 +30,8 @@ interface InspectorProps {
   object: RigObject | null;
   selection: RigObject[];
   objects: RigObject[];
+  /** Размер холста: рамка света и форма «весь экран» считаются от него. */
+  canvas: { width: number; height: number };
   frame: RigFrame | null;
   onChange: (object: RigObject) => void;
   onSelect: (id: string) => void;
@@ -67,7 +71,7 @@ function DeltaField({ label, onApply }: { label: string; onApply: (value: number
 }
 
 export function Inspector(props: InspectorProps) {
-  const { object, selection, objects, frame, onChange } = props;
+  const { object, selection, objects, canvas, frame, onChange } = props;
   // Превью берёт готовый URL из хранилища файлов: ссылка `asset:<id>` читается
   // асинхронно, поэтому хуки стоят до ранних выходов и вызываются всегда.
   const preview = useAssetUrl(object?.image);
@@ -161,6 +165,12 @@ export function Inspector(props: InspectorProps) {
   const commitPivot = (next: { x: number; y: number }) => {
     // Фигура устроена как спрайт: контуры рисуются со сдвигом −pivot × размер,
     // поэтому пивот двигает базу ровно так же.
+    if (object.kind === "light") {
+      // Пятно света рисуется от самой базы, поэтому пивот ему нужен только как
+      // точка вращения: база при его правке стоит на месте.
+      props.onPivot(object.id, { x: object.base.x, y: object.base.y }, next);
+      return;
+    }
     if (object.kind === "sprite" || object.kind === "shape") {
       // Картинка спрайта рисуется со сдвигом −pivot × размер, поэтому база
       // уезжает на M · Δpivot · размер: пивот переезжает, картинка стоит.
@@ -184,6 +194,7 @@ export function Inspector(props: InspectorProps) {
         <div className={`inspector-preview ${object.kind}`}>
           {object.kind === "text" ? <Type size={20} />
             : object.kind === "shape" ? <Shapes size={20} />
+            : object.kind === "light" ? <Lightbulb size={20} />
             : object.kind === "media" ? (object.media?.type === "image" && mediaPreview
               ? <img src={mediaPreview} alt="" />
               : object.media?.type === "audio" ? <Music size={20} /> : <Link2 size={20} />)
@@ -198,6 +209,7 @@ export function Inspector(props: InspectorProps) {
           <span>
             {object.id} · {object.kind === "group" ? "группа"
               : object.kind === "shape" ? `фигура · контуров ${object.shape?.items.length ?? 0}`
+              : object.kind === "light" ? `свет · ${object.light?.radius ?? 0} px`
               : object.kind === "text" ? "текст"
               : object.kind === "media" ? `медиа · ${object.media?.type === "video" ? "видео" : object.media?.type === "audio" ? "звук" : "картинка"}`
               : `${object.width}×${object.height}`}
@@ -274,6 +286,19 @@ export function Inspector(props: InspectorProps) {
             media={object.media ?? normalizeMedia(undefined)}
             onChange={onChange}
           />
+        )}
+
+        {object.kind === "light" && (
+          <LightSection
+            object={object}
+            light={object.light ?? normalizeLight(undefined)}
+            canvas={canvas}
+            onChange={onChange}
+          />
+        )}
+
+        {(object.kind === "sprite" || object.kind === "media") && (
+          <NormalSection object={object} normal={object.normal} onChange={onChange} />
         )}
 
         {object.kind === "text" && (

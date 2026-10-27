@@ -169,6 +169,11 @@ input, select { color: var(--text); }
 .inspector-header { min-height: 53px; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-bottom: 1px solid var(--border-soft); }
 .inspector-preview { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border-radius: 6px; background: #292e35; color: #c0a979; overflow: hidden; }
 .inspector-preview img { width: 100%; height: 100%; object-fit: contain; }
+/* Свет в шапке инспектора: тёплое свечение вместо картинки. */
+.inspector-preview.light { color: #f0d08a; background: radial-gradient(circle at 50% 50%, #6a5a2f, #292e35 70%); }
+/* Карта нормалей: миниатюра рядом с именем файла. */
+.normal-file { display: flex; gap: 8px; align-items: center; }
+.normal-thumb { width: 34px; height: 34px; flex: 0 0 34px; object-fit: cover; border-radius: 5px; background: #292e35; }
 .inspector-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .inspector-title input { min-width: 0; border: 0; border-bottom: 1px solid transparent; background: transparent; padding: 0; font-size: 13px; font-weight: 600; }
 .inspector-title input:focus { outline: none; border-bottom-color: var(--accent-dim); }

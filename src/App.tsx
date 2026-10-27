@@ -14,7 +14,7 @@ import { ModuleApplyDialog } from "./components/ModuleApplyDialog";
 import { FilesDialog } from "./components/FilesDialog";
 import { createDemoPreset, createEmptyPreset, migrateDemoPreset } from "./data/demoPreset";
 import {
-  baseUpdates, groupSpot, isDescendant, makeGroup, makeMedia, makeShape, makeSprite, makeText,
+  baseUpdates, groupSpot, isDescendant, makeGroup, makeLight, makeMedia, makeShape, makeSprite, makeText,
   normalizeModules, normalizeOverlay, normalizePreset, parentNewObject, setParent, setScriptValue,
   uniqueId,
 } from "./engine/preset";
@@ -769,6 +769,23 @@ export default function App() {
   };
 
   /**
+   * Объект освещения: пятно поверх сцены.
+   *
+   * Ставится в центр холста, чтобы свет сразу было видно, и получает обычный
+   * скрипт объекта — значит, ему доступны все настройки «Поведения»: видимость
+   * по рту и морганию, покачивание, следование за мышью.
+   */
+  const addLight = () => {
+    const current = presetRef.current;
+    const id = uniqueId(current.objects, "light");
+    const spot = groupSpot(current, selectionRef.current);
+    const object = makeLight(id, "Свет", spot.x, spot.y, undefined, current.canvas);
+    const objects = parentNewObject([...current.objects, object], [object], selectionRef.current);
+    commit({ ...current, objects }, { label: "Новый свет" });
+    setSelection([id]);
+  };
+
+  /**
    * Открытая тяга мышью (точка пера): состояние для отмены запоминается один
    * раз, на первом движении, а не на каждое событие мыши. Повторный
    * `beginLiveEdit` внутри той же тяги ничего не делает — иначе одно
@@ -1111,6 +1128,7 @@ export default function App() {
           onImport={() => fileInput.current?.click()}
           onAddText={addText}
           onAddShape={addShape}
+          onAddLight={addLight}
           onAddGroup={() => {
             const current = presetRef.current;
             const id = uniqueId(current.objects, "group");
@@ -1195,6 +1213,7 @@ export default function App() {
             object={selected}
             selection={selectedObjects}
             objects={preset.objects}
+            canvas={preset.canvas}
             frame={engine.snapshot}
             onChange={updateObject}
             onSelect={selectOnly}

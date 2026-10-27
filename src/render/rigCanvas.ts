@@ -7,6 +7,7 @@ import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled } from "./warp";
+import { paintLight } from "./light";
 import type { MaskSpec, ShapeSpec } from "../types";
 
 /**
@@ -275,6 +276,13 @@ function drawObjectContent(
 ): void {
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
+  if (object.kind === "light") {
+    // Свет рисуется от пивота: пятно — это градиент в форме, поэтому объект с
+    // тёмным цветом работает тенью, со светлым — лампой. Маска и прозрачность
+    // применяются снаружи, как у любого другого содержимого.
+    paintLight(ctx, object, { width: ctx.canvas.width / zoom, height: ctx.canvas.height / zoom }, 1);
+    return;
+  }
   if (object.kind === "text") {
     drawTextObject(ctx, object, textContent(object, frame, options.texts));
     return;

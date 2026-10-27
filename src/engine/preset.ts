@@ -5,13 +5,15 @@ import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type MediaRepeat,
   type MediaSpec, type ModuleConfig,
   type ModuleInstance,
-  type MouseButton, type ObjectKind, type OverlayConfig, type RigObject, type RigPreset, type ShapeSpec, type TextSpec,
+  type LightSpec, type MouseButton, type ObjectKind, type OverlayConfig, type RigObject, type RigPreset,
+  type ShapeSpec, type TextSpec,
   type VisemeEntry,
 } from "../types";
 import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
 import { normalizeWarp } from "../render/warp";
+import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
 import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
@@ -157,6 +159,36 @@ export function makeShape(
   };
 }
 
+/**
+ * Объект освещения.
+ *
+ * Рамка объекта равна диаметру пятна: выделение, поворот и пивот работают как
+ * у спрайта, а радиус и ширина с высотой не расходятся. Форму и цвета можно
+ * передать сразу — пресеты и тесты заводят свет с нужным пятном.
+ */
+export function makeLight(
+  id: string,
+  name: string,
+  x: number,
+  y: number,
+  light?: Partial<LightSpec>,
+  canvas: { width: number; height: number } = { width: 1000, height: 2000 },
+): RigObject {
+  const spec = normalizeLight({ ...light });
+  const bounds = lightBounds(spec, canvas);
+  return {
+    id, name, kind: "light", enabled: true, image: null, parentId: null,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE, x, y },
+    width: bounds.width, height: bounds.height,
+    script: rootScript(), light: spec,
+  };
+}
+
+/** Рамка света вслед за радиусом: вызывается после правки ползунка. */
+export function lightFrame(object: RigObject, canvas: { width: number; height: number }): { width: number; height: number } {
+  return lightBounds(object.light ?? normalizeLight(null), canvas);
+}
+
 export function uniqueId(objects: RigObject[], preferred: string): string {
   const safe = preferred.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") || "object";
   if (!objects.some((object) => object.id === safe)) return safe;
@@ -261,7 +293,8 @@ export function normalizePreset(value: unknown): RigPreset | null {
     name: preset.name || "Без названия",
     canvas: { width: Number(preset.canvas.width) || 1000, height: Number(preset.canvas.height) || 600 },
     objects: preset.objects.map((object) => {
-      const kind: ObjectKind = object.kind === "group" || object.kind === "media" || object.kind === "text" || object.kind === "shape"
+      const kind: ObjectKind = object.kind === "group" || object.kind === "media" || object.kind === "text"
+        || object.kind === "shape" || object.kind === "light"
         ? object.kind
         : "sprite";
       return {
@@ -278,6 +311,10 @@ export function normalizePreset(value: unknown): RigPreset | null {
         media: kind === "media" ? normalizeMedia(object.media) : undefined,
         text: kind === "text" ? normalizeText(object.text) : undefined,
         shape: kind === "shape" ? normalizeShape(object.shape, object.width || 240, object.height || 160) : undefined,
+        // Свет и карта нормалей — тоже поля своего вида: свет только у света,
+        // нормали только у того, что рисует картинку (спрайт и медиа).
+        light: kind === "light" ? normalizeLight(object.light) : undefined,
+        normal: kind === "sprite" || kind === "media" ? normalizeNormal(object.normal) : undefined,
         // Маска — свойство любого объекта: одна фигура может вырезать сразу
         // несколько спрайтов, поэтому ссылка живёт на объекте, а не в фигуре.
         mask: normalizeMask(object.mask),

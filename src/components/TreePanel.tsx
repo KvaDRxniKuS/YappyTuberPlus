@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FileImage, FileVideo, Film,
-  Folder, FolderPlus, Import, Plus, Shapes, Trash2, Type,
+  Folder, FolderPlus, Import, Lightbulb, Plus, Shapes, Trash2, Type,
 } from "lucide-react";
 import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
@@ -20,6 +20,7 @@ function TreeThumbnail({ object }: { object: RigObject }) {
   if (object.kind === "group") return <Folder size={15} />;
   if (object.kind === "text") return <Type size={15} />;
   if (object.kind === "shape") return <Shapes size={15} />;
+  if (object.kind === "light") return <Lightbulb size={15} />;
   if (object.kind === "media") {
     if (object.media?.type === "audio") return <FileVideo size={15} />;
     return mediaPreview ? <img src={mediaPreview} alt="" draggable={false} /> : <Film size={15} />;
@@ -45,6 +46,8 @@ interface TreePanelProps {
   onAddText: () => void;
   /** Объект-фигура: контуры для заливки и маски. */
   onAddShape: () => void;
+  /** Освещение: пятно поверх сцены, подсветка или тень. */
+  onAddLight: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
   onToggleVisibility: (id: string) => void;
@@ -112,6 +115,9 @@ export function TreePanel(props: TreePanelProps) {
         </button>
         <button onClick={props.onAddShape} title="Фигура: прямоугольник, эллипс или перо — и маска для других объектов">
           <Shapes size={14} /> Фигура
+        </button>
+        <button onClick={props.onAddLight} title="Освещение: пятно поверх сцены — светлое подсвечивает, тёмное затеняет">
+          <Lightbulb size={14} /> Свет
         </button>
       </div>
 
