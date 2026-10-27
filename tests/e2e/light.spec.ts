@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   alphaOf, gradientRadius, lightBounds, normalizeLight, normalizeNormal, paintLight, solidOf, traceLight, withAlpha,
 } from "../../src/render/light";
@@ -325,4 +327,30 @@ test("следование за мышью: доворот в градусах �
   expect(readBehaviour(`// @behaviour {"followMouseRotX":900,"followMouseRotY":-900}`)).toMatchObject({
     followMouseRotX: 180, followMouseRotY: -180,
   });
+});
+
+/*
+ * Ориентация буфера нормалей.
+ *
+ * Две текстуры прохода приходят из разных мест, и хранят строки по-разному:
+ * холст льётся в `uScene` без переворота (первая строка данных — верх картинки),
+ * а карта нормалей рисуется в кадровый буфер, где строка 0 — это низ вьюпорта.
+ * Проход объёма читает обе одним и тем же `vUv` (aPos.y = 0 — верх экрана),
+ * поэтому карта обязана лежать в буфере сверху вниз, как холст.
+ *
+ * Симптом перевёрнутой карты: объём держится не за объект, а зеркалится
+ * относительно середины холста и уезжает вместе с камерой. Проверяем формулы,
+ * потому что браузерного WebGL в тестах нет.
+ */
+test("объём: карта нормалей пишется в буфер сверху вниз, как холст", () => {
+  const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
+  // Вершинный шейдер нормалей: верх объекта (device.y = 0) идёт в строку 0.
+  expect(source).toContain("device.y / uCanvas.y * 2.0 - 1.0");
+  expect(source).not.toContain("1.0 - device.y / uCanvas.y");
+  // Проход объёма: vUv.y = 0 — верх экрана, и обе текстуры читаются этим vUv.
+  expect(source).toContain("1.0 - aPos.y * 2.0");
+  expect(source).toContain("texture(uScene, vUv)");
+  expect(source).toContain("texture(uNormals, vUv)");
+  // Холст льётся без переворота — иначе поехала бы вся сцена, а не карта.
+  expect(source).toContain("gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);\n  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);");
 });
