@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.0 · ядро 21 · файл 3 · мост 1 · модули 1 · оболочка 1`.
+ * `1.1 · ядро 22 · файл 4 · мост 1 · модули 1 · оболочка 1`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -120,12 +120,12 @@ export function generationNumbers(version: ProjectVersion = VERSION): number[] {
   return SLOT_ORDER.map((slot) => version[slot]);
 }
 
-/** Машинная строка версии: `1.0.21.3.1.1.1`. Её пишут в файл и копируют. */
+/** Машинная строка версии: `1.1.22.4.1.1.1`. Её пишут в файл и копируют. */
 export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.0 · ядро 21 · файл 3 · мост 1 · модули 1 · оболочка 1`. */
+/** Строка для человека: `1.1 · ядро 22 · файл 4 · мост 1 · модули 1 · оболочка 1`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");

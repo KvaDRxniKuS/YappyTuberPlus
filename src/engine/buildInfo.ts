@@ -23,7 +23,7 @@ export interface BuildFile {
 }
 
 export interface BuildInfo {
-  /** Машинная запись: `1.0.21.3.1.1.1`. */
+  /** Машинная запись: `1.1.22.4.1.1.1`. */
   version: string;
   /** Версия для установщика: `1.0.0`. */
   packaging?: string;

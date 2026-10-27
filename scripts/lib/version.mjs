@@ -45,7 +45,7 @@ export function readVersion(root) {
     bridge,
     modules,
     shell,
-    /** Машинная запись: `1.0.21.3.1.1.1`. */
+    /** Машинная запись: `1.1.22.4.1.1.1`. */
     version: [major, minor, core, format, bridge, modules, shell].join("."),
     /** Старейшее поколение сценариев, которое понимает это ядро. */
     acceptsFrom,
