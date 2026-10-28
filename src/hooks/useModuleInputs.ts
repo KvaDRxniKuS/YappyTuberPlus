@@ -6,6 +6,7 @@ import { composeValues, inputEnabled, inputKey, inputMeta, inputTexts, isPointer
 import { usePointerInputs } from "./usePointerInputs";
 import type { MonitorOption } from "../modules/pointer";
 import { useExternalSource } from "./useExternalSource";
+import { useAmbientSample, type ObsModuleInfo } from "./useAmbientSample";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
 
 export interface ModuleInputsApi {
@@ -48,10 +49,15 @@ export interface ModuleInputsApi {
   probeSource: (name: string) => Promise<string>;
   /** Последние тексты источников (чат): показываются во «Входах». */
   externalTexts: Record<string, ExternalTextLine[]>;
+  /** OBS у модулей «Свет из экрана»: состояние и списки сцен/источников. */
+  ambientObs: Record<string, ObsModuleInfo>;
+  /** «Проверить» у модуля ambient: переподключиться к OBS. */
+  probeAmbient: (moduleName: string) => void;
 }
 
 /** Такт часов цвета, мс: 30 кадров в секунду хватает для плавности. */
 const COLOR_TICK = 33;
+
 
 const BLINK_TICK = 33;
 
@@ -290,9 +296,15 @@ export function useModuleInputs(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [modules, libraryVersion],
   );
+  // Свет из экрана: замеры снимает отдельный хук (своя сцена и OBS), а здесь
+  // они попадают в те же значения, что и остальные входы.
+  const ambient = useAmbientSample(modules, libraryVersion);
+  const ambientActive = Object.keys(ambient.obs).length > 0
+    || modules.some((module) => module.enabled && moduleDefinition(module.type).kind === "ambient");
+
   const [clock, setClock] = useState({ now: 0, dt: 0 });
   useEffect(() => {
-    if (!colorActive) return undefined;
+    if (!colorActive && !ambientActive) return undefined;
     // Часы идут в реальном времени: 30 тиков в секунду хватает, чтобы переход
     // выглядел плавным, а лишних перерисовок не было.
     let last = typeof performance === "undefined" ? Date.now() : performance.now();
@@ -303,11 +315,11 @@ export function useModuleInputs(
       setClock({ now, dt });
     }, COLOR_TICK);
     return () => window.clearInterval(timer);
-  }, [colorActive]);
+  }, [colorActive, ambientActive]);
 
   const inputs = useMemo<InputValues>(() => ({
     values: composeValues(modules, {
-      audio, manual, auto, pointer, external: externalInputs.values,
+      audio, manual, auto, pointer, external: externalInputs.values, ambient: ambient.samples,
       now: clock.now, dt: clock.dt,
     }),
     signals: {},
@@ -316,7 +328,7 @@ export function useModuleInputs(
     texts: inputTexts(modules, externalInputs.texts),
     meta: inputMeta(modules),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [modules, audio, manual, auto, pointer, clock, externalInputs.values, externalInputs.texts, libraryVersion]);
+  }), [modules, audio, manual, auto, pointer, clock, ambient.samples, externalInputs.values, externalInputs.texts, libraryVersion]);
 
   return {
     inputs, marks: externalInputs.marks,
@@ -330,6 +342,8 @@ export function useModuleInputs(
     externalLogs: externalInputs.logs,
     probeSource: externalInputs.probe,
     externalTexts: externalInputs.texts,
+    ambientObs: ambient.obs,
+    probeAmbient: ambient.probe,
   };
 }
 

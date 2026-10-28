@@ -687,7 +687,12 @@ export type ModuleKind =
    * Цвет: каналы с палитрой и режимом. Цвет не идёт в ядро — модуль отдаёт
    * `r/g/b/a` числами, а подстановка в объект делается перед отрисовкой.
    */
-  | "color";
+  | "color"
+  /**
+   * Свет из экрана (ambient): средний цвет участков своей сцены или источника
+   * OBS. Отдаёт те же пять чисел, что канал цвета, поэтому привязывается так же.
+   */
+  | "ambient";
 
 /**
  * Транспорт внешнего источника.
@@ -841,6 +846,13 @@ export interface ModuleConfig {
   states?: EnumState[];
   /** Настройки внешнего источника (модуль `external`). */
   source?: ExternalSourceConfig;
+  /**
+   * Соединение с OBS у модуля «Свет из экрана»: хост и порт.
+   *
+   * Пароля здесь нет и не будет: он лежит в настройках приложения (профиль
+   * окна), чтобы пресет можно было выкладывать.
+   */
+  connection?: { host?: string; port?: number };
   /** Нормализовать сумму визем к 1. */
   normalize?: boolean;
   /** Порог слышимости для визем, дБ. */
@@ -850,6 +862,7 @@ export interface ModuleConfig {
     | string[]
     | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[]
     | ExternalSourceConfig
+    | { host?: string; port?: number }
     | undefined;
 }
 

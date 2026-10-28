@@ -12,6 +12,7 @@ import type { MonitorOption } from "../modules/pointer";
 import { moduleInputs as moduleInputKeys } from "../modules/values";
 import type { CalibrationApi } from "./VisemeCalibration";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
+import type { ObsModuleInfo } from "../hooks/useAmbientSample";
 import type { ScriptCheck, ScriptScope } from "../engine/scripts";
 import {
   diagnosticName, diagnosticPlace, eventNames, scopeTitle,
@@ -70,6 +71,9 @@ interface RightPanelProps {
   onProbeSource?: (name: string) => Promise<string>;
   /** Последние тексты источников (чат): видны во «Входах». */
   externalTexts?: Record<string, ExternalTextLine[]>;
+  /** OBS у модулей «Свет из экрана»: состояние и списки сцен/источников. */
+  ambientObs?: Record<string, ObsModuleInfo>;
+  onProbeAmbient?: (name: string) => void;
   /**
    * Инспектор объекта — готовая панель параметров.
    *
@@ -223,6 +227,8 @@ export function RightPanel(props: RightPanelProps) {
           onSignOutSource={props.onSignOutSource}
           externalLogs={props.externalLogs}
           onProbeSource={props.onProbeSource}
+          ambientObs={props.ambientObs}
+          onProbeAmbient={props.onProbeAmbient}
           calibrate={props.calibrate}
           cancelCalibration={props.cancelCalibration}
         />

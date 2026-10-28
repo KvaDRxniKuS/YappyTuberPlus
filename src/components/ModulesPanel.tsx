@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Palette, Plus, RefreshCw, Search,
+  ChevronDown, Copy, Keyboard, Mic, MonitorSmartphone, MousePointerClick, Palette, Plus, RefreshCw, Search,
   SlidersHorizontal, Trash2, Wifi, X,
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
@@ -21,6 +21,8 @@ import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { ExternalSourceEditor } from "./ExternalSourceEditor";
 import { PresetsEditor } from "./PresetsEditor";
 import { ColorEditor } from "./ColorEditor";
+import { AmbientEditor } from "./AmbientEditor";
+import type { ObsModuleInfo } from "../hooks/useAmbientSample";
 import { NumberField } from "./NumberField";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
@@ -43,6 +45,10 @@ interface ModulesPanelProps extends CalibrationApi {
   /** Вход в Twitch и выход из него: токен живёт в профиле окна. */
   onAuthorizeSource?: (name: string) => void;
   onSignOutSource?: (name: string) => void;
+  /** OBS у модулей «Свет из экрана»: состояние и списки имён из OBS. */
+  ambientObs?: Record<string, ObsModuleInfo>;
+  /** «Проверить» у ambient: переподключиться к OBS. */
+  onProbeAmbient?: (name: string) => void;
   /** Журнал источников и проверка соединения. */
   externalLogs?: Record<string, ExternalLogEntry[]>;
   onProbeSource?: (name: string) => Promise<string>;
@@ -334,6 +340,19 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     />
                   )}
 
+                  {definition.kind === "ambient" && (
+                    <AmbientEditor
+                      module={module}
+                      obs={{
+                        status: props.ambientObs?.[module.name]?.status ?? { text: "", ok: false },
+                        scenes: props.ambientObs?.[module.name]?.scenes ?? [],
+                        items: props.ambientObs?.[module.name]?.items ?? [],
+                        probe: () => props.onProbeAmbient?.(module.name),
+                      }}
+                      onConfig={(config, label) => patch(module.name, { config }, label)}
+                    />
+                  )}
+
                   {definition.kind === "manual" && module.config.mode === "enum" && (
                     <EnumStatesEditor
                       module={module}
@@ -469,6 +488,8 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     ? "свои виземы"
                     : definition.kind === "color"
                       ? "каналы: r · g · b · a · яркость"
+                    : definition.kind === "ambient"
+                      ? "точки: r · g · b · a · яркость"
                     : definition.kind === "keyboard"
                       ? "клавиши из настроек"
                       : definition.inputs.map((input) => input.name).join(" · ")}
@@ -496,6 +517,7 @@ function paletteIcon(kind: ModuleKind) {
   if (kind === "mouse") return <MousePointerClick size={14} />;
   if (kind === "external") return <Wifi size={14} />;
   if (kind === "color") return <Palette size={14} />;
+  if (kind === "ambient") return <MonitorSmartphone size={14} />;
   return <SlidersHorizontal size={14} />;
 }
 

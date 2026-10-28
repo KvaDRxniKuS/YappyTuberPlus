@@ -1657,6 +1657,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .colour-row-label { min-width: 96px; color: #c8ced6; }
 .colour-row select { flex: 1 1 140px; background: #1b1f24; color: #dfe4ea; border: 1px solid #333a42; border-radius: 5px; padding: 2px 6px; }
 .colour-row .inline-error { flex-basis: 100%; margin: 0; }
+/* Свет из экрана: образец точки, соединение с OBS. */
+.ambient-swatch { background: linear-gradient(135deg, #ff4d6d, #22d3ee); }
+.ambient-obs { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid #262b31; }
+.ambient-obs-row { display: flex; gap: 6px; }
+.ambient-obs-row .module-field { flex: 1 1 0; }
 
 /* Материал: строки каналов, файлы и общая полоса свечения. */
 .material-kinds { flex-wrap: wrap; gap: 4px; }

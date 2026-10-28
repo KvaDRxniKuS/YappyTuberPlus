@@ -1470,6 +1470,8 @@ export default function App() {
           externalLogs={moduleInputs.externalLogs}
           onProbeSource={moduleInputs.probeSource}
           externalTexts={moduleInputs.externalTexts}
+          ambientObs={moduleInputs.ambientObs}
+          onProbeAmbient={moduleInputs.probeAmbient}
           inspector={(
             <Inspector
               object={selected}

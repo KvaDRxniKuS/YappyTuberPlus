@@ -8,6 +8,7 @@ import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./v
 import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { presetEntries, presetInputs, presetPreview } from "./presets";
 import { channelValues, colorChannels, colorInputs } from "./color";
+import { ambientColor, ambientInputs, ambientPoints, ambientValues } from "./ambient";
 import { frameValue, type AudioFrame } from "./audio";
 import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./external";
 import { textInputOf } from "./sources";
@@ -37,6 +38,8 @@ export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   if (definition.kind === "external") return externalInputs(module, definition.inputs);
   // Цвет: у каждого канала свои пять входов — `_r`, `_g`, `_b`, `_a`, `_level`.
   if (definition.kind === "color") return colorInputs(module);
+  // Свет из экрана: то же самое, только на точку выборки.
+  if (definition.kind === "ambient") return ambientInputs(module);
   if (definition.kind === "keyboard") {
     return keyboardKeys(module).map((key) => ({
       name: key.name,
@@ -140,6 +143,13 @@ export interface ModuleSources {
   now?: number;
   /** Секунды с прошлого кадра: `smooth` у цвета считает по нему инерцию. */
   dt?: number;
+  /**
+   * Последние замеры ambient: `{ "ambient_1": { spot_1: {r,g,b,a} } }`.
+   *
+   * Замер делает хук (своя сцена — с холста, OBS — по сети): здесь нет ни
+   * холста, ни сокета, и `values.ts` остаётся чистой функцией от данных.
+   */
+  ambient?: Record<string, Record<string, { r: number; g: number; b: number; a: number }>>;
 }
 
 /**
@@ -223,6 +233,23 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
       }
       const final = module.config.normalize === true ? normalizeVisemes(local) : local;
       Object.assign(values, final);
+      continue;
+    }
+
+    // Свет из экрана: значения уже сняты с кадра хуком. Здесь только
+    // сглаживание и раскладка на пять входов — сцена и OBS выглядят одинаково.
+    if (definition.kind === "ambient") {
+      const samples = sources.ambient?.[module.name] ?? {};
+      const dt = Number.isFinite(sources.dt) ? Math.max(0, sources.dt as number) : 1 / 30;
+      for (const point of ambientPoints(module)) {
+        const color = ambientColor(module.name, point, samples[point.name] ?? null, dt);
+        const numbers = ambientValues(color);
+        for (const part of ["r", "g", "b", "a", "level"] as const) {
+          const name = `${point.name}_${part}`;
+          if (!inputEnabled(module, name)) continue;
+          values[inputKey(module, name)] = numbers[part];
+        }
+      }
       continue;
     }
 

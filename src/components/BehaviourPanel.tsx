@@ -9,6 +9,7 @@ import {
 } from "../engine/behaviour";
 import { presetEntries, presetModules, presetVariable } from "../modules/presets";
 import { colorChannels } from "../modules/color";
+import { ambientPoints } from "../modules/ambient";
 import { moduleDefinition } from "../modules/registry";
 import { COLOR_FIELD_LABEL, colorFieldsOf, ownColorOf, type ColorField } from "../render/color";
 import { Switch } from "./Switch";
@@ -303,13 +304,30 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
 
   /** Задаваемые цвета объекта: у света, фигуры, текста и материала они разные. */
   const colorFields = colorFieldsOf(object);
-  /** Каналы всех модулей цвета: в списке видно и модуль, и канал. */
+  /**
+   * Все источники цвета: каналы модуля «Цвет» и точки «Света из экрана».
+   *
+   * Для света это одно и то же — «взять готовый цвет по имени», поэтому и
+   * список общий: свет не должен знать, палитра это или кусок чужого окна.
+   */
   const colourChannels = (modules ?? [])
-    .filter((module) => module.enabled && moduleDefinition(module.type).kind === "color")
-    .flatMap((module) => colorChannels(module).map((channel) => ({
-      key: `${module.name}.${channel.name}`,
-      label: `${module.name} → ${channel.label}`,
-    })));
+    .filter((module) => module.enabled)
+    .flatMap((module) => {
+      const kind = moduleDefinition(module.type).kind;
+      if (kind === "color") {
+        return colorChannels(module).map((channel) => ({
+          key: `${module.name}.${channel.name}`,
+          label: `${module.name} → ${channel.label}`,
+        }));
+      }
+      if (kind === "ambient") {
+        return ambientPoints(module).map((point) => ({
+          key: `${module.name}.${point.name}`,
+          label: `${module.name} → ${point.label}`,
+        }));
+      }
+      return [];
+    });
 
   /**
    * Привязка цвета. Пустое значение — «свой цвет»: ключ удаляется, а не
@@ -432,13 +450,13 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         <section className="behaviour-section colour-section">
           <div className="section-title"><span><Palette size={13} /> Цвет</span><small>ИЗ МОДУЛЯ</small></div>
           <p className="behaviour-hint">
-            Каждый цвет можно взять из модуля «Цвет»: палитра, режим и скорость живут там,
-            а объект только берёт готовый цвет. «Свой цвет» — как раньше, из настроек объекта.
+            Каждый цвет можно взять из модуля: «Цвет» даёт палитру и режим, «Свет из экрана» —
+            средний цвет участка картинки. Объект только берёт готовый цвет, «свой цвет» — как раньше.
           </p>
           {!colourChannels.length && (
             <p className="behaviour-hint">
-              Модулей с цветом в пресете нет: добавьте «Цвет» во вкладке «Модули», и здесь
-              появятся его каналы.
+              Модулей с цветом в пресете нет: добавьте «Цвет» или «Свет из экрана» во вкладке
+              «Модули», и здесь появятся их каналы и точки.
             </p>
           )}
           {colorFields.map((field) => {

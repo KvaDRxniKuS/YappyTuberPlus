@@ -8,6 +8,7 @@ import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
 import { createCollector, resetCollector } from "../render/lighting";
 import { applyColors, type ColorField, type Rgba } from "../render/color";
+import { sceneSampler } from "../render/sceneSample";
 import {
   drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
@@ -270,6 +271,19 @@ export function Scene(props: SceneProps) {
     });
     // Объём от карт нормалей считается внутри drawRig: каждый объект получает
     // свой объём в своём слое, поэтому верхние слои его перекрывают.
+    //
+    // Замер для ambient — второй проход по тому же кадру, но маленький и без
+    // интерфейса: сетка, выделение и серый фон вокруг артборда в средний цвет
+    // попасть не должны. Просим его только пока включён модуль «Свет из экрана».
+    const probe = sceneSampler.prepare(preset.canvas.width, preset.canvas.height);
+    if (probe) {
+      drawRig(probe.ctx, shown, frame, assets.current, {
+        placeholders: false, lineScale: 1,
+        media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
+        environment: preset.environment,
+      });
+      sceneSampler.commit();
+    }
     drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "frame");
