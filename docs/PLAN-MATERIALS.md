@@ -193,7 +193,7 @@ out += emissiveColor · emissiveStrength
 ## 8. Дебаг и проверка
 
 - Кубик расширяется до полного набора: `cube-albedo.png`, `cube-normal.png`,
-  `cube-orm.png` (R шероховатость, G металл, B окклюзия), `cube-emissive.png`,
+  `cube-orm.png` (ORM: R окклюзия, G шероховатость, B металл), `cube-emissive.png`,
   и лист-дебаг: металл/пластик/матовое/шероховатое под одним светом.
 - Математика шейдера дублируется в `src/render/material.ts` как чистая функция
   (`shadeMaterial`), и **лист-дебаг считается ею же** — тогда картинка в

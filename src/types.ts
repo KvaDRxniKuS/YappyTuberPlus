@@ -396,15 +396,21 @@ export interface MaterialSpec {
   specular: number;
 }
 
-/** Упаковка по умолчанию — ORM, как в glTF: R шероховатость, G металл, B окклюзия. */
+/**
+ * Упаковка по умолчанию — **ORM**, как в glTF, Unreal и Godot: `R` окклюзия,
+ * `G` шероховатость, `B` металл. Буквы в названии — это и есть порядок каналов,
+ * поэтому «взять ORM из Substance» работает без перестановок. Наборы RMA
+ * (`R` шероховатость, `G` металл, `B` окклюзия) отличаются порядком — буква
+ * выбирается в инспекторе.
+ */
 export const DEFAULT_CHANNEL = (value: number, packedChannel: PackedChannel): ChannelSpec => ({
   value, file: null, from: "value", packedChannel,
 });
 
 export const DEFAULT_MATERIAL: MaterialSpec = {
-  roughness: DEFAULT_CHANNEL(0.6, "r"),
-  metallic: DEFAULT_CHANNEL(0, "g"),
-  ao: DEFAULT_CHANNEL(1, "b"),
+  roughness: DEFAULT_CHANNEL(0.6, "g"),
+  metallic: DEFAULT_CHANNEL(0, "b"),
+  ao: DEFAULT_CHANNEL(1, "r"),
   emissive: { color: "#ffffff", strength: 0, file: null },
   packed: null,
   specular: 100,

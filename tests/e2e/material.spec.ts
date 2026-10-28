@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  baseReflectance, fresnel, ggxDistribution, materialBinding, materialSources,
+  MATERIAL_PRESETS, baseReflectance, fresnel, ggxDistribution, materialBinding, materialSources,
   normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
   type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
@@ -149,17 +149,22 @@ test("материал: без материала цвет сцены не ме�
 });
 
 test("материал: файл читает три канала, упаковка — буквами", () => {
+  // Раскладка ORM по стандарту: R — окклюзия, G — шероховатость, B — металл.
   const material = normalizeMaterial({
-    roughness: { from: "packed", packedChannel: "r", value: 0 },
-    metallic: { from: "packed", packedChannel: "g", value: 0 },
-    ao: { from: "packed", packedChannel: "b", value: 0 },
+    roughness: { from: "packed", packedChannel: "g", value: 0 },
+    metallic: { from: "packed", packedChannel: "b", value: 0 },
+    ao: { from: "packed", packedChannel: "r", value: 0 },
     packed: "asset:orm",
   })!;
   expect(usesPacked(material)).toBe(true);
   const binding = materialBinding(material, DEFAULT_ENVIRONMENT);
-  expect(binding.roughness).toEqual({ mode: 2, channel: 0, value: 0, src: null });
-  expect(binding.metallic.channel).toBe(1);
-  expect(binding.ao.channel).toBe(2);
+  expect(binding.roughness).toEqual({ mode: 2, channel: 1, value: 0, src: null });
+  expect(binding.metallic.channel).toBe(2);
+  expect(binding.ao.channel).toBe(0);
+  // Значения по умолчанию уже стоят на своих буквах: «выбрать ORM» = «работает».
+  expect(DEFAULT_MATERIAL.roughness.packedChannel).toBe("g");
+  expect(DEFAULT_MATERIAL.metallic.packedChannel).toBe("b");
+  expect(DEFAULT_MATERIAL.ao.packedChannel).toBe("r");
   // Все карты материала — файлы объекта: иначе они теряются при переносе.
   expect(materialSources(material)).toEqual(["asset:orm"]);
 
@@ -256,4 +261,27 @@ test("материал: имена в редакторе совпадают с �
   expect(model).toContain('"roughness" => Param::Roughness');
   const core = readFileSync(join(process.cwd(), "crates", "rig-core", "src", "lib.rs"), "utf8");
   expect(core).toContain("CORE_GENERATION: u32 = 22");
+});
+
+test("документация: руководство называет то же, что интерфейс", () => {
+  // Руководство — часть продукта: если оно разойдётся с полями, человек будет
+  // искать в инспекторе то, чего нет. Поэтому сверяем имена и раскладку.
+  const guide = readFileSync(join(process.cwd(), "docs", "MATERIALS.md"), "utf8");
+  for (const preset of MATERIAL_PRESETS) expect(guide).toContain(preset.label);
+  for (const field of ["Шероховатость", "Металл", "Окклюзия", "Свечение", "Сила блика", "Окружение сцены"]) {
+    expect(guide).toContain(field);
+  }
+  // Раскладка ORM: буквы — это порядок каналов.
+  expect(guide).toContain("| `R` | окклюзия |");
+  expect(guide).toContain("| `G` | шероховатость |");
+  expect(guide).toContain("| `B` | металл |");
+  // И правило «−1 значит не задано» — главное в скрипте.
+  expect(guide).toContain("`-1` значит «не задано»");
+  // README ведёт в руководство, иначе его никто не найдёт.
+  const readme = readFileSync(join(process.cwd(), "README.md"), "utf8");
+  expect(readme).toContain("docs/MATERIALS.md");
+  // Ползунок силы блика у света — то, что обещает руководство.
+  const lightSection = readFileSync(join(process.cwd(), "src", "components", "LightSection.tsx"), "utf8");
+  expect(lightSection).toContain("Сила блика");
+  expect(lightSection).toContain("specular");
 });

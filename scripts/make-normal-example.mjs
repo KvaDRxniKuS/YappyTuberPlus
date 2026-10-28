@@ -378,13 +378,13 @@ function paintMaterialMaps(orm, emissive) {
       const face = visibleFaceAt(x, y);
       if (!face) continue;
       const name = face.name;
-      // ORM: R — шероховатость, G — металл, B — окклюзия.
+      // ORM: R — окклюзия, G — шероховатость, B — металл (glTF, Unreal, Godot).
       const spec = name === "+Y"
         ? { roughness: 0.18, metallic: 1, ao: 1 }
         : name === "+Z"
           ? { roughness: 0.75, metallic: 0, ao: 1 }
           : { roughness: 0.35, metallic: 0, ao: 0.85 };
-      over(orm, x, y, [spec.roughness, spec.metallic, spec.ao], 1);
+      over(orm, x, y, [spec.ao, spec.roughness, spec.metallic], 1);
       // Свечение: только верхняя грань, слабо — чтобы правило «свечение не
       // зависит от светов» было видно в темноте.
       const glow = name === "+Y" ? 0.35 : 0;

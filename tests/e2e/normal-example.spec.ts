@@ -123,14 +123,15 @@ test("пример: карта ORM разложена по стандарту, �
   const orm = decode("cube-orm.png");
   expect(orm.width).toBe(512);
   // Верх: полированный металл. Правая грань: матовый диэлектрик.
+  // Раскладка ORM: R — окклюзия, G — шероховатость, B — металл.
   const top = at(orm, 256, 150);
   const right = at(orm, 370, 340);
-  expect(top[0]).toBeCloseTo(0.18, 1); // R — шероховатость
-  expect(top[1]).toBeCloseTo(1, 1); // G — металл
-  expect(right[0]).toBeCloseTo(0.75, 1);
-  expect(right[1]).toBeCloseTo(0, 1);
-  // B — окклюзия: у левой грани в углу темнее, чем у верха.
-  expect(at(orm, 150, 340)[2]).toBeLessThan(top[2]);
+  expect(top[1]).toBeCloseTo(0.18, 1); // G — шероховатость
+  expect(top[2]).toBeCloseTo(1, 1); // B — металл
+  expect(right[1]).toBeCloseTo(0.75, 1);
+  expect(right[2]).toBeCloseTo(0, 1);
+  // R — окклюзия: у левой грани в углу темнее, чем у верха.
+  expect(at(orm, 150, 340)[0]).toBeLessThan(top[0]);
   // Вне куба — прозрачно: карта не светится на пустом месте.
   expect(at(orm, 4, 4)[3]).toBe(0);
 

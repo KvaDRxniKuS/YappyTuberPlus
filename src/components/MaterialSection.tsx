@@ -114,9 +114,10 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
               packed: src,
               // Включили упаковку — каналы переключаются на её буквы: иначе файл
               // лежит, а материал его не читает, и это выглядит поломкой.
-              roughness: { ...current.roughness, from: "packed", packedChannel: "r" },
-              metallic: { ...current.metallic, from: "packed", packedChannel: "g" },
-              ao: { ...current.ao, from: "packed", packedChannel: "b" },
+              // Раскладка ORM: R окклюзия, G шероховатость, B металл.
+              roughness: { ...current.roughness, from: "packed", packedChannel: "g" },
+              metallic: { ...current.metallic, from: "packed", packedChannel: "b" },
+              ao: { ...current.ao, from: "packed", packedChannel: "r" },
             }))}
             onClear={() => update({
               packed: null,
@@ -277,7 +278,7 @@ function PackedRow({ packed, onPick, onClear }: {
   return (
     <div className="material-packed">
       <div className="material-channel-head">
-        <span title="Один файл: R — шероховатость, G — металл, B — окклюзия (так пишут glTF и Substance)">Упакованная карта</span>
+        <span title="Один файл по стандарту ORM: R — окклюзия, G — шероховатость, B — металл (glTF, Unreal, Godot). Другой порядок букв выбирается в каналах">Упакованная карта</span>
       </div>
       <div className="material-file">
         {preview && <img className="normal-thumb" src={preview} alt="" draggable={false} />}

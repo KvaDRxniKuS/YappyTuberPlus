@@ -133,6 +133,19 @@ export function LightSection({ object, light, canvas, onChange }: {
           Чем ниже лампа, тем шире и ближе к краю пятна блик; чем выше — тем он уже и ярче.
           Значение выше считается от плоскости холста.
         </p>
+        {/* Сила блика отдельно от яркости: яркость — это само пятно (оно же
+            тень), а блик — отражение. Тень с бликом не нужна никогда. */}
+        <label className="range-property">
+          <span>Сила блика <b>{Math.round(light.specular)}%</b></span>
+          <input
+            type="range" min="0" max="200" step="1" value={light.specular}
+            onChange={(event) => update({ specular: Number(event.target.value) })}
+          />
+        </label>
+        <p className="behaviour-hint">
+          0 % — свет только затеняет и подсвечивает, но не блистает: так делают тени. На само
+          пятно сила блика не влияет.
+        </p>
       </div>
     </>
   );

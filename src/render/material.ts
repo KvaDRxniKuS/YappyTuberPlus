@@ -182,7 +182,9 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
   const V: [number, number, number] = [0, 0, 1];
 
   const metallic = clamp(point.metallic, 0, 1);
-  const roughness = clamp(point.roughness, 0.002, 1);
+  // Минимум — как в шейдере (`clamp(…, 0.02, 1.0)`): «зеркало» не должно
+  // считаться по-разному в кадре и на листе примера.
+  const roughness = clamp(point.roughness, 0.02, 1);
   const F0 = baseReflectance([albedoR, albedoG, albedoB], metallic);
   const ambientLevel = clamp(point.environment.level, 0, 2);
   const ambient: [number, number, number] = [
@@ -257,11 +259,11 @@ function normalize3(v: [number, number, number]): [number, number, number] {
 
 /** Готовые наборы материала: то, с чего начинают, а не «пустые поля». */
 export const MATERIAL_PRESETS: Array<{ id: string; label: string; patch: Partial<MaterialSpec> }> = [
-  { id: "matte", label: "Матовый", patch: { roughness: { ...DEFAULT_CHANNEL(0.9, "r") }, metallic: { ...DEFAULT_CHANNEL(0, "g") } } },
-  { id: "plastic", label: "Пластик", patch: { roughness: { ...DEFAULT_CHANNEL(0.35, "r") }, metallic: { ...DEFAULT_CHANNEL(0, "g") } } },
-  { id: "metal", label: "Металл", patch: { roughness: { ...DEFAULT_CHANNEL(0.25, "r") }, metallic: { ...DEFAULT_CHANNEL(1, "g") } } },
-  { id: "skin", label: "Кожа", patch: { roughness: { ...DEFAULT_CHANNEL(0.55, "r") }, metallic: { ...DEFAULT_CHANNEL(0, "g") } } },
-  { id: "neon", label: "Неон", patch: { roughness: { ...DEFAULT_CHANNEL(0.4, "r") }, emissive: { color: "#66e0ff", strength: 120, file: null } } },
+  { id: "matte", label: "Матовый", patch: { roughness: { ...DEFAULT_CHANNEL(0.9, "g") }, metallic: { ...DEFAULT_CHANNEL(0, "b") } } },
+  { id: "plastic", label: "Пластик", patch: { roughness: { ...DEFAULT_CHANNEL(0.35, "g") }, metallic: { ...DEFAULT_CHANNEL(0, "b") } } },
+  { id: "metal", label: "Металл", patch: { roughness: { ...DEFAULT_CHANNEL(0.25, "g") }, metallic: { ...DEFAULT_CHANNEL(1, "b") } } },
+  { id: "skin", label: "Кожа", patch: { roughness: { ...DEFAULT_CHANNEL(0.55, "g") }, metallic: { ...DEFAULT_CHANNEL(0, "b") } } },
+  { id: "neon", label: "Неон", patch: { roughness: { ...DEFAULT_CHANNEL(0.4, "g") }, emissive: { color: "#66e0ff", strength: 120, file: null } } },
 ];
 
 /** Файлы материала: всё, что должно попасть в сохранение и папку пресета. */

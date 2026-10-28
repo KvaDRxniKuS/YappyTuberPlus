@@ -47,7 +47,9 @@ export function shadePoint(point, lights, options) {
   const N = norm(flat);
   const V = [0, 0, 1];
   const metallic = clamp(point.metallic, 0, 1);
-  const roughness = clamp(point.roughness, 0.002, 1);
+  // Минимум — как в шейдере (`clamp(…, 0.02, 1.0)`): «зеркало» не должно
+  // считаться по-разному в кадре и на листе примера.
+  const roughness = clamp(point.roughness, 0.02, 1);
   const F0 = baseReflectance(point.albedo, metallic);
   const ambientLevel = clamp(point.environment.level, 0, 2);
   const ambient = point.environment.color.map((channel) => channel * ambientLevel);
