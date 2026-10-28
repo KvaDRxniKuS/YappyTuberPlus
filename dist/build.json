@@ -4,21 +4,21 @@
     1
   ],
   "core": 23,
-  "format": 5,
+  "format": 6,
   "bridge": 1,
   "modules": 1,
   "shell": 1,
-  "version": "1.1.23.5.1.1.1",
+  "version": "1.1.23.6.1.1.1",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-10-28T08:02:24.076Z",
-  "commit": "6e0e9dd",
+  "builtAt": "2026-10-28T08:31:31.703Z",
+  "commit": "336c345",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-BmL47N15.js",
-      "size": 410883,
-      "sha256": "eb71aff0a05cebeaaacf12ec10a85ba02f666dd6f1bf626cfcef4c9ec3ba39f4"
+      "path": "assets/bus-DP1qrhhS.js",
+      "size": 420044,
+      "sha256": "999a077904de6981d4e9fe047c4989ea4193fef8c7638ad31bc749c9969c5323"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,9 +76,9 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-BrlL1Laj.js",
-      "size": 8931,
-      "sha256": "45402b9caf2b2590bbf93e62afe52a849d41611ac1174f0f63d5dc87ca14cad8"
+      "path": "assets/overlay-BnY7egTE.js",
+      "size": 9026,
+      "sha256": "133c4be33483215fa1558338e058bf4ee2b337923e7b49d10e1d62e4aedd848b"
     },
     {
       "path": "assets/overlay-DT7yrNH-.css",
@@ -86,14 +86,14 @@
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
     },
     {
-      "path": "assets/studio-CQ6kBR_S.js",
-      "size": 766235,
-      "sha256": "0121e0fbc49f293ef7c30746075660f57a5bb5468e263a67af38692395a11ba4"
+      "path": "assets/studio--p-yROws.js",
+      "size": 776622,
+      "sha256": "ce69785283bd8e1f5443d79c5a66880f846b5ca848468e3898521064ec7cceee"
     },
     {
-      "path": "assets/studio-DYKxBBYv.css",
-      "size": 68565,
-      "sha256": "6621caa31d1c76e4bd0f76d705d931247bc01072baba1f83ba7d3e60501366d9"
+      "path": "assets/studio-CPAI2dXu.css",
+      "size": 69555,
+      "sha256": "24dfd973e7b0b1ec771b95b067ac3286a3a4357ac7c80c8da1e711051472dd4e"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,12 +108,17 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "b88090ca878b86d8cef423060b74527f87623eb0226be3c15a81cac0ac786869"
+      "sha256": "a2c43ec185745e21ef217bb626b551bc7c60da13a869df5d5c2123846de207b6"
     },
     {
       "path": "modules/autoblink.json",
       "size": 1368,
       "sha256": "e7590e4d5e70c1112f96b837ee0e85bc3719f98363913f8b3636d03b5321cafb"
+    },
+    {
+      "path": "modules/color.json",
+      "size": 834,
+      "sha256": "67898ca59776c44cb90005376ea4e650d3a2a4a04bf26bf6cd170b113bd46e1b"
     },
     {
       "path": "modules/external.json",
@@ -122,8 +127,8 @@
     },
     {
       "path": "modules/index.json",
-      "size": 181,
-      "sha256": "964950e29dc3dff8c81c94811545e260c5f50df56a3af1d4586bd8ec22a1fbef"
+      "size": 194,
+      "sha256": "3b5229a4349f0dc893a8a13a9188344215ad6f2cbf97b448b27c130fa669d790"
     },
     {
       "path": "modules/key.json",
@@ -173,7 +178,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "eedc0f238af7fbe5a49f18e53f74c71acb756c7eddcf8a1f895678eac71a3504"
+      "sha256": "c0f4ff3021f3661e3def1f10a054a5e8427ec9d8754b5b5de5bda1f642cf57ce"
     },
     {
       "path": "rig_core.wasm",

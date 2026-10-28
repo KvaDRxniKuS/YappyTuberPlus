@@ -1,0 +1,29 @@
+{
+  "id": "color",
+  "title": "Цвет",
+  "description": "Цвет по палитре и режиму: статичный, дыхание, круг, последовательность, волна, случайный, реакция на вход. Каналов можно добавить сколько угодно.",
+  "kind": "color",
+  "format": 1,
+  "audio": false,
+  "inputs": [],
+  "fields": [],
+  "defaults": {
+    "channels": [
+      {
+        "name": "c1",
+        "label": "Основной",
+        "mode": "cycle",
+        "colors": [
+          { "color": "#ff4d6d", "hold": 1 },
+          { "color": "#8b5cf6", "hold": 1 },
+          { "color": "#22d3ee", "hold": 1 }
+        ],
+        "speed": 100,
+        "phase": 0,
+        "brightness": 100,
+        "smooth": 40,
+        "react": null
+      }
+    ]
+  }
+}
