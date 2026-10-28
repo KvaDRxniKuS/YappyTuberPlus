@@ -10,6 +10,7 @@
     "external",
     "presets",
     "color",
+    "ambient",
     "twitch",
     "pulse"
   ]

@@ -1,0 +1,36 @@
+{
+  "id": "ambient",
+  "title": "Свет из экрана",
+  "description": "Средний цвет участков своей сцены или источника OBS: свет подстраивается под то, что происходит на картинке. Точка выборки задаётся в долях кадра, сила размытия — в пикселях.",
+  "kind": "ambient",
+  "format": 1,
+  "audio": false,
+  "inputs": [],
+  "fields": [],
+  "defaults": {
+    "rate": 10,
+    "connection": {
+      "host": "127.0.0.1",
+      "port": 4455
+    },
+    "points": [
+      {
+        "name": "spot_1",
+        "label": "Точка 1",
+        "source": {
+          "kind": "scene",
+          "scene": "",
+          "item": ""
+        },
+        "area": {
+          "x": 0.5,
+          "y": 0.5,
+          "size": 0.2
+        },
+        "blur": 8,
+        "follow": true,
+        "smooth": 30
+      }
+    ]
+  }
+}
