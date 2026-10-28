@@ -6,19 +6,19 @@
   "core": 23,
   "format": 6,
   "bridge": 1,
-  "modules": 2,
+  "modules": 3,
   "shell": 1,
-  "version": "1.1.23.6.1.2.1",
+  "version": "1.1.23.6.1.3.1",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-10-28T09:36:51.624Z",
-  "commit": "f03a908",
+  "builtAt": "2026-10-28T09:46:37.408Z",
+  "commit": "429aff0",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-CfRcxGt_.js",
-      "size": 423264,
-      "sha256": "58b5aaed8134f16a9cee96edf8a42faed2461dd89e6dd419fffb0ab236a7ac6f"
+      "path": "assets/bus-Ca0afTpV.js",
+      "size": 426020,
+      "sha256": "f4a24702e19f5cb379d742e13edf5fbe4085280ba9d216f56b3a914c691be1e9"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -81,19 +81,19 @@
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
     },
     {
-      "path": "assets/overlay-lQfv3KVq.js",
+      "path": "assets/overlay-Tx5mWe_d.js",
       "size": 9026,
-      "sha256": "27cb5c3a3f2fcf4d3fafd1eac5f9cc4c4fdd7abffbbad3b789b85264ebd2dd09"
+      "sha256": "3ef7d8807895f32a72d6962e1ea8ff16aa97870287a80151715a946e35b16264"
     },
     {
-      "path": "assets/studio-B8pLj8NW.css",
-      "size": 69803,
-      "sha256": "b80db4efc30118d6a365bb5d0840ea05be894f185da6a7e5025896c4e8e2f000"
+      "path": "assets/studio-TZFgDKtN.js",
+      "size": 802896,
+      "sha256": "dd0e6abcf29f17878d656372694081a7524dabed4dfd1faf2091efad3e04f040"
     },
     {
-      "path": "assets/studio-Dr2woGe5.js",
-      "size": 798297,
-      "sha256": "08e1730793c74bbeec64a079556051ca46d04b5bd4ff0ce28bfda3302a4328fa"
+      "path": "assets/studio-VVqbBYn8.css",
+      "size": 70386,
+      "sha256": "cee444423ff0809b91c3aa68bdb23129800012f4363eae305872884d04d42f45"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "ca01f0f3e435ce865edfdcd4ec0985d797b51358f17f9c8056afd8940ccbecf7"
+      "sha256": "e1fb7b4036fdbf1724857f7489148104bd82dda4a71f27b07113ff546d7bfc01"
     },
     {
       "path": "modules/ambient.json",
@@ -117,8 +117,8 @@
     },
     {
       "path": "modules/autoblink.json",
-      "size": 1368,
-      "sha256": "e7590e4d5e70c1112f96b837ee0e85bc3719f98363913f8b3636d03b5321cafb"
+      "size": 709,
+      "sha256": "f8eb80c27edc5963c9a645d10f696a3a4fadae38cecd3622beb31fde5eec185a"
     },
     {
       "path": "modules/color.json",
@@ -183,7 +183,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "9f287552f1db35dfe3e03de733b32d289e55d250059b673c3a4469de4d4f2498"
+      "sha256": "014e9171ee4206082ece4de9926ad0382e602a1653a053cd660927983c6752da"
     },
     {
       "path": "rig_core.wasm",
