@@ -1657,6 +1657,15 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .colour-row-label { min-width: 96px; color: #c8ced6; }
 .colour-row select { flex: 1 1 140px; background: #1b1f24; color: #dfe4ea; border: 1px solid #333a42; border-radius: 5px; padding: 2px 6px; }
 .colour-row .inline-error { flex-basis: 100%; margin: 0; }
+/* Моргание: выводы модуля — свой таймер у каждого. */
+.blink-editor { display: flex; flex-direction: column; gap: 6px; }
+.blink-output { border: 1px solid #262b31; border-radius: 6px; }
+.blink-output-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px; }
+.blink-output-toggle { display: flex; align-items: center; gap: 6px; background: none; border: none; color: #c8ced6; cursor: pointer; font-size: 12px; text-align: left; }
+.blink-output-toggle small { color: #7d868f; }
+.blink-output-timing { margin-left: auto; }
+.blink-output-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-top: 1px solid #262b31; }
+.blink-add { align-self: flex-start; }
 /* Свет из экрана: образец точки, соединение с OBS. */
 .ambient-swatch { background: linear-gradient(135deg, #ff4d6d, #22d3ee); }
 .ambient-obs { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid #262b31; }

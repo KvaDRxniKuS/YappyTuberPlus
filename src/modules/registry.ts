@@ -351,7 +351,10 @@ export function fieldVisible(field: ModuleField, config: ModuleConfig): boolean 
 /** Границы входа: у ручных и авто-модулей они берутся из настроек экземпляра. */
 export function inputRange(module: ModuleInstance, spec: ModuleInputSpec): { min: number; max: number; step: number } {
   const config = module.config;
-  const configurable = moduleDefinition(module.type).kind === "manual" || moduleDefinition(module.type).kind === "autoblink";
+  // У ручного модуля границы общие на весь модуль, а у моргания — свои у каждого
+  // вывода: они уже стоит в самом входе, поэтому настройки экземпляра его не
+  // перекрывают.
+  const configurable = moduleDefinition(module.type).kind === "manual";
   if (configurable) {
     const min = readNumber(config.min) ?? spec.min;
     const max = readNumber(config.max) ?? spec.max;

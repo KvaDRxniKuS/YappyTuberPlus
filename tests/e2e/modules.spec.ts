@@ -37,8 +37,12 @@ test("библиотека шаблонов читается из папки mod
   expect(moduleDefinition("loudness").inputs.map((input) => input.name)).toEqual(["speak", "loudness", "db", "talking"]);
   expect(moduleDefinition("autoblink").inputs.map((input) => input.name)).toEqual(["blink"]);
   expect(moduleDefinition("manual").inputs.map((input) => input.name)).toEqual(["value"]);
-  // Поля с настройками есть у каждого нового модуля.
-  expect(moduleDefinition("autoblink").fields.map((field) => field.key)).toContain("period");
+  // У моргания поля настроек живут на выводах, а не в шаблоне: их правит
+  // отдельный редактор, поэтому в самом шаблоне лежат только стартовые выводы.
+  expect(moduleDefinition("autoblink").fields).toEqual([]);
+  const defaults = moduleDefinition("autoblink").defaults.outputs;
+  expect(Array.isArray(defaults)).toBe(true);
+  expect(JSON.stringify(defaults)).toContain("period");
   expect(moduleDefinition("manual").fields.map((field) => field.key)).toContain("mode");
 });
 
@@ -89,7 +93,10 @@ test("ручной модуль берёт значение из ползунк�
 
 test("границы ручного и авто-модуля берутся из настроек экземпляра", () => {
   const manual = module("manual", "manual", { config: { ...moduleDefinition("manual").defaults, min: -5, max: 5 } });
-  const auto = module("auto", "autoblink", { config: { ...moduleDefinition("autoblink").defaults, min: 0.2, max: 0.9 } });
+  // У моргания границы свои у каждого вывода: они лежат в самом выводе.
+  const auto = module("auto", "autoblink", {
+    config: { outputs: [{ name: "blink", label: "Моргание", period: 4200, hold: 140, jitter: 35, min: 0.2, max: 0.9, seed: 0 }] },
+  });
   // Пока ползунок не трогали, ручной вход стоит на минимуме своих границ.
   const values = composeValues([manual, auto], { audio: {}, manual: {}, auto: {} });
   expect(values["manual.value"]).toBe(-5);

@@ -853,6 +853,12 @@ export interface ModuleConfig {
    * окна), чтобы пресет можно было выкладывать.
    */
   connection?: { host?: string; port?: number };
+  /**
+   * Выводы модуля моргания: у каждого свои интервал, длительность, разброс,
+   * границы и семечко. Поле живёт прямо здесь, потому что это настройка
+   * экземпляра, а не вид модуля: список правится в панели.
+   */
+  outputs?: BlinkOutputSpec[];
   /** Нормализовать сумму визем к 1. */
   normalize?: boolean;
   /** Порог слышимости для визем, дБ. */
@@ -860,10 +866,22 @@ export interface ModuleConfig {
   [key: string]:
     | number | string | boolean
     | string[]
-    | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[]
+    | VisemeEntry[] | KeyboardKey[] | MouseButton[] | EnumState[] | BlinkOutputSpec[]
     | ExternalSourceConfig
     | { host?: string; port?: number }
     | undefined;
+}
+
+/** Один вывод моргания в настройках экземпляра: таймер плюс его числа. */
+export interface BlinkOutputSpec {
+  name: string;
+  label: string;
+  period: number;
+  hold: number;
+  jitter: number;
+  min: number;
+  max: number;
+  seed: number;
 }
 
 /** Экземпляр модуля. Имя — префикс входов: `mic` → `mic.talking`. */
@@ -928,7 +946,11 @@ export const DEFAULT_MODULES: ModuleInstance[] = [
     type: "autoblink",
     enabled: true,
     source: "manual",
-    config: { period: 4200, hold: 140, jitter: 35, min: 0, max: 1 },
+    // Несколько выводов моргания: у каждого свои числа и своё семечко, поэтому
+    // одинаковые настройки не дают синхронного мигания.
+    config: {
+      outputs: [{ name: "blink", label: "Моргание", period: 4200, hold: 140, jitter: 35, min: 0, max: 1, seed: 0 }],
+    },
   },
   {
     name: "manual",

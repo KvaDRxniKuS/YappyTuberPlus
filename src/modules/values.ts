@@ -9,6 +9,7 @@ import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { presetEntries, presetInputs, presetPreview } from "./presets";
 import { channelValues, colorChannels, colorInputs } from "./color";
 import { ambientColor, ambientInputs, ambientPoints, ambientValues } from "./ambient";
+import { autoBlinkInputs } from "./autoblink";
 import { frameValue, type AudioFrame } from "./audio";
 import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./external";
 import { textInputOf } from "./sources";
@@ -40,6 +41,8 @@ export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   if (definition.kind === "color") return colorInputs(module);
   // Свет из экрана: то же самое, только на точку выборки.
   if (definition.kind === "ambient") return ambientInputs(module);
+  // Моргание: по входу на вывод модуля.
+  if (definition.kind === "autoblink") return autoBlinkInputs(module);
   if (definition.kind === "keyboard") {
     return keyboardKeys(module).map((key) => ({
       name: key.name,

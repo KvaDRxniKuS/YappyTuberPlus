@@ -13,6 +13,7 @@ import { ambientPoints } from "../modules/ambient";
 import { moduleDefinition } from "../modules/registry";
 import { COLOR_FIELD_LABEL, colorFieldsOf, ownColorOf, type ColorField } from "../render/color";
 import { Switch } from "./Switch";
+import { autoBlinkEyeInput, autoBlinkOutputs } from "../modules/autoblink";
 
 interface BehaviourPanelProps {
   /** Основной объект: по нему показаны значения. */
@@ -381,6 +382,17 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
   const eyeModules = (modules ?? []).filter((module) => module.type === "autoblink");
   const hasVoice = voiceModules.length > 0;
   const hasEye = eyeModules.length > 0;
+  /**
+   * Вывод выбранного модуля моргания. У модуля их может быть несколько — «глаз»
+   * не обязан быть первым, поэтому имя входа хранится в поведении, а панель
+   * показывает выбор. Пропавшее имя не ломает формулу: берём то, что модуль
+   * отдаёт по умолчанию.
+   */
+  const eyeModuleInstance = eyeModules.find((item) => item.name === (behaviour.eyeModule || eyeModules[0]?.name));
+  const eyeOutputs = eyeModuleInstance ? autoBlinkOutputs(eyeModuleInstance) : [];
+  const eyeInput = eyeOutputs.some((output) => output.name === behaviour.eyeInput)
+    ? behaviour.eyeInput
+    : eyeModuleInstance ? autoBlinkEyeInput(eyeModuleInstance) : "blink";
 
   /** Настройки речи и глаза, которые сейчас некуда приложить. */
   const speechSet = behaviour.squash !== 0 || behaviour.bounce > 0 || behaviour.dragAngle > 0;
@@ -801,12 +813,30 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
             label="Моргание"
             modules={eyeModules}
             value={behaviour.eyeModule}
-            onPick={(eyeModule) => patch({ eyeModule })}
+            onPick={(eyeModule) => {
+              const picked = eyeModules.find((item) => item.name === eyeModule);
+              patch({ eyeModule, eyeInput: picked ? autoBlinkEyeInput(picked) : "blink" });
+            }}
           />
+          {hasEye && eyeOutputs.length > 1 && (
+            <label className="module-field">
+              <span
+                className="module-field-label"
+                title="У модуля моргания несколько выводов: какой из них открывает и закрывает глаз"
+              >
+                Какое моргание
+              </span>
+              <select value={eyeInput} onChange={(event) => patch({ eyeInput: event.target.value })}>
+                {eyeOutputs.map((output) => (
+                  <option key={output.name} value={output.name}>{output.label} ({output.name})</option>
+                ))}
+              </select>
+            </label>
+          )}
           <p className="behaviour-hint">
             Если заданы оба, условия перемножаются: слой виден, когда верно и то, и другое.
             Входы берутся из своих модулей: речь — из {hasVoice ? `«${behaviour.voiceModule || voiceModules[0].name}»` : "микрофона"},
-            моргание — из {hasEye ? `«${behaviour.eyeModule || eyeModules[0].name}»` : "модуля моргания"}.
+            моргание — из {hasEye ? `«${behaviour.eyeModule || eyeModules[0].name}» (${eyeInput})` : "модуля моргания"}.
             Строки есть только у тех модулей, что добавлены в пресет.
           </p>
         </section>

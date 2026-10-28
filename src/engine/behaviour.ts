@@ -110,8 +110,16 @@ export interface Behaviour {
    * ломалось бы, стоило пересоздать модуль — новый получил бы имя `loudness`.
    */
   voiceModule: string;
-  /** Имя модуля моргания, чей вход `blink` читает видимость глаза. */
+  /** Имя модуля моргания, чей вход читает видимость глаза. */
   eyeModule: string;
+  /**
+   * Имя вывода внутри этого модуля: `blink`, `blink_2`…
+   *
+   * У модуля моргания выводов может быть несколько, и «глаз» — не обязательно
+   * первый. Имя хранится снимком, как имя модуля: переименование вывода в
+   * настройках не оставит формулу смотреть в пустоту — панель предложит выбор.
+   */
+  eyeInput: string;
   /** Мировой поворот «тяжёлой» стороной: 0 — вниз, 90 — вправо. `null` — выкл. */
   physRotation: number | null;
   /**
@@ -219,6 +227,7 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   eye: "none",
   voiceModule: "",
   eyeModule: "",
+  eyeInput: "blink",
   physRotation: null,
   physSpace: "world",
   physSmooth: 0.4,
@@ -464,6 +473,8 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
    */
   const voice = behaviour.voiceModule.trim();
   const eye = behaviour.eyeModule.trim();
+  // Какой вывод модуля моргания считать «глазом»: имя входа, а не догадка.
+  const eyeInput = behaviour.eyeInput.trim() || "blink";
   const speak = voice ? `${voice}.speak` : null;
   const talking = voice ? `(${voice}.talking > 0 or ${voice}.speak > 0.05)` : null;
 
@@ -786,8 +797,8 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   const rules: string[] = [];
   if (talking && behaviour.mouth === "open") rules.push(`${talking} ? 1 : 0`);
   if (talking && behaviour.mouth === "closed") rules.push(`${talking} ? 0 : 1`);
-  if (eye && behaviour.eye === "open") rules.push(`1 - ${eye}.blink`);
-  if (eye && behaviour.eye === "closed") rules.push(`${eye}.blink`);
+  if (eye && behaviour.eye === "open") rules.push(`1 - ${eye}.${eyeInput}`);
+  if (eye && behaviour.eye === "closed") rules.push(`${eye}.${eyeInput}`);
   // Пресеты: «виден только при» и «виден при всех, кроме». Пустой список —
   // это «без ограничения», поэтому условие не пишется вовсе: иначе объект
   // исчез бы у всех, кто просто добавил пресеты.

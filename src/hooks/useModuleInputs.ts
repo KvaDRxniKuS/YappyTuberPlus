@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InputMark, InputValues, ModuleConfig, ModuleInstance } from "../types";
 import { AudioInputEngine, type AudioFrame, type CalibrationFrame, type DeviceOption } from "../modules/audio";
-import { inputRange, moduleDefinition } from "../modules/registry";
+import { moduleDefinition } from "../modules/registry";
 import { composeValues, inputEnabled, inputKey, inputMeta, inputTexts, isPointerKind } from "../modules/values";
 import { usePointerInputs } from "./usePointerInputs";
 import type { MonitorOption } from "../modules/pointer";
 import { useExternalSource } from "./useExternalSource";
 import { useAmbientSample, type ObsModuleInfo } from "./useAmbientSample";
 import type { ExternalLogEntry, ExternalStatus, ExternalTextLine } from "../modules/sources";
+import { autoBlinkOutputs, blinkState, blinkTick, type BlinkState } from "../modules/autoblink";
 
 export interface ModuleInputsApi {
   /** Готовый набор для ядра: `mic.talking`, `blink.blink`, `manual.value`. */
@@ -89,7 +90,9 @@ export function useModuleInputs(
   const [devices, setDevices] = useState<DeviceOption[]>([]);
   const [contextState, setContextState] = useState("closed");
   const starting = useRef(false);
-  const schedules = useRef(new Map<string, { next: number; until: number }>());
+  // Состояние таймеров: ключ — «модуль:вывод», потому что выводов у модуля
+  // моргания может быть несколько и у каждого свой генератор.
+  const schedules = useRef(new Map<string, BlinkState>());
 
   const engine = useCallback(() => {
     if (!engineRef.current) engineRef.current = new AudioInputEngine();
@@ -213,15 +216,28 @@ export function useModuleInputs(
   }, [active, liveModules]);
 
   // --- авто-модули: моргание по таймеру -------------------------------------
+  /**
+   * Выводы моргания всех включённых модулей.
+   *
+   * У одного модуля их может быть несколько: «глаза», «брови», редкое и частое
+   * моргание. Вход в скрипте — имя вывода (`auto.blink`, `auto.blink_2`),
+   * поэтому второй модуль с теми же числами больше не нужен.
+   */
   const autoModules = useMemo(
-    () => modules.filter((module) => module.enabled && moduleDefinition(module.type).kind === "autoblink"),
+    () => modules
+      .filter((module) => module.enabled && moduleDefinition(module.type).kind === "autoblink")
+      .map((module) => ({ module, outputs: autoBlinkOutputs(module) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [modules, libraryVersion],
   );
-  const autoKey = JSON.stringify(autoModules.map((module) => [
+  // Настройки влияют на расписание: правка любого числа пересоздаёт таймеры,
+  // чтобы новый интервал начал действовать сразу, а не после текущего моргания.
+  const autoKey = JSON.stringify(autoModules.map(({ module, outputs }) => [
     module.name,
-    module.config.period, module.config.hold, module.config.jitter, module.config.min, module.config.max,
     module.disabledInputs,
+    outputs.map((output) => [
+      output.name, output.period, output.hold, output.jitter, output.min, output.max, output.seed,
+    ]),
   ]));
 
   useEffect(() => {
@@ -233,26 +249,17 @@ export function useModuleInputs(
     const tick = () => {
       const now = performance.now();
       const next: Record<string, number> = {};
-      for (const module of autoModules) {
-        const definition = moduleDefinition(module.type);
-        const spec = definition.inputs[0];
-        if (!spec || !inputEnabled(module, spec.name)) continue;
-        const range = inputRange(module, spec);
-        const period = clamp(Number(module.config.period) || 4200, 500, 20000);
-        const hold = clamp(Number(module.config.hold) || 140, 40, 2000);
-        const jitter = clamp(Number(module.config.jitter) || 0, 0, 90) / 100;
-        let schedule = schedules.current.get(module.name);
-        if (!schedule) {
-          // Первое моргание — не сразу, а через половину интервала: так не
-          // выглядит, будто персонаж моргает при каждом запуске.
-          schedule = { next: now + period * (0.5 + Math.random() * 0.5), until: 0 };
-          schedules.current.set(module.name, schedule);
+      for (const { module, outputs } of autoModules) {
+        for (const output of outputs) {
+          if (!inputEnabled(module, output.name)) continue;
+          const key = `${module.name}:${output.name}`;
+          let state = schedules.current.get(key);
+          if (!state) {
+            state = blinkState(now, output, module.name);
+            schedules.current.set(key, state);
+          }
+          next[inputKey(module, output.name)] = blinkTick(state, output, now);
         }
-        if (now >= schedule.next) {
-          schedule.until = now + hold;
-          schedule.next = now + Math.max(hold + 40, period * (1 + (Math.random() * 2 - 1) * jitter));
-        }
-        next[inputKey(module, spec.name)] = now < schedule.until ? range.max : range.min;
       }
       setAuto((current) => sameRecord(current, next) ? current : next);
     };

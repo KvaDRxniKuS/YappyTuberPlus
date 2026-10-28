@@ -22,6 +22,7 @@ import { ExternalSourceEditor } from "./ExternalSourceEditor";
 import { PresetsEditor } from "./PresetsEditor";
 import { ColorEditor } from "./ColorEditor";
 import { AmbientEditor } from "./AmbientEditor";
+import { AutoBlinkEditor } from "./AutoBlinkEditor";
 import type { ObsModuleInfo } from "../hooks/useAmbientSample";
 import { NumberField } from "./NumberField";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
@@ -350,6 +351,13 @@ export function ModulesPanel(props: ModulesPanelProps) {
                         probe: () => props.onProbeAmbient?.(module.name),
                       }}
                       onConfig={(config, label) => patch(module.name, { config }, label)}
+                    />
+                  )}
+
+                  {definition.kind === "autoblink" && (
+                    <AutoBlinkEditor
+                      module={module}
+                      onOutputs={(outputs, label) => patchConfig(module, "outputs", outputs, label)}
                     />
                   )}
 

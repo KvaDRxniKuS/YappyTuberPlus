@@ -6,7 +6,7 @@
  * этом ничего не говорит, поэтому версия — это **набор чисел с подписями**:
  *
  * ```
- * 1.0 . 21 . 3 . 1 . 1 . 1
+ * 1.1 . 23 . 6 . 1 . 3 . 1
  * │     │    │   │   │   └─ оболочка: приложение Tauri
  * │     │    │   │   └───── модули: контракт шаблонов из папки modules
  * │     │    │   └───────── мост: протокол редактор ↔ оверлей
@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.1 · ядро 23 · файл 6 · мост 1 · модули 2 · оболочка 1`.
+ * `1.1 · ядро 23 · файл 6 · мост 1 · модули 3 · оболочка 1`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -88,7 +88,7 @@ export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, 4, 5, PRESET_FO
  * Растёт вместе с новым видом или новым полем настроек: шаблон новее редактора
  * читается частично, а незнакомый вид молча становится «Manual».
  */
-export const MODULE_FORMAT = 2;
+export const MODULE_FORMAT = 3;
 
 export interface ProjectVersion {
   /** Релиз продукта: то, что видит пользователь и установщик. */
@@ -136,7 +136,7 @@ export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 1 · модули 2 · оболочка 1`. */
+/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 1 · модули 3 · оболочка 1`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");
