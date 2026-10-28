@@ -191,6 +191,19 @@ uniform sampler2D uEmissiveTex;
 uniform vec2 uCanvas;
 uniform vec2 uOrigin;
 uniform vec2 uSize;
+/**
+ * Обратная матрица объекта и его прямоугольник: по ним считается UV карт.
+ *
+ * Читать карты по vUv нельзя: vUv идёт по рамке-боксу, а в боксе есть
+ * паддинг под размытие края, зависящий от масштаба камеры, и при повороте он
+ * вообще описан вокруг повёрнутого прямоугольника. Карта, натянутая на бокс,
+ * «плыла» и растягивалась при движении и зуме — а это выглядело как деформация
+ * самой карты ORM. UV объекта от камеры не зависит.
+ */
+uniform mat3 uInverse;
+uniform vec4 uUvRect;
+/** Пикселей холста на единицу объекта: в них считаются направления на свет. */
+uniform float uScale;
 uniform int uCount;
 uniform vec4 uColor0[MAX_LIGHTS];
 uniform vec4 uColor1[MAX_LIGHTS];
@@ -238,11 +251,11 @@ float triangleInside(vec2 p) {
 }
 
 /** Значение канала в точке: константа, свой файл или буква упакованной карты. */
-float channelValue(int mode, int channel, float constant, sampler2D own) {
+float channelValue(int mode, int channel, float constant, sampler2D own, vec2 uv) {
   if (mode == 0) return constant;
-  if (mode == 1) return texture(own, vUv).r;
+  if (mode == 1) return texture(own, uv).r;
   // «packed» тоже зарезервировано в GLSL — переменная названа «тексель».
-  vec4 packedTexel = texture(uPacked, vUv);
+  vec4 packedTexel = texture(uPacked, uv);
   if (channel == 0) return packedTexel.r;
   if (channel == 1) return packedTexel.g;
   if (channel == 2) return packedTexel.b;
@@ -274,6 +287,10 @@ void main() {
   if (material && scene.a <= 0.001) { outColor = scene; return; }
 
   vec2 p = uOrigin + vUv * uSize;
+  // UV карт — из матрицы объекта, а не из рамки: тогда карта лежит ровно на
+  // картинке при любом повороте, масштабе и зуме камеры.
+  vec2 localPoint = (uInverse * vec3(p, 1.0)).xy;
+  vec2 uv = clamp((localPoint - uUvRect.xy) / uUvRect.zw, 0.0, 1.0);
   float accum = 0.0;
   // Материал: накопленное освещение, тень от тёмных светов и блики.
   vec3 lightSum = vec3(0.0);
@@ -286,9 +303,9 @@ void main() {
   float occlusion = 1.0;
   vec3 F0 = vec3(0.04);
   if (material) {
-    roughness = clamp(channelValue(uRoughMode, uRoughChannel, uRoughValue, uRoughTex), 0.02, 1.0);
-    metallic = clamp(channelValue(uMetalMode, uMetalChannel, uMetalValue, uMetalTex), 0.0, 1.0);
-    occlusion = clamp(channelValue(uAoMode, uAoChannel, uAoValue, uAoTex), 0.0, 1.0);
+    roughness = clamp(channelValue(uRoughMode, uRoughChannel, uRoughValue, uRoughTex, uv), 0.02, 1.0);
+    metallic = clamp(channelValue(uMetalMode, uMetalChannel, uMetalValue, uMetalTex, uv), 0.0, 1.0);
+    occlusion = clamp(channelValue(uAoMode, uAoChannel, uAoValue, uAoTex, uv), 0.0, 1.0);
     // Металл красит отражение цветом объекта, диэлектрик — своим F0 из IOR.
     F0 = mix(vec3(uF0), scene.rgb, metallic);
   }
@@ -334,13 +351,16 @@ void main() {
     if (a <= 0.0005) continue;
 
     // Направление на свет: настоящее смещение до центра пятна плюс высота
-    // света — и то, и другое в пикселях холста. Горизонталь нельзя нормировать
-    // отдельно: единичный вектор против высоты в сотни пикселей даёт (0, 0, 1)
-    // для всей сцены, свет светит строго сверху, и карты нормалей, шероховатости
-    // и металла перестают отзываться на положение пятна — блик стоит на месте,
-    // рельеф выглядит нарисованным.
-    vec2 toLight = center - p;
-    vec3 lightDir = normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)));
+    // света. Горизонталь нельзя нормировать отдельно: единичный вектор против
+    // высоты в сотни пикселей даёт (0, 0, 1) для всей сцены, свет светит строго
+    // сверху, и карты нормалей, шероховатости и металла перестают отзываться на
+    // положение пятна — блик стоит на месте, рельеф выглядит нарисованным.
+    //
+    // Считается в единицах объекта (uScale — пикселей на единицу): тогда
+    // «пол» высоты не превращает свет в прожектор сверху при мелком масштабе,
+    // а наклон остаётся тем же, что и при крупном.
+    vec2 toLight = (center - p) / uScale;
+    vec3 lightDir = normalize(vec3(toLight, max(uLightExtra[i].x / uScale, 0.001)));
     float delta = dot(n, lightDir) - lightDir.z;
     accum += delta * a * polarity;
 
@@ -356,8 +376,11 @@ void main() {
         float D = ggx(NdotH, roughness);
         float k = pow(1.0 - VdotH, 5.0);
         vec3 F = F0 + (1.0 - F0) * k;
-        float denom = 4.0 * max(NdotL, 1e-4) * max(n.z, 1e-4);
-        float gain = (D / denom) * uSpecular * uLightExtra[i].y;
+        // Знаменатель ограничен снизу, а усиление — сверху: иначе у
+        // терминатора (NdotL → 0) блик уходит в бесконечность тонкой линией
+        // поперёк грани — вместо пятна получается полоска.
+        float denom = 4.0 * max(NdotL, 0.02) * max(n.z, 0.02);
+        float gain = clamp(D / denom, 0.0, 8.0) * uSpecular * uLightExtra[i].y;
         lightSum += color0.rgb * a * NdotL;
         specSum += color0.rgb * F * (gain * a);
       }
@@ -374,7 +397,10 @@ void main() {
 
   // Окклюзия гасит диффузную часть и окружение, блик не трогает.
   float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);
-  vec3 ambient = uEnvironment.rgb * uEnvironment.w;
+  // Минимум окружения: металл вне пятна света иначе чёрный, потому что
+  // диффузной части у него нет вовсе, а отражать нечего. Это не «подсветка
+  // ради красоты»: даже в тёмной комнате поверхность что-то отражает.
+  vec3 ambient = uEnvironment.rgb * max(uEnvironment.w, 0.35);
   // Окружение — отражение: у металла красится его цветом (F0), у диэлектрика
   // даёт свои 4 %. Иначе металл был бы чёрным даже в светлой комнате.
   vec3 ambientReflect = F0 * ambient + scene.rgb * (1.0 - metallic) * ambient;
@@ -382,9 +408,10 @@ void main() {
   vec3 emissive = vec3(0.0);
   if (uEmissiveStrength > 0.0) {
     emissive = uEmissiveColor * uEmissiveStrength;
-    if (uEmissiveMode == 1) emissive *= texture(uEmissiveTex, vUv).rgb;
+    if (uEmissiveMode == 1) emissive *= texture(uEmissiveTex, uv).rgb;
   }
-  vec3 rgb = (diffuse + ambientReflect) * shade + specSum * uSpecular + emissive;
+  // uSpecular уже учтён в gain: второй множитель гасил блик дважды.
+  vec3 rgb = (diffuse + ambientReflect) * shade + specSum + emissive;
   outColor = vec4(clamp(rgb, 0.0, 8.0), scene.a);
 }`;
 
@@ -650,7 +677,9 @@ export function shadeLayer(
   lights: LightSample[],
   box: ShadeBox,
 ): boolean {
-  if (!lights.length) return false;
+  // Света в сцене может не быть вовсе: материал и свечение от него не зависят,
+  // и раньше именно этот выход гасил неон «при любых обстоятельствах».
+  if (!lights.length && !sample.material) return false;
   if (box.width < 2 || box.height < 2) return false;
   if (!lightingAvailable() || !state) return false;
   if (!sample.normal && !sample.material) return false;
@@ -789,6 +818,15 @@ export function shadeLayer(
     gl.uniform2f(gl.getUniformLocation(program.volume, "uCanvas"), layer.width, layer.height);
     gl.uniform2f(gl.getUniformLocation(program.volume, "uOrigin"), box.x, box.y);
     gl.uniform2f(gl.getUniformLocation(program.volume, "uSize"), width, height);
+    // UV карт считается от объекта: обратная матрица и его прямоугольник.
+    const inverse = invertMatrix3(sample.matrix);
+    gl.uniformMatrix3fv(gl.getUniformLocation(program.volume, "uInverse"), false, inverse);
+    gl.uniform4f(gl.getUniformLocation(program.volume, "uUvRect"), ...sample.rect);
+    // Масштаб объекта в пикселях холста: в этих единицах считаются направления
+    // на свет, поэтому «пол» высоты не зависит от зума.
+    gl.uniform1f(gl.getUniformLocation(program.volume, "uScale"), Math.max(
+      Math.hypot(sample.matrix[0], sample.matrix[1]), 0.0001,
+    ));
 
     const used = lights.slice(0, MAX_LIGHTS);
     const color0 = new Float32Array(MAX_LIGHTS * 4);
@@ -901,6 +939,23 @@ function createMapTexture(gl: WebGL2RenderingContext, key: string, source: Textu
     entry.uploaded = true;
   }
   return entry.texture;
+}
+
+/**
+ * Обратная матрица 3×3 для матрицы объекта (последняя строка всегда 0, 0, 1).
+ *
+ * Нужна, чтобы из координат холста получить координаты объекта и по ним взять
+ * UV карты: камера и поворот на UV влиять не должны.
+ */
+export function invertMatrix3(matrix: readonly number[]): Float32Array {
+  const [a, b, , c, d, , e, f] = matrix;
+  const det = a * d - b * c;
+  const k = Math.abs(det) < 1e-9 ? 1e6 : 1 / det;
+  return new Float32Array([
+    d * k, -b * k, 0,
+    -c * k, a * k, 0,
+    (c * f - d * e) * k, (b * e - a * f) * k, 1,
+  ]);
 }
 
 let sceneTextureCache: WebGLTexture | null = null;

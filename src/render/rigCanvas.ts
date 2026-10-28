@@ -240,7 +240,10 @@ export function drawRig(
     const sample = view && !ghost
       ? shadeSample(view, object, matrix, left, top, options.environment, values)
       : null;
-    if (sample && options.lighting?.lights.length) {
+    // Свет в сцене не обязателен: материалу хватает собственного окружения, а
+    // свечение от источников не зависит вовсе. Раньше здесь стояло «есть свет»,
+    // и без светильника неон не показывался ни при каких настройках.
+    if (sample && (options.lighting?.lights.length || sample.material)) {
       if (drawShaded(ctx, preset, frame, assets, options, object, matrix, left, top, alpha, masked, strength, sample)) {
         continue;
       }

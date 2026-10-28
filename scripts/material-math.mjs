@@ -10,6 +10,12 @@
 
 export const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
+/** Минимум окружения: металл без него чёрный вне пятна света. */
+export const MIN_AMBIENT = 0.35;
+
+/** Потолок усиления блика: у терминатора GGX иначе уходит в бесконечность. */
+export const MAX_SPECULAR_GAIN = 8;
+
 export function ggx(NdotH, roughness) {
   const alpha = Math.max(roughness * roughness, 0.002);
   const a2 = alpha * alpha;
@@ -64,7 +70,9 @@ export function shadePoint(point, lights, options) {
   // считаться по-разному в кадре и на листе примера.
   const roughness = clamp(point.roughness, 0.02, 1);
   const F0 = baseReflectance(point.albedo, metallic, point.f0 ?? 0.04);
-  const ambientLevel = clamp(point.environment.level, 0, 2);
+  // Минимум окружения: у металла диффузной части нет вовсе, и без отражения
+  // он чёрный вне пятна света — ровно так «половина куба» и пропадала.
+  const ambientLevel = Math.max(clamp(point.environment.level, 0, 2), MIN_AMBIENT);
   const ambient = point.environment.color.map((channel) => channel * ambientLevel);
   const out = [
     (point.albedo[0] * (1 - metallic) + F0[0]) * ambient[0] * point.ao + point.emissive[0],
@@ -83,8 +91,13 @@ export function shadePoint(point, lights, options) {
     const VdotH = Math.max(dot(V, H), 0);
     const D = ggx(NdotH, roughness);
     const F = fresnel(VdotH, F0);
-    const denom = 4 * Math.max(NdotL, 1e-4) * Math.max(N[2], 1e-4);
-    const specScale = (D / denom) * point.specular * Math.max(0, light.polarity);
+    // Ограничение снизу и потолок усиления держат блик пятном: без них у
+    // терминатора он вырождается в белую полоску поперёк грани.
+    const denom = 4 * Math.max(NdotL, 0.02) * Math.max(N[2], 0.02);
+    const specScale = clamp(D / denom, 0, MAX_SPECULAR_GAIN)
+      * point.specular
+      * (light.specular ?? 1)
+      * Math.max(0, light.polarity);
     const diffScale = NdotL * diffuseWeight;
     for (let c = 0; c < 3; c += 1) {
       out[c] += light.color[c] * (specScale * F[c] + diffScale * point.albedo[c]);

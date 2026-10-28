@@ -2,9 +2,9 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MATERIAL_PRESETS, applyPreset, baseReflectance, channelBinding, defaultMaterial, fresnel,
-  ggxDistribution, matchPreset, materialBinding, materialSources, materialSourceSummary,
-  normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
+  MATERIAL_PRESETS, MAX_SPECULAR_GAIN, MIN_AMBIENT, applyPreset, baseReflectance, channelBinding,
+  defaultMaterial, fresnel, ggxDistribution, matchPreset, materialBinding, materialSources,
+  materialSourceSummary, normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
   type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
 import {
@@ -63,9 +63,21 @@ test("материал: блик по GGX — глаже значит ярче �
   expect(baseReflectance([0.9, 0.2, 0.1], 1)).toEqual([0.9, 0.2, 0.1]);
 });
 
-test("материал: металл без света и окружения чёрный — это не баг", () => {
+test("материал: металл вне пятна света не проваливается в чёрный", () => {
+  // Раньше металл без света и без окружения был ровно чёрным: диффузной части
+  // у него нет вовсе, отражать нечего. На тестовом кубе это выглядело как
+  // «работает 50 на 50»: металлические грани пропадали, диэлектрические — нет.
+  // Теперь у окружения есть минимум, и металл виден всегда.
   const metal = shadePoint(point({ metallic: 1 }), [], { normalStrength: 1, material: true });
-  expect(metal).toEqual([0, 0, 0]);
+  expect(metal[0]).toBeCloseTo(0.8 * MIN_AMBIENT, 5);
+
+  // Заданный уровень окружения минимум не ограничивает — он только снизу.
+  const room = shadePoint(
+    point({ metallic: 1, environment: { color: [1, 1, 1], level: 1 } }),
+    [],
+    { normalStrength: 1, material: true },
+  );
+  expect(room[0]).toBeCloseTo(0.8, 5);
 
   // Диэлектрик тот же свет тоже не видит, но окружение его подсвечивает.
   const painted = shadePoint(
@@ -97,15 +109,17 @@ test("материал: свет даёт блик, тень блика не д�
   const lit = shadePoint(point({ roughness: 0.2 }), [light()], { normalStrength: 1, material: true });
   expect(lit[0]).toBeGreaterThan(0.8);
 
-  // Тёмный свет (тень) блика не даёт: иначе тень бликовала бы.
+  // Тёмный свет (тень) блика не даёт: он только гасит диффузную часть, а
+  // отражение окружения остаётся — иначе тень была бы чёрной дырой.
   const shadow = shadePoint(point({ roughness: 0.2 }), [light({ polarity: -1 })], { normalStrength: 1, material: true });
-  expect(shadow[0]).toBe(0);
+  expect(shadow[0]).toBeGreaterThan(0);
+  expect(shadow[0]).toBeLessThan(lit[0]);
 
-  // Сила блика 0 — surface без блика, только диффузная часть.
+  // Сила блика 0 — поверхность без блика, только диффузия и окружение.
   const noSpec = shadePoint(
     point({ roughness: 0.2, specular: 0 }), [light()], { normalStrength: 1, material: true },
   );
-  expect(noSpec[0]).toBeCloseTo(0.8, 5);
+  expect(noSpec[0]).toBeCloseTo(0.8 + (0.8 + 0.04) * MIN_AMBIENT, 5);
 });
 
 test("материал: окклюзия гасит диффузную часть, блик не трогает", () => {
@@ -115,7 +129,7 @@ test("материал: окклюзия гасит диффузную част�
   const dark = shadePoint(
     point({ ao: 0, specular: 0 }), [light()], { normalStrength: 1, material: true },
   );
-  expect(bright[0]).toBeCloseTo(0.8, 5);
+  expect(bright[0]).toBeCloseTo(0.8 + (0.8 + 0.04) * MIN_AMBIENT, 5);
   expect(dark[0]).toBe(0);
 
   // Блик при нулевой окклюзии остаётся: он не диффузный.
@@ -258,8 +272,13 @@ test("материал: шейдер считает по той же модел�
   expect(source).toContain("float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);");
   // Высота света участвует в направлении на свет вместе с настоящим смещением
   // до пятна: нормированная отдельно горизонталь давала «свет сверху» везде.
-  expect(source).toContain("vec2 toLight = center - p;");
-  expect(source).toContain("normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)))");
+  expect(source).toContain("vec2 toLight = (center - p) / uScale;");
+  expect(source).toContain("normalize(vec3(toLight, max(uLightExtra[i].x / uScale, 0.001)))");
+  // Блик ограничен: у терминатора он иначе становится белой полоской.
+  expect(source).toContain("float gain = clamp(D / denom, 0.0, 8.0) * uSpecular * uLightExtra[i].y;");
+  expect(source).toContain("float denom = 4.0 * max(NdotL, 0.02) * max(n.z, 0.02);");
+  // Минимум окружения — общий с моделью в тестах.
+  expect(source).toContain("vec3 ambient = uEnvironment.rgb * max(uEnvironment.w, 0.35);");
 });
 
 test("материал: имена в редакторе совпадают с ядром", () => {

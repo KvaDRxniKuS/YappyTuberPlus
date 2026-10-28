@@ -21,14 +21,14 @@ test("паспорт: шесть чисел и подписи слотов", () 
   );
   // 1.1 — релиз материала: ядро 23 (ior из скрипта), формат файла 6 (цвета
   // объектов), модули 3 (виды «Цвет» и «Свет из экрана», выводы моргания).
-  expect(versionString()).toBe("1.1.23.6.1.3.1");
+  expect(versionString()).toBe("1.1.23.6.1.3.2");
   // Мост в паспорте и протокол оверлея — одно число, иначе они разъедутся.
   expect(VERSION.bridge).toBe(OVERLAY_PROTOCOL);
   expect(VERSION.format).toBe(PRESET_FORMAT);
   expect(VERSION.modules).toBe(MODULE_FORMAT);
 
   // Для человека — подписями, в том же порядке.
-  expect(versionLabel()).toBe("1.1 · ядро 23 · файл 6 · мост 1 · модули 3 · оболочка 1");
+  expect(versionLabel()).toBe("1.1 · ядро 23 · файл 6 · мост 1 · модули 3 · оболочка 2");
   expect(versionShort()).toBe("1.1");
   // В установщик уходят только три числа: поколения туда не помещаются.
   expect(packagingVersion()).toBe("1.1.0");

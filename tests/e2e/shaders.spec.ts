@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { lightDirection } from "../../scripts/material-math.mjs";
+import { invertMatrix3 } from "../../src/render/lighting";
 import { join } from "node:path";
 
 /*
@@ -72,8 +73,8 @@ test("шейдер объёма: нормаль и упакованная кар
   expect(volume).toBeTruthy();
   // Те же слова, что были ошибкой: `flat` и `packed`. Имена по смыслу, а не по
   // старой привычке.
-  expect(volume).toContain("vec3 lightDir = normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)));");
-  expect(volume).toContain("vec4 packedTexel = texture(uPacked, vUv);");
+  expect(volume).toContain("vec3 lightDir = normalize(vec3(toLight, max(uLightExtra[i].x / uScale, 0.001)));");
+  expect(volume).toContain("vec4 packedTexel = texture(uPacked, uv);");
 });
 
 /*
@@ -93,8 +94,65 @@ test("шейдер объёма: смещение до света не норм�
   expect(volume).not.toContain("flatDir");
   expect(volume).not.toContain("toLight / toLightLen");
   // Смещение и высота уходят в один normalize — значит, в одних единицах.
-  expect(volume).toContain("vec2 toLight = center - p;");
-  expect(volume).toContain("normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)))");
+  // Единицы — объекта, а не холста: иначе при мелком масштабе высота упирается
+  // в «пол» и свет снова светит сверху для всей сцены.
+  expect(volume).toContain("vec2 toLight = (center - p) / uScale;");
+  expect(volume).toContain("normalize(vec3(toLight, max(uLightExtra[i].x / uScale, 0.001)))");
+});
+
+/*
+ * Карты читаются по UV объекта, а не по рамке-боксу.
+ *
+ * `vUv` идёт по боксу, а в боксе есть паддинг под размытие края, и он зависит
+ * от масштаба камеры: карта, натянутая на бокс, ползла и растягивалась при
+ * зуме и повороте — это и выглядело как «ORM деформируется от камеры».
+ */
+test("шейдер объёма: UV карт считается от объекта, а не от рамки", () => {
+  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
+  expect(volume).toBeTruthy();
+  expect(volume).toContain("uniform mat3 uInverse;");
+  expect(volume).toContain("vec2 uv = clamp((localPoint - uUvRect.xy) / uUvRect.zw, 0.0, 1.0);");
+  // Буфер сцены и буфер нормалей по-прежнему читаются рамкой: они в ней и лежат.
+  expect(volume).toContain("vec4 scene = texture(uScene, vUv);");
+  expect(volume).toContain("vec4 nrm = texture(uNormals, vUv);");
+  // Каналы и карта свечения — только по UV объекта.
+  expect(volume).toContain("channelValue(uRoughMode, uRoughChannel, uRoughValue, uRoughTex, uv)");
+  expect(volume).toContain("texture(uEmissiveTex, uv)");
+  // Обратная матрица в JS считается той же формулой, что и в примере.
+  const inverse = invertMatrix3([2, 0, 0, 0, 2, 0, 10, 20, 1]);
+  expect(inverse[0]).toBeCloseTo(0.5, 6);
+  expect(inverse[1]).toBeCloseTo(0, 6);
+  // Точка (30, 60) в холсте — это (10, 20) в объекте с масштабом 2 и сдвигом.
+  expect((inverse[0] * 30 + inverse[3] * 60 + inverse[6])).toBeCloseTo(10, 5);
+  expect(inverse[6]).toBeCloseTo(-5, 6);
+  expect(inverse[7]).toBeCloseTo(-10, 6);
+});
+
+/* Блик — пятно, а не полоска: усиление ограничено и посчитано один раз. */
+/*
+ * Свечение не зависит от светильников.
+ *
+ * Материал и его свечение считаются и в пустой сцене: раньше и проход объёма,
+ * и сама отрисовка требовали хотя бы одного света в сцене — и неон молчал при
+ * любых настройках, хотя к свету отношения не имеет.
+ */
+test("объём: материал и свечение работают без светильников в сцене", () => {
+  const layer = lighting.slice(lighting.indexOf("export function shadeLayer"));
+  expect(layer).toContain("if (!lights.length && !sample.material) return false;");
+  const canvas = readFileSync(join(process.cwd(), "src", "render", "rigCanvas.ts"), "utf8");
+  expect(canvas).toContain("if (sample && (options.lighting?.lights.length || sample.material)) {");
+});
+
+test("шейдер объёма: блик не вырождается в линию и не гасится дважды", () => {
+  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
+  expect(volume).toBeTruthy();
+  expect(volume).toContain("float denom = 4.0 * max(NdotL, 0.02) * max(n.z, 0.02);");
+  expect(volume).toContain("float gain = clamp(D / denom, 0.0, 8.0) * uSpecular * uLightExtra[i].y;");
+  // Один множитель силы блика на весь шейдер: в сумме его больше нет.
+  expect(volume).toContain("specSum + emissive");
+  expect(volume).not.toContain("specSum * uSpecular");
+  // Минимум окружения: без него металл чёрный вне пятна света.
+  expect(volume).toContain("vec3 ambient = uEnvironment.rgb * max(uEnvironment.w, 0.35);");
 });
 
 test("направление на свет: пятно сдвинулось — наклон изменился", () => {

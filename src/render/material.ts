@@ -17,6 +17,15 @@ import {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+/**
+ * Минимум окружения: у металла диффузной части нет вовсе, и без отражения он
+ * чёрный вне пятна света — ровно так «половина куба» и пропадала.
+ */
+export const MIN_AMBIENT = 0.35;
+
+/** Потолок усиления блика: у терминатора GGX иначе уходит в бесконечность. */
+export const MAX_SPECULAR_GAIN = 8;
+
 export interface Channel {
   value: number;
   file: string | null;
@@ -226,7 +235,9 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
   // считаться по-разному в кадре и на листе примера.
   const roughness = clamp(point.roughness, 0.02, 1);
   const F0 = baseReflectance([albedoR, albedoG, albedoB], metallic, point.f0);
-  const ambientLevel = clamp(point.environment.level, 0, 2);
+  // Минимум окружения: у металла диффузной части нет вовсе, и без отражения
+  // он чёрный вне пятна света — ровно так «половина куба» и пропадала.
+  const ambientLevel = Math.max(clamp(point.environment.level, 0, 2), MIN_AMBIENT);
   const ambient: [number, number, number] = [
     point.environment.color[0] * ambientLevel,
     point.environment.color[1] * ambientLevel,
@@ -255,9 +266,13 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
     const D = ggxDistribution(NdotH, roughness);
     const F = fresnel(VdotH, F0);
     // Знаменатель 4·NdotL·NdotV: у нас NdotV = N.z, и он не ноль, пока
-    // поверхность не повёрнута от зрителя.
-    const denom = 4 * Math.max(NdotL, 1e-4) * Math.max(N[2], 1e-4);
-    const specScale = (D / denom) * point.specular * Math.max(0, light.polarity);
+    // поверхность не повёрнута от зрителя. Ограничение снизу и потолок усиления
+    // держат блик пятном: без них у терминатора он вырождается в белую полоску.
+    const denom = 4 * Math.max(NdotL, 0.02) * Math.max(N[2], 0.02);
+    const specScale = clamp(D / denom, 0, MAX_SPECULAR_GAIN)
+      * point.specular
+      * light.specular
+      * Math.max(0, light.polarity);
     const diffScale = NdotL * diffuseWeight;
 
     for (let c = 0; c < 3; c += 1) {
