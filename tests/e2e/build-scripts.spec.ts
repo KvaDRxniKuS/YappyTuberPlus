@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -35,8 +35,44 @@ function section(text: string, from: string, to: string): string {
   return code(lines.slice(start + 1, end).join("\n"));
 }
 
+/**
+ * Ярлыки — одной группой.
+ *
+ * Человек не работает из консоли: он открывает папку проекта в Проводнике и
+ * ищет двойной клик глазами. Пока ярлыки назывались по-разному
+ * (`build-yappytuber`, `check-build`, `reset-yappytuber-data`), они стояли
+ * вперемешку с `Cargo.toml` и `package.json`. Префикс `app-` собирает их в
+ * один непрерывный блок в начале списка — и по имени сразу видно, что это
+ * ярлык, а не исходник.
+ */
+test("ярлыки: все двойные клики в корне — одной группой app-*", () => {
+  const launchers = readdirSync(process.cwd(), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && (entry.name.endsWith(".bat") || entry.name.endsWith(".sh")))
+    .map((entry) => entry.name)
+    .sort();
+  expect(launchers.length).toBeGreaterThanOrEqual(15);
+  // Ни одного ярлыка без префикса: иначе группа снова рассыпается.
+  expect(launchers.filter((name) => !name.startsWith("app-"))).toEqual([]);
+  // И у каждого есть напарник для другой платформы, кроме установки окружения:
+  // Build Tools с её winget и MSVC на Linux/macOS не ставятся.
+  const missing = launchers
+    .filter((name) => !name.startsWith("app-tools"))
+    .map((name) => name.replace(/\.(bat|sh)$/, ""))
+    .filter((base) => !launchers.includes(`${base}.bat`) || !launchers.includes(`${base}.sh`));
+  expect([...new Set(missing)]).toEqual([]);
+
+  // Внутри ярлыков — только новые имена: старые остались лишь в истории.
+  // Скрипты в `scripts/` не переименовывались, поэтому `publish-build.mjs` и
+  // `pulse-bridge.mjs` — законные упоминания, их и не ловим.
+  const oldNames = /(build-yappytuber|start-yappytuber|update-yappytuber|reset-yappytuber-data|install-build-tools|check-build|publish-build|pulse-bridge)(?!\.mjs)/;
+  for (const name of launchers) {
+    const hit = oldNames.exec(script(name));
+    expect(hit?.[0] ?? null, `${name}: старое имя`).toBeNull();
+  }
+});
+
 test("сборка: при успехе окно закрывается, папку открывает сам", () => {
-  const bat = script("build-yappytuber.bat");
+  const bat = script("app-build.bat");
   // Успешный путь целиком: от «Готово» до первой ветки с ошибкой.
   const done = section(bat, "build_done", "npm_failed");
   // Ни ожидания клавиши, ни вопроса с писком.
@@ -50,13 +86,13 @@ test("сборка: при успехе окно закрывается, пап�
 });
 
 test("сборка: ошибка по-прежнему оставляет окно открытым", () => {
-  const bat = script("build-yappytuber.bat");
+  const bat = script("app-build.bat");
   expect(section(bat, "npm_failed", "build_failed")).toContain("pause");
   expect(section(bat, "build_failed", "usage")).toContain("pause");
 });
 
 test("сборка: папку можно не открывать — ключ --no-open", () => {
-  const bat = script("build-yappytuber.bat");
+  const bat = script("app-build.bat");
   expect(bat).toContain('if /i "%~1"=="--no-open" ( set "OPEN=0" & shift & goto parse )');
   // «Не открывать» проверяется раньше, чем вызывается проводник.
   const plain = code(bat);
@@ -72,10 +108,10 @@ test("сборка: папку можно не открывать — ключ -
 });
 
 test("лаунчеры разделены: update собирает, start только запускает", () => {
-  const updateBat = code(script("update-yappytuber.bat"));
-  const updateSh = script("update-yappytuber.sh");
-  const startBat = code(script("start-yappytuber.bat"));
-  const startSh = script("start-yappytuber.sh");
+  const updateBat = code(script("app-update.bat"));
+  const updateSh = script("app-update.sh");
+  const startBat = code(script("app-start.bat"));
+  const startSh = script("app-start.sh");
 
   // Git, зависимости и ядро — только в обновлении.
   for (const text of [updateBat, updateSh]) {
@@ -103,7 +139,7 @@ test("лаунчеры разделены: update собирает, start тол
 });
 
 test("ни один двойной клик не пищит: choice убран, вопросы ждут Enter", () => {
-  for (const name of ["build-yappytuber.bat", "install-build-tools.bat", "start-yappytuber.bat", "update-yappytuber.bat"]) {
+  for (const name of ["app-build.bat", "app-tools.bat", "app-start.bat", "app-update.bat"]) {
     const text = code(script(name));
     expect(text, name).not.toContain("choice ");
     expect(text, name).toContain("set /p");
@@ -111,7 +147,7 @@ test("ни один двойной клик не пищит: choice убран, 
 });
 
 test("linux/macOS: папка с пакетом открывается сама и без ожидания", () => {
-  const sh = script("build-yappytuber.sh");
+  const sh = script("app-build.sh");
   expect(sh).toContain("--no-open) OPEN=0 ;;");
   expect(sh).toContain('xdg-open "$TARGET"');
   expect(sh).toContain('open "$TARGET"');

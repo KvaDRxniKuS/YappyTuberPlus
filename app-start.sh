@@ -2,23 +2,23 @@
 # YappyTuberPlus — запуск (Linux/macOS).
 #
 # Открывает редактор в браузере. Обновление и сборку ядра делает отдельный
-# файл update-yappytuber.sh: запуск ничего не скачивает и не собирает, поэтому
+# файл app-update.sh: запуск ничего не скачивает и не собирает, поэтому
 # он быстрый.
 #
 # Прошлый запуск закрывается сам: порты редактора, моста и агента
 # освобождаются перед стартом, окна искать и закрывать руками не нужно.
 #
-#   ./start-yappytuber.sh                 запустить
-#   ./start-yappytuber.sh --no-open       не открывать браузер
-#   ./start-yappytuber.sh --no-bridge     не запускать мост для OBS
-#   ./start-yappytuber.sh --no-update     не поднимать локальный агент
+#   ./app-start.sh                 запустить
+#   ./app-start.sh --no-open       не открывать браузер
+#   ./app-start.sh --no-bridge     не запускать мост для OBS
+#   ./app-start.sh --no-update     не поднимать локальный агент
 #                                         обновлений (порт 17802)
-#   ./start-yappytuber.sh --app           открыть редактор как приложение:
+#   ./app-start.sh --app           открыть редактор как приложение:
 #                                         нативное окно Tauri, а если Rust нет —
 #                                         окно браузера без вкладок
-#   ./start-yappytuber.sh --tauri         запустить нативное окно Tauri
-#   ./start-yappytuber.sh --port 5199     другой порт редактора
-#   ./start-yappytuber.sh --dir PATH      папка проекта, если скрипт не в нём
+#   ./app-start.sh --tauri         запустить нативное окно Tauri
+#   ./app-start.sh --port 5199     другой порт редактора
+#   ./app-start.sh --dir PATH      папка проекта, если скрипт не в нём
 #
 # Коды возврата: 0 — успех, 1 — ошибка окружения.
 set -u
@@ -97,19 +97,19 @@ say "Папка проекта: $APP_DIR"
 
 # --- проект подготовлен? ----------------------------------------------------
 # Запуск ничего не собирает: если зависимостей или ядра нет, их ставит и
-# собирает update-yappytuber.sh. Спрашиваем один раз, а не молча падаем.
+# собирает app-update.sh. Спрашиваем один раз, а не молча падаем.
 if [ ! -d node_modules ] || [ ! -f public/rig_core.wasm ]; then
   step "Проект ещё не подготовлен"
-  say "Нет node_modules или public/rig_core.wasm — это делает update-yappytuber.sh."
-  if [ -x "$SCRIPT_DIR/update-yappytuber.sh" ] || [ -f "$SCRIPT_DIR/update-yappytuber.sh" ]; then
+  say "Нет node_modules или public/rig_core.wasm — это делает app-update.sh."
+  if [ -x "$SCRIPT_DIR/app-update.sh" ] || [ -f "$SCRIPT_DIR/app-update.sh" ]; then
     printf 'Запустить обновление сейчас? [Y/n]: '
     read -r ANSWER || ANSWER="n"
     if [ "${ANSWER:-y}" != "n" ] && [ "${ANSWER:-y}" != "N" ]; then
-      bash "$SCRIPT_DIR/update-yappytuber.sh" || fail "обновление завершилось с ошибкой"
+      bash "$SCRIPT_DIR/app-update.sh" || fail "обновление завершилось с ошибкой"
     fi
   fi
   if [ ! -d node_modules ] || [ ! -f public/rig_core.wasm ]; then
-    fail "сначала запустите update-yappytuber.sh, потом этот файл"
+    fail "сначала запустите app-update.sh, потом этот файл"
   fi
 fi
 

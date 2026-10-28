@@ -104,7 +104,7 @@ test("документация описывает обновление и пуб
   // Обновление: раздел в «истине» (DESIGN) и подробности в VERSIONS.
   expect(read("docs/DESIGN.md")).toContain("## 23. Обновление сборки");
   expect(read("docs/VERSIONS.md")).toContain("Автообновление есть");
-  expect(read("docs/BUILD.md")).toContain("publish-build");
+  expect(read("docs/BUILD.md")).toContain("app-publish");
   expect(read("docs/LAUNCHER.md")).toContain("sync-repo.mjs");
   // Ключ пропуска версии описан там, где перечислены ключи localStorage.
   expect(read("docs/DATA.md")).toContain("yappytuberplus.update.skip");

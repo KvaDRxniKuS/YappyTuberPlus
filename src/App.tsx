@@ -405,7 +405,7 @@ export default function App() {
       await applyUpdateApp(updateOffer.manifest, updateOffer.base);
       return null;
     }
-    return `Закройте это окно и снова запустите start-yappytuber.bat: лаунчер подтянет `
+    return `Закройте это окно и снова запустите app-start.bat: лаунчер подтянет `
       + `${updateOffer.manifest.version} и пересоберёт проект. Пресеты и файлы останутся на месте.`;
   }, [updateOffer]);
 

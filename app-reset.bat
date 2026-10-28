@@ -101,10 +101,10 @@ exit /b 0
 :usage
 echo YappyTuberPlus - данные приложения
 echo.
-echo   reset-yappytuber-data.bat            показать пути и спросить
-echo   reset-yappytuber-data.bat --profile  удалить автосохранение
-echo   reset-yappytuber-data.bat --presets  удалить файлы пресетов
-echo   reset-yappytuber-data.bat --all      удалить всё
+echo   app-reset.bat            показать пути и спросить
+echo   app-reset.bat --profile  удалить автосохранение
+echo   app-reset.bat --presets  удалить файлы пресетов
+echo   app-reset.bat --all      удалить всё
 echo.
 pause
 exit /b 0

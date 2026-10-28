@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # YappyTuberPlus — сборка приложения (Linux/macOS).
 #
-#   ./build-yappytuber.sh              приложение + пакет
-#   ./build-yappytuber.sh --no-bundle  только бинарник
-#   ./build-yappytuber.sh --fast       без пересборки WASM-ядра
-#   ./build-yappytuber.sh --no-open    не открывать папку с результатом
-#   ./build-yappytuber.sh --help       справка
+#   ./app-build.sh              приложение + пакет
+#   ./app-build.sh --no-bundle  только бинарник
+#   ./app-build.sh --fast       без пересборки WASM-ядра
+#   ./app-build.sh --no-open    не открывать папку с результатом
+#   ./app-build.sh --help       справка
 #
 # При успехе папка с результатом открывается сама, ждать нажатия не нужно.
 #
 # Внимание: на Linux получится .deb/AppImage, на macOS — .app/.dmg.
-# Файл .exe для Windows собирается только на Windows: см. build-yappytuber.bat
+# Файл .exe для Windows собирается только на Windows: см. app-build.bat
 # и docs/BUILD.md.
 set -u
 

@@ -294,7 +294,7 @@ const FALLBACK: &str = r#"<!doctype html>
 code{background:#1c2430;padding:2px 6px;border-radius:4px}a{color:#81dbc5}</style></head>
 <body><h1>Веб-сборка не найдена</h1>
 <p>Сервер оверлея работает, но рядом нет папки со страницей оверлея. Соберите приложение
-(<code>npm run build</code> или <code>build-yappytuber.bat</code>) — веб-сборка попадёт в ресурсы
+(<code>npm run build</code> или <code>app-build.bat</code>) — веб-сборка попадёт в ресурсы
 установщика, и эта страница заменится настоящим оверлеем.</p>
 <p>Другой путь — указать папку вручную переменной <code>YTP_OVERLAY_WEB</code>.</p>
 <p><a href="/health">/health</a> — состояние сервера.</p></body></html>

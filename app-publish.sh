@@ -7,9 +7,9 @@
 #
 # САМ НЕ СОБИРАЕТ И НЕ ТЕСТИРУЕТ: сначала сборка и проверка, потом публикация.
 #
-#   ./publish-build.sh                опубликовать dist
-#   ./publish-build.sh --check        показать, что уедет, ничего не отправляя
-#   ./publish-build.sh D:\Rig\dist    другая папка сборки
+#   ./app-publish.sh                опубликовать dist
+#   ./app-publish.sh --check        показать, что уедет, ничего не отправляя
+#   ./app-publish.sh D:\Rig\dist    другая папка сборки
 set -euo pipefail
 cd "$(dirname "$0")"
 

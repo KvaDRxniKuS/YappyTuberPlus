@@ -3,7 +3,7 @@ rem ===========================================================================
 rem  YappyTuberPlus - zapusk
 rem
 rem  Двойной клик: открывает редактор в браузере. Обновление и сборку ядра
-rem  делает отдельный файл update-yappytuber.bat: запуск ничего не скачивает и
+rem  делает отдельный файл app-update.bat: запуск ничего не скачивает и
 rem  не собирает, поэтому он быстрый.
 rem
 rem  Прошлый запуск закрывается сам: порты редактора, моста и агента
@@ -78,7 +78,7 @@ for /f "delims=" %%v in ('node -v') do echo Node.js %%v
 
 rem --- проект подготовлен? ---------------------------------------------------
 rem Запуск ничего не собирает: если зависимостей или ядра нет, их ставит и
-rem собирает update-yappytuber.bat. Спрашиваем один раз, а не молча падаем.
+rem собирает app-update.bat. Спрашиваем один раз, а не молча падаем.
 if not exist "node_modules" goto need_update
 if not exist "public\rig_core.wasm" goto need_update
 goto prepared
@@ -86,13 +86,13 @@ goto prepared
 :need_update
 echo.
 echo Проект ещё не подготовлен: нет node_modules или public\rig_core.wasm.
-echo Это делает update-yappytuber.bat - он скачает изменения и соберёт ядро.
+echo Это делает app-update.bat - он скачает изменения и соберёт ядро.
 echo.
-if not exist "%~dp0update-yappytuber.bat" goto need_update_manual
+if not exist "%~dp0app-update.bat" goto need_update_manual
 set "ANSWER="
 set /p "ANSWER=Запустить обновление сейчас? [Y/n]: "
 if /i "%ANSWER%"=="n" goto need_update_manual
-call "%~dp0update-yappytuber.bat"
+call "%~dp0app-update.bat"
 if errorlevel 1 goto fail
 if not exist "node_modules" goto need_update_manual
 if not exist "public\rig_core.wasm" goto need_update_manual
@@ -100,7 +100,7 @@ goto prepared
 
 :need_update_manual
 echo.
-echo Сначала запустите update-yappytuber.bat, потом этот файл.
+echo Сначала запустите app-update.bat, потом этот файл.
 goto fail
 
 :prepared
@@ -193,7 +193,7 @@ rem --- справка и ошибки -----------------------------------------
 :usage
 echo YappyTuberPlus - запуск
 echo.
-echo   start-yappytuber.bat [параметры]
+echo   app-start.bat [параметры]
 echo.
 echo   --no-open      не открывать браузер
 echo   --no-bridge    не запускать мост для OBS
@@ -204,14 +204,14 @@ echo   --tauri        запустить нативное окно Tauri
 echo   --port 5199    другой порт редактора
 echo   --dir PATH     папка проекта
 echo.
-echo Обновление и сборка ядра - отдельный файл update-yappytuber.bat.
+echo Обновление и сборка ядра - отдельный файл app-update.bat.
 pause
 exit /b 0
 
 :no_node
 echo.
 echo ОШИБКА: не найден Node.js. Установите Node.js 20 или новее: https://nodejs.org/
-echo Быстрая установка окружения: install-build-tools.bat
+echo Быстрая установка окружения: app-tools.bat
 goto fail
 
 :bad_dir

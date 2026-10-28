@@ -11,8 +11,8 @@ rem
 rem  При успехе окно закрывается само, при ошибке - остаётся с объяснением.
 rem
 rem  Параметры:
-rem    publish-build.bat --check        показать, что уедет, ничего не отправляя
-rem    publish-build.bat D:\Rig\dist   другая папка сборки
+rem    app-publish.bat --check        показать, что уедет, ничего не отправляя
+rem    app-publish.bat D:\Rig\dist   другая папка сборки
 rem ===========================================================================
 setlocal EnableExtensions
 chcp 65001 >nul 2>&1
@@ -35,7 +35,7 @@ where node >nul 2>&1
 if errorlevel 1 (
   echo.
   echo Не найден Node.js - он нужен для публикации.
-  echo Запустите install-build-tools.bat или поставьте Node.js с nodejs.org.
+  echo Запустите app-tools.bat или поставьте Node.js с nodejs.org.
   echo.
   pause
   popd
@@ -45,7 +45,7 @@ where git >nul 2>&1
 if errorlevel 1 (
   echo.
   echo Не найден Git - без него публиковать некуда.
-  echo Запустите install-build-tools.bat или поставьте Git с git-scm.com.
+  echo Запустите app-tools.bat или поставьте Git с git-scm.com.
   echo.
   pause
   popd
@@ -69,9 +69,9 @@ exit /b 0
 
 :usage
 echo.
-echo  publish-build.bat            опубликовать папку dist
-echo  publish-build.bat --check    показать, что уедет, ничего не отправляя
-echo  publish-build.bat D:\Rig\dist  другая папка сборки
+echo  app-publish.bat            опубликовать папку dist
+echo  app-publish.bat --check    показать, что уедет, ничего не отправляя
+echo  app-publish.bat D:\Rig\dist  другая папка сборки
 echo.
 echo  Скрипт только публикует: собрать и проверить нужно заранее - npm run build.
 echo.

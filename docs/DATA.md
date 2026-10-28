@@ -81,8 +81,8 @@ IndexedDB профиля webview (база `yappytuberplus.assets`). Файл р
 
 ## Как это почистить
 
-Двойной клик по **`reset-yappytuber-data.bat`** (Windows) или
-`./reset-yappytuber-data.sh` (Linux/macOS): скрипт покажет оба пути и спросит,
+Двойной клик по **`app-reset.bat`** (Windows) или
+`./app-reset.sh` (Linux/macOS): скрипт покажет оба пути и спросит,
 что удалять.
 
 | Ключ | Что делает |

@@ -4,8 +4,8 @@
 # Сверяет паспорт build.json внутри папки с версией репозитория: та ли это
 # сборка, из того ли коммита, с тем ли поколением ядра.
 #
-#   ./check-build.sh              спросить папку (Enter — dist)
-#   ./check-build.sh dist         проверить папку сразу
+#   ./app-check.sh              спросить папку (Enter — dist)
+#   ./app-check.sh dist         проверить папку сразу
 set -euo pipefail
 cd "$(dirname "$0")"
 

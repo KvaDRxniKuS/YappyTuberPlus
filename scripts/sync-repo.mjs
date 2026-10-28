@@ -151,7 +151,7 @@ function restoreFolder() {
   rmSync(backup, { recursive: true, force: true });
   backup = "";
   say(`Своя сборка в ${folder} возвращена на место (в репозитории — версия из обновления).`);
-  say(`  опубликовать: publish-build.bat · взять версию репозитория: git checkout -- ${folder}`);
+  say(`  опубликовать: app-publish.bat · взять версию репозитория: git checkout -- ${folder}`);
 }
 
 /** Обновление не состоялось: вернуть всё как было и сказать честно. */

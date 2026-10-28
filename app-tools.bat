@@ -191,14 +191,14 @@ popd
 exit /b 1
 
 :all_ok
-echo Всё готово. Дальше - build-yappytuber.bat (двойной клик), он соберёт .exe.
+echo Всё готово. Дальше - app-build.bat (двойной клик), он соберёт .exe.
 echo.
-if not exist "build-yappytuber.bat" goto done
+if not exist "app-build.bat" goto done
 set "ANSWER="
 set /p "ANSWER=Собрать приложение сейчас? [Y/n]: "
 if /i "!ANSWER!"=="n" goto done
 echo.
-call "%~dp0build-yappytuber.bat"
+call "%~dp0app-build.bat"
 popd
 exit /b 0
 
@@ -277,9 +277,9 @@ exit /b 0
 :usage
 echo YappyTuberPlus - установка инструментов сборки
 echo.
-echo   install-build-tools.bat           проверить и установить всё нужное
-echo   install-build-tools.bat --check   только показать, чего не хватает
-echo   install-build-tools.bat --yes     без подтверждения
+echo   app-tools.bat           проверить и установить всё нужное
+echo   app-tools.bat --check   только показать, чего не хватает
+echo   app-tools.bat --yes     без подтверждения
 echo.
 echo Ставит: Node.js LTS, Visual Studio Build Tools (C++), Rust, WebView2,
 echo и по желанию Git. Нужны права администратора и интернет.

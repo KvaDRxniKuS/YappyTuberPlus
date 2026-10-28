@@ -691,10 +691,10 @@ Client ID и имя канала — обычные поля модуля: Clien
 WebSocket, HTTP, SSE и OSC. Мост переводит одно в другое — и он уже в репозитории:
 
 ```bat
-pulse-bridge.bat                 :: Windows, двойной клик
-./pulse-bridge.sh                :: Linux/macOS
-pulse-bridge.bat --hr 90         :: ровные 90 ударов вместо тренажёра
-pulse-bridge.bat --port 18000    :: другой порт
+app-pulse.bat                 :: Windows, двойной клик
+./app-pulse.sh                :: Linux/macOS
+app-pulse.bat --hr 90         :: ровные 90 ударов вместо тренажёра
+app-pulse.bat --port 18000    :: другой порт
 ```
 
 Мост (`scripts/pulse-bridge.mjs`) не требует `npm install`: сервер WebSocket собран

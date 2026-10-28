@@ -16,7 +16,7 @@ rem
 rem  Первый запуск долгий: компилируется Rust-часть (5-20 минут).
 rem  При успехе папка с результатом открывается сама, а окно закрывается:
 rem  нажимать ничего не нужно. Окно остаётся открытым только при ошибке.
-rem  Если чего-то не хватает, скрипт предложит запустить install-build-tools.bat.
+rem  Если чего-то не хватает, скрипт предложит запустить app-tools.bat.
 rem ===========================================================================
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul 2>&1
@@ -53,7 +53,7 @@ rem --- файл лежит в папке проекта? ----------------------
 if exist "package.json" goto in_project
 echo ОШИБКА: рядом с этим файлом нет папки проекта (package.json).
 echo.
-echo Положите build-yappytuber.bat в корень папки YappyTuberPlus
+echo Положите app-build.bat в корень папки YappyTuberPlus
 echo (рядом с package.json и src-tauri) и запустите снова.
 pause
 popd
@@ -97,18 +97,18 @@ echo.
 
 if "%TOOLS_OK%"=="1" goto tools_ok
 echo Собирать нечем: не хватает компонентов выше.
-if not exist "install-build-tools.bat" goto tools_missing
+if not exist "app-tools.bat" goto tools_missing
 rem Вопрос через Enter, а не через `choice`: `choice` пищит на любой «лишней»
 rem клавише, а набирать Y/N вслепую неудобно.
 set "ANSWER="
 set /p "ANSWER=Запустить установку инструментов? [Y/n]: "
 if /i "%ANSWER%"=="n" goto tools_missing
-call "%~dp0install-build-tools.bat"
+call "%~dp0app-tools.bat"
 popd
 exit /b 0
 :tools_missing
 echo.
-echo Запустите install-build-tools.bat (двойной клик) - он поставит всё нужное.
+echo Запустите app-tools.bat (двойной клик) - он поставит всё нужное.
 echo Подробности: docs\BUILD.md
 pause
 popd
@@ -196,10 +196,10 @@ exit /b 1
 :build_failed
 echo.
 echo ОШИБКА сборки. Что чаще всего мешает:
-echo   - нет MSVC Build Tools: запустите install-build-tools.bat;
-echo   - нет Rust или target wasm32: install-build-tools.bat -^> Rust;
+echo   - нет MSVC Build Tools: запустите app-tools.bat;
+echo   - нет Rust или target wasm32: app-tools.bat -^> Rust;
 echo   - занят порт 5173 или окно приложения уже открыто;
-echo   - нет интернета для загрузки NSIS (тогда: build-yappytuber.bat --no-bundle).
+echo   - нет интернета для загрузки NSIS (тогда: app-build.bat --no-bundle).
 echo.
 echo Полный текст ошибки - выше в этом окне. Подробнее: docs\BUILD.md
 pause
@@ -209,12 +209,12 @@ exit /b 1
 :usage
 echo YappyTuberPlus - сборка .exe
 echo.
-echo   build-yappytuber.bat               приложение + установщик
-echo   build-yappytuber.bat --no-bundle   только .exe
-echo   build-yappytuber.bat --fast        без пересборки WASM-ядра
-echo   build-yappytuber.bat --no-open     не открывать папку с результатом
+echo   app-build.bat               приложение + установщик
+echo   app-build.bat --no-bundle   только .exe
+echo   app-build.bat --fast        без пересборки WASM-ядра
+echo   app-build.bat --no-open     не открывать папку с результатом
 echo.
-echo Инструменты сборки ставит install-build-tools.bat.
+echo Инструменты сборки ставит app-tools.bat.
 echo При успехе папка с результатом открывается сама, окно закрывается.
 pause
 popd

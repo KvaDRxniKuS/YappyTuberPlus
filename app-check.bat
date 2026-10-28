@@ -7,7 +7,7 @@ rem  build.json с репозиторием. При совпадении окн�
 rem  несколько секунд, при расхождении - остаётся открытым с объяснением.
 rem
 rem  Параметры:
-rem    check-build.bat D:\Rig\dist   папку можно передать сразу
+rem    app-check.bat D:\Rig\dist   папку можно передать сразу
 rem ===========================================================================
 setlocal EnableExtensions
 chcp 65001 >nul 2>&1
@@ -25,7 +25,7 @@ where node >nul 2>&1
 if errorlevel 1 (
   echo.
   echo Не найден Node.js - он нужен для проверки.
-  echo Запустите install-build-tools.bat или поставьте Node.js с nodejs.org.
+  echo Запустите app-tools.bat или поставьте Node.js с nodejs.org.
   echo.
   pause
   popd
@@ -36,7 +36,7 @@ node scripts\build-version.mjs --check "%FOLDER%"
 if errorlevel 1 (
   echo.
   echo Проверка не прошла: версия или состав файлов не совпадают с паспортом.
-  echo Пересоберите её - npm run build или build-yappytuber.bat.
+  echo Пересоберите её - npm run build или app-build.bat.
   echo.
   pause
   popd

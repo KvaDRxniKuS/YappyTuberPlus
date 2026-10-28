@@ -141,8 +141,8 @@ test("публикация: папка, изменённая в обход па�
 });
 
 test("публикация: двойной клик без консоли", () => {
-  const bat = readFileSync(join(root, "publish-build.bat"), "utf8");
-  const sh = readFileSync(join(root, "publish-build.sh"), "utf8");
+  const bat = readFileSync(join(root, "app-publish.bat"), "utf8");
+  const sh = readFileSync(join(root, "app-publish.sh"), "utf8");
 
   // Ярлык зовёт скрипт и остаётся открытым только при ошибке.
   expect(bat).toContain("node scripts\\publish-build.mjs");

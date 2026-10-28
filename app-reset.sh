@@ -5,10 +5,10 @@
 # подтверждению удаляет их. Картинок отдельными файлами приложение не пишет:
 # аватар лежит внутри пресета (data URL).
 #
-#   ./reset-yappytuber-data.sh            показать пути и спросить
-#   ./reset-yappytuber-data.sh --profile  удалить автосохранение
-#   ./reset-yappytuber-data.sh --presets  удалить файлы пресетов
-#   ./reset-yappytuber-data.sh --all      удалить всё
+#   ./app-reset.sh            показать пути и спросить
+#   ./app-reset.sh --profile  удалить автосохранение
+#   ./app-reset.sh --presets  удалить файлы пресетов
+#   ./app-reset.sh --all      удалить всё
 set -euo pipefail
 
 IDENT="com.yappytuberplus.studio"

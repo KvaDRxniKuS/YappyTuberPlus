@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Пульс: мост для модуля «Пульсометр».
 #
-#   ./pulse-bridge.sh            тренажёр: пульс гуляет 60...110
-#   ./pulse-bridge.sh --hr 90    ровные 90 ударов
-#   ./pulse-bridge.sh --port 18000
+#   ./app-pulse.sh            тренажёр: пульс гуляет 60...110
+#   ./app-pulse.sh --hr 90    ровные 90 ударов
+#   ./app-pulse.sh --port 18000
 #
 # Отдаёт ws://127.0.0.1:17801/inputs и http://127.0.0.1:17801/state.
 set -e
