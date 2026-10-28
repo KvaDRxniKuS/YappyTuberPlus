@@ -71,8 +71,39 @@ test("сборка: папку можно не открывать — ключ -
   expect(code(bat)).toContain("--no-open     не открывать папку с результатом");
 });
 
+test("лаунчеры разделены: update собирает, start только запускает", () => {
+  const updateBat = code(script("update-yappytuber.bat"));
+  const updateSh = script("update-yappytuber.sh");
+  const startBat = code(script("start-yappytuber.bat"));
+  const startSh = script("start-yappytuber.sh");
+
+  // Git, зависимости и ядро — только в обновлении.
+  for (const text of [updateBat, updateSh]) {
+    expect(text).toContain("sync-repo.mjs");
+    expect(text).toContain("build:wasm");
+  }
+  expect(updateBat).toContain("npm ci");
+
+  // Запуск ничего не скачивает и не собирает: он должен быть быстрым.
+  for (const text of [startBat, startSh]) {
+    expect(text).not.toContain("sync-repo.mjs");
+    expect(text).not.toContain("build:wasm");
+    expect(text).not.toContain("npm ci");
+    expect(text).not.toContain("git clone");
+  }
+
+  // Прошлый запуск закрывается сам: иначе порт занят, а окна ищут руками.
+  expect(startBat).toContain("netstat -ano");
+  expect(startBat).toContain("taskkill /f /pid");
+  expect(startSh).toContain("free_port()");
+  expect(startSh).toContain("lsof -ti");
+
+  // Оба файла объясняют свою роль и умеют показать справку.
+  for (const text of [updateBat, updateSh, startBat, startSh]) expect(text).toContain("--help");
+});
+
 test("ни один двойной клик не пищит: choice убран, вопросы ждут Enter", () => {
-  for (const name of ["build-yappytuber.bat", "install-build-tools.bat", "start-yappytuber.bat"]) {
+  for (const name of ["build-yappytuber.bat", "install-build-tools.bat", "start-yappytuber.bat", "update-yappytuber.bat"]) {
     const text = code(script(name));
     expect(text, name).not.toContain("choice ");
     expect(text, name).toContain("set /p");

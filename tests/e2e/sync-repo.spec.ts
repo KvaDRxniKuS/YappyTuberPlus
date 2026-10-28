@@ -184,9 +184,11 @@ function slice(text: string, from: string, to: string): string {
   return text.slice(start, end);
 }
 
-test("лаунчеры зовут общий скрипт, а не прячут папку сборки сами", () => {
-  const bat = readFileSync(join(root, "start-yappytuber.bat"), "utf8");
-  const sh = readFileSync(join(root, "start-yappytuber.sh"), "utf8");
+test("обновление зовёт общий скрипт, а не прячет папку сборки само", () => {
+  // Обновление отделено от запуска: `start` больше ничего не скачивает и не
+  // собирает, поэтому эти проверки смотрят на `update`.
+  const bat = readFileSync(join(root, "update-yappytuber.bat"), "utf8");
+  const sh = readFileSync(join(root, "update-yappytuber.sh"), "utf8");
 
   // Обновление — один вызов на обеих платформах.
   const batUpdate = slice(bat, ":update\r\n", "rem --- зависимости");
@@ -203,4 +205,11 @@ test("лаунчеры зовут общий скрипт, а не прячут 
   // Коды возврата трактуются мягко: не обновились — работаем с текущими файлами.
   expect(bat).toContain("Обновление не удалось");
   expect(sh).toContain("работаю с текущими файлами");
+
+  // А сам запуск к git не прикасается вовсе.
+  for (const name of ["start-yappytuber.bat", "start-yappytuber.sh"]) {
+    const text = readFileSync(join(root, name), "utf8");
+    expect(commands(text), name).not.toContain("sync-repo.mjs");
+    expect(commands(text), name).not.toContain("git clone");
+  }
 });

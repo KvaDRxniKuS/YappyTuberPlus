@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
-# YappyTuberPlus — обновление и запуск (Linux/macOS).
+# YappyTuberPlus — запуск (Linux/macOS).
 #
-# Скачивает последние изменения ветки, ставит зависимости, при наличии Rust
-# пересобирает WASM-ядро и запускает редактор в браузере.
+# Открывает редактор в браузере. Обновление и сборку ядра делает отдельный
+# файл update-yappytuber.sh: запуск ничего не скачивает и не собирает, поэтому
+# он быстрый.
 #
-#   ./start-yappytuber.sh                 обновить и запустить
+# Прошлый запуск закрывается сам: порты редактора, моста и агента
+# освобождаются перед стартом, окна искать и закрывать руками не нужно.
+#
+#   ./start-yappytuber.sh                 запустить
 #   ./start-yappytuber.sh --no-open       не открывать браузер
 #   ./start-yappytuber.sh --no-bridge     не запускать мост для OBS
 #   ./start-yappytuber.sh --no-update     не поднимать локальный агент
 #                                         обновлений (порт 17802)
-#   ./start-yappytuber.sh --no-serve      только обновить и собрать
 #   ./start-yappytuber.sh --app           открыть редактор как приложение:
 #                                         нативное окно Tauri, а если Rust нет —
 #                                         окно браузера без вкладок
 #   ./start-yappytuber.sh --tauri         запустить нативное окно Tauri
 #   ./start-yappytuber.sh --port 5199     другой порт редактора
-#   ./start-yappytuber.sh --branch NAME   другая ветка
 #   ./start-yappytuber.sh --dir PATH      папка проекта, если скрипт не в нём
 #
-# Коды возврата: 0 — успех, 1 — ошибка окружения или сборки.
+# Коды возврата: 0 — успех, 1 — ошибка окружения.
 set -u
 
-REPO_URL="${YAPPY_REPO_URL:-https://github.com/KvaDRxniKuS/YappyTuberPlus.git}"
-BRANCH="${YAPPY_BRANCH:-arena/e287965b-yappytuberplus}"
-FALLBACK_BRANCH="main"
+OVERLAY_BRIDGE_PORT="${OVERLAY_BRIDGE_PORT:-17800}"
+UPDATE_AGENT_PORT="${UPDATE_AGENT_PORT:-17802}"
 OPEN=1
 BRIDGE=1
-SERVE=1
 AGENT=1
 MODE="dev"
 PORT=5173
@@ -37,22 +37,23 @@ step() { printf '\n== %s\n' "$*"; }
 warn() { printf '!! %s\n' "$*" >&2; }
 fail() { printf 'ОШИБКА: %s\n' "$*" >&2; exit 1; }
 
-# Превращает распакованный архив (папка без .git) в git-копию, чтобы работало
-# автообновление. Возвращает 0 при успехе; содержимое приводится к ветке.
-attach_repo() {
-  step "Папка без .git: включаю автообновление"
-  local dir="$1"
-  # Откат: не оставляем полуподключённый репозиторий после неудачи.
-  attach_rollback() { rm -rf "$dir/.git"; return 1; }
-  git -C "$dir" init -q >/dev/null 2>&1 || return 1
-  git -C "$dir" remote add origin "$REPO_URL" >/dev/null 2>&1 || { attach_rollback; return 1; }
-  git -C "$dir" fetch origin --prune >/dev/null 2>&1 || { attach_rollback; return 1; }
-  local attach="$BRANCH"
-  git -C "$dir" rev-parse --verify --quiet "origin/$attach" >/dev/null || attach="$FALLBACK_BRANCH"
-  git -C "$dir" rev-parse --verify --quiet "origin/$attach" >/dev/null || { attach_rollback; return 1; }
-  git -C "$dir" symbolic-ref HEAD "refs/heads/$attach" >/dev/null 2>&1 || { attach_rollback; return 1; }
-  git -C "$dir" reset --hard "origin/$attach" >/dev/null 2>&1 || { attach_rollback; return 1; }
-  say "Автообновление включено: ветка $attach."
+# Освобождает порт: закрывает прошлый запуск, чтобы не искать окна руками.
+# Без этого Vite молча взял бы другой порт, а мост для OBS не поднялся бы.
+free_port() {
+  local port="$1" pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -ti "tcp:$port" 2>/dev/null || true)"
+  elif command -v fuser >/dev/null 2>&1; then
+    fuser -k "$port/tcp" >/dev/null 2>&1 || true
+    return 0
+  elif command -v ss >/dev/null 2>&1; then
+    pids="$(ss -lptnH "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | sort -u)"
+  fi
+  [ -z "$pids" ] && return 0
+  say "== Порт $port занят прошлым запуском: закрываю ($(echo "$pids" | tr '\n' ' '))"
+  kill $pids 2>/dev/null || true
+  sleep 1
+  kill -9 $pids 2>/dev/null || true
 }
 
 while [ $# -gt 0 ]; do
@@ -61,11 +62,8 @@ while [ $# -gt 0 ]; do
     --no-bridge) BRIDGE=0 ;;
     --bridge) BRIDGE=1 ;;
     --no-update) AGENT=0 ;;
-    --no-serve) SERVE=0 ;;
     --tauri) MODE="tauri" ;;
     --app) MODE="app" ;;
-    --branch=*) BRANCH="${1#*=}" ;;
-    --branch) shift; BRANCH="${1:-}" ;;
     --port=*) PORT="${1#*=}" ;;
     --port) shift; PORT="${1:-}" ;;
     --dir=*) APP_DIR="${1#*=}" ;;
@@ -78,84 +76,47 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-step "YappyTuberPlus: обновление и запуск"
+step "YappyTuberPlus: запуск"
 
 # --- окружение -------------------------------------------------------------
-command -v git >/dev/null 2>&1 || fail "не найден git. Установите Git и повторите запуск."
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   fail "не найден Node.js. Установите Node.js 20 или новее: https://nodejs.org/"
 fi
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
-  warn "Node.js $(node -v) старше требуемого 20: сборка может не пройти."
-fi
-say "Node.js $(node -v), npm $(npm -v)"
+say "Node.js $(node -v)"
 
 # --- расположение проекта ---------------------------------------------------
 if [ -z "$APP_DIR" ]; then
-  if [ -d "$SCRIPT_DIR/.git" ]; then
-    APP_DIR="$SCRIPT_DIR"
-  elif [ -f "$SCRIPT_DIR/package.json" ]; then
+  if [ -f "$SCRIPT_DIR/package.json" ]; then
     APP_DIR="$SCRIPT_DIR"
   else
     APP_DIR="$(pwd)/YappyTuberPlus"
   fi
 fi
+cd "$APP_DIR" || fail "не удалось перейти в $APP_DIR"
 say "Папка проекта: $APP_DIR"
 
-# --- клонирование или подключение архива ------------------------------------
-if [ ! -d "$APP_DIR/.git" ]; then
-  if [ -f "$APP_DIR/package.json" ]; then
-    # Скачали ZIP вместо git clone — подключаем репозиторий на месте.
-    attach_repo "$APP_DIR" \
-      || warn "не удалось подключить репозиторий — запускаю текущие файлы без автообновления."
-  else
-    step "Клонирование ветки $BRANCH"
-    if ! git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"; then
-      warn "не удалось клонировать ветку $BRANCH, пробую ветку по умолчанию."
-      rm -rf "$APP_DIR"
-      git clone "$REPO_URL" "$APP_DIR" || fail "не удалось склонировать $REPO_URL"
+# --- проект подготовлен? ----------------------------------------------------
+# Запуск ничего не собирает: если зависимостей или ядра нет, их ставит и
+# собирает update-yappytuber.sh. Спрашиваем один раз, а не молча падаем.
+if [ ! -d node_modules ] || [ ! -f public/rig_core.wasm ]; then
+  step "Проект ещё не подготовлен"
+  say "Нет node_modules или public/rig_core.wasm — это делает update-yappytuber.sh."
+  if [ -x "$SCRIPT_DIR/update-yappytuber.sh" ] || [ -f "$SCRIPT_DIR/update-yappytuber.sh" ]; then
+    printf 'Запустить обновление сейчас? [Y/n]: '
+    read -r ANSWER || ANSWER="n"
+    if [ "${ANSWER:-y}" != "n" ] && [ "${ANSWER:-y}" != "N" ]; then
+      bash "$SCRIPT_DIR/update-yappytuber.sh" || fail "обновление завершилось с ошибкой"
     fi
   fi
-fi
-
-cd "$APP_DIR" || fail "не удалось перейти в $APP_DIR"
-
-# --- обновление -------------------------------------------------------------
-# Вся работа с git — в scripts/sync-repo.mjs: он забирает ветку, уводит правки
-# исходников в git stash и сохраняет свою папку сборки, чтобы обновление не
-# заменило её версией из репозитория.
-step "Получение обновлений"
-node scripts/sync-repo.mjs --branch "$BRANCH" --fallback "$FALLBACK_BRANCH" \
-  || warn "обновление не удалось — работаю с текущими файлами."
-
-# --- зависимости ------------------------------------------------------------
-if [ ! -d node_modules ]; then
-  step "Установка зависимостей (npm ci)"
-  npm ci --no-audit --no-fund || fail "npm ci завершился с ошибкой"
-else
-  step "Проверка зависимостей"
-  npm install --no-audit --no-fund --prefer-offline >/dev/null 2>&1 \
-    || warn "npm install не удался, использую текущие node_modules."
-fi
-
-# --- WASM-ядро --------------------------------------------------------------
-step "Rust-ядро (WASM)"
-if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1 \
-  && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
-  npm run build:wasm || fail "сборка WASM завершилась с ошибкой"
-else
-  if [ -f public/rig_core.wasm ]; then
-    say "Rust/wasm32 не найден — использую собранный public/rig_core.wasm."
-  else
-    fail "нет Rust/wasm32 и отсутствует public/rig_core.wasm"
+  if [ ! -d node_modules ] || [ ! -f public/rig_core.wasm ]; then
+    fail "сначала запустите update-yappytuber.sh, потом этот файл"
   fi
 fi
 
-if [ "$SERVE" = "0" ]; then
-  step "Готово (--no-serve): проект обновлён и собран."
-  exit 0
-fi
+# --- прошлый запуск не мешает -----------------------------------------------
+free_port "$PORT"
+[ "$BRIDGE" = "1" ] && free_port "$OVERLAY_BRIDGE_PORT"
+[ "$AGENT" = "1" ] && free_port "$UPDATE_AGENT_PORT"
 
 # --- запуск -----------------------------------------------------------------
 URL="http://localhost:${PORT}/"
