@@ -108,7 +108,7 @@ export interface ProjectVersion {
  */
 export const VERSION: ProjectVersion = {
   release: [1, 1],
-  core: 22,
+  core: 23,
   format: PRESET_FORMAT,
   bridge: 1,
   modules: MODULE_FORMAT,

@@ -2,8 +2,9 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MATERIAL_PRESETS, baseReflectance, channelBinding, fresnel, ggxDistribution, materialBinding,
-  materialSources, normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
+  MATERIAL_PRESETS, applyPreset, baseReflectance, channelBinding, fresnel, ggxDistribution,
+  matchPreset, materialBinding, materialSources, materialSourceSummary, normalizeEnvironment,
+  normalizeMaterial, shadePoint, usesPacked,
   type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
 import {
@@ -196,6 +197,18 @@ test("материал: значения из скрипта заменяют и
   expect(materialBinding(material, undefined, { emissive: 5 }).emissive.strength).toBe(2);
 });
 
+test("материал: отражение из скрипта заменяет инспектор", () => {
+  const material = normalizeMaterial({ ior: 1.5 })!;
+  // −1 — «не задано»: работает инспектор.
+  expect(materialBinding(material, undefined, { ior: -1 }).f0).toBeCloseTo(f0FromIor(1.5), 6);
+  expect(materialBinding(material, undefined, {}).f0).toBeCloseTo(f0FromIor(1.5), 6);
+  // Задано — заменяет: кожа из формулы становится кожей и в кадре.
+  expect(materialBinding(material, undefined, { ior: 1.4 }).f0).toBeCloseTo(f0FromIor(1.4), 6);
+  // Выход за физику обрезается, а не превращается в мусор.
+  expect(materialBinding(material, undefined, { ior: 9 }).f0).toBeCloseTo(f0FromIor(MAX_IOR), 6);
+  expect(materialBinding(material, undefined, { ior: 0.2 }).f0).toBeCloseTo(f0FromIor(1.5), 6);
+});
+
 test("материал: окружение и высота света считаются по правилам", () => {
   expect(normalizeEnvironment({ level: 500, color: "плохой" })).toEqual({ color: DEFAULT_ENVIRONMENT.color, level: 200 });
   expect(normalizeEnvironment(null)).toEqual(DEFAULT_ENVIRONMENT);
@@ -253,7 +266,7 @@ test("материал: имена в редакторе совпадают с �
   // возможностью.
   const editor = readFileSync(join(process.cwd(), "src", "components", "ScriptEditor.tsx"), "utf8");
   const block = editor.slice(editor.indexOf("const PARAMETERS = ["), editor.indexOf("const TEXT_PARAMETER"));
-  for (const name of ["roughness", "metallic", "ao", "emissive"]) {
+  for (const name of ["roughness", "metallic", "ao", "emissive", "ior"]) {
     expect(block).toContain(`"${name}"`);
     expect(NEUTRAL_PARAMS[name]).toBe(name === "emissive" ? 0 : -1);
   }
@@ -261,14 +274,17 @@ test("материал: имена в редакторе совпадают с �
   const features = readFileSync(join(process.cwd(), "src", "engine", "coreFeatures.ts"), "utf8");
   expect(features).toContain('words: ["roughness", "metallic", "ao", "emissive"]');
   expect(features).toContain('since: 22');
+  expect(features).toContain('words: ["ior"]');
+  expect(features).toContain('since: 23');
   // И Rust-часть: имена параметров и поколение.
   const model = readFileSync(join(process.cwd(), "crates", "rig-core", "src", "model.rs"), "utf8");
-  for (const name of ["Roughness", "Metallic", "Ao", "Emissive"]) {
+  for (const name of ["Roughness", "Metallic", "Ao", "Emissive", "Ior"]) {
     expect(model).toContain(`Param::${name}`);
   }
   expect(model).toContain('"roughness" => Param::Roughness');
+  expect(model).toContain('"ior" => Param::Ior');
   const core = readFileSync(join(process.cwd(), "crates", "rig-core", "src", "lib.rs"), "utf8");
-  expect(core).toContain("CORE_GENERATION: u32 = 22");
+  expect(core).toContain("CORE_GENERATION: u32 = 23");
 });
 
 test("документация: руководство называет то же, что интерфейс", () => {
@@ -325,34 +341,79 @@ test("материал: отражение считается из IOR, а не 
   expect(skin / plastic).toBeCloseTo(0.0278 / 0.04, 2);
 });
 
-test("материал: набор меняет всё своё, а не оставляет хвостов", () => {
-  const apply = (ids: string[]) => {
-    let material = normalizeMaterial({})!;
-    for (const id of ids) {
-      const preset = MATERIAL_PRESETS.find((entry) => entry.id === id)!;
-      material = normalizeMaterial({ ...material, ...preset.patch })!;
-    }
-    return material;
-  };
-  // После «Неона» любой другой набор гасит свечение: иначе объект светится
-  // дальше, и человек думает, что пресет не сработал.
-  for (const id of ["matte", "plastic", "metal", "skin"]) {
-    expect(apply(["neon", id]).emissive.strength).toBe(0);
+test("материал: пресет — список значений, а не режим", () => {
+  const base = normalizeMaterial({})!;
+  const preset = (id: string) => MATERIAL_PRESETS.find((entry) => entry.id === id)!;
+
+  // Применение ставит числа.
+  const skin = applyPreset(base, preset("skin"));
+  expect(skin.roughness.value).toBe(0.55);
+  expect(skin.metallic.value).toBe(0);
+  expect(skin.ior).toBe(1.4);
+  expect(skin.emissive.strength).toBe(0);
+
+  // Набор задаёт все свои свойства: после «Неона» другой набор гасит свечение,
+  // а «Неон» после «Металла» перестаёт быть металлом.
+  const afterNeon = applyPreset(applyPreset(base, preset("neon")), preset("matte"));
+  expect(afterNeon.emissive.strength).toBe(0);
+  const neonAfterMetal = applyPreset(applyPreset(base, preset("metal")), preset("neon"));
+  expect(neonAfterMetal.metallic.value).toBe(0);
+  expect(neonAfterMetal.emissive.strength).toBe(120);
+
+  // Но источники каналов он НЕ трогает: выбранная карта остаётся подключённой.
+  const withCards = normalizeMaterial({
+    roughness: { from: "file", file: "asset:rough", value: 0.2 },
+    metallic: { from: "packed", packedChannel: "b", value: 1 },
+    ao: { from: "file", file: "asset:ao", value: 1 },
+    emissive: { color: "#ff0000", strength: 80, file: "asset:glow" },
+    packed: "asset:orm",
+  })!;
+  const afterPreset = applyPreset(withCards, preset("skin"));
+  expect(afterPreset.roughness.from).toBe("file");
+  expect(afterPreset.roughness.file).toBe("asset:rough");
+  expect(afterPreset.metallic.from).toBe("packed");
+  expect(afterPreset.ao.file).toBe("asset:ao");
+  // И карта свечения тоже: её выбирали руками.
+  expect(afterPreset.emissive.file).toBe("asset:glow");
+  // Значения при этом поменялись — то есть набор сработал, просто его не видно
+  // там, где читается карта.
+  expect(afterPreset.roughness.value).toBe(0.55);
+
+  // «Какой пресет сейчас» считается по значениям: сдвинули ползунок — «нет».
+  expect(matchPreset(skin)?.id).toBe("skin");
+  expect(matchPreset(applyPreset(skin, preset("plastic")))?.id).toBe("plastic");
+  const nudged = { ...skin, roughness: { ...skin.roughness, value: 0.57 } };
+  expect(matchPreset(nudged)).toBeNull();
+  // Источник на определение не влияет: это значения, а не способы их взять.
+  expect(matchPreset(withCards)).toBeNull();
+  expect(matchPreset(undefined)).toBeNull();
+
+  // Каждый набор задаёт все свои свойства.
+  for (const entry of MATERIAL_PRESETS) {
+    expect(Number.isFinite(entry.roughness), entry.label).toBe(true);
+    expect(Number.isFinite(entry.metallic), entry.label).toBe(true);
+    expect(Number.isFinite(entry.ior), entry.label).toBe(true);
+    expect(Number.isFinite(entry.emissive.strength), entry.label).toBe(true);
   }
-  // «Неон» после «Металла» — не металл: он диэлектрик.
-  expect(apply(["metal", "neon"]).metallic.value).toBe(0);
-  expect(apply(["metal", "neon"]).emissive.strength).toBe(120);
-  // Кожа отличается от пластика не только шириной блика, но и отражением.
-  expect(apply(["skin"]).ior).toBe(1.4);
-  expect(apply(["plastic"]).ior).toBe(1.5);
-  expect(f0FromIor(apply(["skin"]).ior)).toBeLessThan(f0FromIor(apply(["plastic"]).ior));
-  // Каждый набор задаёт все свойства, которыми владеет.
-  for (const preset of MATERIAL_PRESETS) {
-    expect(preset.patch.roughness, preset.label).toBeTruthy();
-    expect(preset.patch.metallic, preset.label).toBeTruthy();
-    expect(preset.patch.emissive, preset.label).toBeTruthy();
-    expect(preset.patch.ior, preset.label).toBeTruthy();
-  }
+});
+
+test("материал: сводка источников говорит, откуда что читается", () => {
+  const numbers = normalizeMaterial({})!;
+  expect(materialSourceSummary(numbers)).toBe("числа ×3");
+  const mixed = normalizeMaterial({
+    roughness: { from: "packed", packedChannel: "g", value: 0.3 },
+    metallic: { from: "packed", packedChannel: "b", value: 0 },
+    ao: { from: "file", file: "asset:ao", value: 1 },
+    packed: "asset:orm",
+  })!;
+  expect(materialSourceSummary(mixed)).toBe("ORM ×2 · свой файл ×1");
+  const withGlow = normalizeMaterial({
+    emissive: { color: "#ffffff", strength: 50, file: "asset:glow" },
+  })!;
+  expect(materialSourceSummary(withGlow)).toContain("карта свечения");
+  // Без упакованной карты «из ORM» ничего не читает: это числа.
+  const orphan = normalizeMaterial({ metallic: { from: "packed", value: 1 } })!;
+  expect(materialSourceSummary(orphan)).toBe("числа ×3");
 });
 
 test("материал: канал переключается на файл до того, как файл выбран", () => {

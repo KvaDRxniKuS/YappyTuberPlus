@@ -61,7 +61,7 @@ const PARAMETERS = [
   "warpTLx", "warpTLy", "warpTRx", "warpTRy", "warpBRx", "warpBRy", "warpBLx", "warpBLy",
   // Материал: три канала заменяют инспектор (−1 — «не задано»), свечение
   // прибавляется (см. «Материал» в инспекторе).
-  "roughness", "metallic", "ao", "emissive",
+  "roughness", "metallic", "ao", "emissive", "ior",
 ];
 // `text` — строковый параметр текстового объекта: база в скрипте объекта
 // (`text = "привет"`), переопределение — в блоке события. Отдельно от чисел,

@@ -23,7 +23,7 @@ export const NEUTRAL_PARAMS: ObjectFrame = {
   // Материал: −1 значит «значение из инспектора» — так кадр старого ядра, где
   // этих параметров нет, читается как «материал настроен вручную», а не как
   // «шероховатость 0».
-  roughness: -1, metallic: -1, ao: -1, emissive: 0,
+  roughness: -1, metallic: -1, ao: -1, emissive: 0, ior: -1,
 };
 
 /**

@@ -835,7 +835,7 @@ impl Rig {
                     // выглядит так, как настроено в инспекторе.
                     Param::Mask => 1.0,
                     // Материал: −1 значит «из инспектора», свечение — 0.
-                    Param::Roughness | Param::Metallic | Param::Ao => -1.0,
+                    Param::Roughness | Param::Metallic | Param::Ao | Param::Ior => -1.0,
                     Param::Emissive => 0.0,
                     Param::Visible => object.base.visible,
                     Param::Layer => object.base.layer,
@@ -1513,7 +1513,7 @@ impl Rig {
             return match param {
                 Param::SizeX | Param::SizeY | Param::Opacity => 1.0,
                 Param::Mask => 1.0,
-                Param::Roughness | Param::Metallic | Param::Ao => -1.0,
+                Param::Roughness | Param::Metallic | Param::Ao | Param::Ior => -1.0,
                 Param::Emissive => 0.0,
                 Param::Visible => self.preset.objects[index].base.visible,
                 Param::Layer => self.preset.objects[index].base.layer,

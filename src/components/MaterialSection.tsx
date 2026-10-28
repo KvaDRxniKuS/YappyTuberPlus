@@ -1,10 +1,13 @@
 import { useRef, useState } from "react";
-import { ImageUp, Layers, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { ImageUp, Layers, Sparkles, Trash2 } from "lucide-react";
 import type { ChannelSpec, EnvironmentSpec, MaterialSpec, PackedChannel, RigObject } from "../types";
 import {
   DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL, MAX_IOR, MIN_IOR, f0FromIor, iorFromF0, reflectanceFromF0,
 } from "../types";
-import { MATERIAL_PRESETS, normalizeEnvironment, normalizeMaterial } from "../render/material";
+import {
+  MATERIAL_PRESETS, applyPreset, materialSourceSummary, matchPreset,
+  normalizeEnvironment, normalizeMaterial,
+} from "../render/material";
 import { blobToDataUrl, storeFile } from "../engine/assets";
 import { fileKind } from "../engine/importFile";
 import { useAssetMissing, useAssetUrl } from "../hooks/useAssets";
@@ -34,17 +37,9 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
     const next = normalizeMaterial({ ...current, ...patch }) ?? DEFAULT_MATERIAL;
     onChange({ ...object, material: next });
   };
-  /**
-   * Набор задаёт все свои поля разом: иначе после «Неона» объект продолжал бы
-   * светиться под «Матовым». Карту свечения при этом сохраняем — её выбирали
-   * руками, и терять её от нажатия «Пластик» нельзя.
-   */
-  const applyPreset = (patch: Partial<MaterialSpec>) => {
-    const emissive = patch.emissive
-      ? { ...patch.emissive, file: current.emissive.file }
-      : current.emissive;
-    update({ ...patch, emissive });
-  };
+  // Пресет — это список значений, а не режим: он меняет числа и не трогает
+  // источники каналов (карты остаются подключёнными).
+  const activePreset = matchPreset(material);
   const updateChannel = (key: "roughness" | "metallic" | "ao", patch: Partial<ChannelSpec>) =>
     update({ [key]: { ...current[key], ...patch } } as Partial<MaterialSpec>);
 
@@ -81,19 +76,27 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
 
       {enabled && (
         <>
-          <div className="image-actions material-kinds">
-            {MATERIAL_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                className="button secondary"
-                title={`Поставить значения «${preset.label}»`}
-                onClick={() => applyPreset(preset.patch)}
-              >
-                <Wand2 size={13} /> {preset.label}
-              </button>
-            ))}
-          </div>
+          {/* Пресет — список значений. «Нет» значит «значения не совпадают ни с
+              одним набором»: сдвинули ползунок — набор перестал быть собой. */}
+          <label className="select-property">
+            <span>Пресет</span>
+            <select
+              value={activePreset?.id ?? ""}
+              title="Заполняет числа материала; карты и источники каналов не трогает"
+              onChange={(event) => {
+                const preset = MATERIAL_PRESETS.find((entry) => entry.id === event.target.value);
+                if (preset) update(applyPreset(current, preset));
+              }}
+            >
+              <option value="">нет</option>
+              {MATERIAL_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.label}</option>
+              ))}
+            </select>
+          </label>
 
+          {/* Упаковка стоит рядом с пресетом: это тоже «про весь материал», а не
+              про один канал. */}
           <ChannelRow
             label="Шероховатость"
             hint="0 — зеркало, 1 — матовое"
@@ -121,6 +124,11 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
             onPick={(file) => chooseFile(file, (src) => updateChannel("ao", { from: "file", file: src }))}
             onClear={() => updateChannel("ao", { from: "value", file: null })}
           />
+
+          <p className="behaviour-hint">
+            Источник: <b>{materialSourceSummary(current)}</b>. Переключатель в строке канала
+            решает, откуда брать число: из ползунка, из упакованной карты или из своего файла.
+          </p>
 
           <ReflectanceRow ior={current.ior} onChange={(ior) => update({ ior })} />
 
@@ -219,7 +227,7 @@ function ReflectanceRow({ ior, onChange }: { ior: number; onChange: (ior: number
     <div className="material-channel">
       <div className="material-channel-head">
         <span title="Сколько света поверхность отражает «в лоб»: у кожи меньше, чем у пластика">Отражение</span>
-        <small>{Math.round(f0 * 1000) / 10} % света</small>
+        <small title="Доля падающего света, которую поверхность отражает «в лоб»">{Math.round(f0 * 1000) / 10} % света</small>
       </div>
       <label className="range-property">
         <span>{Math.round(reflectance * 100)} %</span>
@@ -255,12 +263,27 @@ function ChannelRow({ label, hint, channel, packed, onChange, onPick, onClear }:
     <div className="material-channel">
       <div className="material-channel-head">
         <span title={hint}>{label}</span>
-        <div className="segmented small inline" title="Откуда берётся значение канала">
-          <button className={channel.from === "value" ? "active" : ""} onClick={() => onChange({ from: "value" })}>число</button>
-          <button className={channel.from === "file" ? "active" : ""} onClick={() => onChange({ from: "file" })}>файл</button>
+        {/* Источник канала: число, буква упакованной карты или своя карта.
+            Это не «режим материала», а выбор на каждый канал: шероховатость
+            может быть из ORM, а окклюзия — числом. */}
+        <div className="segmented small inline" title="Откуда брать значение этого канала">
+          <button
+            className={channel.from === "value" ? "active" : ""}
+            title="Использовать число из ползунка"
+            onClick={() => onChange({ from: "value" })}
+          >число</button>
           {packed && (
-            <button className={channel.from === "packed" ? "active" : ""} onClick={() => onChange({ from: "packed" })}>карта</button>
+            <button
+              className={channel.from === "packed" ? "active" : ""}
+              title="Использовать значение из упакованной карты (буква выбирается ниже)"
+              onClick={() => onChange({ from: "packed" })}
+            >из ORM</button>
           )}
+          <button
+            className={channel.from === "file" ? "active" : ""}
+            title="Использовать свою карту канала (серая картинка)"
+            onClick={() => onChange({ from: "file" })}
+          >свой файл</button>
         </div>
       </div>
       {channel.from === "value" && (

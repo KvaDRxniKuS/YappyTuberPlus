@@ -27,7 +27,12 @@ export type ParamName =
    */
   | "roughness" | "metallic" | "ao"
   /** Материал: сила свечения. Прибавляется к настройке инспектора. */
-  | "emissive";
+  | "emissive"
+  /**
+   * Материал: показатель преломления (отражение). Заменяет значение из
+   * инспектора, `-1` — «не задано».
+   */
+  | "ior";
 
 export interface Vec2 { x: number; y: number }
 

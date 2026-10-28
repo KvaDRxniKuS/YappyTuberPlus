@@ -276,58 +276,91 @@ function normalize3(v: [number, number, number]): [number, number, number] {
 }
 
 /**
- * Готовые наборы материала: то, с чего начинают, а не «пустые поля».
+ * Готовые наборы материала — это **список значений**, а не режим и не карта.
  *
- * Набор **полный**: он задаёт все свойства, которыми владеет, — шероховатость,
- * металл, отражение и свечение. Иначе после «Неона» объект продолжал бы
- * светиться под «Матовым», а «Неон» после «Металла» дал бы светящийся металл.
+ * Набор задаёт только числа: шероховатость, металл, отражение и свечение.
+ * Источник канала (число, своя карта, буква ORM) он не трогает — иначе нажатие
+ * «Кожа» молча отвязывало бы уже выбранную карту шероховатости. Поэтому в
+ * наборе нет `ChannelSpec`, а есть голые значения.
  *
  * IOR взят по таблице отрасли (Filament / glTF): пластик и стекло 1.5–1.58,
  * кожа 1.4 (2.8 %), волосы 1.55, зубы 1.6. У металла поле не участвует —
  * металл отражает цветом объекта, — поэтому там нейтральные 1.5.
  */
-export const MATERIAL_PRESETS: Array<{ id: string; label: string; patch: Partial<MaterialSpec> }> = [
-  {
-    id: "matte",
-    label: "Матовый",
-    patch: {
-      roughness: DEFAULT_CHANNEL(0.9, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
-      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.5,
-    },
-  },
-  {
-    id: "plastic",
-    label: "Пластик",
-    patch: {
-      roughness: DEFAULT_CHANNEL(0.35, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
-      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.5,
-    },
-  },
-  {
-    id: "metal",
-    label: "Металл",
-    patch: {
-      roughness: DEFAULT_CHANNEL(0.25, "g"), metallic: DEFAULT_CHANNEL(1, "b"),
-      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.5,
-    },
-  },
-  {
-    id: "skin",
-    label: "Кожа",
-    patch: {
-      roughness: DEFAULT_CHANNEL(0.55, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
-      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.4,
-    },
-  },
-  {
-    id: "neon",
-    label: "Неон",
-    patch: {
-      roughness: DEFAULT_CHANNEL(0.4, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
-      emissive: { color: "#66e0ff", strength: 120, file: null }, ior: 1.5,
-    },
-  },
+export interface MaterialPreset {
+  id: string;
+  label: string;
+  /** Шероховатость 0…1. */
+  roughness: number;
+  /** Металл 0…1. */
+  metallic: number;
+  /** Отражение диэлектрика (IOR). */
+  ior: number;
+  /** Свечение: цвет и сила 0…200 %. */
+  emissive: { color: string; strength: number };
+}
+
+export const MATERIAL_PRESETS: MaterialPreset[] = [
+  { id: "matte", label: "Матовый", roughness: 0.9, metallic: 0, ior: 1.5, emissive: { color: "#ffffff", strength: 0 } },
+  { id: "plastic", label: "Пластик", roughness: 0.35, metallic: 0, ior: 1.5, emissive: { color: "#ffffff", strength: 0 } },
+  { id: "metal", label: "Металл", roughness: 0.25, metallic: 1, ior: 1.5, emissive: { color: "#ffffff", strength: 0 } },
+  { id: "skin", label: "Кожа", roughness: 0.55, metallic: 0, ior: 1.4, emissive: { color: "#ffffff", strength: 0 } },
+  { id: "neon", label: "Неон", roughness: 0.4, metallic: 0, ior: 1.5, emissive: { color: "#66e0ff", strength: 120 } },
 ];
+
+/**
+ * Набор на материал: меняет значения, не трогая источники каналов.
+ *
+ * Карта шероховатости остаётся подключённой, карта свечения — тоже: их выбирал
+ * человек, и терять их от нажатия «Пластик» нельзя.
+ */
+export function applyPreset(current: MaterialSpec, preset: MaterialPreset): MaterialSpec {
+  return {
+    ...current,
+    roughness: { ...current.roughness, value: preset.roughness },
+    metallic: { ...current.metallic, value: preset.metallic },
+    ior: preset.ior,
+    emissive: { ...current.emissive, color: preset.emissive.color, strength: preset.emissive.strength },
+  };
+}
+
+/**
+ * Какой набор сейчас стоит — или `null`, если ни один.
+ *
+ * Сравниваются **значения**, а не источники: как только человек сдвинул
+ * ползунок, набор перестаёт быть собой, и список честно показывает «нет».
+ */
+export function matchPreset(material: MaterialSpec | undefined): MaterialPreset | null {
+  if (!material) return null;
+  const same = (a: number, b: number) => Math.abs(a - b) < 0.005;
+  return MATERIAL_PRESETS.find((preset) => (
+    same(material.roughness.value, preset.roughness)
+    && same(material.metallic.value, preset.metallic)
+    && same(material.ior, preset.ior)
+    && same(material.emissive.strength, preset.emissive.strength)
+    && material.emissive.color.toLowerCase() === preset.emissive.color.toLowerCase()
+  )) ?? null;
+}
+
+/**
+ * Откуда сейчас берутся значения — одной строкой для инспектора.
+ *
+ * Раскрывать три строки каналов, чтобы понять «а что вообще читается», — лишняя
+ * работа; сводка отвечает на это сразу: `ORM · 1 свой файл · 2 числа`.
+ */
+export function materialSourceSummary(material: MaterialSpec | undefined): string {
+  if (!material) return "нет";
+  const parts: string[] = [];
+  const channels = [material.roughness, material.metallic, material.ao];
+  const packed = channels.filter((channel) => channel.from === "packed" && material.packed).length;
+  const own = channels.filter((channel) => channel.from === "file" && channel.file).length;
+  const numbers = channels.length - packed - own;
+  if (packed > 0) parts.push(`ORM ×${packed}`);
+  if (own > 0) parts.push(`свой файл ×${own}`);
+  if (numbers > 0) parts.push(`числа ×${numbers}`);
+  if (material.emissive.file) parts.push("карта свечения");
+  return parts.join(" · ") || "числа";
+}
 
 /** Файлы материала: всё, что должно попасть в сохранение и папку пресета. */
 export function materialSources(material: MaterialSpec | undefined): string[] {
@@ -408,6 +441,12 @@ export function materialBinding(
   const ao = fromPacked(material.ao);
   const liveEmissive = values?.emissive;
   const extraGlow = typeof liveEmissive === "number" && Number.isFinite(liveEmissive) ? liveEmissive : 0;
+  // Отражение из скрипта: `-1` — «не задано», иначе IOR заменяет инспектор.
+  // Ниже 1 показатель преломления не бывает — это уже не физика.
+  const liveIor = values?.ior;
+  const ior = typeof liveIor === "number" && Number.isFinite(liveIor) && liveIor >= MIN_IOR
+    ? Math.min(MAX_IOR, liveIor)
+    : material.ior;
   return {
     roughness: live("roughness", roughness),
     metallic: live("metallic", metallic),
@@ -421,7 +460,7 @@ export function materialBinding(
     specular: material.specular / 100,
     // F0 считается здесь, а не в шейдере: одна и та же формула для кадра,
     // тестов и генератора примера.
-    f0: f0FromIor(material.ior),
+    f0: f0FromIor(ior),
     environment: { color: hexToRgb(env.color), level: env.level / 100 },
   };
 }

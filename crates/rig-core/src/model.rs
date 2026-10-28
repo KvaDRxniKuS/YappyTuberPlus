@@ -235,10 +235,13 @@ pub enum Param {
     /// Материал: сила свечения. Прибавляется к настройке инспектора, поэтому
     /// пульсация пишется как `emissive = sin(time * 6) * 0.5 + 0.5`.
     Emissive,
+    /// Материал: показатель преломления диэлектрика 1..2.5 (из него считается
+    /// доля отражения). −1 — «не задано», тогда работает инспектор.
+    Ior,
 }
 
 impl Param {
-    pub const ALL: [Param; 26] = [
+    pub const ALL: [Param; 27] = [
         Param::X,
         Param::Y,
         Param::Rotation,
@@ -265,6 +268,7 @@ impl Param {
         Param::Metallic,
         Param::Ao,
         Param::Emissive,
+        Param::Ior,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -295,6 +299,7 @@ impl Param {
             Param::Metallic => "metallic",
             Param::Ao => "ao",
             Param::Emissive => "emissive",
+            Param::Ior => "ior",
         }
     }
 
@@ -336,6 +341,7 @@ impl Param {
             "metallic" => Param::Metallic,
             "ao" => Param::Ao,
             "emissive" => Param::Emissive,
+            "ior" => Param::Ior,
             _ => return None,
         })
     }

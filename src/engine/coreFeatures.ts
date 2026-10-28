@@ -201,6 +201,12 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
     words: ["roughness", "metallic", "ao", "emissive"],
     fields: ["material"],
   },
+  {
+    id: "ior",
+    label: "отражение из скрипта (`ior`)",
+    since: 23,
+    words: ["ior"],
+  },
 ];
 
 /** Что сцена просит у ядра и почему. */

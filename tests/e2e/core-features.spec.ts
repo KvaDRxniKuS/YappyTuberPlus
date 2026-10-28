@@ -97,18 +97,23 @@ test("требование: у числа есть причина, и она н�
   expect(light.needs).toBe(21);
   expect(needsReason(light)).toContain("свет");
 
-  // Материал поднимает требование до текущего поколения, и причина называет его.
+  // Материал поднимает требование до своего поколения, и причина называет его.
   const material = needsReport(preset([{ kind: "sprite", material: { roughness: { value: 0.3 } } } as Partial<RigObject>]));
-  expect(material.needs).toBe(VERSION.core);
+  expect(material.needs).toBe(22);
   expect(needsReason(material)).toContain("материал");
+
+  // Отражение из скрипта — уже 23: старое ядро вернуло бы «не задано».
+  const ior = needsReport(preset([{ kind: "sprite", script: "ior = 1.4" } as Partial<RigObject>]));
+  expect(ior.needs).toBe(VERSION.core);
+  expect(needsCore(preset([{ kind: "sprite", script: "ior = 1.4" } as Partial<RigObject>]))).toBe(23);
 
   // Незнакомый вызов важнее подписей: он и есть причина текущего поколения.
   expect(needsReason(needsReport(preset([{ script: "x = mystery(1)" }])))).toContain("mystery()");
 });
 
 test("требование: файл уносит его с собой", () => {
-  // Материал — самая новая механика: именно он держит сцену на текущем ядре.
-  const scene = preset([{ kind: "sprite", material: { roughness: { value: 0.4 } } } as Partial<RigObject>]);
+  // Самая новая механика — `ior` в формуле: именно она держит сцену на текущем ядре.
+  const scene = preset([{ kind: "sprite", script: "ior = 1.45" } as Partial<RigObject>]);
   const stamped = stampPreset(scene);
   expect(stamped.built).toContain(VERSION.core.toString());
   expect(stamped.needs).toBe(VERSION.core);
