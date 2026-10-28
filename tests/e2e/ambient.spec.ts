@@ -224,6 +224,12 @@ test("ambient: точка привязывается к цвету так же, 
   // Пароль OBS — в настройках приложения, а не в пресете.
   const templateText = readFileSync(join(directory, "ambient.json"), "utf8");
   expect(templateText).not.toContain("password");
+  const editor = readFileSync(join(process.cwd(), "src", "components", "AmbientEditor.tsx"), "utf8");
+  // Пароль вводится в карточке модуля, но живёт в настройках приложения:
+  // правка идёт мимо `onConfig`, поэтому в пресет он не попадёт.
+  expect(editor).toContain("setObsPassword(");
+  expect(editor).toContain('type="password"');
+
   const obs = readFileSync(join(process.cwd(), "src", "modules", "obs.ts"), "utf8");
   expect(obs).toContain("yappytuber.obs.password");
   expect(obs).toContain("localStorage");

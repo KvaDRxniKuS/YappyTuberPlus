@@ -5,7 +5,7 @@ import {
   AMBIENT_POINT_BASE, AMBIENT_RATE_MAX, AMBIENT_RATE_MIN, ambientConnection, ambientPoints,
   ambientRate, sanitizePointName, uniquePointName, type AmbientPoint, type AmbientSourceKind,
 } from "../modules/ambient";
-import type { ObsStatus } from "../modules/obs";
+import { obsPassword, setObsPassword, type ObsStatus } from "../modules/obs";
 
 /**
  * Точки модуля «Свет из экрана».
@@ -63,6 +63,9 @@ export function AmbientEditor(props: {
 
   const connection = ambientConnection(props.module);
   const obs = props.obs;
+  // Пароль obs-websocket — не данные пресета: он лежит в настройках приложения.
+  // Поэтому правка идёт мимо `onConfig`, а в карточке стоит пометка.
+  const [secret, setSecret] = useState(() => obsPassword());
 
   return (
     <div className="color-editor ambient-editor">
@@ -301,9 +304,24 @@ export function AmbientEditor(props: {
               />
             </label>
           </div>
+          <label className="module-field">
+            <span className="module-field-label" title="Хранится в настройках приложения, в пресет не попадает">
+              Пароль obs-websocket
+            </span>
+            <input
+              className="text-input"
+              type="password"
+              value={secret}
+              placeholder="если выключена авторизация — пусто"
+              onChange={(event) => {
+                setSecret(event.target.value);
+                setObsPassword(event.target.value);
+              }}
+            />
+          </label>
           <p className="behaviour-hint">
-            Пароль obs-websocket хранится в настройках приложения, а не в пресете: пресет можно
-            выкладывать, а секрет — нет.
+            Пароль хранится в настройках приложения, а не в пресете: пресет можно выкладывать,
+            а секрет — нет. В самом пресете остаются только адрес и порт.
           </p>
           <button className="button secondary" onClick={() => obs?.probe()}>
             Проверить соединение
