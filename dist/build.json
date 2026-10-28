@@ -3,22 +3,22 @@
     1,
     1
   ],
-  "core": 22,
+  "core": 23,
   "format": 5,
   "bridge": 1,
   "modules": 1,
   "shell": 1,
-  "version": "1.1.22.5.1.1.1",
+  "version": "1.1.23.5.1.1.1",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-10-28T07:18:58.378Z",
-  "commit": "d59a886",
+  "builtAt": "2026-10-28T07:35:21.173Z",
+  "commit": "cc4c311",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-DUud6EQs.js",
-      "size": 409344,
-      "sha256": "73f29069c1875ce6dee41d17b6fe83b5d2db1619dde3890f7de61bdc01bec5df"
+      "path": "assets/bus-C8Nqhjmz.js",
+      "size": 410237,
+      "sha256": "1915be6f4c7e9768c22d63ea23aaf6468fe9917b520d5d173e18f24cb600e60b"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,9 +76,9 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-Daw0Zwyz.js",
+      "path": "assets/overlay-CjjeJwy7.js",
       "size": 8931,
-      "sha256": "3a3f50ec3361e25c98e0af01cc2bdb71aee1d38caa608c8f7681d3e43f57cb9a"
+      "sha256": "b4e6b3e99c115ec43b87702331264af4ac3738b72931f58711075ce393e305e4"
     },
     {
       "path": "assets/overlay-DT7yrNH-.css",
@@ -86,14 +86,14 @@
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
     },
     {
-      "path": "assets/studio-CKV3aGct.js",
-      "size": 765578,
-      "sha256": "9033706fa9c14f681eae76e0ea562c6999a42e99720bfd616cee410e8a36bd3d"
-    },
-    {
       "path": "assets/studio-DFhKmlYi.css",
       "size": 68520,
       "sha256": "193f0f4eff4deb83c6b10855497c563ca6e5dd1ab34c2515c79f3c5b77d29df5"
+    },
+    {
+      "path": "assets/studio-Ktz-fDZQ.js",
+      "size": 765825,
+      "sha256": "ab3c632e1d37dd2d7cc32bf472b5620f7ffc5f259d75ca34089d278ceb0d4d19"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "1466cef33bb0f77d5cb9225cbe83d5439053334c8fe1905f2328ad78edf4defa"
+      "sha256": "10537315d989afffe2de37b965f5687077d1326a597cc718e2f8d5fc10104f65"
     },
     {
       "path": "modules/autoblink.json",
@@ -173,7 +173,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "970e368352ec6cb35e0938477c2ca6aa22f4b9bff21b5c5842e94d2dc830ff46"
+      "sha256": "93ee6c1ff4488c31afc2b55c1b85558c6a6042c45097897b72d0d73784d9472c"
     },
     {
       "path": "rig_core.wasm",
