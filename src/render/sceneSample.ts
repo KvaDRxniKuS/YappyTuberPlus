@@ -96,10 +96,25 @@ class SceneSampler {
   private requested = false;
   private width = 0;
   private height = 0;
+  private listeners = new Set<() => void>();
 
-  /** Замер нужен: модуль ambient включён и смотрит на свою сцену. */
+  /**
+   * Замер нужен: модуль ambient включён и смотрит на свою сцену.
+   *
+   * Заодно будим того, кто рисует кадр: в простое (стоп, расстановка) кадров
+   * нет, и без этого замер бы ждал первого движения мышью.
+   */
   request(): void {
     this.requested = true;
+    for (const listener of this.listeners) listener();
+  }
+
+  /** Кто перерисует кадр по просьбе о замере. Возвращает отписку. */
+  onRequest(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   /** Замер больше не нужен: модулей ambient нет. */

@@ -382,6 +382,9 @@ export function Scene(props: SceneProps) {
   }, [imageKey, props.preset.objects]);
 
   useEffect(() => assets.current.onChange(() => { markDirty(); }), []);
+  // Замер для ambient нужен и в простое (стоп, расстановка), когда кадров нет:
+  // просьба о замере сама будит отрисовку, иначе свет замирал бы до движения мыши.
+  useEffect(() => sceneSampler.onRequest(() => { markDirty(); }), []);
   // Файлы из хранилища читаются асинхронно: когда картинка появилась,
   // спрайт нужно поставить в очередь декодирования и перерисовать сцену.
   useEffect(() => onAssetsChanged(() => {
