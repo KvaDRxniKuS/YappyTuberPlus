@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { lightDirection } from "../../scripts/material-math.mjs";
-import { invertMatrix3 } from "../../src/render/lighting";
+import { SHADER_SOURCES, glslFloat, invertMatrix3 } from "../../src/render/lighting";
+import { SPECULAR_EXPOSURE, SPECULAR_REACH } from "../../src/render/material";
 import { join } from "node:path";
 
 /*
@@ -14,10 +15,15 @@ import { join } from "node:path";
  * работали», хотя весь код был на месте. Ни один тест этого не видел: браузера
  * с WebGL в прогоне нет, а проверки шейдера были текстовые и по смыслу.
  *
- * Поэтому здесь проверяется единственное, что можно проверить без драйвера:
- * текст шейдера не использует зарезервированных слов. Список — из спецификации
- * GLSL ES (разделы «Reserved Keywords» у 1.00 и 3.00); всё, что попало в
- * переменную, функцию или параметр, ловится до запуска.
+ * Поэтому здесь проверяется то, что видно по тексту: зарезервированные слова
+ * (список — из спецификации GLSL ES, разделы «Reserved Keywords» у 1.00 и 3.00),
+ * висячие запятые в списках аргументов и целые числа там, где ждёт float.
+ *
+ * Список неполный, но ровно по факту: `flat` и `packed`, потом `f(a, b,)` и
+ * `#define SPECULAR_EXPOSURE 6`. Три из четырёх пойманы человеком, четвёртое —
+ * тестом ниже. Всё это — ошибки одного рода: их не видит ни TypeScript (текст
+ * шейдера для него строка), ни глаз, а следствием всегда «карты нормалей и
+ * материал перестали работать», потому что `giveUp` выключает объём целиком.
  */
 
 /** Зарезервированные слова GLSL ES 1.00 и 3.00: объявлять их нельзя. */
@@ -51,26 +57,68 @@ function reservedOf(shader: string): string[] {
   return RESERVED.filter((word) => found.has(word));
 }
 
-/** Все шейдеры файла: каждый начинается с `#version 300 es`. */
-function shadersOf(source: string): string[] {
-  return [...source.matchAll(/`(#version 300 es[\s\S]*?)`/g)].map((match) => match[1]);
-}
+/** Все программы: четыре текста, каждый начинается с `#version 300 es`. */
+const SHADERS = Object.entries(SHADER_SOURCES);
 
 const lighting = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
 
 test("шейдеры: ни одного зарезервированного слова GLSL", () => {
-  const shaders = shadersOf(lighting);
   // Четыре программы: нормали (вершины + фрагмент) и объём (вершины + фрагмент).
-  expect(shaders.length).toBe(4);
-  for (const shader of shaders) {
-    const first = shader.slice(0, shader.indexOf("`")).split("\n")[0];
-    expect(reservedOf(shader), `шейдер с ${first}`).toEqual([]);
+  expect(SHADERS.map(([name]) => name)).toEqual([
+    "normalVertex", "normalFragment", "volumeVertex", "volumeFragment",
+  ]);
+  for (const [name, shader] of SHADERS) {
+    expect(reservedOf(shader), `шейдер ${name}`).toEqual([]);
   }
 });
 
+/*
+ * Два способа убить шейдер, которые не видны ни в редакторе, ни в сборке.
+ *
+ *  · `f(a, b,)` — JS терпит висячую запятую, GLSL нет: «syntax error,
+ *    unexpected RIGHT_PAREN»;
+ *  · `#define SPECULAR_EXPOSURE 6`, а дальше `float * 6` — GLSL ES 3.00 не
+ *    приводит int к float: «wrong operand types».
+ *
+ * Следствие в обоих случаях одно: программа не собирается, объём выключается, и
+ * пользователь видит «нормали не работают». Числа в текст шейдера поэтому уходят
+ * через glslFloat(), а проверяется собранный текст — тот самый, что видит драйвер.
+ */
+test("шейдеры: ни висячей запятой, ни целого числа в float-месте", () => {
+  for (const [name, source] of SHADERS) {
+    expect(source, `шейдер ${name}`).toContain("#version 300 es");
+    // Ни в вызовах, ни в инициализаторах.
+    expect(source, `шейдер ${name}`).not.toMatch(/,\s*[)}]/);
+    // Числовые define'ы — только вещественные. кроме счётчика цикла: MAX_LIGHTS
+    // живёт в int-контексте и там ему место.
+    const ints = [...source.matchAll(/^#define ([A-Z_]+) (\S+)$/gm)]
+      .filter(([, macro, value]) => macro !== "MAX_LIGHTS" && /^-?\d+$/.test(value))
+      .map(([, macro, value]) => `${macro} = ${value}`);
+    expect(ints, `шейдер ${name}: целые литералы`).toEqual([]);
+  }
+});
+
+test("шейдер объёма: числа материала подставлены вещественными литералами", () => {
+  const volume = SHADER_SOURCES.volumeFragment;
+  // Не «6» и не «1.8000000000000002 — а ровно то, что принимает GLSL.
+  expect(volume).toContain(`#define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}`);
+  expect(volume).toContain(`#define SPECULAR_REACH ${glslFloat(SPECULAR_REACH)}`);
+  expect(volume).not.toContain(`#define SPECULAR_EXPOSURE ${SPECULAR_EXPOSURE}\n`);
+});
+
+test("glslFloat: целое число становится вещественным литералом", () => {
+  expect(glslFloat(6)).toBe("6.0");
+  expect(glslFloat(0)).toBe("0.0");
+  expect(glslFloat(-2)).toBe("-2.0");
+  expect(glslFloat(1.8)).toBe("1.8");
+  expect(glslFloat(0.35)).toBe("0.35");
+  expect(glslFloat(1e-5)).toBe("0.00001");
+  // Экспонента — уже float, вторую точку не просит.
+  expect(glslFloat(1e21)).toBe("1e+21");
+});
+
 test("шейдер объёма: нормаль и упакованная карта названы не зарезервированными словами", () => {
-  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
-  expect(volume).toBeTruthy();
+  const volume = SHADER_SOURCES.volumeFragment;
   // Те же слова, что были ошибкой: `flat` и `packed`. Имена по смыслу, а не по
   // старой привычке.
   expect(volume).toContain("vec3 lightDir = normalize(vec3(toLight, max(uLightExtra[i].x / uScale, 0.001)));");
@@ -88,8 +136,7 @@ test("шейдер объёма: нормаль и упакованная кар
  * показывали. Проверяем и текст шейдера, и саму формулу числами.
  */
 test("шейдер объёма: смещение до света не нормируется отдельно от высоты", () => {
-  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
-  expect(volume).toBeTruthy();
+  const volume = SHADER_SOURCES.volumeFragment;
   // Ни деления смещения на его длину, ни отдельной единичной горизонтали.
   expect(volume).not.toContain("flatDir");
   expect(volume).not.toContain("toLight / toLightLen");
@@ -108,8 +155,7 @@ test("шейдер объёма: смещение до света не норм�
  * зуме и повороте — это и выглядело как «ORM деформируется от камеры».
  */
 test("шейдер объёма: UV карт считается от объекта, а не от рамки", () => {
-  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
-  expect(volume).toBeTruthy();
+  const volume = SHADER_SOURCES.volumeFragment;
   expect(volume).toContain("uniform mat3 uInverse;");
   expect(volume).toContain("vec2 uv = clamp((localPoint - uUvRect.xy) / uUvRect.zw, 0.0, 1.0);");
   // Буфер сцены и буфер нормалей по-прежнему читаются рамкой: они в ней и лежат.
@@ -144,8 +190,7 @@ test("объём: материал и свечение работают без �
 });
 
 test("шейдер объёма: блик не вырождается в линию и не гасится дважды", () => {
-  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
-  expect(volume).toBeTruthy();
+  const volume = SHADER_SOURCES.volumeFragment;
   // Блик — лепесток GGX, нормированный на собственный максимум. Прежняя схема
   // (D, делённая на 4·NdotL, с полкой снизу и потолком сверху) делала косое
   // падение ярче прямого: на плоской поверхности максимум уползал на кольцо, и

@@ -111,6 +111,19 @@ export function resetCollector(collector: LightingCollector): void {
 export const MAX_LIGHTS = 8;
 
 /**
+ * Число, которое уходит в текст шейдера. GLSL ES 3.00 не приводит `int` к
+ * `float`: `#define SPECULAR_EXPOSURE 6` и дальше `float * 6` — это ошибка
+ * компиляции, драйвер не собирает программу, `giveUp` выключает объём целиком,
+ * и выглядит это как «карты нормалей перестали работать». Поэтому литерал
+ * всегда пишется с точкой.
+ */
+export function glslFloat(value: number): string {
+  const text = String(value);
+  return /[.eE]/.test(text) ? text : `${text}.0`;
+}
+
+
+/**
  * Порог «тёмный тексель — это не нормаль, а пустое место».
  *
  * У единичной нормали максимум компоненты не меньше 1/√3 ≈ 0.577, а в карте
@@ -157,7 +170,7 @@ void main() {
   // карты она не перекрывает. Порог безопасен: любая настоящая нормаль ярче
   // 0.79, потому что у единичного вектора максимум компоненты больше 1/√3.
   float level = max(max(map.r, map.g), map.b);
-  float cover = smoothstep(${NORMAL_COVERAGE_DARK.toFixed(2)}, ${NORMAL_COVERAGE_LIT.toFixed(2)}, level);
+  float cover = smoothstep(${glslFloat(NORMAL_COVERAGE_DARK)}, ${glslFloat(NORMAL_COVERAGE_LIT)}, level);
   // Карта без альфы приходит с alpha = 1 — правило ей не мешает.
   cover *= smoothstep(0.02, 0.5, map.a);
   vec3 texel = map.rgb * 2.0 - 1.0;
@@ -184,8 +197,8 @@ precision highp float;
  * src/render/material.ts, чтобы шейдер и эталонная реализация не могли
  * разойтись: подстановка происходит при сборке строки шейдера.
  */
-#define SPECULAR_EXPOSURE ${SPECULAR_EXPOSURE}
-#define SPECULAR_REACH ${SPECULAR_REACH}
+#define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}
+#define SPECULAR_REACH ${glslFloat(SPECULAR_REACH)}
 in vec2 vUv;
 
 uniform sampler2D uScene;
@@ -464,7 +477,7 @@ void main() {
           / max(length(dev), 1e-5);
         float lobe = ggxLobe(
           max(angDev - psi * outlineRay(dirH, shape, halfAngle, soft) * 0.15, 0.0),
-          roughness,
+          roughness
         );
         // Узкий блик чуть ярче широкого — так глянец читается на мелком зуме.
         // Потолка усилению больше не нужно: лепесток ограничен сам собой.
@@ -503,6 +516,19 @@ void main() {
   vec3 rgb = (diffuse + ambientReflect) * shade + specSum + emissive;
   outColor = vec4(clamp(rgb, 0.0, 8.0), scene.a);
 }`;
+
+/**
+ * Собранные тексты программ — наружу для проверок. Тестам нужен ровно тот
+ * текст, который уходит в GL: с подставленными числами. Иначе проверка
+ * зарезервированных слов и литералов смотрит в шаблон, а драйвер — в
+ * результат, и расход («шейдер не собирается») виден только пользователю.
+ */
+export const SHADER_SOURCES = {
+  normalVertex: NORMAL_VERTEX,
+  normalFragment: NORMAL_FRAGMENT,
+  volumeVertex: VOLUME_VERTEX,
+  volumeFragment: VOLUME_FRAGMENT,
+};
 
 interface Programs {
   gl: WebGL2RenderingContext;
