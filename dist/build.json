@@ -11,14 +11,14 @@
   "version": "1.1.23.6.1.2.1",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-10-28T09:19:11.450Z",
-  "commit": "991e2f1",
+  "builtAt": "2026-10-28T09:36:51.624Z",
+  "commit": "f03a908",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-BeRMfPw1.js",
-      "size": 423226,
-      "sha256": "f8818a73a5b4af0915d69014ea53b51ee79a60b14423f8585296bd14e2f32b54"
+      "path": "assets/bus-CfRcxGt_.js",
+      "size": 423264,
+      "sha256": "58b5aaed8134f16a9cee96edf8a42faed2461dd89e6dd419fffb0ab236a7ac6f"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,14 +76,14 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-C_np4gUb.js",
-      "size": 9026,
-      "sha256": "d54d4502ffb0861356ec8101ee9947b948883ea08ae7cd10bd7f2541cc754c80"
-    },
-    {
       "path": "assets/overlay-DT7yrNH-.css",
       "size": 2724,
       "sha256": "4748b40f056a5670dd0d8c7a6c22a1110db8a2fdd1cfae4ab17248b0860bbc1f"
+    },
+    {
+      "path": "assets/overlay-lQfv3KVq.js",
+      "size": 9026,
+      "sha256": "27cb5c3a3f2fcf4d3fafd1eac5f9cc4c4fdd7abffbbad3b789b85264ebd2dd09"
     },
     {
       "path": "assets/studio-B8pLj8NW.css",
@@ -91,9 +91,9 @@
       "sha256": "b80db4efc30118d6a365bb5d0840ea05be894f185da6a7e5025896c4e8e2f000"
     },
     {
-      "path": "assets/studio-C3CwTOCP.js",
+      "path": "assets/studio-Dr2woGe5.js",
       "size": 798297,
-      "sha256": "a8f3f135c2f055e91ce54ae5264c18a9924bc848f21805be24dae91c715a6c8a"
+      "sha256": "08e1730793c74bbeec64a079556051ca46d04b5bd4ff0ce28bfda3302a4328fa"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "68d2c5f339421df7857f972295f8a29ab432877ac56ac45d077ddb4e2da8b169"
+      "sha256": "ca01f0f3e435ce865edfdcd4ec0985d797b51358f17f9c8056afd8940ccbecf7"
     },
     {
       "path": "modules/ambient.json",
@@ -183,7 +183,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "08891f382294b2226e92c89017f7b74ee676d87456e08ebd99df59e00f7171e0"
+      "sha256": "9f287552f1db35dfe3e03de733b32d289e55d250059b673c3a4469de4d4f2498"
     },
     {
       "path": "rig_core.wasm",
