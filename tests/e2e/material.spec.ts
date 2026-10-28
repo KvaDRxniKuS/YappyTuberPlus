@@ -430,3 +430,39 @@ test("материал: канал переключается на файл до
   const packed = normalizeMaterial({ packed: null, metallic: { from: "packed", value: 1 } })!;
   expect(channelBinding(materialBinding(packed, undefined).metallic).mode).toBe(0);
 });
+
+test("материал: порядок полей в инспекторе — сверху общее, ниже частное", () => {
+  // Порядок проверяется по разметке, а не глазами: однажды вставка «наверх»
+  // попала в старую копию блока, и упаковка осталась между «Отражением» и
+  // «Свечением» — а это ровно то место, где её никто не ищет.
+  const source = readFileSync(join(process.cwd(), "src", "components", "MaterialSection.tsx"), "utf8");
+  const at = (needle: string) => {
+    const index = source.indexOf(needle);
+    expect(index, `в разметке нет «${needle}»`).toBeGreaterThan(-1);
+    return index;
+  };
+  const preset = at("<span>Пресет</span>");
+  const packed = at("<PackedRow");
+  const roughness = at('label="Шероховатость"');
+  const metallic = at('label="Металл"');
+  const occlusion = at('label="Окклюзия"');
+  const source_ = at("Источник:");
+  const reflection = at("<ReflectanceRow");
+  const glow = at("<EmissiveHint");
+
+  // Общее — пресет и упаковка — стоит до каналов.
+  expect(preset).toBeLessThan(packed);
+  expect(packed).toBeLessThan(roughness);
+  // Каналы идут вместе, в порядке «шероховатость, металл, окклюзия».
+  expect(roughness).toBeLessThan(metallic);
+  expect(metallic).toBeLessThan(occlusion);
+  // Сводка источников — сразу после каналов, отражение и свечение — ниже.
+  expect(occlusion).toBeLessThan(source_);
+  expect(source_).toBeLessThan(reflection);
+  expect(reflection).toBeLessThan(glow);
+  // Упаковка не должна оказаться между отражением и свечением: именно там она
+  // была после неудачной правки.
+  expect(packed < reflection || packed > glow).toBe(true);
+  // И упакованная карта в разделе ровно одна: две значили бы дубль.
+  expect(source.split("<PackedRow").length - 1).toBe(1);
+});

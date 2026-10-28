@@ -96,7 +96,26 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
           </label>
 
           {/* Упаковка стоит рядом с пресетом: это тоже «про весь материал», а не
-              про один канал. */}
+              про один канал. Ниже — три канала, которые из неё читаются. */}
+          <PackedRow
+            packed={current.packed}
+            onPick={(file) => chooseFile(file, (src) => update({
+              packed: src,
+              // Включили упаковку — каналы переключаются на её буквы: иначе файл
+              // лежит, а материал его не читает, и это выглядит поломкой.
+              // Раскладка ORM: R окклюзия, G шероховатость, B металл.
+              roughness: { ...current.roughness, from: "packed", packedChannel: "g" },
+              metallic: { ...current.metallic, from: "packed", packedChannel: "b" },
+              ao: { ...current.ao, from: "packed", packedChannel: "r" },
+            }))}
+            onClear={() => update({
+              packed: null,
+              roughness: { ...current.roughness, from: "value" },
+              metallic: { ...current.metallic, from: "value" },
+              ao: { ...current.ao, from: "value" },
+            })}
+          />
+
           <ChannelRow
             label="Шероховатость"
             hint="0 — зеркало, 1 — матовое"
@@ -131,25 +150,6 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
           </p>
 
           <ReflectanceRow ior={current.ior} onChange={(ior) => update({ ior })} />
-
-          <PackedRow
-            packed={current.packed}
-            onPick={(file) => chooseFile(file, (src) => update({
-              packed: src,
-              // Включили упаковку — каналы переключаются на её буквы: иначе файл
-              // лежит, а материал его не читает, и это выглядит поломкой.
-              // Раскладка ORM: R окклюзия, G шероховатость, B металл.
-              roughness: { ...current.roughness, from: "packed", packedChannel: "g" },
-              metallic: { ...current.metallic, from: "packed", packedChannel: "b" },
-              ao: { ...current.ao, from: "packed", packedChannel: "r" },
-            }))}
-            onClear={() => update({
-              packed: null,
-              roughness: { ...current.roughness, from: "value" },
-              metallic: { ...current.metallic, from: "value" },
-              ao: { ...current.ao, from: "value" },
-            })}
-          />
 
           <EmissiveHint file={current.emissive.file} />
           <div className="emissive-row">
