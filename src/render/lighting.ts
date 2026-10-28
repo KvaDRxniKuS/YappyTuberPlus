@@ -241,11 +241,12 @@ float triangleInside(vec2 p) {
 float channelValue(int mode, int channel, float constant, sampler2D own) {
   if (mode == 0) return constant;
   if (mode == 1) return texture(own, vUv).r;
-  vec4 packed = texture(uPacked, vUv);
-  if (channel == 0) return packed.r;
-  if (channel == 1) return packed.g;
-  if (channel == 2) return packed.b;
-  return packed.a;
+  // «packed» тоже зарезервировано в GLSL — переменная названа «тексель».
+  vec4 packedTexel = texture(uPacked, vUv);
+  if (channel == 0) return packedTexel.r;
+  if (channel == 1) return packedTexel.g;
+  if (channel == 2) return packedTexel.b;
+  return packedTexel.a;
 }
 
 /** Распределение GGX: чем меньше шероховатость, тем уже и ярче блик. */
@@ -335,8 +336,11 @@ void main() {
     // Направление на свет: по плоскости экрана и с высотой над холстом.
     // Без высоты свет лежит плашмя, и блик получается плоским.
     vec2 toLight = center - p;
-    float flat = length(toLight);
-    vec2 flatDir = flat > 0.001 ? toLight / flat : vec2(0.0);
+    // «flat» — зарезервированное слово GLSL (квалификатор интерполяции): с ним
+    // шейдер не собирался, и весь проход объёма молча выключался. Переменная
+    // называется по смыслу — длина вектора до света.
+    float toLightLen = length(toLight);
+    vec2 flatDir = toLightLen > 0.001 ? toLight / toLightLen : vec2(0.0);
     vec3 lightDir = normalize(vec3(flatDir, max(uLightExtra[i].x, 1.0)));
     float delta = dot(n, lightDir) - lightDir.z;
     accum += delta * a * polarity;
@@ -662,14 +666,20 @@ export function shadeLayer(
   const normalTexture = normalSource && normalSource.strength > 0
     ? readySource(normalSource.src)
     : null;
-  if (normalSource && normalSource.strength > 0 && !normalTexture) return false;
   const material = sample.material;
+  // Материал считается и без карты нормалей: тогда поверхность плоская, но
+  // блик, металл и окклюзия работают. Ждать карту незачем — иначе на время
+  // загрузки молча пропадал бы весь материал. Совсем без материала и без
+  // карты считать нечего.
+  if (!normalTexture && !material) return false;
   const bindings = material
     ? [material.roughness, material.metallic, material.ao].map((channel) => (
       channel.mode === 1 ? readySource(channel.src) : null
     ))
     : [];
-  if (material && bindings.some((entry, index) => material[channelName(index)].mode === 1 && !entry)) return false;
+  // Свой файл канала ещё грузится — канал читает константу (см. `modeOf`), а
+  // не отменяет проход: иначе один недокачанный файл гасил весь материал, и
+  // объект выглядел плоским без всякой причины на экране.
 
   const gl = program.gl;
   const width = box.width;
@@ -834,11 +844,6 @@ export function shadeLayer(
     console.warn("Объём от карты нормалей пропущен:", reason);
     return false;
   }
-}
-
-/** Имя канала по порядку: нужно, чтобы не разъехались текстуры и режимы. */
-function channelName(index: number): "roughness" | "metallic" | "ao" {
-  return index === 0 ? "roughness" : index === 1 ? "metallic" : "ao";
 }
 
 /** Готовая текстура файла канала или `null`, если файл ещё не пришёл. */

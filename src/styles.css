@@ -1652,6 +1652,8 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .material-channel-head > span { color: #c8ced6; }
 .material-file { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .material-packed { padding-top: 6px; border-top: 1px solid #262b31; }
+/* Сброс — отдельной строкой под пресетом: это действие про весь материал. */
+.material-reset { display: flex; padding-top: 6px; }
 .material-packed-channel { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .material-packed-channel select { background: #1b1f24; color: #dfe4ea; border: 1px solid #333a42; border-radius: 5px; padding: 2px 6px; }
 .emissive-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

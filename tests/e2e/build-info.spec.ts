@@ -49,7 +49,9 @@ test("сборка: числа в build.json совпадают с редакт�
   expect(info.bridge).toBe(VERSION.bridge);
   expect(info.modules).toBe(VERSION.modules);
   expect(info.shell).toBe(VERSION.shell);
-  expect(info.packaging).toBe("1.0.0");
+  // Версия упаковки — из package.json: раньше здесь стояло «1.0.0» руками, и
+  // после релиза 1.1 тест падал на верном числе.
+  expect(info.packaging).toBe(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version);
   expect(info.schema).toBe(1);
   expect(typeof info.builtAt).toBe("string");
 

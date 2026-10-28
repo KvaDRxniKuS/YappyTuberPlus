@@ -1,11 +1,11 @@
 import { useRef, useState } from "react";
-import { ImageUp, Layers, Sparkles, Trash2 } from "lucide-react";
+import { ImageUp, Layers, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import type { ChannelSpec, EnvironmentSpec, MaterialSpec, PackedChannel, RigObject } from "../types";
 import {
   DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL, MAX_IOR, MIN_IOR, f0FromIor, iorFromF0, reflectanceFromF0,
 } from "../types";
 import {
-  MATERIAL_PRESETS, applyPreset, materialSourceSummary, matchPreset,
+  MATERIAL_PRESETS, applyPreset, defaultMaterial, materialSourceSummary, matchPreset,
   normalizeEnvironment, normalizeMaterial,
 } from "../render/material";
 import { blobToDataUrl, storeFile } from "../engine/assets";
@@ -94,6 +94,19 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
               ))}
             </select>
           </label>
+
+          {/* Пресет меняет только числа, а сброс — это «как в первый раз»:
+              все значения к умолчаниям и все карты отвязаны. Пресета «нет»
+              для этого мало, и в списке пункта «нет» как раз не хватало. */}
+          <div className="material-reset">
+            <button
+              className="button secondary"
+              title="Вернуть все числа к умолчаниям и отвязать все карты: упакованную ORM, свои карты каналов и карту свечения"
+              onClick={() => onChange({ ...object, material: defaultMaterial() })}
+            >
+              <RotateCcw size={13} /> Сбросить материал
+            </button>
+          </div>
 
           {/* Упаковка стоит рядом с пресетом: это тоже «про весь материал», а не
               про один канал. Ниже — три канала, которые из неё читаются. */}

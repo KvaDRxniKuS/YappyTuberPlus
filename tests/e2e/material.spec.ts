@@ -2,9 +2,9 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MATERIAL_PRESETS, applyPreset, baseReflectance, channelBinding, fresnel, ggxDistribution,
-  matchPreset, materialBinding, materialSources, materialSourceSummary, normalizeEnvironment,
-  normalizeMaterial, shadePoint, usesPacked,
+  MATERIAL_PRESETS, applyPreset, baseReflectance, channelBinding, defaultMaterial, fresnel,
+  ggxDistribution, matchPreset, materialBinding, materialSources, materialSourceSummary,
+  normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
   type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
 import {
@@ -465,4 +465,73 @@ test("материал: порядок полей в инспекторе — с
   expect(packed < reflection || packed > glow).toBe(true);
   // И упакованная карта в разделе ровно одна: две значили бы дубль.
   expect(source.split("<PackedRow").length - 1).toBe(1);
+});
+
+/*
+ * Сброс материала.
+ *
+ * Пресета «нет» для этого мало: пункт «нет» значит «значения не совпали с
+ * набором», а не «вернуть как было». Сброс обязан сделать ровно одно — вернуть
+ * все числа к умолчаниям и отвязать **все** карты: упакованную ORM, свои файлы
+ * каналов и карту свечения. Если отвязать только часть, материал продолжит
+ * читать старую картинку, и человек решит, что кнопка не работает.
+ */
+test("материал: сброс возвращает числа и отвязывает все карты", () => {
+  const dirty = normalizeMaterial({
+    ...DEFAULT_MATERIAL,
+    roughness: { ...DEFAULT_MATERIAL.roughness, value: 0.12, from: "file", file: "blob:rough" },
+    metallic: { ...DEFAULT_MATERIAL.metallic, value: 1, from: "packed" },
+    ao: { ...DEFAULT_MATERIAL.ao, value: 0.4, from: "file", file: "blob:ao" },
+    emissive: { color: "#66e0ff", strength: 120, file: "blob:glow" },
+    packed: "blob:orm",
+    specular: 40,
+    ior: 1.9,
+  })!;
+  // Это именно «грязное» состояние: все привязки заняты.
+  expect(dirty.packed).toBe("blob:orm");
+  expect(dirty.roughness.file).toBe("blob:rough");
+  expect(dirty.emissive.file).toBe("blob:glow");
+
+  const reset = defaultMaterial();
+  // Числа — ровно умолчания, без «почти как было».
+  expect(reset).toEqual(DEFAULT_MATERIAL);
+  // И ни одной карты: ни упаковки, ни своих файлов, ни свечения.
+  expect(reset.packed).toBeNull();
+  for (const key of ["roughness", "metallic", "ao"] as const) {
+    expect(reset[key].file, key).toBeNull();
+    expect(reset[key].from, key).toBe("value");
+  }
+  expect(reset.emissive.file).toBeNull();
+  // Сброс — не «выключить материал»: объект продолжает считаться материалом.
+  expect(defaultMaterial()).not.toBeUndefined();
+});
+
+test("материал: сброс не портит умолчания и не делит вложенные объекты", () => {
+  // Каналы и свечение — вложенные объекты. Мелкая копия умолчаний связала бы
+  // их: правка одного объекта меняла бы умолчание для всех остальных.
+  const first = defaultMaterial();
+  first.roughness.value = 0.1;
+  first.emissive.strength = 99;
+  first.ao.packedChannel = "a";
+
+  const second = defaultMaterial();
+  expect(second.roughness.value).toBe(DEFAULT_MATERIAL.roughness.value);
+  expect(second.emissive.strength).toBe(DEFAULT_MATERIAL.emissive.strength);
+  expect(second.ao.packedChannel).toBe(DEFAULT_MATERIAL.ao.packedChannel);
+  expect(DEFAULT_MATERIAL.roughness.value).toBe(0.6);
+});
+
+test("материал: кнопка сброса есть в разделе и стоит рядом с пресетом", () => {
+  const source = readFileSync(join(process.cwd(), "src", "components", "MaterialSection.tsx"), "utf8");
+  expect(source).toContain("Сбросить материал");
+  // Нажатие возвращает раздел в исходное состояние через общую функцию сброса.
+  expect(source).toContain("material: defaultMaterial()");
+  const at = (needle: string) => {
+    const index = source.indexOf(needle);
+    expect(index, `в разметке нет «${needle}»`).toBeGreaterThan(-1);
+    return index;
+  };
+  // Сброс — общее действие, поэтому стоит до каналов: пресет → сброс → упаковка.
+  expect(at("<span>Пресет</span>")).toBeLessThan(at("Сбросить материал"));
+  expect(at("Сбросить материал")).toBeLessThan(at("<PackedRow"));
 });

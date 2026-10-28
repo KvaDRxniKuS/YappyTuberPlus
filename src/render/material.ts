@@ -81,6 +81,28 @@ export function normalizeMaterial(raw: unknown): MaterialSpec | undefined {
   };
 }
 
+/**
+ * Материал «как в первый раз»: значения по умолчанию и ни одной карты.
+ *
+ * Отдельная функция, а не `{ ...DEFAULT_MATERIAL }`, потому что каналы и
+ * свечение — вложенные объекты: при мелкой копии они остались бы общими с
+ * умолчаниями, и правка одного объекта меняла бы «умолчание» для всех
+ * остальных. Сброс обязан отвязывать все карты: упакованную, свои файлы
+ * каналов и карту свечения — иначе после сброса материал продолжал бы читать
+ * старую картинку, и «сбросить» означало бы только половину.
+ */
+export function defaultMaterial(): MaterialSpec {
+  return {
+    roughness: { ...DEFAULT_MATERIAL.roughness, file: null, from: "value" },
+    metallic: { ...DEFAULT_MATERIAL.metallic, file: null, from: "value" },
+    ao: { ...DEFAULT_MATERIAL.ao, file: null, from: "value" },
+    emissive: { ...DEFAULT_MATERIAL.emissive, file: null },
+    packed: null,
+    specular: DEFAULT_MATERIAL.specular,
+    ior: DEFAULT_MATERIAL.ior,
+  };
+}
+
 export function normalizeEnvironment(raw: unknown): EnvironmentSpec {
   const source = raw && typeof raw === "object" ? raw as Partial<EnvironmentSpec> : {};
   return {
