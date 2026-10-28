@@ -252,7 +252,7 @@ export function AmbientEditor(props: {
                   <span>Размытие <b>{Math.round(point.blur)} px</b></span>
                   <input
                     type="range" min={0} max={64} step={1} value={Math.round(point.blur)}
-                    title="Сколько пикселей уменьшенной копии добавить по краям: мягче границы — ровнее цвет"
+                    title="Сколько пикселей уменьшенной копии (128 по длинной стороне) добавить по краям: мягче границы — ровнее цвет"
                     onChange={(event) => patchPoint(point, { blur: Number(event.target.value) }, "Размытие участка")}
                   />
                 </label>

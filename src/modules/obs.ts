@@ -376,11 +376,12 @@ export class ObsClient {
         name = program.currentProgramSceneName ?? "";
       }
       if (!name) return null;
+      // Высоту не задаём: OBS сохранит пропорции источника сам. Если задать обе
+      // стороны, картинка растянется, и квадрат участка станет прямоугольником.
       const data = await this.request<{ imageData?: string }>("GetSourceScreenshot", {
         sourceName: name,
         imageFormat: "png",
         imageWidth: width,
-        imageHeight: Math.round(width * 9 / 16),
       });
       return typeof data.imageData === "string" ? data.imageData : null;
     } catch {
