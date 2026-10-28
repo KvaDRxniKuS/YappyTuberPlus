@@ -23,7 +23,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { shadePoint } from "./material-math.mjs";
+import { lightDirection, shadePoint } from "./material-math.mjs";
 
 const SIZE = 512;
 const SS = 3; // сглаживание краёв: 3×3 подпикселя на пиксель
@@ -235,7 +235,9 @@ function paintEdges(color) {
  */
 function lit(color, normalMap, lightFrom, flipGreen) {
   const out = blank(SIZE, SIZE);
-  const light = { x: lightFrom[0], y: lightFrom[1], radius: 900 };
+  // Высота как «авто» в редакторе: половина радиуса пятна. Смещение до света
+  // считается от каждой точки, поэтому лист показывает настоящий наклон.
+  const light = { x: lightFrom[0], y: lightFrom[1], radius: 900, height: 450 };
   for (let y = 0; y < SIZE; y += 1) {
     for (let x = 0; x < SIZE; x += 1) {
       const i = (y * SIZE + x) * 4;
@@ -262,18 +264,14 @@ function lit(color, normalMap, lightFrom, flipGreen) {
       const cover = smooth(0.08, 0.25, level) * smooth(0.02, 0.5, alpha);
       const volume = len * cover * 2;
       const n = [xy[0], xy[1], Math.sqrt(Math.max(1 - (xy[0] ** 2 + xy[1] ** 2), 0.05))];
-      const dx = light.x - x;
-      const dy = light.y - y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const flat = [dx / dist, dy / dist];
-      const l = [flat[0] * 0.85, flat[1] * 0.85, 1];
-      const ln = Math.hypot(l[0], l[1], l[2]);
-      const delta = (n[0] * l[0] + n[1] * l[1] + n[2] * l[2]) / ln - l[2] / ln;
+      // Та же формула, что в шейдере: смещение до света и высота в пикселях.
+      const l = lightDirection([light.x - x, light.y - y], light.height);
+      const delta = n[0] * l[0] + n[1] * l[1] + n[2] * l[2] - l[2];
       const scale = 1 + Math.min(2, Math.max(-0.9, delta)) * volume;
       out.data[i] = Math.min(1, Math.max(0, base[0] * Math.max(0, scale)));
       out.data[i + 1] = Math.min(1, Math.max(0, base[1] * Math.max(0, scale)));
       out.data[i + 2] = Math.min(1, Math.max(0, base[2] * Math.max(0, scale)));
-      void nx; void nz; void light.radius;
+      void nx; void nz;
     }
   }
   return out;

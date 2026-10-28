@@ -38,6 +38,18 @@ const norm = (v) => {
   return [v[0] / length, v[1] / length, v[2] / length];
 };
 
+/**
+ * Направление на свет для точки сцены — та же формула, что в шейдере объёма.
+ *
+ * `toLight` — смещение от точки до центра пятна, `height` — высота света над
+ * холстом. Оба числа в одних единицах (пиксели холста), и только вместе они
+ * дают наклон: если нормировать смещение отдельно, высота в сотни пикселей
+ * перевесит, и свет будет светить сверху для всей сцены.
+ */
+export function lightDirection(toLight, height) {
+  return norm([toLight[0], toLight[1], Math.max(height, 1)]);
+}
+
 /** Цвет точки по материалу: то же, что `shadePoint` из `src/render/material.ts`. */
 export function shadePoint(point, lights, options) {
   const flat = [

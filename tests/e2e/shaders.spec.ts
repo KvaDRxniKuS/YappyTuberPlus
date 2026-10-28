@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { lightDirection } from "../../scripts/material-math.mjs";
 import { join } from "node:path";
 
 /*
@@ -69,10 +70,59 @@ test("шейдеры: ни одного зарезервированного с�
 test("шейдер объёма: нормаль и упакованная карта названы не зарезервированными словами", () => {
   const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
   expect(volume).toBeTruthy();
-  // Те же слова, что были ошибкой: `flat` (длина вектора до света) и `packed`
-  // (тексель упакованной карты). Имена по смыслу, а не по старой привычке.
-  expect(volume).toContain("float toLightLen = length(toLight);");
+  // Те же слова, что были ошибкой: `flat` и `packed`. Имена по смыслу, а не по
+  // старой привычке.
+  expect(volume).toContain("vec3 lightDir = normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)));");
   expect(volume).toContain("vec4 packedTexel = texture(uPacked, vUv);");
+});
+
+/*
+ * Направление на свет — не мелочь оформления, а причина «мёртвых» карт.
+ *
+ * Горизонталь до пятна когда-то нормировалась до единицы, а высота света
+ * оставалась в пикселях (авто — половина радиуса, у лампы 240 это 120). Вектор
+ * (0, 0, 120) — это свет строго сверху для любой точки сцены: пятно гуляет,
+ * яркость меняется, а наклон поверхности к свету — нет. Карта нормалей
+ * выглядела нарисованной, блик не двигался, шероховатость и металл ничего не
+ * показывали. Проверяем и текст шейдера, и саму формулу числами.
+ */
+test("шейдер объёма: смещение до света не нормируется отдельно от высоты", () => {
+  const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
+  expect(volume).toBeTruthy();
+  // Ни деления смещения на его длину, ни отдельной единичной горизонтали.
+  expect(volume).not.toContain("flatDir");
+  expect(volume).not.toContain("toLight / toLightLen");
+  // Смещение и высота уходят в один normalize — значит, в одних единицах.
+  expect(volume).toContain("vec2 toLight = center - p;");
+  expect(volume).toContain("normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)))");
+});
+
+test("направление на свет: пятно сдвинулось — наклон изменился", () => {
+  // Нормаль наклонена вправо на 45°, свет с высотой 120 px (лампа радиусом 240).
+  const n = [Math.SQRT1_2, 0, Math.SQRT1_2];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const at = (center: [number, number]) => lightDirection([center[0], center[1]], 120);
+
+  // Свет справа: поверхность развёрнута к нему, NdotL растёт до почти единицы.
+  expect(dot(n, at([100, 0]))).toBeGreaterThan(0.9);
+  expect(dot(n, at([200, 0]))).toBeGreaterThan(0.9);
+  // Свет слева: поверхность отвёрнута, NdotL становится отрицательным.
+  expect(dot(n, at([-200, 0]))).toBeLessThan(0);
+  // Свет ровно над точкой: честный косинус наклона нормали.
+  expect(dot(n, at([0, 0]))).toBeCloseTo(Math.SQRT1_2, 3);
+
+  // Ошибка, которую поймал этот тест: единичная горизонталь против высоты в
+  // пикселях даёт один и тот же наклон для любого положения пятна.
+  const broken = (center: [number, number]) => {
+    const offset = [center[0], center[1]];
+    const length = Math.hypot(offset[0], offset[1]);
+    const flat2 = length > 0.001 ? [offset[0] / length, offset[1] / length] : [0, 0];
+    const l = [flat2[0], flat2[1], 120];
+    const size = Math.hypot(l[0], l[1], l[2]);
+    return [l[0] / size, l[1] / size, l[2] / size];
+  };
+  expect(Math.abs(dot(n, broken([200, 0])) - dot(n, broken([-200, 0])))).toBeLessThan(0.05);
+  expect(Math.abs(dot(n, at([200, 0])) - dot(n, at([-200, 0])))).toBeGreaterThan(1);
 });
 
 test("проверка зарезервированных слов ловит именно ту ошибку", () => {

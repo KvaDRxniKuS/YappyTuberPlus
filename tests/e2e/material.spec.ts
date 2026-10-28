@@ -256,8 +256,10 @@ test("материал: шейдер считает по той же модел�
   expect(source).toContain("specSum += color0.rgb * F * (gain * a);");
   // Окклюзия гасит диффузную часть, а не блик.
   expect(source).toContain("float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);");
-  // Высота света участвует в направлении на свет.
-  expect(source).toContain("normalize(vec3(flatDir, max(uLightExtra[i].x, 1.0)))");
+  // Высота света участвует в направлении на свет вместе с настоящим смещением
+  // до пятна: нормированная отдельно горизонталь давала «свет сверху» везде.
+  expect(source).toContain("vec2 toLight = center - p;");
+  expect(source).toContain("normalize(vec3(toLight, max(uLightExtra[i].x, 1.0)))");
 });
 
 test("материал: имена в редакторе совпадают с ядром", () => {
