@@ -67,6 +67,8 @@ export interface MaterialBinding {
   packed: string | null;
   /** Общая сила блика материала 0…2. */
   specular: number;
+  /** Отражение диэлектрика из IOR: 0.04 у «обычного» (IOR 1.5), 0.028 у кожи. */
+  f0: number;
   /** Окружение сцены: цвет 0…1 и уровень 0…2. */
   environment: { color: [number, number, number]; level: number };
 }
@@ -213,6 +215,8 @@ uniform float uRoughValue;
 uniform float uMetalValue;
 uniform float uAoValue;
 uniform float uSpecular;
+/** Отражение диэлектрика из IOR: 0.04 у «обычного» (IOR 1.5), 0.028 у кожи. */
+uniform float uF0;
 
 uniform int uEmissiveMode;
 uniform vec3 uEmissiveColor;
@@ -284,8 +288,8 @@ void main() {
     roughness = clamp(channelValue(uRoughMode, uRoughChannel, uRoughValue, uRoughTex), 0.02, 1.0);
     metallic = clamp(channelValue(uMetalMode, uMetalChannel, uMetalValue, uMetalTex), 0.0, 1.0);
     occlusion = clamp(channelValue(uAoMode, uAoChannel, uAoValue, uAoTex), 0.0, 1.0);
-    // Металл красит отражение цветом объекта, диэлектрик отражает 4 %.
-    F0 = mix(vec3(0.04), scene.rgb, metallic);
+    // Металл красит отражение цветом объекта, диэлектрик — своим F0 из IOR.
+    F0 = mix(vec3(uF0), scene.rgb, metallic);
   }
 
   for (int i = 0; i < MAX_LIGHTS; i++) {
@@ -759,6 +763,7 @@ export function shadeLayer(
       setChannel("Metal", material.metallic, bindings[1] ?? null);
       setChannel("Ao", material.ao, bindings[2] ?? null);
       gl.uniform1f(gl.getUniformLocation(program.volume, "uSpecular"), Math.min(2, Math.max(0, material.specular)));
+      gl.uniform1f(gl.getUniformLocation(program.volume, "uF0"), Math.min(0.16, Math.max(0, material.f0)));
       gl.uniform1i(gl.getUniformLocation(program.volume, "uEmissiveMode"), emissiveTexture ? 1 : 0);
       gl.uniform3f(
         gl.getUniformLocation(program.volume, "uEmissiveColor"),

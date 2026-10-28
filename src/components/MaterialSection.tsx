@@ -1,11 +1,14 @@
 import { useRef, useState } from "react";
 import { ImageUp, Layers, Sparkles, Trash2, Wand2 } from "lucide-react";
 import type { ChannelSpec, EnvironmentSpec, MaterialSpec, PackedChannel, RigObject } from "../types";
-import { DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL } from "../types";
+import {
+  DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL, MAX_IOR, MIN_IOR, f0FromIor, iorFromF0, reflectanceFromF0,
+} from "../types";
 import { MATERIAL_PRESETS, normalizeEnvironment, normalizeMaterial } from "../render/material";
 import { blobToDataUrl, storeFile } from "../engine/assets";
 import { fileKind } from "../engine/importFile";
 import { useAssetMissing, useAssetUrl } from "../hooks/useAssets";
+import { LabeledNumberField } from "./NumberField";
 
 /**
  * Раздел «Материал» вкладки «Параметры».
@@ -30,6 +33,17 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
   const update = (patch: Partial<MaterialSpec>) => {
     const next = normalizeMaterial({ ...current, ...patch }) ?? DEFAULT_MATERIAL;
     onChange({ ...object, material: next });
+  };
+  /**
+   * Набор задаёт все свои поля разом: иначе после «Неона» объект продолжал бы
+   * светиться под «Матовым». Карту свечения при этом сохраняем — её выбирали
+   * руками, и терять её от нажатия «Пластик» нельзя.
+   */
+  const applyPreset = (patch: Partial<MaterialSpec>) => {
+    const emissive = patch.emissive
+      ? { ...patch.emissive, file: current.emissive.file }
+      : current.emissive;
+    update({ ...patch, emissive });
   };
   const updateChannel = (key: "roughness" | "metallic" | "ao", patch: Partial<ChannelSpec>) =>
     update({ [key]: { ...current[key], ...patch } } as Partial<MaterialSpec>);
@@ -73,7 +87,7 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
                 key={preset.id}
                 className="button secondary"
                 title={`Поставить значения «${preset.label}»`}
-                onClick={() => update(preset.patch)}
+                onClick={() => applyPreset(preset.patch)}
               >
                 <Wand2 size={13} /> {preset.label}
               </button>
@@ -107,6 +121,8 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
             onPick={(file) => chooseFile(file, (src) => updateChannel("ao", { from: "file", file: src }))}
             onClear={() => updateChannel("ao", { from: "value", file: null })}
           />
+
+          <ReflectanceRow ior={current.ior} onChange={(ior) => update({ ior })} />
 
           <PackedRow
             packed={current.packed}
@@ -185,6 +201,39 @@ export function MaterialSection({ object, material, environment, onChange, onEnv
         </>
       )}
       {error && <p className="inline-error">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Отражение диэлектрика: одно физическое свойство в двух шкалах.
+ *
+ * «Отражение» — шкала художника: 50 % = привычные 4 %, как у пластика.
+ * «IOR» — то же число по-научному (и так же, как в glTF), поэтому его можно
+ * взять из 3D-редактора без пересчёта. Меняют друг друга, истина одна — `ior`.
+ */
+function ReflectanceRow({ ior, onChange }: { ior: number; onChange: (ior: number) => void }) {
+  const f0 = f0FromIor(ior);
+  const reflectance = reflectanceFromF0(f0);
+  return (
+    <div className="material-channel">
+      <div className="material-channel-head">
+        <span title="Сколько света поверхность отражает «в лоб»: у кожи меньше, чем у пластика">Отражение</span>
+        <small>{Math.round(f0 * 1000) / 10} % света</small>
+      </div>
+      <label className="range-property">
+        <span>{Math.round(reflectance * 100)} %</span>
+        <input
+          type="range" min="0.2" max="1" step="0.01" value={reflectance}
+          onChange={(event) => onChange(iorFromF0(0.16 * Number(event.target.value) ** 2))}
+        />
+      </label>
+      <LabeledNumberField
+        label="IOR"
+        value={Math.round(ior * 100) / 100}
+        step={0.01}
+        onCommit={(value) => onChange(Math.min(MAX_IOR, Math.max(MIN_IOR, value)))}
+      />
     </div>
   );
 }

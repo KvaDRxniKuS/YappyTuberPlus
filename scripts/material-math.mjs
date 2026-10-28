@@ -22,12 +22,13 @@ export function fresnel(VdotH, F0) {
   return [F0[0] + (1 - F0[0]) * k, F0[1] + (1 - F0[1]) * k, F0[2] + (1 - F0[2]) * k];
 }
 
-export function baseReflectance(albedo, metallic) {
+export function baseReflectance(albedo, metallic, f0 = 0.04) {
   const m = clamp(metallic, 0, 1);
+  const base = clamp(f0, 0, 1);
   return [
-    0.04 + (albedo[0] - 0.04) * m,
-    0.04 + (albedo[1] - 0.04) * m,
-    0.04 + (albedo[2] - 0.04) * m,
+    base + (albedo[0] - base) * m,
+    base + (albedo[1] - base) * m,
+    base + (albedo[2] - base) * m,
   ];
 }
 
@@ -50,7 +51,7 @@ export function shadePoint(point, lights, options) {
   // Минимум — как в шейдере (`clamp(…, 0.02, 1.0)`): «зеркало» не должно
   // считаться по-разному в кадре и на листе примера.
   const roughness = clamp(point.roughness, 0.02, 1);
-  const F0 = baseReflectance(point.albedo, metallic);
+  const F0 = baseReflectance(point.albedo, metallic, point.f0 ?? 0.04);
   const ambientLevel = clamp(point.environment.level, 0, 2);
   const ambient = point.environment.color.map((channel) => channel * ambientLevel);
   const out = [

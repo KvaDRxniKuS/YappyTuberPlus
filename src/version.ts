@@ -71,10 +71,10 @@ export const SLOT_INFO: Record<VersionSlot, SlotInfo> = {
  * Новый номер старый редактор не поймёт — он молча потерял бы свет или
  * материал, поэтому формат растёт вместе с такими полями.
  */
-export const PRESET_FORMAT = 4;
+export const PRESET_FORMAT = 5;
 
 /** Форматы, которые этот редактор ещё читает. Здесь только старые поколения. */
-export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, PRESET_FORMAT];
+export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, 4, PRESET_FORMAT];
 
 /** Поколение контракта шаблонов модулей: `public/modules/*.json`. */
 export const MODULE_FORMAT = 1;

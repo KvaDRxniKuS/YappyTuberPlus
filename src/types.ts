@@ -394,7 +394,43 @@ export interface MaterialSpec {
   packed: string | null;
   /** Сила блика 0…200 %: общий множитель спекуляра материала. */
   specular: number;
+  /**
+   * Показатель преломления диэлектрика (IOR). Из него считается F0 —
+   * сколько света поверхность отражает «в лоб»:
+   * `F0 = ((n − 1) / (n + 1))²`. У пластика 1.5 → 4 %, у кожи 1.4 → 2.8 %.
+   *
+   * Так же это поле называется в glTF (`KHR_materials_ior`), поэтому число из
+   * 3D-редактора переносится сюда без пересчёта. У металла параметр не
+   * участвует: металл отражает цветом самого объекта.
+   */
+  ior: number;
 }
+
+/** Границы IOR: воздух — 1, дальше уже стекло и камни. */
+export const MIN_IOR = 1;
+export const MAX_IOR = 2.5;
+
+/** F0 из показателя преломления: доля отражения при взгляде по нормали. */
+export function f0FromIor(ior: number): number {
+  const n = Math.min(MAX_IOR, Math.max(MIN_IOR, ior));
+  return ((n - 1) / (n + 1)) ** 2;
+}
+
+/**
+ * «Отражение» из F0 — та же величина в шкале художника (0…1), как `reflectance`
+ * в Filament: `F0 = 0.16 · reflectance²`. Половина шкалы — привычные 4 %.
+ */
+export function reflectanceFromF0(f0: number): number {
+  return Math.sqrt(Math.min(0.16, Math.max(0, f0)) / 0.16);
+}
+
+export function iorFromF0(f0: number): number {
+  const root = Math.sqrt(Math.max(0, f0));
+  // Обратная к F0 = ((n−1)/(n+1))²: n = (1 + √F0) / (1 − √F0).
+  return Math.min(MAX_IOR, Math.max(MIN_IOR, (1 + root) / (1 - root)));
+}
+
+export const reflectanceOf = (material: { ior: number }) => reflectanceFromF0(f0FromIor(material.ior));
 
 /**
  * Упаковка по умолчанию — **ORM**, как в glTF, Unreal и Godot: `R` окклюзия,
@@ -414,6 +450,8 @@ export const DEFAULT_MATERIAL: MaterialSpec = {
   emissive: { color: "#ffffff", strength: 0, file: null },
   packed: null,
   specular: 100,
+  // 1.5 — «обычный диэлектрик»: 4 % отражения, как у пластика и стекла.
+  ior: 1.5,
 };
 
 /** Окружение сцены: без него металл чёрный — у него нет диффузной части. */

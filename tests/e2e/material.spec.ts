@@ -2,11 +2,14 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MATERIAL_PRESETS, baseReflectance, fresnel, ggxDistribution, materialBinding, materialSources,
-  normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
+  MATERIAL_PRESETS, baseReflectance, channelBinding, fresnel, ggxDistribution, materialBinding,
+  materialSources, normalizeEnvironment, normalizeMaterial, shadePoint, usesPacked,
   type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
-import { DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL, lightHeight, DEFAULT_LIGHT } from "../../src/types";
+import {
+  DEFAULT_ENVIRONMENT, DEFAULT_LIGHT, DEFAULT_MATERIAL, MAX_IOR, MIN_IOR,
+  f0FromIor, iorFromF0, lightHeight, reflectanceFromF0,
+} from "../../src/types";
 import { NEUTRAL_PARAMS } from "../../src/engine/frame";
 import * as peer from "../../scripts/material-math.mjs";
 
@@ -27,6 +30,7 @@ const point = (patch: Partial<MaterialPoint> = {}): MaterialPoint => ({
   ao: 1,
   emissive: [0, 0, 0],
   specular: 1,
+  f0: 0.04,
   environment: { color: [1, 1, 1], level: 0 },
   ...patch,
 });
@@ -168,8 +172,10 @@ test("материал: файл читает три канала, упаков�
   // Все карты материала — файлы объекта: иначе они теряются при переносе.
   expect(materialSources(material)).toEqual(["asset:orm"]);
 
-  // «Файл» без файла читается как число: иначе объект молча стал бы чёрным.
+  // «Файл» без файла: режим остаётся «файл» (это намерение человека), а
+  // читается константа — иначе объект молча стал бы чёрным.
   const empty = normalizeMaterial({ roughness: { from: "file", file: null, value: 0.3 } })!;
+  expect(empty.roughness.from).toBe("file");
   expect(materialBinding(empty, DEFAULT_ENVIRONMENT).roughness.mode).toBe(0);
 
   // Материала нет — поля нет: старый пресет выглядит как раньше.
@@ -181,7 +187,7 @@ test("материал: значения из скрипта заменяют и
   const material = normalizeMaterial({ roughness: { value: 0.5 }, emissive: { strength: 40, color: "#ffffff" } })!;
   // −1 значит «не задано»: тогда работает инспектор.
   const idle = materialBinding(material, undefined, { roughness: -1, metallic: -1, ao: -1, emissive: 0 });
-  expect(idle.roughness).toEqual({ mode: 0, channel: 0, value: 0.5, src: null });
+  expect(idle.roughness).toEqual({ mode: 0, channel: 1, value: 0.5, src: null });
 
   const live = materialBinding(material, undefined, { roughness: 0.1, emissive: 0.3 });
   expect(live.roughness.value).toBeCloseTo(0.1, 6);
@@ -230,7 +236,9 @@ test("материал: шейдер считает по той же модел�
   // GGX и Шлик — в шейдере, а не «примерное затемнение».
   expect(source).toContain("float ggx(float NdotH, float roughness)");
   expect(source).toContain("vec3 F = F0 + (1.0 - F0) * k;");
-  expect(source).toContain("F0 = mix(vec3(0.04), scene.rgb, metallic);");
+  // Отражение диэлектрика приходит из IOR, а не зашито в 4 %.
+  expect(source).toContain("F0 = mix(vec3(uF0), scene.rgb, metallic);");
+  expect(source).toContain('getUniformLocation(program.volume, "uF0")');
   // Блик привязан к покрытию пятна: он не выходит за свет и не живёт в пустоте.
   expect(source).toContain("specSum += color0.rgb * F * (gain * a);");
   // Окклюзия гасит диффузную часть, а не блик.
@@ -284,4 +292,80 @@ test("документация: руководство называет то ж�
   const lightSection = readFileSync(join(process.cwd(), "src", "components", "LightSection.tsx"), "utf8");
   expect(lightSection).toContain("Сила блика");
   expect(lightSection).toContain("specular");
+});
+
+test("материал: отражение считается из IOR, а не зашито в 4 %", () => {
+  // Формула glTF: F0 = ((n − 1) / (n + 1))².
+  expect(f0FromIor(1.5)).toBeCloseTo(0.04, 6);
+  expect(f0FromIor(1.4)).toBeCloseTo(0.0278, 3); // кожа — 2.8 %
+  expect(f0FromIor(1.6)).toBeCloseTo(0.0533, 3); // зубы — 5.8 %
+  expect(f0FromIor(1.0)).toBe(0); // воздух не отражает
+  // Шкала художника: 50 % = 4 %, как `reflectance` в Filament.
+  expect(reflectanceFromF0(0.04)).toBeCloseTo(0.5, 6);
+  expect(0.16 * 0.5 ** 2).toBeCloseTo(0.04, 6);
+  // Обе шкалы — одно и то же число: ползунок и IOR не расходятся.
+  for (const n of [1.1, 1.33, 1.4, 1.5, 1.58, 1.9, 2.4]) {
+    expect(iorFromF0(f0FromIor(n))).toBeCloseTo(n, 6);
+  }
+  // Старый файл без поля читается как «обычный диэлектрик», а не как ошибка.
+  expect(normalizeMaterial({ roughness: { value: 0.5 } })!.ior).toBe(1.5);
+  // Мусор не выносит значение за физику.
+  expect(normalizeMaterial({ ior: 99 })!.ior).toBe(MAX_IOR);
+  expect(normalizeMaterial({ ior: -3 })!.ior).toBe(MIN_IOR);
+
+  // Кожа отражает меньше пластика при одной шероховатости — вот и вся разница
+  // в блике, кроме его ширины. Считаем на чёрном альбедо, чтобы видеть только
+  // отражение, а не диффузную часть.
+  const spec = (f0: number) => shadePoint(
+    point({ roughness: 0.35, f0, albedo: [0, 0, 0] }), [light()], { normalStrength: 1, material: true },
+  )[0];
+  const plastic = spec(f0FromIor(1.5));
+  const skin = spec(f0FromIor(1.4));
+  // 2.8 % против 4 % — блик слабее примерно на треть, а не «на глаз».
+  expect(skin / plastic).toBeCloseTo(0.0278 / 0.04, 2);
+});
+
+test("материал: набор меняет всё своё, а не оставляет хвостов", () => {
+  const apply = (ids: string[]) => {
+    let material = normalizeMaterial({})!;
+    for (const id of ids) {
+      const preset = MATERIAL_PRESETS.find((entry) => entry.id === id)!;
+      material = normalizeMaterial({ ...material, ...preset.patch })!;
+    }
+    return material;
+  };
+  // После «Неона» любой другой набор гасит свечение: иначе объект светится
+  // дальше, и человек думает, что пресет не сработал.
+  for (const id of ["matte", "plastic", "metal", "skin"]) {
+    expect(apply(["neon", id]).emissive.strength).toBe(0);
+  }
+  // «Неон» после «Металла» — не металл: он диэлектрик.
+  expect(apply(["metal", "neon"]).metallic.value).toBe(0);
+  expect(apply(["metal", "neon"]).emissive.strength).toBe(120);
+  // Кожа отличается от пластика не только шириной блика, но и отражением.
+  expect(apply(["skin"]).ior).toBe(1.4);
+  expect(apply(["plastic"]).ior).toBe(1.5);
+  expect(f0FromIor(apply(["skin"]).ior)).toBeLessThan(f0FromIor(apply(["plastic"]).ior));
+  // Каждый набор задаёт все свойства, которыми владеет.
+  for (const preset of MATERIAL_PRESETS) {
+    expect(preset.patch.roughness, preset.label).toBeTruthy();
+    expect(preset.patch.metallic, preset.label).toBeTruthy();
+    expect(preset.patch.emissive, preset.label).toBeTruthy();
+    expect(preset.patch.ior, preset.label).toBeTruthy();
+  }
+});
+
+test("материал: канал переключается на файл до того, как файл выбран", () => {
+  // Раньше режим «файл» без файла нормализация возвращала в «число», и кнопка
+  // не нажималась: выбрать файл было нельзя вообще.
+  const opened = normalizeMaterial({ roughness: { from: "file", file: null, value: 0.5 } })!;
+  expect(opened.roughness.from).toBe("file");
+  // Читается при этом константа: пустой карты не бывает.
+  expect(channelBinding(opened.roughness)).toEqual({ mode: 0, channel: 1, value: 0.5, src: null });
+  // Файл появился — включается текстура, режим не менялся.
+  const chosen = normalizeMaterial({ roughness: { from: "file", file: "asset:rough", value: 0.5 } })!;
+  expect(channelBinding(chosen.roughness)).toEqual({ mode: 1, channel: 1, value: 0.5, src: "asset:rough" });
+  // Упаковка без выбранной карты тоже читается константой, а не пустотой.
+  const packed = normalizeMaterial({ packed: null, metallic: { from: "packed", value: 1 } })!;
+  expect(channelBinding(materialBinding(packed, undefined).metallic).mode).toBe(0);
 });

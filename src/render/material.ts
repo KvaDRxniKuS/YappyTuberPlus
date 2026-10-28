@@ -1,5 +1,5 @@
 import {
-  DEFAULT_CHANNEL, DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL,
+  DEFAULT_CHANNEL, DEFAULT_ENVIRONMENT, DEFAULT_MATERIAL, MAX_IOR, MIN_IOR, f0FromIor,
   type ChannelSpec, type EmissiveSpec, type EnvironmentSpec, type MaterialSpec,
 } from "../types";
 
@@ -29,15 +29,19 @@ export function normalizeChannel(raw: unknown, fallback: ChannelSpec): ChannelSp
   if (!raw || typeof raw !== "object") return { ...fallback };
   const source = raw as Partial<ChannelSpec>;
   const from = source.from === "file" || source.from === "packed" ? source.from : "value";
-  const channel = source.packedChannel === "g" || source.packedChannel === "b" || source.packedChannel === "a"
+  // Буква канала по умолчанию — своя у каждого канала (ORM: R окклюзия,
+  // G шероховатость, B металл), а не всегда «R».
+  const channel = source.packedChannel === "r" || source.packedChannel === "g"
+    || source.packedChannel === "b" || source.packedChannel === "a"
     ? source.packedChannel
-    : "r";
+    : fallback.packedChannel;
   return {
     value: clamp(Number(source.value ?? fallback.value) || 0, 0, 1),
     file: typeof source.file === "string" && source.file ? source.file : null,
-    // Ссылка на файл без файла — не выбранный канал: читать нечего, значит
-    // константа. Упаковка проверяется отдельно: её файл лежит в `material.packed`.
-    from: from === "file" && !source.file ? "value" : from,
+    // Режим — это намерение человека, а не следствие выбранного файла: нажав
+    // «файл», он ждёт переключатель, даже пока файла нет. Что читать, решает
+    // `channelBinding`: без файла — константу.
+    from,
     packedChannel: channel,
   };
 }
@@ -72,6 +76,8 @@ export function normalizeMaterial(raw: unknown): MaterialSpec | undefined {
     emissive: normalizeEmissive(source.emissive),
     packed: typeof source.packed === "string" && source.packed ? source.packed : null,
     specular: clamp(Number(source.specular ?? 100) || 0, 0, 200),
+    // IOR: у старого файла поля нет — берём «обычный диэлектрик» 1.5.
+    ior: clamp(Number(source.ior ?? DEFAULT_MATERIAL.ior) || DEFAULT_MATERIAL.ior, MIN_IOR, MAX_IOR),
   };
 }
 
@@ -105,6 +111,8 @@ export interface MaterialPoint {
   emissive: [number, number, number];
   /** Сила блика материала 0…2. */
   specular: number;
+  /** Отражение диэлектрика: из IOR, 0.04 у «обычного» (IOR 1.5). */
+  f0: number;
   /** Окружение: цвет и уровень 0…2. */
   environment: { color: [number, number, number]; level: number };
 }
@@ -132,13 +140,23 @@ export function fresnel(VdotH: number, F0: [number, number, number]): [number, n
   ];
 }
 
-/** База отражения: диэлектрик 4 %, металл — цветом самого объекта. */
-export function baseReflectance(albedo: [number, number, number], metallic: number): [number, number, number] {
+/**
+ * База отражения: у диэлектрика — свой F0 (из IOR), у металла — цвет объекта.
+ *
+ * Общий 0.04 — это только «обычный диэлектрик» (IOR 1.5). Кожа отражает 2.8 %
+ * (IOR 1.4), зубы 5.8 % (1.6), поэтому F0 приходит параметром.
+ */
+export function baseReflectance(
+  albedo: [number, number, number],
+  metallic: number,
+  f0 = 0.04,
+): [number, number, number] {
   const m = clamp(metallic, 0, 1);
+  const base = clamp(f0, 0, 1);
   return [
-    0.04 + (albedo[0] - 0.04) * m,
-    0.04 + (albedo[1] - 0.04) * m,
-    0.04 + (albedo[2] - 0.04) * m,
+    base + (albedo[0] - base) * m,
+    base + (albedo[1] - base) * m,
+    base + (albedo[2] - base) * m,
   ];
 }
 
@@ -185,7 +203,7 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
   // Минимум — как в шейдере (`clamp(…, 0.02, 1.0)`): «зеркало» не должно
   // считаться по-разному в кадре и на листе примера.
   const roughness = clamp(point.roughness, 0.02, 1);
-  const F0 = baseReflectance([albedoR, albedoG, albedoB], metallic);
+  const F0 = baseReflectance([albedoR, albedoG, albedoB], metallic, point.f0);
   const ambientLevel = clamp(point.environment.level, 0, 2);
   const ambient: [number, number, number] = [
     point.environment.color[0] * ambientLevel,
@@ -257,13 +275,58 @@ function normalize3(v: [number, number, number]): [number, number, number] {
   return [v[0] / length, v[1] / length, v[2] / length];
 }
 
-/** Готовые наборы материала: то, с чего начинают, а не «пустые поля». */
+/**
+ * Готовые наборы материала: то, с чего начинают, а не «пустые поля».
+ *
+ * Набор **полный**: он задаёт все свойства, которыми владеет, — шероховатость,
+ * металл, отражение и свечение. Иначе после «Неона» объект продолжал бы
+ * светиться под «Матовым», а «Неон» после «Металла» дал бы светящийся металл.
+ *
+ * IOR взят по таблице отрасли (Filament / glTF): пластик и стекло 1.5–1.58,
+ * кожа 1.4 (2.8 %), волосы 1.55, зубы 1.6. У металла поле не участвует —
+ * металл отражает цветом объекта, — поэтому там нейтральные 1.5.
+ */
 export const MATERIAL_PRESETS: Array<{ id: string; label: string; patch: Partial<MaterialSpec> }> = [
-  { id: "matte", label: "Матовый", patch: { roughness: { ...DEFAULT_CHANNEL(0.9, "g") }, metallic: { ...DEFAULT_CHANNEL(0, "b") } } },
-  { id: "plastic", label: "Пластик", patch: { roughness: { ...DEFAULT_CHANNEL(0.35, "g") }, metallic: { ...DEFAULT_CHANNEL(0, "b") } } },
-  { id: "metal", label: "Металл", patch: { roughness: { ...DEFAULT_CHANNEL(0.25, "g") }, metallic: { ...DEFAULT_CHANNEL(1, "b") } } },
-  { id: "skin", label: "Кожа", patch: { roughness: { ...DEFAULT_CHANNEL(0.55, "g") }, metallic: { ...DEFAULT_CHANNEL(0, "b") } } },
-  { id: "neon", label: "Неон", patch: { roughness: { ...DEFAULT_CHANNEL(0.4, "g") }, emissive: { color: "#66e0ff", strength: 120, file: null } } },
+  {
+    id: "matte",
+    label: "Матовый",
+    patch: {
+      roughness: DEFAULT_CHANNEL(0.9, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
+      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.5,
+    },
+  },
+  {
+    id: "plastic",
+    label: "Пластик",
+    patch: {
+      roughness: DEFAULT_CHANNEL(0.35, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
+      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.5,
+    },
+  },
+  {
+    id: "metal",
+    label: "Металл",
+    patch: {
+      roughness: DEFAULT_CHANNEL(0.25, "g"), metallic: DEFAULT_CHANNEL(1, "b"),
+      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.5,
+    },
+  },
+  {
+    id: "skin",
+    label: "Кожа",
+    patch: {
+      roughness: DEFAULT_CHANNEL(0.55, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
+      emissive: { color: "#ffffff", strength: 0, file: null }, ior: 1.4,
+    },
+  },
+  {
+    id: "neon",
+    label: "Неон",
+    patch: {
+      roughness: DEFAULT_CHANNEL(0.4, "g"), metallic: DEFAULT_CHANNEL(0, "b"),
+      emissive: { color: "#66e0ff", strength: 120, file: null }, ior: 1.5,
+    },
+  },
 ];
 
 /** Файлы материала: всё, что должно попасть в сохранение и папку пресета. */
@@ -321,6 +384,8 @@ export function materialBinding(
   emissive: { color: [number, number, number]; strength: number; src: string | null };
   packed: string | null;
   specular: number;
+  /** Отражение диэлектрика из IOR: 0.04 у «обычного» (IOR 1.5). */
+  f0: number;
   environment: { color: [number, number, number]; level: number };
 } {
   const env = environment ?? DEFAULT_ENVIRONMENT;
@@ -354,6 +419,9 @@ export function materialBinding(
     },
     packed: material.packed,
     specular: material.specular / 100,
+    // F0 считается здесь, а не в шейдере: одна и та же формула для кадра,
+    // тестов и генератора примера.
+    f0: f0FromIor(material.ior),
     environment: { color: hexToRgb(env.color), level: env.level / 100 },
   };
 }

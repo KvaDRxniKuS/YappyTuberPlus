@@ -19,15 +19,15 @@ test("паспорт: шесть чисел и подписи слотов", () 
   expect(versionString()).toBe(
     `${VERSION.release.join(".")}.${VERSION.core}.${PRESET_FORMAT}.${OVERLAY_PROTOCOL}.${MODULE_FORMAT}.${VERSION.shell}`,
   );
-  // 1.1 — релиз материала: ядро 22, формат файла 4.
-  expect(versionString()).toBe("1.1.22.4.1.1.1");
+  // 1.1 — релиз материала: ядро 22, формат файла 5 (появился IOR).
+  expect(versionString()).toBe("1.1.22.5.1.1.1");
   // Мост в паспорте и протокол оверлея — одно число, иначе они разъедутся.
   expect(VERSION.bridge).toBe(OVERLAY_PROTOCOL);
   expect(VERSION.format).toBe(PRESET_FORMAT);
   expect(VERSION.modules).toBe(MODULE_FORMAT);
 
   // Для человека — подписями, в том же порядке.
-  expect(versionLabel()).toBe("1.1 · ядро 22 · файл 4 · мост 1 · модули 1 · оболочка 1");
+  expect(versionLabel()).toBe("1.1 · ядро 22 · файл 5 · мост 1 · модули 1 · оболочка 1");
   expect(versionShort()).toBe("1.1");
   // В установщик уходят только три числа: поколения туда не помещаются.
   expect(packagingVersion()).toBe("1.1.0");

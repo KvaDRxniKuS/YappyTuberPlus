@@ -478,6 +478,8 @@ function shadeSheet(name, material) {
         emissive: material.emissive ? material.emissive : [0, 0, 0],
         emissiveMap: [glowMap[i], glowMap[i + 1], glowMap[i + 2]],
         specular: 1,
+        // Отражение диэлектрика: 4 % — «обычный» IOR 1.5, как у пластика.
+        f0: material.f0 ?? 0.04,
         environment: { color: [0.55, 0.6, 0.7], level: 0.45 },
         ...material,
       };
