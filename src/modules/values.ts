@@ -7,6 +7,7 @@ import {
 import { VISEME_BASE, computeVisemes, normalizeVisemes, visemeInputs } from "./viseme";
 import { enumInputs, enumStates, manualMode, stateIndex } from "./manual";
 import { presetEntries, presetInputs, presetPreview } from "./presets";
+import { channelValues, colorChannels, colorInputs } from "./color";
 import { frameValue, type AudioFrame } from "./audio";
 import { TEXT_HISTORY_DEFAULT, externalInputs, readExternalSource } from "./external";
 import { textInputOf } from "./sources";
@@ -34,6 +35,8 @@ export function instanceInputs(module: ModuleInstance): ModuleInputSpec[] {
   if (definition.kind === "presets") return presetInputs(module);
   // Внешний источник: входы задаёт таблица отображения, а не шаблон.
   if (definition.kind === "external") return externalInputs(module, definition.inputs);
+  // Цвет: у каждого канала свои пять входов — `_r`, `_g`, `_b`, `_a`, `_level`.
+  if (definition.kind === "color") return colorInputs(module);
   if (definition.kind === "keyboard") {
     return keyboardKeys(module).map((key) => ({
       name: key.name,
@@ -129,6 +132,14 @@ export interface ModuleSources {
   pointer?: PointerFrame;
   /** Внешние источники: `{ bridge: { hr: 72 } }` — уже с учётом правил. */
   external?: Record<string, Record<string, number>>;
+  /**
+   * Время кадра в миллисекундах: нужно модулю «Цвет», у которого значение —
+   * функция времени. Без него берётся системное: в тестах это делает результат
+   * непредсказуемым, поэтому время всегда можно передать явно.
+   */
+  now?: number;
+  /** Секунды с прошлого кадра: `smooth` у цвета считает по нему инерцию. */
+  dt?: number;
 }
 
 /**
@@ -255,6 +266,24 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
       else if (definition.kind === "autoblink") value = sources.auto[key];
       else value = sources.manual[key];
       values[key] = Number.isFinite(value as number) ? (value as number) : fallbackValue(module, definition, spec);
+    }
+  }
+  // Цвет считается последним: режим «Реакция» ведёт яркость входом другого
+  // модуля, а тот может стоять в списке ниже — тогда его значения уже собраны.
+  const now = Number.isFinite(sources.now) ? sources.now as number : Date.now();
+  const dt = Number.isFinite(sources.dt) ? Math.max(0, sources.dt as number) : 1 / 30;
+  for (const module of modules) {
+    if (!module.enabled) continue;
+    if (moduleDefinition(module.type).kind !== "color") continue;
+    for (const channel of colorChannels(module)) {
+      const react = channel.react;
+      const level = react ? (values[`${react.module}.${react.input}`] ?? 0) : 1;
+      const numbers = channelValues(module.name, channel, now / 1000, dt, level);
+      for (const part of ["r", "g", "b", "a", "level"] as const) {
+        const key = inputKey(module, `${channel.name}_${part}`);
+        if (!inputEnabled(module, `${channel.name}_${part}`)) continue;
+        values[key] = numbers[part];
+      }
     }
   }
   return values;

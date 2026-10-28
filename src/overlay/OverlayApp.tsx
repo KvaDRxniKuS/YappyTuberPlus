@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
+import { applyColors } from "../render/color";
 import { createCollector, resetCollector } from "../render/lighting";
 import { MediaAssets, MaskMedia } from "../render/media";
 import { assetIdsOfPreset, ensureAssetsOfPreset, onAssetsChanged, unresolvedAssetIds } from "../engine/assets";
@@ -156,6 +157,7 @@ export function OverlayApp() {
       if (!element) return;
       const client = clientRef.current;
       const frame = client?.frame ?? null;
+      const colors = client?.colors ?? null;
       const current = presetRef.current;
       const sequence = frame?.seq ?? -1;
       if (sequence !== lastSeq) {
@@ -191,7 +193,10 @@ export function OverlayApp() {
         object.mask?.kind === "file" && object.mask.file ? [object.mask.file] : []
       )));
       resetCollector(lighting);
-      drawRig(ctx, current, frame, assets.current, {
+      // Цвета из модулей приходят рядом с кадром: ядро их не считает. Нет
+      // цветов — у объектов остаются свои, как и было.
+      const colored = colors ? applyColors(current, colors) : current;
+      drawRig(ctx, colored, frame, assets.current, {
         media: mediaAssets.current, maskMedia: maskMedia.current, lighting,
         environment: current.environment,
       });

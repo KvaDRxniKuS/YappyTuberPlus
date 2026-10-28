@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { RigFrame, RigPreset } from "../types";
 import { createOverlayBus, type CompositeBus } from "../overlay/bus";
 import { OverlayHost } from "../overlay/host";
+import type { FrameColors } from "../overlay/protocol";
 import { overlayBridgeUrl } from "../overlay/window";
 
 export interface OverlayHostState {
@@ -15,6 +16,8 @@ export interface OverlayHostState {
   bridgeReady: boolean;
   /** «Стоп»: оверлей показывает нейтральную позу вместо живых кадров. */
   setFrozen: (frozen: boolean, preset?: RigPreset) => void;
+  /** Цвета из модулей: без них в OBS цвет застынет на первом кадре. */
+  setColors: (colors: FrameColors) => void;
 }
 
 /**
@@ -108,10 +111,18 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
     hostRef.current?.setPreset(preset);
   }, [preset]);
 
+  /**
+   * Готовые цвета из модулей едут в оверлей вместе с кадром: ядро их не знает,
+   * поэтому без этого в OBS цвет застыл бы, а в редакторе был бы живой.
+   */
+  const setColors = useCallback((colors: FrameColors) => {
+    hostRef.current?.setColors(colors);
+  }, []);
+
   const setFrozen = useCallback((frozen: boolean, preset?: RigPreset) => {
     frozenRef.current = frozen;
     hostRef.current?.setFrozen(frozen, preset ?? presetRef.current);
   }, []);
 
-  return { sinkRef, viewers, staleViewers, transport, bridgeUrl, bridgeReady, setFrozen };
+  return { sinkRef, viewers, staleViewers, transport, bridgeUrl, bridgeReady, setFrozen, setColors };
 }

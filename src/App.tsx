@@ -43,6 +43,7 @@ import {
   pruneAssets,
 } from "./engine/assets";
 import { textChannel } from "./render/text";
+import { resolvedColors } from "./render/color";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
 import { propagateBase, repivot, reorderNeighbor, reorderObjects } from "./engine/structure";
@@ -280,6 +281,21 @@ export default function App() {
   const textsRef = useRef<Record<string, { text: string; author?: string }>>({});
   const engineTexts = useMemo(() => textChannel(moduleInputs.externalTexts), [moduleInputs.externalTexts]);
   textsRef.current = engineTexts;
+  /**
+   * Цвета объектов из модулей: ядро их не считает, поэтому они собираются здесь
+   * и уходят в отрисовку — в редакторе и в оверлей. Пока привязок нет, словарь
+   * пустой и сцена рисуется своими цветами.
+   */
+  const engineColors = useMemo(
+    () => resolvedColors(preset, moduleInputs.inputs.values),
+    [preset, moduleInputs.inputs],
+  );
+  // Оверлей живёт отдельной страницей и цветов не считает — ему их отдают
+  // вместе с кадром. Иначе в редакторе цвет живой, а в OBS застывший.
+  const setOverlayColors = overlay.setColors;
+  useEffect(() => {
+    setOverlayColors(engineColors);
+  }, [engineColors, setOverlayColors]);
   const engine = useRigEngine(
     preset, inputsRef, paused || stopped, overlay.sinkRef, textsRef, moduleInputs.marks,
   );
@@ -752,6 +768,21 @@ export default function App() {
         objects: current.objects.map((object) => byId.get(object.id) ?? object),
       };
     }, { label: next.length > 1 ? `Текст · ${next.length} объектов` : "Текст", coalesce: "text-settings" });
+  }, [commit]);
+
+  /**
+   * Привязка цветов из модулей сразу у нескольких объектов: один шаг истории,
+   * чтобы Ctrl+Z возвращал всю пачку.
+   */
+  const updateColorObjects = useCallback((next: RigObject[]) => {
+    if (!next.length) return;
+    commit((current) => {
+      const byId = new Map(next.map((object) => [object.id, object]));
+      return {
+        ...current,
+        objects: current.objects.map((object) => byId.get(object.id) ?? object),
+      };
+    }, { label: next.length > 1 ? `Цвет · ${next.length} объектов` : "Цвет", coalesce: "object-color" });
   }, [commit]);
 
   /**
@@ -1350,6 +1381,7 @@ export default function App() {
             bounds={layout.showBounds}
             pivots={layout.showPivots}
             texts={engineTexts}
+            colors={engineColors}
             onDropFiles={(files) => { void importFiles(files); }}
             onTool={chooseTool}
             onToggleGrid={() => setShowGrid(!showGrid)}
@@ -1420,6 +1452,7 @@ export default function App() {
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
           onText={updateTextObjects}
+          onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}
           pen={pen}
           onPen={startPen}

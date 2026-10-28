@@ -50,6 +50,9 @@ export interface ModuleInputsApi {
   externalTexts: Record<string, ExternalTextLine[]>;
 }
 
+/** Такт часов цвета, мс: 30 кадров в секунду хватает для плавности. */
+const COLOR_TICK = 33;
+
 const BLINK_TICK = 33;
 
 /**
@@ -279,15 +282,41 @@ export function useModuleInputs(
   // Внешние источники (WebSocket и будущие транспорты) живут рядом с указателем.
   const externalInputs = useExternalSource(modules, libraryVersion);
 
+  // Цвет живёт по времени: значение канала — функция часов, а не события. Без
+  // своего тика значения замирали бы, пока в сцене ничего не происходит (нет
+  // звука, нет мыши), и «Дыхание» стояло бы на месте.
+  const colorActive = useMemo(
+    () => modules.some((module) => module.enabled && moduleDefinition(module.type).kind === "color"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modules, libraryVersion],
+  );
+  const [clock, setClock] = useState({ now: 0, dt: 0 });
+  useEffect(() => {
+    if (!colorActive) return undefined;
+    // Часы идут в реальном времени: 30 тиков в секунду хватает, чтобы переход
+    // выглядел плавным, а лишних перерисовок не было.
+    let last = typeof performance === "undefined" ? Date.now() : performance.now();
+    const timer = window.setInterval(() => {
+      const now = typeof performance === "undefined" ? Date.now() : performance.now();
+      const dt = Math.min(0.25, Math.max(0.001, (now - last) / 1000));
+      last = now;
+      setClock({ now, dt });
+    }, COLOR_TICK);
+    return () => window.clearInterval(timer);
+  }, [colorActive]);
+
   const inputs = useMemo<InputValues>(() => ({
-    values: composeValues(modules, { audio, manual, auto, pointer, external: externalInputs.values }),
+    values: composeValues(modules, {
+      audio, manual, auto, pointer, external: externalInputs.values,
+      now: clock.now, dt: clock.dt,
+    }),
     signals: {},
     // Текст чата и паспорта входов едут вместе со значениями: в скрипте это
     // `twitch.chat.message(-1)` и `twitch.reward.max`.
     texts: inputTexts(modules, externalInputs.texts),
     meta: inputMeta(modules),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [modules, audio, manual, auto, pointer, externalInputs.values, externalInputs.texts, libraryVersion]);
+  }), [modules, audio, manual, auto, pointer, clock, externalInputs.values, externalInputs.texts, libraryVersion]);
 
   return {
     inputs, marks: externalInputs.marks,

@@ -5,7 +5,7 @@ import { assetRef, inlineSource } from "../engine/assets";
 import type { CompositeBus } from "./bus";
 import {
   basesOf, configSignature, OVERLAY_PROTOCOL, poseSignature, structureSignature,
-  toOverlayScene, type HelloMessage, type OverlayScene, type WireMessage,
+  toOverlayScene, type FrameColors, type HelloMessage, type OverlayScene, type WireMessage,
 } from "./protocol";
 
 export interface OverlayHostOptions {
@@ -37,6 +37,11 @@ export class OverlayHost {
   private sceneVersion = 0;
   private config: OverlayConfig | null = null;
   private presetRef: RigPreset | null = null;
+  /**
+   * Последние цвета из модулей. Едут с каждым кадром: цвет меняется по времени,
+   * и «один раз при изменении» его не отдать — оверлей застыл бы на первом.
+   */
+  private colors: FrameColors = {};
   private bases: Record<string, BasePose> | null = null;
   private frozen = false;
   private structures = "";
@@ -130,7 +135,13 @@ export class OverlayHost {
     this.bus.post({
       t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
       frame: neutralFrame(preset, nextFrameSeq()),
+      colors: Object.keys(this.colors).length ? this.colors : undefined,
     });
+  }
+
+  /** Готовые цвета из модулей: их отдаём вместе со следующим кадром. */
+  setColors(colors: FrameColors): void {
+    this.colors = colors;
   }
 
   /** Called by the engine loop after every produced frame. */
@@ -138,7 +149,10 @@ export class OverlayHost {
     if (this.disposed || this.frozen || this.viewers.size === 0 || !this.scene) return;
     // Номер приходит от редактора и не откатывается при пересоздании движка:
     // оверлей отбрасывает всё, что не новее прошлого кадра.
-    this.bus.post({ t: "frame", sender: this.id, frame, sceneVersion: this.sceneVersion });
+    this.bus.post({
+      t: "frame", sender: this.id, frame, sceneVersion: this.sceneVersion,
+      colors: Object.keys(this.colors).length ? this.colors : undefined,
+    });
   }
 
   dispose(): void {

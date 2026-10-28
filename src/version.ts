@@ -66,15 +66,17 @@ export const SLOT_INFO: Record<VersionSlot, SlotInfo> = {
  * Поколение формата пресета.
  *
  * 2 — пресеты до света и карт нормалей, 3 — вид `light` и поле `normal`,
- * 4 — материал объекта (`material`) и окружение сцены. Старые номера
+ * 4 — материал объекта (`material`) и окружение сцены, 5 — материал с `ior` и
+ * пресеты материала, 6 — привязки цветов (`object.colors`) и модуль цвета с
+ * каналами. Старые номера
  * принимаются при чтении: чего в них не было, получает значения по умолчанию.
  * Новый номер старый редактор не поймёт — он молча потерял бы свет или
  * материал, поэтому формат растёт вместе с такими полями.
  */
-export const PRESET_FORMAT = 5;
+export const PRESET_FORMAT = 6;
 
 /** Форматы, которые этот редактор ещё читает. Здесь только старые поколения. */
-export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, 4, PRESET_FORMAT];
+export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, 4, 5, PRESET_FORMAT];
 
 /** Поколение контракта шаблонов модулей: `public/modules/*.json`. */
 export const MODULE_FORMAT = 1;

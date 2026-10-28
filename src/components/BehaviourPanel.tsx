@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Lightbulb, MousePointer2, Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
-import type { ModuleInstance, RigObject, TextSpec } from "../types";
+import { Lightbulb, MousePointer2, Palette, Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
+import type { ColorLink, ModuleInstance, RigObject, TextSpec } from "../types";
 import { normalizeText } from "../engine/preset";
 import { hasQuotedPlaceholder, quotePlaceholders, unquotePlaceholders } from "../render/text";
 import {
@@ -8,6 +8,9 @@ import {
   type Behaviour, type PresetRule, type VisibilityRule,
 } from "../engine/behaviour";
 import { presetEntries, presetModules, presetVariable } from "../modules/presets";
+import { colorChannels } from "../modules/color";
+import { moduleDefinition } from "../modules/registry";
+import { COLOR_FIELD_LABEL, colorFieldsOf, ownColorOf, type ColorField } from "../render/color";
 import { Switch } from "./Switch";
 
 interface BehaviourPanelProps {
@@ -18,6 +21,8 @@ interface BehaviourPanelProps {
   onChange: (scripts: Record<string, string>) => void;
   /** Правка свойств текста: шрифт, размер, оформление и источник строки. */
   onText?: (objects: RigObject[]) => void;
+  /** Правка цвета: привязка «поле цвета → модуль и канал». */
+  onColors?: (objects: RigObject[]) => void;
   /** Модули пресета: из них вкладка берёт список пресетов одежды и эмоций. */
   modules?: ModuleInstance[];
 }
@@ -256,7 +261,7 @@ function TextSettings({ spec, onPatch }: {
  * переписывает блок в скрипте объекта, поэтому вкладка «Объект» всегда
  * показывает, что именно считается.
  */
-export function BehaviourPanel({ object, selection, onChange, onText, modules }: BehaviourPanelProps) {
+export function BehaviourPanel({ object, selection, onChange, onText, onColors, modules }: BehaviourPanelProps) {
   const behaviour = useMemo(
     () => (object ? readBehaviour(object.script) : { ...DEFAULT_BEHAVIOUR }),
     [object?.script],
@@ -295,6 +300,39 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
   const reset = () => onChange(resetBehaviourFor(targets));
 
   const heavy = heavyAngle(object.pivot);
+
+  /** Задаваемые цвета объекта: у света, фигуры, текста и материала они разные. */
+  const colorFields = colorFieldsOf(object);
+  /** Каналы всех модулей цвета: в списке видно и модуль, и канал. */
+  const colourChannels = (modules ?? [])
+    .filter((module) => module.enabled && moduleDefinition(module.type).kind === "color")
+    .flatMap((module) => colorChannels(module).map((channel) => ({
+      key: `${module.name}.${channel.name}`,
+      label: `${module.name} → ${channel.label}`,
+    })));
+
+  /**
+   * Привязка цвета. Пустое значение — «свой цвет»: ключ удаляется, а не
+   * записывается пустым, иначе в пресете остался бы мусор, а объект выглядел бы
+   * привязанным к несуществующему каналу.
+   */
+  const setColour = (field: ColorField, value: string, alpha?: boolean) => {
+    if (!onColors) return;
+    const updates = targets
+      .filter((item) => colorFieldsOf(item).includes(field))
+      .map((item) => {
+        const colors = { ...(item.colors ?? {}) };
+        if (!value) delete colors[field];
+        else {
+          const [moduleName, channel] = value.split(".");
+          const link: ColorLink = { module: moduleName, channel };
+          if (alpha) link.alpha = true;
+          colors[field] = link;
+        }
+        return { ...item, colors: Object.keys(colors).length ? colors : undefined };
+      });
+    if (updates.length) onColors(updates);
+  };
 
   /**
    * Модули мыши пресета: из них берётся имя входа для формул.
@@ -387,6 +425,58 @@ export function BehaviourPanel({ object, selection, onChange, onText, modules }:
               if (updates.length) onText(updates);
             }}
           />
+        </section>
+      )}
+
+      {colorFields.length > 0 && (
+        <section className="behaviour-section colour-section">
+          <div className="section-title"><span><Palette size={13} /> Цвет</span><small>ИЗ МОДУЛЯ</small></div>
+          <p className="behaviour-hint">
+            Каждый цвет можно взять из модуля «Цвет»: палитра, режим и скорость живут там,
+            а объект только берёт готовый цвет. «Свой цвет» — как раньше, из настроек объекта.
+          </p>
+          {!colourChannels.length && (
+            <p className="behaviour-hint">
+              Модулей с цветом в пресете нет: добавьте «Цвет» во вкладке «Модули», и здесь
+              появятся его каналы.
+            </p>
+          )}
+          {colorFields.map((field) => {
+            const link = object.colors?.[field];
+            const key = link ? `${link.module}.${link.channel}` : "";
+            const missing = !!link && !colourChannels.some((item) => item.key === key);
+            return (
+              <div className="colour-row" key={field}>
+                <span className="colour-row-label">{COLOR_FIELD_LABEL[field]}</span>
+                <span
+                  className="colour-swatch"
+                  title="Свой цвет объекта: он останется, если модуль пропадёт"
+                  style={{ background: ownColorOf(object, field) ?? "transparent" }}
+                />
+                <select
+                  value={key}
+                  title="Откуда брать этот цвет"
+                  onChange={(event) => setColour(field, event.target.value)}
+                >
+                  <option value="">свой цвет</option>
+                  {colourChannels.map((channel) => (
+                    <option key={channel.key} value={channel.key}>{channel.label}</option>
+                  ))}
+                </select>
+                {link && (
+                  <label className="check-line" title="Брать из канала и прозрачность. По умолчанию альфа своя: у света на ней держится мягкий край">
+                    <input
+                      type="checkbox"
+                      checked={link.alpha === true}
+                      onChange={(event) => setColour(field, key, event.target.checked)}
+                    />
+                    <span>α</span>
+                  </label>
+                )}
+                {missing && <p className="inline-error">Модуль или канал пропал — рисуется свой цвет.</p>}
+              </div>
+            );
+          })}
         </section>
       )}
 

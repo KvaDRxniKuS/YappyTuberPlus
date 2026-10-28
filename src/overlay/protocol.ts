@@ -60,11 +60,22 @@ export interface PoseMessage {
   bases: Record<string, BasePose>;
 }
 
+/**
+ * Готовые цвета объектов из модулей: `{ "obj": { fill: { r, g, b, a } } }`.
+ *
+ * Ядро цвета не знает, поэтому они едут рядом с кадром, а не внутри него. Поле
+ * необязательное: оверлей старой сборки его просто не читает, и протокол
+ * остаётся прежним.
+ */
+export type FrameColors = Record<string, Partial<Record<string, { r: number; g: number; b: number; a: number }>>>;
+
 export interface FrameMessage {
   t: "frame";
   sender: string;
   frame: RigFrame;
   sceneVersion: number;
+  /** Цвета с этого кадра; нет — у объектов остаются свои. */
+  colors?: FrameColors;
 }
 
 export interface ByeMessage {

@@ -1052,6 +1052,8 @@ YappyTuberPlus/
 │   ├── overlay-bridge.mjs    # WS-мост для OBS (только разработка в браузере)
 │   ├── pulse-bridge.mjs      # мост пульсометра (WS + HTTP, без зависимостей)
 │   ├── generate-demo-sprites.mjs
+│   ├── make-normal-example.mjs # пример кубика с картой нормалей
+│   ├── material-math.mjs     # та же математика материала, но на чистом JS
 │   └── smoke-engine.mjs
 ├── CHANGELOG.md              # история версий, начиная с 0.1
 ├── docs/
@@ -1066,6 +1068,8 @@ YappyTuberPlus/
 │   ├── BUILD.md              # сборка приложения, паспорт папки, публикация
 │   ├── DATA.md               # где лежат пресеты, файлы и настройки
 │   ├── BACKLOG.md            # что отложено и почему
+│   ├── PLAN-COLOR.md         # план: модуль цвета и «свет из экрана» (ambient)
+│   ├── PLAN-MATERIALS.md     # план: материал поверхности — что решили и почему
 │   ├── PLAN-0.2.md … PLAN-0.5.md  # планы прежних этапов: что решено и почему
 │   ├── reference/            # исходная ревизия ТЗ без изменений
 │   └── branding/             # исходник иконки

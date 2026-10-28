@@ -7,6 +7,7 @@ import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCor
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
 import { createCollector, resetCollector } from "../render/lighting";
+import { applyColors, type ColorField, type Rgba } from "../render/color";
 import {
   drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
@@ -51,6 +52,11 @@ interface SceneProps {
   pivots: GuideMode;
   /** Текст из модулей: подстановки `{twitch.chat.message}` в текстовых объектах. */
   texts?: TextChannel;
+  /**
+   * Готовые цвета из модулей: `{ obj: { fill: { r, g, b } } }`. Ядро их не
+   * считает, поэтому они приходят сюда и подставляются в пресет перед кадром.
+   */
+  colors?: Record<string, Partial<Record<ColorField, Rgba>>>;
   /**
    * Перо: контур, который сейчас рисуется. Клик по сцене ставит точку, готовая
    * точка хватается и переносится — как в графическом редакторе.
@@ -239,6 +245,7 @@ export function Scene(props: SceneProps) {
     const { zoom, x, y } = camera.current;
     const preset = current.preset;
     const frame = current.frameRef.current;
+    const colors = current.colors;
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(zoom, zoom);
@@ -252,7 +259,10 @@ export function Scene(props: SceneProps) {
     mediaAssets.current.sync(preset, frame);
     maskMedia.current.sync(maskSources(preset));
     resetCollector(lighting.current);
-    drawRig(ctx, preset, frame, assets.current, {
+    // Цвета из модулей подставляются в копию пресета: свет, фигуры, текст и
+    // материал уже читают цвет из объекта, поэтому менять их код не нужно.
+    const shown = colors ? applyColors(preset, colors) : preset;
+    drawRig(ctx, shown, frame, assets.current, {
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
       lighting: lighting.current,
@@ -343,6 +353,13 @@ export function Scene(props: SceneProps) {
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Цвет из модуля меняется по времени (30 раз в секунду), поэтому каждый его
+  // новый набор — это новый кадр. Правка самого пресета перерисовку уже зовёт.
+  useEffect(() => {
+    markDirty();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.colors]);
 
   const imageKey = props.preset.objects.map((object) => object.image).filter(Boolean).join("|");
   useEffect(() => {

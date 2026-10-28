@@ -40,6 +40,8 @@ interface RightPanelProps {
   onBehaviour: (scripts: Record<string, string>) => void;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
+  /** Привязка цветов объекта к каналам модулей: один шаг истории на всю пачку. */
+  onColors: (objects: RigObject[]) => void;
   /** Правка объекта целиком: контуры фигуры пишутся этой вкладкой. */
   onObject: (object: RigObject) => void;
   /** Перо: какой контур фигуры рисуется на сцене. */
@@ -197,6 +199,7 @@ export function RightPanel(props: RightPanelProps) {
           selection={props.selectedObjects}
           onChange={props.onBehaviour}
           onText={props.onText}
+          onColors={props.onColors}
           modules={props.modules}
         />
       ) : tab === "shape" ? (

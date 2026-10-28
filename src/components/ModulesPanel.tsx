@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Plus, RefreshCw, Search, SlidersHorizontal,
-  Trash2, Wifi, X,
+  ChevronDown, Copy, Keyboard, Mic, MousePointerClick, Palette, Plus, RefreshCw, Search,
+  SlidersHorizontal, Trash2, Wifi, X,
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
 import type { DeviceOption } from "../modules/audio";
@@ -20,6 +20,7 @@ import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { ExternalSourceEditor } from "./ExternalSourceEditor";
 import { PresetsEditor } from "./PresetsEditor";
+import { ColorEditor } from "./ColorEditor";
 import { NumberField } from "./NumberField";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
@@ -320,6 +321,19 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     />
                   )}
 
+                  {definition.kind === "color" && (
+                    <ColorEditor
+                      module={module}
+                      reactOptions={props.modules
+                        .filter((other) => other.name !== module.name && other.enabled)
+                        .flatMap((other) => instanceInputs(other).map((spec) => ({
+                          key: `${other.name}.${spec.name}`,
+                          label: `${other.name}.${spec.name}`,
+                        })))}
+                      onChannels={(channels, label) => patchConfig(module, "channels", channels, label)}
+                    />
+                  )}
+
                   {definition.kind === "manual" && module.config.mode === "enum" && (
                     <EnumStatesEditor
                       module={module}
@@ -453,6 +467,8 @@ export function ModulesPanel(props: ModulesPanelProps) {
                 <span className="module-palette-inputs">
                   {definition.kind === "viseme"
                     ? "свои виземы"
+                    : definition.kind === "color"
+                      ? "каналы: r · g · b · a · яркость"
                     : definition.kind === "keyboard"
                       ? "клавиши из настроек"
                       : definition.inputs.map((input) => input.name).join(" · ")}
@@ -479,6 +495,7 @@ function paletteIcon(kind: ModuleKind) {
   if (kind === "keyboard" || kind === "key") return <Keyboard size={14} />;
   if (kind === "mouse") return <MousePointerClick size={14} />;
   if (kind === "external") return <Wifi size={14} />;
+  if (kind === "color") return <Palette size={14} />;
   return <SlidersHorizontal size={14} />;
 }
 

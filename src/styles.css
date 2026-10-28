@@ -1644,6 +1644,20 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   resize: vertical;
 }
 
+/* Цвет: каналы модуля и строки привязки в «Поведении». */
+.color-editor { display: flex; flex-direction: column; gap: 6px; }
+.color-channel { border: 1px solid #262b31; border-radius: 6px; }
+.color-channel-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px; }
+.color-channel-toggle { display: flex; align-items: center; gap: 6px; background: none; border: none; color: #c8ced6; cursor: pointer; font-size: 12px; }
+.color-channel-toggle small { color: #7d868f; }
+.color-channel-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-top: 1px solid #262b31; }
+.color-palette { display: flex; flex-direction: column; gap: 4px; }
+.color-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #3a424b; display: inline-block; flex: none; }
+.colour-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 0; font-size: 12px; }
+.colour-row-label { min-width: 96px; color: #c8ced6; }
+.colour-row select { flex: 1 1 140px; background: #1b1f24; color: #dfe4ea; border: 1px solid #333a42; border-radius: 5px; padding: 2px 6px; }
+.colour-row .inline-error { flex-basis: 100%; margin: 0; }
+
 /* Материал: строки каналов, файлы и общая полоса свечения. */
 .material-kinds { flex-wrap: wrap; gap: 4px; }
 .material-channel { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid #262b31; }

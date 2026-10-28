@@ -1,6 +1,6 @@
 import type { BasePose, OverlayConfig, RigFrame } from "../types";
 import type { CompositeBus } from "./bus";
-import { OVERLAY_PROTOCOL, type OverlayScene, type WireMessage } from "./protocol";
+import { OVERLAY_PROTOCOL, type FrameColors, type OverlayScene, type WireMessage } from "./protocol";
 import { acceptAssetData } from "../engine/assets";
 
 export type OverlayStatus = "connecting" | "waiting" | "live" | "stale";
@@ -33,6 +33,8 @@ export class OverlayClient {
   config: OverlayConfig | null = null;
   bases: Record<string, BasePose> | null = null;
   frame: RigFrame | null = null;
+  /** Цвета из модулей с последнего кадра: ядро их не считает. */
+  colors: FrameColors | null = null;
   status: OverlayStatus = "connecting";
   host: string | null = null;
   frameCount = 0;
@@ -192,6 +194,7 @@ export class OverlayClient {
         if (message.frame.seq <= this.lastSeq) break;
         this.lastSeq = message.frame.seq;
         this.frame = message.frame;
+        this.colors = message.colors ?? null;
         this.frameCount += 1;
         for (const listener of this.frameListeners) listener();
         if (this.status !== "live") this.update("live");
