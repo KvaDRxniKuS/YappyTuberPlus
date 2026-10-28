@@ -123,7 +123,7 @@ export const VERSION: ProjectVersion = {
   format: PRESET_FORMAT,
   bridge: 1,
   modules: MODULE_FORMAT,
-  shell: 3,
+  shell: 4,
 };
 
 /** Номера поколений в порядке слотов: без релиза. */

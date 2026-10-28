@@ -146,8 +146,22 @@ test("объём: материал и свечение работают без �
 test("шейдер объёма: блик не вырождается в линию и не гасится дважды", () => {
   const volume = shadersOf(lighting).find((shader) => shader.includes("uMaterial") && shader.includes("ggx"));
   expect(volume).toBeTruthy();
-  expect(volume).toContain("float denom = 4.0 * max(NdotL, 0.02) * max(n.z, 0.02);");
-  expect(volume).toContain("float gain = clamp(D / denom, 0.0, 8.0) * uSpecular * uLightExtra[i].y;");
+  // Блик — лепесток GGX, нормированный на собственный максимум. Прежняя схема
+  // (D, делённая на 4·NdotL, с полкой снизу и потолком сверху) делала косое
+  // падение ярче прямого: на плоской поверхности максимум уползал на кольцо, и
+  // вместо точки под источником была полоса по краю пятна.
+  expect(volume).toContain("float lobe = ggxLobe(");
+  expect(volume).toContain("float ggxLobe(float angle, float roughness)");
+  expect(volume).not.toContain("4.0 * max(NdotL, 0.02)");
+  expect(volume).not.toContain("clamp(D / denom");
+  // Отражение не обрезается краем пятна: оно спадает до SPECULAR_REACH плавно,
+  // а подсветка холста остаётся внутри пятна.
+  expect(volume).toContain("float reach = color0.a * (1.0 - smoothstep(1.0, SPECULAR_REACH, d));");
+  expect(volume).toContain("if (inPatch) lightSum += color0.rgb * a * NdotL;");
+  // Форма блика берётся из той же функции, что и форма пятна: прямоугольный
+  // свет даёт прямоугольное отражение.
+  expect(volume).toContain("float d = shapeEdge(local, shape, halfAngle, soft, cover);");
+  expect(volume).toContain("float outlineRay(vec2 dir, float shape, float halfAngle, float soft)");
   // Один множитель силы блика на весь шейдер: в сумме его больше нет.
   expect(volume).toContain("specSum + emissive");
   expect(volume).not.toContain("specSum * uSpecular");

@@ -443,16 +443,58 @@ writeFileSync(join(OUT, "cube-emissive.png"), encodePng(SIZE, SIZE, toPixels(emi
  * только материал. Считается той же функцией, что и в редакторе, поэтому лист
  * — эталон, а не иллюстрация.
  */
-const LIGHT = {
-  L: (() => {
-    const [dx, dy] = [180, -260];
-    const flat = Math.hypot(dx, dy);
-    return [dx / flat * 0.72, dy / flat * 0.72, 0.7];
-  })(),
-  color: [1, 0.96, 0.9],
-  polarity: 1,
-  specular: 1,
-};
+/*
+ * Свет над кубиком — настоящая геометрия, а не подставленное направление:
+ * пятно лежит выше-правее центра, его высота равна половине радиуса (так
+ * работает «авто» в редакторе). Направление на свет, наклон и блик считаются из
+ * этих же чисел на каждый пиксель, поэтому лист показывает ровно тот расчёт,
+ * что делает рендер, — включая блик, который переезжает по граням.
+ *
+ * Лист, где нормаль подставлена плоская, блик показать не может в принципе:
+ * отражение точечного источника лежит под самим источником, а не в центре
+ * картинки. Именно поэтому здесь читается карта нормалей.
+ */
+const LIGHT_AT = [SIZE / 2 + 150, SIZE / 2 - 210];
+const LIGHT_RADIUS = 520;
+const LIGHT_HEIGHT = LIGHT_RADIUS / 2;
+const LIGHT_COLOR = [1, 0.96, 0.9];
+
+/** Нормаль пикселя из карты — тот же пересчёт в координаты холста, что в рендере. */
+function normalAt(map, x, y) {
+  const i = (y * SIZE + x) * 4;
+  if (map[i + 3] <= 0.01) return null;
+  const nx = map[i] * 2 - 1;
+  // В карте +Y смотрит вверх, на холсте Y растёт вниз — как в `lighting.ts`.
+  const xy = [nx, -(map[i + 1] * 2 - 1)];
+  let len = Math.hypot(xy[0], xy[1]);
+  if (len > 1) {
+    xy[0] /= len;
+    xy[1] /= len;
+    len = 1;
+  }
+  return [xy[0], xy[1], Math.sqrt(Math.max(1 - len * len, 0.05))];
+}
+
+/** Один свет в одной точке: то, что шейдер собирает из `uGeom` и `uShape`. */
+function lightAt(toLight) {
+  return {
+    L: lightDirection(toLight, LIGHT_HEIGHT),
+    color: LIGHT_COLOR,
+    polarity: 1,
+    specular: 1,
+    body: {
+      toLight,
+      height: LIGHT_HEIGHT,
+      span: LIGHT_RADIUS,
+      shape: 0,
+      halfAngle: (120 * Math.PI) / 180 / 2,
+      soft: 0.6,
+      rotation: 0,
+      core: 1,
+      tint: LIGHT_COLOR,
+    },
+  };
+}
 
 function shadeSheet(name, material) {
   const out = blank(SIZE, SIZE);
@@ -464,7 +506,7 @@ function shadeSheet(name, material) {
       const i = (y * SIZE + x) * 4;
       const alpha = albedoMap[i + 3];
       if (alpha <= 0.01) continue;
-      const normal = [0, 0, 1];
+      const normal = normalAt(normalMap.data, x, y) ?? [0, 0, 1];
       const point = {
         albedo: [albedoMap[i], albedoMap[i + 1], albedoMap[i + 2]],
         normal,
@@ -481,7 +523,9 @@ function shadeSheet(name, material) {
         environment: { color: [0.55, 0.6, 0.7], level: 0.45 },
         ...material,
       };
-      const rgb = shadePoint(point, [LIGHT], { normalStrength: 1, material: true });
+      const rgb = shadePoint(point, [lightAt([LIGHT_AT[0] - x, LIGHT_AT[1] - y])], {
+        normalStrength: 1, material: true,
+      });
       out.data[i] = Math.min(1, rgb[0]);
       out.data[i + 1] = Math.min(1, rgb[1]);
       out.data[i + 2] = Math.min(1, rgb[2]);
@@ -490,6 +534,102 @@ function shadeSheet(name, material) {
     }
   }
   return out;
+}
+
+/*
+ * Лист «форма источника — форма блика». Плоская пластина смотрит ровно на
+ * камеру, поэтому отражение на ней лежит строго под источником, а его контур
+ * повторяет контур света: круг даёт круглое пятно, прямоугольник — квадратное,
+ * треугольник — треугольное. Это и есть то, что раньше выглядело «полосой»:
+ * блик был обрезан краем пятна и не имел пика под источником.
+ */
+const PLATE = 240;
+const LIGHT_PLATE_COLOR = [0.9, 0.86, 0.78];
+const PLATE_LIGHT = { x: PLATE / 2 - 46, y: PLATE / 2 - 26, span: 78, height: 260, cover: 0.85 };
+// Подписи без цифр «9» и «0»: в растровом шрифте генератора их нет.
+const SHAPES = [
+  { caption: "CIRCLE", shape: 0 },
+  { caption: "RECT", shape: 1 },
+  { caption: "TRIANGLE", shape: 2 },
+];
+
+function plateSheet(shape) {
+  const out = blank(PLATE, PLATE);
+  for (let y = 0; y < PLATE; y += 1) {
+    for (let x = 0; x < PLATE; x += 1) {
+      const inset = 18;
+      const inside = x >= inset && y >= inset && x < PLATE - inset && y < PLATE - inset;
+      if (!inside) continue;
+      const toLight = [PLATE_LIGHT.x - x, PLATE_LIGHT.y - y];
+      const length = Math.hypot(toLight[0], toLight[1], PLATE_LIGHT.height);
+      const point = {
+        albedo: [0.5, 0.5, 0.52],
+        normal: [0, 0, 1],
+        // Один и тот же материал на всех трёх панелях: отличается только
+        // форма света — иначе сравнивать было бы нечего.
+        roughness: 0.25,
+        metallic: 0,
+        ao: 1,
+        emissive: [0, 0, 0],
+        specular: 1,
+        f0: 0.04,
+        environment: { color: [0.55, 0.6, 0.7], level: 0.45 },
+      };
+      // Пятно света заведомо больше пластины, поэтому покрытие пятна здесь
+      // равно константе: `color` — это цвет света уже с покрытием, как и
+      // требует контракт shadePoint (в шейдере этим множителем занят `a`).
+      const light = {
+        L: toLight.concat(PLATE_LIGHT.height).map((value) => value / length),
+        color: LIGHT_PLATE_COLOR.map((value) => value * PLATE_LIGHT.cover),
+        polarity: 1,
+        specular: 1,
+        body: {
+          toLight,
+          height: PLATE_LIGHT.height,
+          span: PLATE_LIGHT.span,
+          shape,
+          halfAngle: (120 * Math.PI) / 180 / 2,
+          soft: 0.35,
+          rotation: 0,
+          core: 0.85,
+          tint: [1, 0.96, 0.9],
+        },
+      };
+      const rgb = shadePoint(point, [light], { normalStrength: 1, material: true });
+      const i = (y * PLATE + x) * 4;
+      out.data[i] = Math.min(1, rgb[0]);
+      out.data[i + 1] = Math.min(1, rgb[1]);
+      out.data[i + 2] = Math.min(1, rgb[2]);
+      out.data[i + 3] = 1;
+    }
+  }
+  return out;
+}
+
+{
+  const gap = 24;
+  const sheetWidth = PLATE * SHAPES.length + gap * (SHAPES.length + 1);
+  const sheetHeight = PLATE + gap * 2 + 26;
+  const sheet = blank(sheetWidth, sheetHeight);
+  bar(sheet, 0, 0, sheetWidth, sheetHeight, [0.09, 0.1, 0.12], 1);
+  SHAPES.forEach((panel, index) => {
+    const image = plateSheet(panel.shape);
+    const x = gap + index * (PLATE + gap);
+    const y = gap;
+    for (let dy = 0; dy < PLATE; dy += 1) {
+      for (let dx = 0; dx < PLATE; dx += 1) {
+        const source = (dy * PLATE + dx) * 4;
+        over(
+          sheet, x + dx, y + dy,
+          [image.data[source], image.data[source + 1], image.data[source + 2]],
+          image.data[source + 3],
+        );
+      }
+    }
+    bar(sheet, x, y, PLATE, 26, [0.09, 0.1, 0.12], 0.82);
+    text(sheet, x + 8, y + 7, panel.caption, 2, [0.92, 0.93, 0.95]);
+  });
+  writeFileSync(join(OUT, "specular-shapes.png"), encodePng(sheetWidth, sheetHeight, toPixels(sheet)));
 }
 
 const materials = [

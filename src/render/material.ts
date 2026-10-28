@@ -17,14 +17,34 @@ import {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+/** Гладкий переход 1 → 0 между `edge0` и `edge1`: то же, что `smoothstep` в GLSL. */
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 /**
  * Минимум окружения: у металла диффузной части нет вовсе, и без отражения он
  * чёрный вне пятна света — ровно так «половина куба» и пропадала.
  */
 export const MIN_AMBIENT = 0.35;
 
-/** Потолок усиления блика: у терминатора GGX иначе уходит в бесконечность. */
-export const MAX_SPECULAR_GAIN = 8;
+/**
+ * Экспозиция отражения: во сколько раз блик ярче самой подсветки холста.
+ *
+ * Свет на холсте — полупрозрачная дымка, а в отражении он виден как тело
+ * источника. Без множителя отражение диэлектрика (4 % по Шлику) тонуло в
+ * диффузной части и глаз не различал блика вовсе. Это ручная экспозиция, а не
+ * физика: потолок усиления больше не нужен — лепесток GGX ограничен сам.
+ */
+export const SPECULAR_EXPOSURE = 6;
+
+/**
+ * Досягаемость блика в радиусах пятна. За краем подсветки света нет, а
+ * отражение есть: оно спадает к этой границе плавно, а не обрывается по ней —
+ * иначе край пятна было видно полосой поперёк поверхности.
+ */
+export const SPECULAR_REACH = 1.8;
 
 export interface Channel {
   value: number;
@@ -161,6 +181,90 @@ export function ggxDistribution(NdotH: number, roughness: number): number {
   return a2 / (Math.PI * d * d);
 }
 
+/**
+ * Доля лепестка GGX: 1 в точном зеркальном направлении, 0.5 на половине его
+ * ширины. То же распределение, что `ggxDistribution`, но делённое на
+ * собственный максимум — поэтому усиление ограничено сверху по построению.
+ *
+ * Это и есть причина, по которой прежний множитель `D / (4·NdotL)` требовал
+ * полок: без них косое падение оказывалось ярче прямого, и на плоской
+ * поверхности максимум уползал на кольцо в 40 % радиуса пятна — «полоса»
+ * вместо точки.
+ */
+export function ggxLobe(angle: number, roughness: number): number {
+  const alpha = Math.max(roughness * roughness, 0.002);
+  return ggxDistribution(Math.cos(angle), roughness) * Math.PI * alpha * alpha;
+}
+
+/** Знаковая площадь внутри треугольника: больше нуля значит «внутри». */
+function triangleInside(point: [number, number]): number {
+  const a: [number, number] = [0, -1];
+  const b: [number, number] = [0.866025, 0.5];
+  const c: [number, number] = [-0.866025, 0.5];
+  const cross = (u: [number, number], v: [number, number], q: [number, number]) =>
+    (v[0] - u[0]) * (q[1] - u[1]) - (v[1] - u[1]) * (q[0] - u[0]);
+  return Math.min(cross(a, b, point), cross(b, c, point), cross(c, a, point));
+}
+
+/**
+ * Форма источника: 0 в центре фигуры, 1 на её краю; `cover` — мягкая стенка
+ * (у треугольника и сектора это и есть сама фигура).
+ *
+ * Одна функция на подсветку холста и на блик — поэтому у прямоугольного света
+ * отражение прямоугольное, у треугольного — треугольное, и поворот у них
+ * общий. `local` уже поделен на масштаб: радиус пятна для подсветки и «тело»
+ * источника для блика; для формы «весь экран» масштабом служит диагональ.
+ */
+export function shapeEdge(
+  local: [number, number],
+  shape: number,
+  halfAngle: number,
+  soft: number,
+): { d: number; cover: number } {
+  if (shape < 0.5) return { d: Math.hypot(local[0], local[1]), cover: 1 };
+  if (shape < 1.5) {
+    return { d: Math.max(Math.abs(local[0]), Math.abs(local[1])), cover: 1 };
+  }
+  if (shape < 2.5) {
+    return {
+      d: Math.hypot(local[0], local[1]) / 1.5,
+      cover: clamp(triangleInside(local) / Math.max(soft * 0.35, 0.001), 0, 1),
+    };
+  }
+  if (shape < 3.5) {
+    const dir = Math.atan2(local[0], -local[1]);
+    return {
+      d: Math.hypot(local[0], local[1]),
+      cover: clamp((halfAngle - Math.abs(dir)) / Math.max(soft * halfAngle, 0.001), 0, 1),
+    };
+  }
+  return { d: Math.hypot(local[0], local[1]), cover: 1 };
+}
+
+/**
+ * Насколько далеко по направлению `dir` лежит край формы источника: угловой
+ * контур света. Бисекция идёт по той же `shapeEdge`, поэтому блик наследует и
+ * треугольник, и сектор, и поворот — всё, что умеет сам свет.
+ *
+ * Восемь шагов — это около 1 % по краю: больше не нужно, спорит с ценой пикселя.
+ */
+export function outlineRay(
+  dir: [number, number],
+  shape: number,
+  halfAngle: number,
+  soft: number,
+): number {
+  let low = 0.05;
+  let high = 3;
+  for (let step = 0; step < 8; step += 1) {
+    const mid = (low + high) / 2;
+    const probe = shapeEdge([dir[0] * mid, dir[1] * mid], shape, halfAngle, soft);
+    if (probe.d <= 1 && probe.cover > 0) low = mid;
+    else high = mid;
+  }
+  return low;
+}
+
 /** Френель Шлика: у металла отражение красят в цвет альбедо, у диэлектрика — 4 %. */
 export function fresnel(VdotH: number, F0: [number, number, number]): [number, number, number] {
   const k = Math.pow(1 - clamp(VdotH, 0, 1), 5);
@@ -191,6 +295,35 @@ export function baseReflectance(
   ];
 }
 
+/**
+ * Геометрия источника света для блика: те же числа, что уходят в `uGeom` и
+ * `uShape` шейдера объёма. Без них отражение нельзя ни посчитать, ни нарисовать
+ * формой источника — направление `L` для этого не достаточно.
+ */
+export interface LightBody {
+  /** Смещение от точки к центру пятна, пиксели холста (y вниз). */
+  toLight: [number, number];
+  /** Высота света над холстом, пиксели холста. */
+  height: number;
+  /**
+   * Масштаб формы, пиксели холста: радиус пятна, а для «весь экран» —
+   * диагональ холста. Именно так его видит шейдер.
+   */
+  span: number;
+  /** Форма: 0 круг, 1 прямоугольник, 2 треугольник, 3 сектор, 4 весь экран. */
+  shape: number;
+  /** Половина раствора сектора в радианах. */
+  halfAngle: number;
+  /** Мягкость края 0…1. */
+  soft: number;
+  /** Поворот источника в радианах. */
+  rotation: number;
+  /** Альфа света в центре пятна: яркость отражения. */
+  core: number;
+  /** Цвет света в центре пятна, 0…1 на канал: `color0.rgb` шейдера. */
+  tint: [number, number, number];
+}
+
 /** Один свет в точке: диффузная добавка и блик, уже умноженные на покрытие пятна. */
 export interface LightPoint {
   /** Направление на свет (единичный вектор, z > 0). */
@@ -201,6 +334,8 @@ export interface LightPoint {
   polarity: number;
   /** Сила блика этого света 0…2. */
   specular: number;
+  /** Форма и положение источника: нужны блику, см. `LightBody`. */
+  body: LightBody;
 }
 
 export interface ShadeOptions {
@@ -258,26 +393,63 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
     // Тёмный свет — это тень: в материале он гасит диффузную часть (это делает
     // шейдер), а сам ничего не добавляет.
     if (light.polarity <= 0) continue;
+    const body = light.body;
+    const cos = Math.cos(body.rotation);
+    const sin = Math.sin(body.rotation);
+    // Смещение точки от центра света и её координата в системе источника:
+    // ровно то же, что считает шейдер (`rel`, `local`).
+    const rel: [number, number] = [-body.toLight[0], -body.toLight[1]];
+    const inSource: [number, number] = [
+      (cos * rel[0] + sin * rel[1]) / body.span,
+      (-sin * rel[0] + cos * rel[1]) / body.span,
+    ];
+    const patch = shapeEdge(inSource, body.shape, body.halfAngle, body.soft);
+    // Блик спадает к `SPECULAR_REACH`, а не обрывается краем пятна: за ним
+    // подсветки нет, а отражение есть. Диффузную часть это не касается:
+    // покрытие пятна уже умножено в `color` (в шейдере за него отвечает `a`).
+    const specAllowed = patch.d <= SPECULAR_REACH;
     const NdotL = dot3(N, light.L);
     if (NdotL <= 0) continue;
     const H = normalize3([light.L[0] + V[0], light.L[1] + V[1], light.L[2] + V[2]]);
-    const NdotH = Math.max(dot3(N, H), 1e-4);
-    const VdotH = Math.max(dot3(V, H), 0);
-    const D = ggxDistribution(NdotH, roughness);
-    const F = fresnel(VdotH, F0);
-    // Знаменатель 4·NdotL·NdotV: у нас NdotV = N.z, и он не ноль, пока
-    // поверхность не повёрнута от зрителя. Ограничение снизу и потолок усиления
-    // держат блик пятном: без них у терминатора он вырождается в белую полоску.
-    const denom = 4 * Math.max(NdotL, 0.02) * Math.max(N[2], 0.02);
-    const specScale = clamp(D / denom, 0, MAX_SPECULAR_GAIN)
-      * point.specular
-      * light.specular
+    // Шлик по полувектору и взгляду: V смотрит вдоль нормали холста,
+    // поэтому VdotH = H.z — ровно то же, что в шейдере.
+    const F = fresnel(Math.max(H[2], 0), F0);
+    // Угол между полувектором и нормалью = «насколько мимо блика» лежит
+    // точка: 0 в центре отражения, рост к краям. Берётся именно так, а не
+    // трассировкой отражённого луча, потому что под ортографической камерой
+    // такой луч на грани круче 45° уходит за спину и блика не было бы вовсе.
+    const NdotH = clamp(dot3(N, H), 0, 1);
+    const angDev = Math.acos(NdotH);
+    // Угловой радиус тела источника: его отражение и есть блик. Край формы
+    // берётся в направлении отклонения — поэтому у прямоугольного света пятно
+    // прямоугольное, у треугольного — треугольное, поворот общий.
+    const dist = Math.max(Math.hypot(rel[0], rel[1], Math.max(body.height, 1)), 1);
+    const bulk = Math.max(body.span * (1 - body.soft), body.span * 0.15);
+    // Пол в 15 % тела держит глянцевый блик от схлопывания в субпиксель.
+    const psi = Math.max(Math.atan(bulk / dist), 0.02);
+    const dev: [number, number] = [H[0] - N[0] * NdotH, H[1] - N[1] * NdotH];
+    const dirLen = Math.max(Math.hypot(dev[0], dev[1]), 1e-5);
+    const dirH: [number, number] = [
+      (cos * dev[0] + sin * dev[1]) / dirLen,
+      (-sin * dev[0] + cos * dev[1]) / dirLen,
+    ];
+    const lobe = ggxLobe(
+      Math.max(angDev - psi * outlineRay(dirH, body.shape, body.halfAngle, body.soft) * 0.15, 0),
+      roughness,
+    );
+    // Узкий блик чуть ярче широкого: `mix(1, 2, 1 − roughness)` — это 2 − roughness.
+    const amp = (2 - roughness) * SPECULAR_EXPOSURE;
+    const reach = specAllowed ? body.core * (1 - smoothstep(1, SPECULAR_REACH, patch.d)) : 0;
+    const specScale = lobe * reach * amp * NdotL * point.specular * light.specular
       * Math.max(0, light.polarity);
     const diffScale = NdotL * diffuseWeight;
 
     for (let c = 0; c < 3; c += 1) {
-      const lightColor = light.color[c];
-      out[c] += lightColor * (specScale * F[c] + diffScale * (point.albedo[c] as number));
+      // Диффузная часть идёт через `color`: в нём уже лежит покрытие пятна.
+      // Блик — через `tint` и `reach`: отражение видно и там, куда пятно не
+      // дотянулось, поэтому множитель покрытия к нему не применяется.
+      out[c] += light.color[c] * diffScale * (point.albedo[c] as number)
+        + body.tint[c] * F[c] * specScale;
     }
   }
 

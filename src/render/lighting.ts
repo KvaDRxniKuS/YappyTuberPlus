@@ -1,5 +1,6 @@
 import type { LightShape } from "../types";
 import { assetUrl } from "../engine/assets";
+import { SPECULAR_EXPOSURE, SPECULAR_REACH } from "./material";
 import { alphaOf, withAlpha } from "./light";
 
 /**
@@ -178,6 +179,13 @@ void main() {
 const VOLUME_FRAGMENT = `#version 300 es
 precision highp float;
 #define MAX_LIGHTS ${MAX_LIGHTS}
+/**
+ * Экспозиция отражения и досягаемость блика за краем пятна. Обе числа — из
+ * src/render/material.ts, чтобы шейдер и эталонная реализация не могли
+ * разойтись: подстановка происходит при сборке строки шейдера.
+ */
+#define SPECULAR_EXPOSURE ${SPECULAR_EXPOSURE}
+#define SPECULAR_REACH ${SPECULAR_REACH}
 in vec2 vUv;
 
 uniform sampler2D uScene;
@@ -250,6 +258,52 @@ float triangleInside(vec2 p) {
   return min(d1, min(d2, d3));
 }
 
+/**
+ * Форма источника: 0 в центре фигуры, 1 на её краю; cover — мягкая стенка
+ * (у треугольника и сектора это и есть сама фигура).
+ *
+ * Функция одна на подсветку холста и на блик: первая вызывает её с радиусом
+ * пятна, второй — с «телом» источника. Поэтому у прямоугольного света
+ * отражение прямоугольное, у треугольного — треугольное, и поворот у них
+ * общий. local уже поделен на масштаб: для формы «весь экран» это диагональ
+ * холста, и ветка отличается только им.
+ */
+float shapeEdge(vec2 local, float shape, float halfAngle, float soft, out float cover) {
+  cover = 1.0;
+  if (shape < 0.5) return length(local);
+  if (shape < 1.5) return max(abs(local.x), abs(local.y));
+  if (shape < 2.5) {
+    cover = clamp(triangleInside(local) / max(soft * 0.35, 0.001), 0.0, 1.0);
+    return length(local) / 1.5;
+  }
+  if (shape < 3.5) {
+    float dir = atan(local.x, -local.y);
+    cover = clamp((halfAngle - abs(dir)) / max(soft * halfAngle, 0.001), 0.0, 1.0);
+    return length(local);
+  }
+  return length(local);
+}
+
+/**
+ * Насколько далеко по направлению dir лежит край формы источника: угловой
+ * контур света. Бисекция идёт по той же функции формы, поэтому блик наследует
+ * и треугольник, и сектор, и поворот — всё, что умеет сам свет.
+ */
+float outlineRay(vec2 dir, float shape, float halfAngle, float soft) {
+  float low = 0.05;
+  float high = 3.0;
+  for (int step = 0; step < 8; step++) {
+    float mid = (low + high) * 0.5;
+    float insideCover = 1.0;
+    if (shapeEdge(dir * mid, shape, halfAngle, soft, insideCover) <= 1.0 && insideCover > 0.0) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
 /** Значение канала в точке: константа, свой файл или буква упакованной карты. */
 float channelValue(int mode, int channel, float constant, sampler2D own, vec2 uv) {
   if (mode == 0) return constant;
@@ -268,6 +322,22 @@ float ggx(float NdotH, float roughness) {
   float a2 = alpha * alpha;
   float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
   return a2 / (3.14159265 * d * d);
+}
+
+/**
+ * Доля лепестка GGX: 1 в точном зеркальном направлении, 0.5 на половине его
+ * ширины. Это то же распределение, что ggx, но делённое на собственный
+ * максимум, — поэтому блик ограничен сверху по построению и не нуждается ни в
+ * поле снизу, ни в потолке усиления.
+ *
+ * Прежний множитель D / (4·NdotL) требовал и того и другого: без полок он
+ * делал косое падение ярче прямого (1/NdotL растёт быстрее, чем убывает D), и
+ * на плоской поверхности максимум уползал на кольцо в 40 % радиуса пятна.
+ * Отсюда и «полоса» вместо точки: яркий пояс шёл по краю подсветки.
+ */
+float ggxLobe(float angle, float roughness) {
+  float alpha = max(roughness * roughness, 0.002);
+  return ggx(cos(angle), roughness) * 3.14159265 * alpha * alpha;
 }
 
 void main() {
@@ -325,30 +395,24 @@ void main() {
     vec2 rel = p - center;
     float c = cos(rot);
     float s = sin(rot);
-    vec2 local = vec2(c * rel.x + s * rel.y, -s * rel.x + c * rel.y) / radius;
+    // Для формы «весь экран» масштабом служит диагональ холста, остальное —
+    // радиус пятна. Дальше одна и та же функция считает и пятно, и блик.
+    float span = shape < 3.5 ? radius : max(length(uCanvas), 1.0);
+    vec2 local = vec2(c * rel.x + s * rel.y, -s * rel.x + c * rel.y) / span;
 
-    float d;
     float cover = 1.0;
-    if (shape < 0.5) {
-      d = length(local);
-    } else if (shape < 1.5) {
-      d = max(abs(local.x), abs(local.y));
-    } else if (shape < 2.5) {
-      d = length(local) / 1.5;
-      cover = clamp(triangleInside(local) / max(soft * 0.35, 0.001), 0.0, 1.0);
-    } else if (shape < 3.5) {
-      d = length(local);
-      float dir = atan(local.x, -local.y);
-      cover = clamp((halfAngle - abs(dir)) / max(soft * halfAngle, 0.001), 0.0, 1.0);
-    } else {
-      d = length(rel) / max(length(uCanvas), 1.0);
-    }
-    if (d > 1.0 || cover <= 0.0) continue;
-
+    float d = shapeEdge(local, shape, halfAngle, soft, cover);
+    bool inPatch = d <= 1.0 && cover > 0.0;
     float kernel = 1.0 - soft;
     float t = clamp((d - kernel) / max(1.0 - kernel, 0.001), 0.0, 1.0);
     float a = mix(color0.a, color1.a, t) * cover;
-    if (a <= 0.0005) continue;
+    if (!material) {
+      // Прежний проход объёма: только пятно подсветки, ни на пиксель шире.
+      if (!inPatch || a <= 0.0005) continue;
+    } else if (!inPatch && d > SPECULAR_REACH) {
+      // За пределами досягаемости блика считать нечего: остаётся окружение.
+      continue;
+    }
 
     // Направление на свет: настоящее смещение до центра пятна плюс высота
     // света. Горизонталь нельзя нормировать отдельно: единичный вектор против
@@ -368,21 +432,46 @@ void main() {
       float NdotL = dot(n, lightDir);
       if (polarity < 0.5) {
         // Тёмный свет — тень: блика не даёт, только гасит диффузную часть.
-        shadowSum += a * 0.9;
+        if (inPatch) shadowSum += a * 0.9;
       } else if (NdotL > 0.0) {
+        // Диффузная часть — это и есть подсветка холста, она остаётся внутри
+        // пятна. Блик живёт по своим правилам: отражение видно и там, куда
+        // само пятно не дотянулось.
+        if (inPatch) lightSum += color0.rgb * a * NdotL;
+        // Полувектор источника и взгляда смотрит ровно на нормаль там, где
+        // поверхность повёрнута к зеркальному отражению. Значит, угол между
+        // H и n — это «насколько мимо блика» лежит точка: ноль в центре
+        // пятна, рост к краям. Такая геометрия работает на любом наклоне
+        // грани, в отличие от трассировки отражённого луча: под ортографической
+        // камерой он на грани круче 45° уходит за спину, и блика нет вовсе.
         vec3 H = normalize(lightDir + vec3(0.0, 0.0, 1.0));
-        float NdotH = max(dot(n, H), 1e-4);
-        float VdotH = max(H.z, 0.0);
-        float D = ggx(NdotH, roughness);
-        float k = pow(1.0 - VdotH, 5.0);
+        float NdotH = clamp(dot(n, H), 0.0, 1.0);
+        float angDev = acos(NdotH);
+        // Шлик по-прежнему по полувектору и взгляду: V у нас смотрит вдоль
+        // нормали холста, поэтому VdotH = H.z, а не NdotH.
+        float k = pow(1.0 - max(H.z, 0.0), 5.0);
         vec3 F = F0 + (1.0 - F0) * k;
-        // Знаменатель ограничен снизу, а усиление — сверху: иначе у
-        // терминатора (NdotL → 0) блик уходит в бесконечность тонкой линией
-        // поперёк грани — вместо пятна получается полоска.
-        float denom = 4.0 * max(NdotL, 0.02) * max(n.z, 0.02);
-        float gain = clamp(D / denom, 0.0, 8.0) * uSpecular * uLightExtra[i].y;
-        lightSum += color0.rgb * a * NdotL;
-        specSum += color0.rgb * F * (gain * a);
+        // Угловой радиус тела источника: его отражение и есть блик. Край
+        // формы берётся в направлении отклонения, поэтому у прямоугольного
+        // света пятно прямоугольное, у треугольного — треугольное, поворот общий.
+        float dist = max(length(vec3(rel, max(uLightExtra[i].x, 1.0))), 1.0);
+        float body = max(span * (1.0 - soft), span * 0.15);
+        // Пол в 15 % тела держит глянцевый блик от схлопывания в субпиксель:
+        // без него «зеркало» молча пропадало на ровном месте.
+        float psi = max(atan(body, dist), 0.02);
+        vec2 dev = H.xy - n.xy * NdotH;
+        vec2 dirH = vec2(c * dev.x + s * dev.y, -s * dev.x + c * dev.y)
+          / max(length(dev), 1e-5);
+        float lobe = ggxLobe(
+          max(angDev - psi * outlineRay(dirH, shape, halfAngle, soft) * 0.15, 0.0),
+          roughness,
+        );
+        // Узкий блик чуть ярче широкого — так глянец читается на мелком зуме.
+        // Потолка усилению больше не нужно: лепесток ограничен сам собой.
+        float amp = mix(1.0, 2.0, 1.0 - roughness) * SPECULAR_EXPOSURE
+          * uSpecular * uLightExtra[i].y;
+        float reach = color0.a * (1.0 - smoothstep(1.0, SPECULAR_REACH, d));
+        specSum += color0.rgb * F * (lobe * reach * amp * NdotL);
       }
     }
   }
@@ -410,7 +499,7 @@ void main() {
     emissive = uEmissiveColor * uEmissiveStrength;
     if (uEmissiveMode == 1) emissive *= texture(uEmissiveTex, uv).rgb;
   }
-  // uSpecular уже учтён в gain: второй множитель гасил блик дважды.
+  // uSpecular уже учтён в amp: второй множитель гасил бы блик дважды.
   vec3 rgb = (diffuse + ambientReflect) * shade + specSum + emissive;
   outColor = vec4(clamp(rgb, 0.0, 8.0), scene.a);
 }`;
