@@ -174,8 +174,9 @@ rem Освобождает порт: закрывает прошлый запу�
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r /c:":%~1[^0-9].*LISTENING"') do (
   echo == Порт %~1 занят прошлым запуском: закрываю процесс %%p
   taskkill /f /pid %%p >nul 2>&1
+  rem Даём системе отпустить порт, прежде чем займём его снова.
+  timeout /t 1 >nul 2>&1
 )
-timeout /t 1 >nul 2>&1
 goto :eof
 
 :refresh_path
