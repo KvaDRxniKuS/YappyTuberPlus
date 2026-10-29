@@ -195,8 +195,10 @@ test("шейдер объёма: блик не вырождается в лин�
   // (D, делённая на 4·NdotL, с полкой снизу и потолком сверху) делала косое
   // падение ярче прямого: на плоской поверхности максимум уползал на кольцо, и
   // вместо точки под источником была полоса по краю пятна.
-  expect(volume).toContain("float lobe = ggxLobe(");
-  expect(volume).toContain("float ggxLobe(float angle, float roughness)");
+  expect(volume).toContain("float lobe = specLobe(angDev, width);");
+  expect(volume).toContain("float specLobe(float angle, float halfWidth)");
+  // Колено экспозиции: без него металл с F0 = цвет объекта выбеливал пол-пятна.
+  expect(volume).toContain("float exposure = mix(1.0, SPECULAR_EXPOSURE,");
   expect(volume).not.toContain("4.0 * max(NdotL, 0.02)");
   expect(volume).not.toContain("clamp(D / denom");
   // Отражение не обрезается краем пятна: оно спадает до SPECULAR_REACH плавно,

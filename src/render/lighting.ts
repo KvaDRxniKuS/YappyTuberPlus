@@ -1,6 +1,9 @@
 import type { LightShape } from "../types";
 import { assetUrl } from "../engine/assets";
-import { SPECULAR_EXPOSURE, SPECULAR_REACH } from "./material";
+import {
+  LOBE_HALF_RATIO, SPECULAR_BODY_FLOOR, SPECULAR_EXPOSURE, SPECULAR_EXPOSURE_KNEE,
+  SPECULAR_PIXEL_FLOOR, SPECULAR_REACH,
+} from "./material";
 import { alphaOf, withAlpha } from "./light";
 
 /**
@@ -199,6 +202,10 @@ precision highp float;
  */
 #define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}
 #define SPECULAR_REACH ${glslFloat(SPECULAR_REACH)}
+#define SPECULAR_EXPOSURE_KNEE ${glslFloat(SPECULAR_EXPOSURE_KNEE)}
+#define LOBE_HALF_RATIO ${glslFloat(LOBE_HALF_RATIO)}
+#define SPECULAR_BODY_FLOOR ${glslFloat(SPECULAR_BODY_FLOOR)}
+#define SPECULAR_PIXEL_FLOOR ${glslFloat(SPECULAR_PIXEL_FLOOR)}
 in vec2 vUv;
 
 uniform sampler2D uScene;
@@ -338,19 +345,22 @@ float ggx(float NdotH, float roughness) {
 }
 
 /**
- * Доля лепестка GGX: 1 в точном зеркальном направлении, 0.5 на половине его
- * ширины. Это то же распределение, что ggx, но делённое на собственный
- * максимум, — поэтому блик ограничен сверху по построению и не нуждается ни в
- * поле снизу, ни в потолке усиления.
+ * Доля блика: 1 в точном зеркальном направлении, 0.5 на полуширине лепестка,
+ * дальше спад по тому же закону, что у GGX по углу (1/θ⁴), — поэтому ни
+ * «полки», ни кольца, ни потолка усиления не нужно: лепесток ограничен своим
+ * максимумом по построению.
  *
- * Прежний множитель D / (4·NdotL) требовал и того и другого: без полок он
- * делал косое падение ярче прямого (1/NdotL растёт быстрее, чем убывает D), и
- * на плоской поверхности максимум уползал на кольцо в 40 % радиуса пятна.
- * Отсюда и «полоса» вместо точки: яркий пояс шёл по краю подсветки.
+ * 0.41421 = √2 − 1 — множитель, при котором знаменатель равен 2 ровно на
+ * полуширине.
+ *
+ * Прежний множитель D / (4·NdotL) требовал и полок, и потолка: без них косое
+ * падение оказывалось ярче прямого, и максимум уползал на кольцо в 40 %
+ * радиуса пятна. Отсюда и «полоса» вместо точки.
  */
-float ggxLobe(float angle, float roughness) {
-  float alpha = max(roughness * roughness, 0.002);
-  return ggx(cos(angle), roughness) * 3.14159265 * alpha * alpha;
+float specLobe(float angle, float halfWidth) {
+  float k = (angle * angle) / max(halfWidth * halfWidth, 1e-8) * 0.41421;
+  float d = 1.0 + k;
+  return 1.0 / (d * d);
 }
 
 void main() {
@@ -469,19 +479,36 @@ void main() {
         // света пятно прямоугольное, у треугольного — треугольное, поворот общий.
         float dist = max(length(vec3(rel, max(uLightExtra[i].x, 1.0))), 1.0);
         float body = max(span * (1.0 - soft), span * 0.15);
-        // Пол в 15 % тела держит глянцевый блик от схлопывания в субпиксель:
-        // без него «зеркало» молча пропадало на ровном месте.
-        float psi = max(atan(body, dist), 0.02);
+        // Направление, в котором точка отклоняется от зеркала. Ровно под
+        // центром света отклонение нулевое и направление вырождено — тогда
+        // берём направление от центра пятна: иначе бисекция контура упиралась
+        // бы в свою верхнюю границу и раздувала блик втрое.
         vec2 dev = H.xy - n.xy * NdotH;
-        vec2 dirH = vec2(c * dev.x + s * dev.y, -s * dev.x + c * dev.y)
-          / max(length(dev), 1e-5);
-        float lobe = ggxLobe(
-          max(angDev - psi * outlineRay(dirH, shape, halfAngle, soft) * 0.15, 0.0),
-          roughness
-        );
+        float devLen = length(dev);
+        float relLen = length(rel);
+        vec2 tangent = devLen > 1e-4
+          ? dev / devLen
+          : (relLen > 1e-4 ? rel / relLen : vec2(1.0, 0.0));
+        vec2 dirH = vec2(c * tangent.x + s * tangent.y, -s * tangent.x + c * tangent.y);
+        // Угловой радиус края формы света в этом направлении: он и задаёт,
+        // какую форму будет иметь блик, — прямоугольник остаётся прямоугольником.
+        float psi = atan(body * outlineRay(dirH, shape, halfAngle, soft), dist);
+        // Полуширина лепестка: шероховатость, но не уже 15 % углового тела
+        // света и не уже пикселя холста. Без второго «зеркало» молча
+        // схлопывалось в субпиксель, и блика не было видно вовсе — ровно та
+        // жалоба, на которую ответили. Числа приходят из модели материала.
+        float width = max(LOBE_HALF_RATIO * max(roughness * roughness, 0.002),
+          max(psi * SPECULAR_BODY_FLOOR, SPECULAR_PIXEL_FLOOR / dist));
+        float lobe = specLobe(angDev, width);
         // Узкий блик чуть ярче широкого — так глянец читается на мелком зуме.
         // Потолка усилению больше не нужно: лепесток ограничен сам собой.
-        float amp = mix(1.0, 2.0, 1.0 - roughness) * SPECULAR_EXPOSURE
+        // Экспозиция нужна слабым отражателям: у диэлектрика F0 = 4 %, и без
+        // подтяжки блик тонул бы в диффузной части. У металла F0 — цвет самого
+        // объекта, и там она гаснет до единицы, иначе пол-пятна выбеливалось.
+        float f0Max = max(F0.x, max(F0.y, F0.z));
+        float exposure = mix(1.0, SPECULAR_EXPOSURE,
+          clamp(1.0 - f0Max / SPECULAR_EXPOSURE_KNEE, 0.0, 1.0));
+        float amp = mix(1.0, 2.0, 1.0 - roughness) * exposure
           * uSpecular * uLightExtra[i].y;
         float reach = color0.a * (1.0 - smoothstep(1.0, SPECULAR_REACH, d));
         specSum += color0.rgb * F * (lobe * reach * amp * NdotL);

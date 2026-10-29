@@ -2,10 +2,11 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MATERIAL_PRESETS, MIN_AMBIENT, SPECULAR_EXPOSURE, SPECULAR_REACH, applyPreset, baseReflectance,
-  channelBinding, defaultMaterial, fresnel, ggxDistribution, ggxLobe, matchPreset, materialBinding,
-  materialSources, materialSourceSummary, normalizeEnvironment, normalizeMaterial, outlineRay,
-  shadePoint, shapeEdge, usesPacked,
+  LOBE_HALF_RATIO, MATERIAL_PRESETS, MIN_AMBIENT, SPECULAR_BODY_FLOOR, SPECULAR_EXPOSURE,
+  SPECULAR_EXPOSURE_KNEE, SPECULAR_REACH, applyPreset, baseReflectance, channelBinding, defaultMaterial,
+  fresnel, ggxDistribution, matchPreset, materialBinding, materialSources, materialSourceSummary,
+  normalizeEnvironment, normalizeMaterial, outlineRay, shadePoint, shapeEdge, specLobe, specLobeWidth,
+  usesPacked,
   type LightBody, type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
 import {
@@ -131,20 +132,38 @@ test("блик: пик лежит под источником и убывает 
 
 test("блик: лепесток ограничен собственным максимумом", () => {
   // Ограниченность — не «потолок», который надо помнить, а свойство формулы:
-  // распределение делится на свой пик. Поэтому ни поля снизу, ни clamp сверху
-  // в шейдере больше нет.
-  for (const roughness of [0.02, 0.1, 0.35, 0.7, 1]) {
-    expect(ggxLobe(0, roughness)).toBeCloseTo(1, 6);
+  // доля делится на собственный пик. Поэтому ни поля снизу, ни clamp сверху в
+  // шейдере больше нет.
+  for (const width of [0.002, 0.02, 0.1, 0.4]) {
+    expect(specLobe(0, width)).toBeCloseTo(1, 6);
     let previous = Number.POSITIVE_INFINITY;
-    for (let angle = 0; angle <= 1.5; angle += 0.1) {
-      const value = ggxLobe(angle, roughness);
+    for (let angle = 0; angle <= 1.5; angle += 0.05) {
+      const value = specLobe(angle, width);
       expect(value).toBeLessThanOrEqual(1 + 1e-6);
       expect(value).toBeLessThanOrEqual(previous + 1e-9);
       previous = value;
     }
+    // «Полуширина» называется полушириной не за красоту: ровно на этом угле
+    // доля падает до половины, и только от неё зависит, где у блика край.
+    expect(specLobe(width, width)).toBeCloseTo(0.5, 6);
   }
-  // Половина ширины у гладкой поверхности меньше, чем у матовой: «узкий блик».
-  expect(ggxLobe(0.2, 0.1)).toBeLessThan(ggxLobe(0.2, 0.8));
+  // Сплав экспоненциальный, а не обрыв: за полушириной блик ещё виден, но
+  // быстро уходит в единицы процента.
+  expect(specLobe(0.4, 0.1)).toBeLessThan(0.02);
+});
+
+test("блик: полуширина — шероховатость, но не уже тела света и не уже пикселя", () => {
+  // Полы и есть ответ на «блика нет»: голый GGX при шероховатости 0.05 уже
+  // пикселя, а без углового тела света зеркало схлопывалось в точку.
+  const dist = TEST_HEIGHT;
+  const psi = 0.3;
+  expect(specLobeWidth(0.02, psi, dist)).toBeCloseTo(psi * SPECULAR_BODY_FLOOR, 9);
+  expect(specLobeWidth(1, psi, dist)).toBeCloseTo(LOBE_HALF_RATIO, 6);
+  // Пиксельный пол: чем ближе поверхность к источнику (меньше dist), тем он
+  // заметнее — это сглаживание, а не размытие.
+  expect(specLobeWidth(0.02, 0, 10)).toBeGreaterThan(specLobeWidth(0.02, 0, 400));
+  // Узкий блик остаётся узким: широкому свету пол даёт ширину, гладкому — нет.
+  expect(specLobeWidth(0.4, 0.3, dist)).toBeLessThan(specLobeWidth(0.4, 2.4, dist));
 });
 
 test("блик: форма источника переходит в форму отражения", () => {
@@ -183,6 +202,26 @@ test("блик: за краем пятна гаснет плавно, подсв
   expect(beyond).toBe(0);
   // Спад между ними не обрывается ступенькой.
   expect(far).toBeLessThan(glint(TEST_RADIUS * 0.9, 0.3));
+});
+
+test("блик: экспозиция тянет диэлектрик и не трогает металл", () => {
+  // Жалоба «металлик не даёт блика» была обратной стороной экспозиции: множитель
+  // в 6 нужен поверх 4 % отражения, а металлу F0 — цвет самого объекта, и с
+  // тем же множителем его пик выбеливал пол-пятна. Колено гасит подтяжку там,
+  // где отражение и так яркое.
+  const bright = shadePoint(mirrorOnly({ roughness: 0.2, metallic: 1, albedo: [0.55, 0.55, 0.55] }),
+    [light({ L: [0, 0, 1], color: [1, 1, 1] })], { normalStrength: 1 });
+  const dull = shadePoint(mirrorOnly({ roughness: 0.2, albedo: [0.55, 0.55, 0.55] }),
+    [light({ L: [0, 0, 1], color: [1, 1, 1] })], { normalStrength: 1 });
+  // Яркость металла под источником: выше диффузной части диэлектрика, но без
+  // клиппинга в бесконечность (шейдер всё равно clamp'ит к 8, здесь важно,
+  // что значение остаётся в пределах одного-двух).
+  expect(bright[0]).toBeGreaterThan(0.3);
+  expect(bright[0]).toBeLessThan(1.6);
+  expect(Number.isFinite(bright[0]) && Number.isFinite(dull[0])).toBe(true);
+  // Колено работает: пока F0 ниже 0.32, подтяжка есть, выше — её нет.
+  expect(SPECULAR_EXPOSURE).toBeGreaterThan(1);
+  expect(SPECULAR_EXPOSURE_KNEE).toBeGreaterThan(0.04);
 });
 
 test("материал: блик по GGX — глаже значит ярче и уже", () => {
@@ -414,7 +453,17 @@ test("материал: шейдер считает по той же модел�
   // Одна функция формы на пятно и на блик — иначе отражение не могло бы
   // наследовать форму источника.
   expect(source).toContain("float d = shapeEdge(local, shape, halfAngle, soft, cover);");
-  expect(source).toContain("float lobe = ggxLobe(");
+  expect(source).toContain("float lobe = specLobe(angDev, width);");
+  // Полуширина лепестка и колено экспозиции приходят из модели материала,
+  // а не удвоены литералом в тексте шейдера.
+  expect(source).toContain("#define LOBE_HALF_RATIO ${glslFloat(LOBE_HALF_RATIO)}");
+  expect(source).toContain("#define SPECULAR_BODY_FLOOR ${glslFloat(SPECULAR_BODY_FLOOR)}");
+  expect(source).toContain("#define SPECULAR_EXPOSURE_KNEE ${glslFloat(SPECULAR_EXPOSURE_KNEE)}");
+  // Направление для контура не вырождается под центром света: иначе бисекция
+  // упиралась в свою границу и раздувала блик втрое (было плато с обрывом).
+  expect(source).toContain("vec2 tangent = devLen > 1e-4");
+  expect(source).not.toContain("* 0.15, 0.0),\n          roughness");
+  expect(source).not.toContain("psi * outlineRay(dirH, shape, halfAngle, soft) * 0.15");
   // Диффузная часть остаётся внутри пятна, блик — снаружи тоже.
   expect(source).toContain("if (inPatch) lightSum += color0.rgb * a * NdotL;");
   // Окклюзия гасит диффузную часть, а не блик.
@@ -427,8 +476,9 @@ test("материал: шейдер считает по той же модел�
   expect(source).not.toContain("float denom = 4.0 * max(NdotL, 0.02)");
   expect(source).not.toContain("clamp(D / denom");
   expect(source).not.toContain("MAX_SPECULAR_GAIN");
-  // Экспозиция и досягаемость приходят из модели, а не удвоены литералом.
-  expect(source).toContain("#define SPECULAR_EXPOSURE ${SPECULAR_EXPOSURE}");
+  // Экспозиция и досягаемость приходят из модели, а не удвоены литералом, и
+  // уходят в текст вещественными литералами (GLSL ES 3.00 не приводит int).
+  expect(source).toContain("#define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}");
   expect(source).toContain("#define SPECULAR_REACH ${SPECULAR_REACH}");
   expect(SPECULAR_EXPOSURE).toBe(6);
   expect(SPECULAR_REACH).toBe(1.8);

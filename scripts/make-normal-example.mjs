@@ -553,8 +553,54 @@ const SHAPES = [
   { caption: "TRIANGLE", shape: 2 },
 ];
 
+/**
+ * Пластина под одним светом данной формы. Второй проход рисует контур
+ * полуширины блика — там, где его яркость упала вдвое от пика: именно этот
+ * контур и повторяет форму источника (его угловое тело входит в ширину
+ * лепестка через `outlineRay`), а не силуэт лампы.
+ */
+/** Свет пластины: один и тот же во обоих проходах — и для цвета, и для поля. */
+function plateLight(shape, toLight, length) {
+  return {
+    // Пятно света заведомо больше пластины, поэтому покрытие пятна равно
+    // константе: `color` — это цвет света уже с покрытием, как и требует
+    // контракт shadePoint (в шейдере за это отвечает `a`).
+    L: toLight.concat(PLATE_LIGHT.height).map((value) => value / length),
+    color: LIGHT_PLATE_COLOR.map((value) => value * PLATE_LIGHT.cover),
+    polarity: 1,
+    specular: 1,
+    body: {
+      toLight,
+      height: PLATE_LIGHT.height,
+      span: PLATE_LIGHT.span,
+      shape,
+      halfAngle: (120 * Math.PI) / 180 / 2,
+      soft: 0.35,
+      rotation: 0,
+      core: 0.85,
+      tint: [1, 0.96, 0.9],
+    },
+  };
+}
+
 function plateSheet(shape) {
   const out = blank(PLATE, PLATE);
+  const platePoint = {
+    albedo: [0.5, 0.5, 0.52],
+    normal: [0, 0, 1],
+    // Один и тот же материал на всех трёх панелях: отличается только форма
+    // света — иначе сравнивать было бы нечего. Глянец выбран заведомо
+    // гладким, чтобы ширина блика шла от углового тела источника.
+    roughness: 0.05,
+    metallic: 0,
+    ao: 1,
+    emissive: [0, 0, 0],
+    specular: 1,
+    f0: 0.04,
+    environment: { color: [0, 0, 0], level: 0 },
+  };
+  const glintField = new Float64Array(PLATE * PLATE);
+  let glintMax = 0;
   for (let y = 0; y < PLATE; y += 1) {
     for (let x = 0; x < PLATE; x += 1) {
       const inset = 18;
@@ -562,44 +608,36 @@ function plateSheet(shape) {
       if (!inside) continue;
       const toLight = [PLATE_LIGHT.x - x, PLATE_LIGHT.y - y];
       const length = Math.hypot(toLight[0], toLight[1], PLATE_LIGHT.height);
-      const point = {
-        albedo: [0.5, 0.5, 0.52],
-        normal: [0, 0, 1],
-        // Один и тот же материал на всех трёх панелях: отличается только
-        // форма света — иначе сравнивать было бы нечего.
-        roughness: 0.25,
-        metallic: 0,
-        ao: 1,
-        emissive: [0, 0, 0],
-        specular: 1,
-        f0: 0.04,
-        environment: { color: [0.55, 0.6, 0.7], level: 0.45 },
-      };
-      // Пятно света заведомо больше пластины, поэтому покрытие пятна здесь
-      // равно константе: `color` — это цвет света уже с покрытием, как и
-      // требует контракт shadePoint (в шейдере этим множителем занят `a`).
-      const light = {
-        L: toLight.concat(PLATE_LIGHT.height).map((value) => value / length),
-        color: LIGHT_PLATE_COLOR.map((value) => value * PLATE_LIGHT.cover),
-        polarity: 1,
-        specular: 1,
-        body: {
-          toLight,
-          height: PLATE_LIGHT.height,
-          span: PLATE_LIGHT.span,
-          shape,
-          halfAngle: (120 * Math.PI) / 180 / 2,
-          soft: 0.35,
-          rotation: 0,
-          core: 0.85,
-          tint: [1, 0.96, 0.9],
-        },
-      };
-      const rgb = shadePoint(point, [light], { normalStrength: 1, material: true });
+      const light = plateLight(shape, toLight, length);
+      // «Только блик»: нулевой альбедо и без окружения — всё, что останется в
+      // канале, и есть отражение источника.
+      const only = shadePoint({ ...platePoint, albedo: [0, 0, 0] }, [light], { normalStrength: 1, material: true });
+      const value = Math.max(only[0], only[1], only[2]);
+      glintField[y * PLATE + x] = value;
+      if (value > glintMax) glintMax = value;
+    }
+  }
+  const half = glintMax * 0.5;
+  for (let y = 0; y < PLATE; y += 1) {
+    for (let x = 0; x < PLATE; x += 1) {
+      const inset = 18;
+      const inside = x >= inset && y >= inset && x < PLATE - inset && y < PLATE - inset;
+      if (!inside) continue;
+      const toLight = [PLATE_LIGHT.x - x, PLATE_LIGHT.y - y];
+      const length = Math.hypot(toLight[0], toLight[1], PLATE_LIGHT.height);
+      const light = plateLight(shape, toLight, length);
+      const rgb = shadePoint(platePoint, [light], { normalStrength: 1, material: true });
       const i = (y * PLATE + x) * 4;
-      out.data[i] = Math.min(1, rgb[0]);
-      out.data[i + 1] = Math.min(1, rgb[1]);
-      out.data[i + 2] = Math.min(1, rgb[2]);
+      // Контур полуширины: пиксель, чей блик вдвое меньше пикового, и сосед
+      // вдоль X или Y уже за этой границей.
+      const here = glintField[y * PLATE + x];
+      const left = x > 0 ? glintField[y * PLATE + x - 1] : 0;
+      const up = y > 0 ? glintField[(y - 1) * PLATE + x] : 0;
+      const crossed = (here - half) * (left - half) < 0 || (here - half) * (up - half) < 0;
+      const tone = crossed ? [0.95, 0.55, 0.28] : [Math.min(1, rgb[0]), Math.min(1, rgb[1]), Math.min(1, rgb[2])];
+      out.data[i] = tone[0];
+      out.data[i + 1] = tone[1];
+      out.data[i + 2] = tone[2];
       out.data[i + 3] = 1;
     }
   }

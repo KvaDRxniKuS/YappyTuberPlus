@@ -35,9 +35,31 @@ export const MIN_AMBIENT = 0.35;
  * Свет на холсте — полупрозрачная дымка, а в отражении он виден как тело
  * источника. Без множителя отражение диэлектрика (4 % по Шлику) тонуло в
  * диффузной части и глаз не различал блика вовсе. Это ручная экспозиция, а не
- * физика: потолок усиления больше не нужен — лепесток GGX ограничен сам.
+ * физика: потолок усиления больше не нужен — лепесток ограничен своим
+ * максимумом по построению.
  */
 export const SPECULAR_EXPOSURE = 6;
+
+
+/**
+ * Половина ширины чистого GGX по углу: θ½ = √(√2 − 1)·α = 0.64359·roughness².
+ * Через неё шероховатость превращается в угол — ту же единицу, в которой
+ * измеряются тело источника и пиксель холста.
+ */
+export const LOBE_HALF_RATIO = 0.64359;
+/** Пол ширины блика: доля углового тела света — 15 %. */
+export const SPECULAR_BODY_FLOOR = 0.15;
+/** Шаг одного пикселя холста в доле блика (сглаживание, не размытие). */
+export const SPECULAR_PIXEL_FLOOR = 1;
+
+/**
+ * Колено экспозиции блика: F0, выше которого поверхность и так отражает
+ * заметно и подтягивать её не за чем. У диэлектрика F0 = 4 % (0.04) — он
+ * получает почти всю экспозицию; у металла F0 = цвет объекта (обычно 0.5…1) —
+ * он получает единицу. Без колена металл под лампой выбеливался в пятно:
+ * `0.55 · 6` — это 3.3, а не отражение лампы.
+ */
+export const SPECULAR_EXPOSURE_KNEE = 0.32;
 
 /**
  * Досягаемость блика в радиусах пятна. За краем подсветки света нет, а
@@ -182,18 +204,37 @@ export function ggxDistribution(NdotH: number, roughness: number): number {
 }
 
 /**
- * Доля лепестка GGX: 1 в точном зеркальном направлении, 0.5 на половине его
- * ширины. То же распределение, что `ggxDistribution`, но делённое на
- * собственный максимум — поэтому усиление ограничено сверху по построению.
+ * Доля блика: 1 в точном зеркальном направлении, 0.5 на полуширине лепестка,
+ * дальше — спад по тому же закону, что у GGX по углу (1/θ⁴). Лепесток
+ * ограничен своим максимумом по построению, поэтому ни поля снизу, ни потолка
+ * усиления не нужно.
  *
- * Это и есть причина, по которой прежний множитель `D / (4·NdotL)` требовал
- * полок: без них косое падение оказывалось ярче прямого, и на плоской
- * поверхности максимум уползал на кольцо в 40 % радиуса пятна — «полоса»
- * вместо точки.
+ * `√2 − 1 = 0.41421` — множитель, при котором знаменатель равен 2 ровно на
+ * полуширине.
+ *
+ * Причина, по которой отсюда убран прежний множитель `D / (4·NdotL)`: без полок
+ * он делал косое падение ярче прямого, и на плоской поверхности максимум
+ * уползал на кольцо в 40 % радиуса пятна — «полоса» вместо точки.
  */
-export function ggxLobe(angle: number, roughness: number): number {
+export function specLobe(angle: number, halfWidth: number): number {
+  const k = ((angle * angle) / Math.max(halfWidth * halfWidth, 1e-8)) * (Math.SQRT2 - 1);
+  const d = 1 + k;
+  return 1 / (d * d);
+}
+
+/**
+ * Полуширина лепестка в углах: шероховатость (у GGX это 0.64359·rough²), но не
+ * уже 15 % углового тела света и не уже пикселя холста. Второй пол — ответ на
+ * жалобу «блика нет»: при шероховатости ниже примерно 0.15 лепесток был мельче
+ * пикселя и исчезал. Третий множитель (`psi`) несёт форму источника: край
+ * формы в направлении отклонения считает та же `outlineRay`, что и пятно.
+ */
+export function specLobeWidth(roughness: number, psi: number, dist: number): number {
   const alpha = Math.max(roughness * roughness, 0.002);
-  return ggxDistribution(Math.cos(angle), roughness) * Math.PI * alpha * alpha;
+  return Math.max(
+    LOBE_HALF_RATIO * alpha,
+    Math.max(psi * SPECULAR_BODY_FLOOR, SPECULAR_PIXEL_FLOOR / dist),
+  );
 }
 
 /** Знаковая площадь внутри треугольника: больше нуля значит «внутри». */
@@ -425,20 +466,31 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
     // прямоугольное, у треугольного — треугольное, поворот общий.
     const dist = Math.max(Math.hypot(rel[0], rel[1], Math.max(body.height, 1)), 1);
     const bulk = Math.max(body.span * (1 - body.soft), body.span * 0.15);
-    // Пол в 15 % тела держит глянцевый блик от схлопывания в субпиксель.
-    const psi = Math.max(Math.atan(bulk / dist), 0.02);
     const dev: [number, number] = [H[0] - N[0] * NdotH, H[1] - N[1] * NdotH];
-    const dirLen = Math.max(Math.hypot(dev[0], dev[1]), 1e-5);
+    const devLen = Math.hypot(dev[0], dev[1]);
+    const relLen = Math.hypot(rel[0], rel[1]);
+    // Ровно под центром света отклонение нулевое и направление вырождено:
+    // тогда направление берём от центра пятна, иначе бисекция контура уходит
+    // за свою верхнюю границу и раздувает блик втрое.
+    const tangent: [number, number] = devLen > 1e-4
+      ? [dev[0] / devLen, dev[1] / devLen]
+      : (relLen > 1e-4 ? [rel[0] / relLen, rel[1] / relLen] : [1, 0]);
     const dirH: [number, number] = [
-      (cos * dev[0] + sin * dev[1]) / dirLen,
-      (-sin * dev[0] + cos * dev[1]) / dirLen,
+      (cos * tangent[0] + sin * tangent[1]),
+      (-sin * tangent[0] + cos * tangent[1]),
     ];
-    const lobe = ggxLobe(
-      Math.max(angDev - psi * outlineRay(dirH, body.shape, body.halfAngle, body.soft) * 0.15, 0),
-      roughness,
-    );
+    // Угловой радиус края формы света в направлении отклонения: он решает,
+    // какую форму имеет блик, и поворот наследует у самого источника.
+    const psi = Math.atan((bulk * outlineRay(dirH, body.shape, body.halfAngle, body.soft)) / dist);
+    const lobe = specLobe(angDev, specLobeWidth(roughness, psi, dist));
     // Узкий блик чуть ярче широкого: `mix(1, 2, 1 − roughness)` — это 2 − roughness.
-    const amp = (2 - roughness) * SPECULAR_EXPOSURE;
+    // Экспозиция нужна слабым отражателям (диэлектрик со своими 4 % тонул бы в
+    // диффузной части) и гаснет там, где отражение и так яркое: у металла F0 —
+    // цвет объекта, и без колена его пик выбеливал пол-пятна.
+    const f0Max = Math.max(F0[0], Math.max(F0[1], F0[2]));
+    const exposure = 1 + (SPECULAR_EXPOSURE - 1) * clamp(1 - f0Max / SPECULAR_EXPOSURE_KNEE, 0, 1);
+    const amp = (2 - roughness) * exposure;
+
     const reach = specAllowed ? body.core * (1 - smoothstep(1, SPECULAR_REACH, patch.d)) : 0;
     const specScale = lobe * reach * amp * NdotL * point.specular * light.specular
       * Math.max(0, light.polarity);
