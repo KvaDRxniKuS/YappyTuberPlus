@@ -1701,11 +1701,42 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 /* Моргание: выводы модуля — свой таймер у каждого. */
 .blink-editor { display: flex; flex-direction: column; gap: 6px; }
 .blink-output { border: 1px solid #262b31; border-radius: 6px; }
-.blink-output-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px; }
-.blink-output-toggle { display: flex; align-items: center; gap: 6px; background: none; border: none; color: #c8ced6; cursor: pointer; font-size: 12px; text-align: left; }
-.blink-output-toggle small { color: #7d868f; }
+.blink-output-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 4px; }
+.blink-output-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: #c8ced6;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.blink-output-toggle:hover { background: #ffffff08; }
+.blink-output-toggle > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blink-output-toggle small { color: #7d868f; white-space: nowrap; }
 .blink-output-timing { margin-left: auto; }
 .blink-output-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-top: 1px solid #262b31; }
+.blink-output-body .text-input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 3px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #0f1215;
+  color: #cfd9e0;
+  font: 12px "Cascadia Code", ui-monospace, monospace;
+}
+.blink-output-body .text-input:focus { outline: none; border-color: #609c8c; }
+.blink-output-body .text-input:focus-visible { outline: 2px solid #82d5c177; outline-offset: 1px; }
 .blink-add { align-self: flex-start; }
 /* Свет из экрана: образец точки, соединение с OBS. */
 .ambient-swatch { background: linear-gradient(135deg, #ff4d6d, #22d3ee); }

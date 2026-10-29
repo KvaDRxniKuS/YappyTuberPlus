@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { ModuleInstance } from "../types";
 import {
-  BLINK_OUTPUT_BASE, BLINK_RANGES, autoBlinkOutputs, sanitizeBlinkName, uniqueBlinkName,
-  type BlinkOutput,
+  BLINK_OUTPUT_BASE, BLINK_SEED_MAX, autoBlinkOutputs, normalizeBlinkNumber, sanitizeBlinkName, uniqueBlinkName,
+  type BlinkNumberField, type BlinkOutput,
 } from "../modules/autoblink";
 
 /**
@@ -24,17 +24,21 @@ export function AutoBlinkEditor(props: {
 }) {
   const outputs = autoBlinkOutputs(props.module);
   const [open, setOpen] = useState<string | null>(outputs[0]?.name ?? null);
+  // Черновики не меняют ключ карточки на каждый символ: имя сохраняется только
+  // при уходе из поля, иначе React размонтирует input и теряет выделение.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const draftKey = (name: string, field: string) => `${name}\u0000${field}`;
+  const setDraft = (key: string, value: string) => setDrafts((current) => ({ ...current, [key]: value }));
+  const clearDraft = (key: string) => setDrafts((current) => {
+    if (!(key in current)) return current;
+    const next = { ...current };
+    delete next[key];
+    return next;
+  });
 
   const patch = (output: BlinkOutput, changes: Partial<BlinkOutput>, label: string) => {
     props.onOutputs(outputs.map((item) => (item.name === output.name ? { ...item, ...changes } : item)), label);
-  };
-
-  /** Число из поля: пустое и битое не превращается в ноль молча. */
-  const number = (raw: string, current: number, min: number, max: number, step: number) => {
-    const parsed = Number(raw.replace(",", "."));
-    if (!Number.isFinite(parsed)) return current;
-    const clamped = Math.min(max, Math.max(min, parsed));
-    return step >= 1 ? Math.round(clamped) : Math.round(clamped * 100) / 100;
   };
 
   const add = () => {
@@ -44,7 +48,7 @@ export function AutoBlinkEditor(props: {
       name,
       label: `Моргание ${outputs.length + 1}`,
       // Новый вывод сразу не в такт первому: семечко по умолчанию своё.
-      seed: (outputs.length * 137) % BLINK_RANGES.seed.max,
+      seed: (outputs.length * 137) % (BLINK_SEED_MAX + 1),
     };
     props.onOutputs([...outputs, next], "Добавление вывода моргания");
     setOpen(name);
@@ -59,26 +63,36 @@ export function AutoBlinkEditor(props: {
 
   const field = (
     output: BlinkOutput,
-    key: keyof typeof BLINK_RANGES,
+    key: BlinkNumberField,
     title: string,
     label: string,
     hint: string,
   ) => {
-    const range = BLINK_RANGES[key];
+    const editKey = draftKey(output.name, key);
+    const current = output[key];
     return (
       <label className="module-field" title={hint}>
         <span className="module-field-label">{label}</span>
         <input
           className="text-input"
-          type="number"
-          min={range.min}
-          max={range.max}
-          step={range.step}
-          value={output[key as keyof BlinkOutput] as number}
-          onChange={(event) => {
-            const value = number(event.target.value, output[key as keyof BlinkOutput] as number, range.min, range.max, range.step);
-            patch(output, { [key]: value } as Partial<BlinkOutput>, title);
+          type="text"
+          inputMode="decimal"
+          spellCheck={false}
+          value={drafts[editKey] ?? String(current)}
+          onFocus={(event) => setDraft(editKey, event.currentTarget.value)}
+          onChange={(event) => setDraft(editKey, event.target.value)}
+          onBlur={(event) => {
+            const raw = event.currentTarget.value.trim();
+            if (raw) {
+              const parsed = Number(raw.replace(",", "."));
+              if (Number.isFinite(parsed)) {
+                const value = normalizeBlinkNumber(key, parsed);
+                if (value !== current) patch(output, { [key]: value }, title);
+              }
+            }
+            clearDraft(editKey);
           }}
+          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
         />
       </label>
     );
@@ -88,12 +102,15 @@ export function AutoBlinkEditor(props: {
     <div className="blink-editor">
       {outputs.map((output) => {
         const expanded = open === output.name;
+        const labelKey = draftKey(output.name, "label");
+        const nameKey = draftKey(output.name, "name");
         return (
           <div className="blink-output" key={output.name}>
             <div className="blink-output-head">
               <button
+                type="button"
                 className="blink-output-toggle"
-                title="Открыть настройки вывода"
+                title={expanded ? "Свернуть настройки вывода" : "Открыть настройки вывода"}
                 onClick={() => setOpen(expanded ? null : output.name)}
               >
                 <span>{output.label}</span>
@@ -103,6 +120,7 @@ export function AutoBlinkEditor(props: {
                 </small>
               </button>
               <button
+                type="button"
                 className="button secondary"
                 title={outputs.length > 1 ? "Удалить вывод" : "Последний вывод удалить нельзя"}
                 disabled={outputs.length <= 1}
@@ -114,40 +132,54 @@ export function AutoBlinkEditor(props: {
 
             {expanded && (
               <div className="blink-output-body">
-                <label className="module-field">
+                <label className="module-field" title="Подпись для панели: пробелы разрешены">
                   <span className="module-field-label">Подпись</span>
                   <input
                     className="text-input"
-                    value={output.label}
-                    onChange={(event) => patch(output, { label: event.target.value.slice(0, 32) }, "Подпись вывода")}
+                    value={drafts[labelKey] ?? output.label}
+                    onFocus={(event) => setDraft(labelKey, event.currentTarget.value)}
+                    onChange={(event) => setDraft(labelKey, event.target.value.slice(0, 32))}
+                    onBlur={(event) => {
+                      const label = event.currentTarget.value.slice(0, 32);
+                      if (label !== output.label) patch(output, { label }, "Подпись вывода");
+                      clearDraft(labelKey);
+                    }}
+                    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
                   />
                 </label>
                 <label className="module-field">
                   <span className="module-field-label" title="В скрипте: <модуль>.<имя>, например auto.blink_2">Имя в скрипте</span>
                   <input
                     className="text-input"
-                    value={output.name}
-                    onChange={(event) => {
-                      const clean = event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 24);
-                      if (!clean) return;
-                      const name = uniqueBlinkName(outputs.filter((item) => item.name !== output.name), sanitizeBlinkName(clean));
-                      patch(output, { name }, "Имя вывода моргания");
+                    spellCheck={false}
+                    value={drafts[nameKey] ?? output.name}
+                    onFocus={(event) => setDraft(nameKey, event.currentTarget.value)}
+                    onChange={(event) => setDraft(nameKey, event.target.value)}
+                    onBlur={(event) => {
+                      const name = uniqueBlinkName(
+                        outputs.filter((item) => item.name !== output.name),
+                        sanitizeBlinkName(event.currentTarget.value),
+                      );
+                      clearDraft(nameKey);
+                      if (name !== output.name) patch(output, { name }, "Имя вывода моргания");
                       setOpen(name);
                     }}
+                    onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
                   />
                 </label>
 
-                {field(output, "period", "Интервал моргания", "Интервал", "Среднее время между морганиями, мс")}
-                {field(output, "hold", "Длительность закрытия", "Длительность", "Сколько вход держится в максимуме, мс")}
-                {field(output, "jitter", "Разброс интервала", "Разброс", "Случайное отклонение интервала, %: 0 — метроном")}
-                {field(output, "min", "Значение открытых глаз", "Минимум", "Значение входа, когда глаза открыты")}
-                {field(output, "max", "Значение закрытых глаз", "Максимум", "Значение входа, когда глаза закрыты")}
-                {field(output, "seed", "Семечко", "Семечко", "Число задаёт рисунок моргания. 0 — случайное при каждом запуске")}
+                {field(output, "period", "Интервал моргания", "Интервал", "Среднее время между морганиями, мс; верхнего ограничения нет, 0 допустимо")}
+                {field(output, "hold", "Длительность закрытия", "Длительность", "Сколько вход держится в максимуме, мс; верхнего ограничения нет")}
+                {field(output, "jitter", "Разброс интервала", "Разброс", "Случайное отклонение интервала, %; значение может быть больше 100")}
+                {field(output, "min", "Значение открытых глаз", "Минимум", "Значение входа, когда глаза открыты; не ограничено диапазоном 0…1")}
+                {field(output, "max", "Значение закрытых глаз", "Максимум", "Значение входа, когда глаза закрыты; не ограничено диапазоном 0…1")}
+                {field(output, "seed", "Семечко", "Семечко", `0 — случайный рисунок; иначе целое число до ${BLINK_SEED_MAX}`)}
 
                 <p className="module-hint">
-                  Два вывода с одинаковыми числами всё равно моргают по-разному: семечко
-                  смешивается с именем вывода. Одинаковый рисунок нужен редко — тогда
-                  поставьте выводы в один, а не подбирайте числа.
+                  Интервал, длительность и разброс не имеют произвольного верхнего предела;
+                  между началами морганий остаётся пауза не короче длительности + 40 мс.
+                  Минимум и максимум можно задать вне 0…1. Семечко смешивается с именем
+                  вывода, поэтому два одинаковых набора чисел всё равно моргают по-разному.
                 </p>
               </div>
             )}

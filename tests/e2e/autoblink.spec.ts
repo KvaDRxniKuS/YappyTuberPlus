@@ -1,8 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  BLINK_OUTPUT_BASE, autoBlinkEyeInput, autoBlinkInputs, autoBlinkOutputs, blinkRandom, blinkSeed,
+  BLINK_OUTPUT_BASE, BLINK_SEED_MAX, autoBlinkEyeInput, autoBlinkInputs, autoBlinkOutputs, blinkRandom, blinkSeed,
   blinkSpread, blinkState, blinkTick, sanitizeBlinkName, uniqueBlinkName,
   type BlinkOutput,
 } from "../../src/modules/autoblink";
@@ -51,6 +51,18 @@ const blinkModule = (config: Record<string, unknown>, name = "auto"): ModuleInst
   config,
 });
 
+async function openAutoBlinkCard(page: Page) {
+  await page.goto("/");
+  await expect(page.locator(".engine-status")).toHaveClass(/ready/, { timeout: 15_000 });
+  await page.getByRole("button", { name: /Модули/ }).click();
+  const cards = page.locator(".module-card");
+  for (let index = 0; index < await cards.count(); index += 1) {
+    const card = cards.nth(index);
+    if (await card.locator(".module-name").inputValue() === "auto") return card;
+  }
+  throw new Error("В стартовом пресете не найден модуль autoblink «auto»");
+}
+
 test("старый пресет: поля наверху становятся единственным выводом blink", () => {
   const module = blinkModule({ period: 6000, hold: 200, jitter: 10, min: 0.2, max: 0.8 });
   const outputs = autoBlinkOutputs(module);
@@ -74,15 +86,64 @@ test("несколько выводов: вход на каждый, имена 
   // Имена пригодны для скрипта, а пустая подпись берётся из имени.
   expect(outputs[1].label).toBe("Брови");
   expect(outputs[2].label).toBe("blink_2_2");
-  // Границы полей приводятся к допустимым, а min/max не переворачиваются.
-  expect(outputs[2].period).toBe(500);
-  expect(outputs[2].hold).toBe(2000);
-  expect(outputs[2].jitter).toBe(90);
-  expect(outputs[2].seed).toBe(9999);
+  // Произвольных верхних границ больше нет; min/max остаются упорядоченными.
+  expect(outputs[2].period).toBe(1);
+  expect(outputs[2].hold).toBe(99999);
+  expect(outputs[2].jitter).toBe(500);
+  expect(outputs[2].seed).toBe(99999);
   expect(outputs[2].min).toBeLessThan(outputs[2].max);
   // Входов столько же, сколько выводов.
   expect(autoBlinkInputs(module).map((input) => input.name)).toEqual(["blink", "blink_2", "blink_2_2"]);
   expect(autoBlinkInputs(module)[1].min).toBe(0.1);
+});
+
+test("значения моргания: нет произвольных верхних границ, подпись хранит пробелы", () => {
+  const module = blinkModule({
+    outputs: [{
+      name: "blink",
+      label: "Левое веко ",
+      period: 200_000_000,
+      hold: 3_600_000,
+      jitter: 250,
+      min: -12.5,
+      max: 4.75,
+      seed: 1_000_000,
+    }],
+  });
+  const [blink] = autoBlinkOutputs(module);
+  expect(blink).toMatchObject({
+    label: "Левое веко ",
+    period: 200_000_000,
+    hold: 3_600_000,
+    jitter: 250,
+    min: -12.5,
+    max: 4.75,
+    seed: 1_000_000,
+  });
+  expect(autoBlinkInputs(module)[0]).toMatchObject({ label: "Левое веко ", min: -12.5, max: 4.75 });
+
+  const technicallyTooLarge = autoBlinkOutputs(blinkModule({
+    outputs: [{ ...BLINK_OUTPUT_BASE, seed: BLINK_SEED_MAX + 1 }],
+  }))[0];
+  expect(technicallyTooLarge.seed).toBe(BLINK_SEED_MAX);
+});
+
+test("таймерные числа остаются безопасными при отрицательных и предельно больших значениях", () => {
+  const normalized = autoBlinkOutputs(blinkModule({
+    outputs: [{ ...BLINK_OUTPUT_BASE, period: -1, hold: -20, jitter: -300, min: -4, max: -2, seed: -1 }],
+  }))[0];
+  expect(normalized).toMatchObject({ period: 0, hold: 0, jitter: 0, min: -4, max: -2, seed: 0 });
+
+  const huge = output({ period: Number.MAX_VALUE, hold: Number.MAX_VALUE, jitter: Number.MAX_VALUE });
+  const spread = blinkSpread(huge);
+  expect(Number.isFinite(spread.shortest)).toBe(true);
+  expect(Number.isFinite(spread.longest)).toBe(true);
+  expect(spread.longest).toBe(Number.MAX_VALUE);
+  const state = blinkState(0, huge, "auto");
+  expect(Number.isFinite(state.next)).toBe(true);
+  blinkTick(state, huge, state.next);
+  expect(Number.isFinite(state.until)).toBe(true);
+  expect(Number.isFinite(state.next)).toBe(true);
 });
 
 test("имена выводов: латиница, цифры и подчёркивание", () => {
@@ -91,6 +152,44 @@ test("имена выводов: латиница, цифры и подчёрк�
   expect(sanitizeBlinkName("!!!")).toBe("blink");
   expect(uniqueBlinkName([output({ name: "blink" })], "blink")).toBe("blink_2");
   expect(uniqueBlinkName([output({ name: "blink" }), output({ name: "blink_2" })], "blink")).toBe("blink_3");
+});
+
+test("имя в скрипте можно печатать целиком, не теряя фокус, а подпись принимает пробелы", async ({ page }) => {
+  const card = await openAutoBlinkCard(page);
+  const scriptName = card.getByLabel("Имя в скрипте");
+  await scriptName.click();
+  await scriptName.press("Control+A");
+  await scriptName.pressSequentially("eyes_left");
+  await expect(scriptName).toBeFocused();
+  await expect(scriptName).toHaveValue("eyes_left");
+  await scriptName.press("End");
+  await scriptName.pressSequentially("_2");
+  await scriptName.press("Enter");
+  await expect(card.getByLabel("Имя в скрипте")).toHaveValue("eyes_left_2");
+
+  const caption = card.getByLabel("Подпись");
+  await caption.fill("Левое");
+  await caption.pressSequentially(" веко");
+  await expect(caption).toHaveValue("Левое веко");
+  await caption.press("Enter");
+  await expect(card.getByLabel("Подпись")).toHaveValue("Левое веко");
+});
+
+test("вся строка заголовка вывода моргания сворачивает и раскрывает настройки", async ({ page }) => {
+  const card = await openAutoBlinkCard(page);
+  const body = card.locator(".blink-output-body");
+  await expect(body).toBeVisible();
+
+  const toggle = card.locator(".blink-output-toggle");
+  const box = await toggle.boundingBox();
+  expect(box).not.toBeNull();
+  // Пустое поле слева от текста тоже входит в широкую кнопку, а не только сам текст.
+  await page.mouse.click(box!.x + 2, box!.y + box!.height / 2);
+  await expect(body).toBeHidden();
+  const collapsedBox = await toggle.boundingBox();
+  expect(collapsedBox).not.toBeNull();
+  await page.mouse.click(collapsedBox!.x + 2, collapsedBox!.y + collapsedBox!.height / 2);
+  await expect(body).toBeVisible();
 });
 
 test("значения двух выводов доходят до скрипта под своими именами", () => {
@@ -152,11 +251,19 @@ test("расписание: интервал, длительность и раз
   // Следующее моргание — ровно через интервал: разброс нулевой.
   expect(state.next - blink).toBeGreaterThanOrEqual(steady.period);
 
+  // Интервал 0 допустим, но начала двух морганий не сближаются чаще hold + 40 мс.
+  expect(blinkSpread(output({ period: 0, hold: 0, jitter: 0 })).shortest).toBe(40);
   // Разброс 90 % на коротком интервале не превращается в «моргание без паузы».
   expect(blinkSpread(output({ period: 1000, hold: 900, jitter: 90 })).shortest).toBeGreaterThanOrEqual(940);
   const wide = blinkSpread(output({ period: 4000, hold: 100, jitter: 50 }));
   expect(wide.shortest).toBeCloseTo(2000, 6);
   expect(wide.longest).toBeCloseTo(6000, 6);
+
+  // Разброс может превысить 100 %; слишком короткая пауза всё равно
+  // ограничивается длительностью закрытия плюс 40 мс.
+  const overHundred = blinkSpread(output({ period: 1000, hold: 200, jitter: 250 }));
+  expect(overHundred.shortest).toBe(240);
+  expect(overHundred.longest).toBe(3500);
 });
 
 test("расписание: два вывода с одинаковыми настройками не совпадают", () => {

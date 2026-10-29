@@ -21,36 +21,24 @@ import type { ModuleInputSpec } from "./registry";
 export interface BlinkOutput {
   /** Имя для скрипта: латиница, цифры и `_`. Это же имя входа. */
   name: string;
-  /** Подпись в панели. */
+  /** Подпись в панели; пробелы разрешены. */
   label: string;
-  /** Средний интервал между морганиями, мс. */
+  /** Средний интервал между морганиями, мс; конечное число от 0 без верхнего предела. */
   period: number;
-  /** Сколько вход держится в максимуме, мс. */
+  /** Сколько вход держится в максимуме, мс; конечное число от 0. */
   hold: number;
-  /** Разброс интервала, %: 0 — метроном, 90 — почти случайно. */
+  /** Разброс интервала, %: 0 — метроном; верхнего предела нет. */
   jitter: number;
-  /** Значение «глаза открыты». */
+  /** Значение «глаза открыты»; любое конечное число. */
   min: number;
-  /** Значение «глаза закрыты». */
+  /** Значение «глаза закрыты»; любое конечное число. */
   max: number;
-  /** Семечко 0…9999: `0` — случайное при запуске. */
+  /** Семечко 0…2³²−1: `0` — случайное при запуске. */
   seed: number;
 }
 
-/** Границы полей: одни и те же в панели, в JSON и в проверках. */
-export const BLINK_RANGES = {
-  period: { min: 500, max: 20000, step: 100 },
-  hold: { min: 40, max: 2000, step: 10 },
-  jitter: { min: 0, max: 90, step: 5 },
-  min: { min: 0, max: 1, step: 0.01 },
-  max: { min: 0, max: 1, step: 0.01 },
-  seed: { min: 0, max: 9999, step: 1 },
-} as const;
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const number = (value: unknown, fallback: number) => (
-  typeof value === "number" && Number.isFinite(value) ? value : fallback
-);
+/** Полный диапазон семечка, который принимает используемый 32-битный генератор. */
+export const BLINK_SEED_MAX = 0xffff_ffff;
 
 /** Вывод нового модуля: то, что видно в панели сразу после добавления. */
 export const BLINK_OUTPUT_BASE: BlinkOutput = {
@@ -63,6 +51,24 @@ export const BLINK_OUTPUT_BASE: BlinkOutput = {
   max: 1,
   seed: 0,
 };
+
+export type BlinkNumberField = "period" | "hold" | "jitter" | "min" | "max" | "seed";
+
+/**
+ * Нормализация числового поля: убраны прежние произвольные пределы таймера.
+ * Сохраняем только ограничения, нужные смыслу/формату: интервалы и проценты
+ * разброса неотрицательны, а семечко — целое в диапазоне uint32.
+ */
+export function normalizeBlinkNumber(field: BlinkNumberField, value: number): number {
+  if (!Number.isFinite(value)) return BLINK_OUTPUT_BASE[field];
+  if (field === "period" || field === "hold" || field === "jitter") return Math.max(0, value);
+  if (field === "seed") return Math.min(BLINK_SEED_MAX, Math.max(0, Math.round(value)));
+  return value;
+}
+
+const number = (value: unknown, fallback: number) => (
+  typeof value === "number" && Number.isFinite(value) ? value : fallback
+);
 
 /** Имя вывода — латиница, цифры и `_`: оно попадает в скрипт. */
 export function blinkNameAllowed(raw: string): boolean {
@@ -93,21 +99,20 @@ function normalizeOutput(raw: unknown, fallbackName: string): BlinkOutput | null
   const name = typeof source.name === "string" && source.name.trim()
     ? sanitizeBlinkName(source.name)
     : fallbackName;
-  const min = clamp(number(source.min, BLINK_OUTPUT_BASE.min), BLINK_RANGES.min.min, BLINK_RANGES.min.max);
-  const max = clamp(number(source.max, BLINK_OUTPUT_BASE.max), BLINK_RANGES.max.min, BLINK_RANGES.max.max);
+  const rawMin = normalizeBlinkNumber("min", number(source.min, BLINK_OUTPUT_BASE.min));
+  const rawMax = normalizeBlinkNumber("max", number(source.max, BLINK_OUTPUT_BASE.max));
   return {
     name,
-    // Пустая подпись заполняется позже — уже итоговым именем: если имя пришлось
-    // сделать уникальным (`blink_2_2`), подпись должна совпадать с ним.
-    label: typeof source.label === "string" ? source.label.trim().slice(0, 32) : "",
-    period: clamp(number(source.period, BLINK_OUTPUT_BASE.period), BLINK_RANGES.period.min, BLINK_RANGES.period.max),
-    hold: clamp(number(source.hold, BLINK_OUTPUT_BASE.hold), BLINK_RANGES.hold.min, BLINK_RANGES.hold.max),
-    jitter: clamp(number(source.jitter, BLINK_OUTPUT_BASE.jitter), BLINK_RANGES.jitter.min, BLINK_RANGES.jitter.max),
-    // Порядок границ приводим здесь: в скрипте `min` должен быть меньше `max`,
-    // иначе «открытые глаза» оказались бы ярче закрытых и вид мигал наоборот.
-    min: Math.min(min, max),
-    max: Math.max(min, max),
-    seed: Math.round(clamp(number(source.seed, BLINK_OUTPUT_BASE.seed), BLINK_RANGES.seed.min, BLINK_RANGES.seed.max)),
+    // Не удаляем пробелы: подпись редактируется посимвольно, и завершающий пробел
+    // нужен, чтобы можно было допечатать следующее слово.
+    label: typeof source.label === "string" ? source.label.slice(0, 32) : "",
+    period: normalizeBlinkNumber("period", number(source.period, BLINK_OUTPUT_BASE.period)),
+    hold: normalizeBlinkNumber("hold", number(source.hold, BLINK_OUTPUT_BASE.hold)),
+    jitter: normalizeBlinkNumber("jitter", number(source.jitter, BLINK_OUTPUT_BASE.jitter)),
+    // Min/max могут быть вне 0…1; лишь сохраняем логичный порядок диапазона.
+    min: Math.min(rawMin, rawMax),
+    max: Math.max(rawMin, rawMax),
+    seed: normalizeBlinkNumber("seed", number(source.seed, BLINK_OUTPUT_BASE.seed)),
   };
 }
 
@@ -222,6 +227,18 @@ export interface BlinkState {
   seed: number;
 }
 
+/** Бесконечность от переполнения не попадает в таймер/JSON: верхний предел — MAX_VALUE. */
+function safeTimeAdd(left: number, right: number): number {
+  const sum = left + right;
+  return Number.isFinite(sum) ? sum : Number.MAX_VALUE;
+}
+
+/** Неотрицательная длительность: положительное переполнение насыщается MAX_VALUE. */
+function safeDuration(value: number): number {
+  if (Number.isNaN(value) || value <= 0) return 0;
+  return Number.isFinite(value) ? value : Number.MAX_VALUE;
+}
+
 /**
  * Завести таймер: первое моргание — через половину интервала.
  *
@@ -229,9 +246,10 @@ export interface BlinkState {
  * пишется в поле `seed` вывода: `0` — случайное число, взятое один раз.
  */
 export function blinkState(time: number, output: BlinkOutput, moduleName: string): BlinkState {
-  const seed = output.seed > 0 ? output.seed : Math.floor(Math.random() * 9999) + 1;
+  const seed = output.seed > 0 ? output.seed : Math.floor(Math.random() * BLINK_SEED_MAX) + 1;
   const random = blinkRandom(seed, moduleName, output.name);
-  return { next: time + output.period * (0.5 + random.next() * 0.5), until: 0, random, seed };
+  const period = normalizeBlinkNumber("period", output.period);
+  return { next: safeTimeAdd(time, period * (0.5 + random.next() * 0.5)), until: 0, random, seed };
 }
 
 /**
@@ -243,10 +261,12 @@ export function blinkState(time: number, output: BlinkOutput, moduleName: string
  */
 export function blinkTick(state: BlinkState, output: BlinkOutput, now: number): number {
   if (now >= state.next) {
-    state.until = now + output.hold;
-    const jitter = clamp(output.jitter, 0, 90) / 100;
-    const spread = output.period * (1 + (state.random.next() * 2 - 1) * jitter);
-    state.next = now + Math.max(output.hold + 40, spread);
+    const hold = normalizeBlinkNumber("hold", output.hold);
+    const period = normalizeBlinkNumber("period", output.period);
+    const jitter = normalizeBlinkNumber("jitter", output.jitter) / 100;
+    state.until = safeTimeAdd(now, hold);
+    const spread = safeDuration(period * (1 + (state.random.next() * 2 - 1) * jitter));
+    state.next = safeTimeAdd(now, Math.max(safeTimeAdd(hold, 40), spread));
   }
   return now < state.until ? output.max : output.min;
 }
@@ -256,8 +276,11 @@ export function blinkTick(state: BlinkState, output: BlinkOutput, now: number): 
  * Возвращает границы в миллисекундах, а не проценты.
  */
 export function blinkSpread(output: BlinkOutput): { shortest: number; longest: number } {
-  const jitter = clamp(output.jitter, 0, 90) / 100;
-  const shortest = Math.max(output.hold + 40, output.period * (1 - jitter));
-  const longest = Math.max(output.hold + 40, output.period * (1 + jitter));
+  const period = normalizeBlinkNumber("period", output.period);
+  const hold = normalizeBlinkNumber("hold", output.hold);
+  const jitter = normalizeBlinkNumber("jitter", output.jitter) / 100;
+  const pause = safeTimeAdd(hold, 40);
+  const shortest = Math.max(pause, safeDuration(period * (1 - jitter)));
+  const longest = Math.max(pause, safeDuration(period * (1 + jitter)));
   return { shortest, longest };
 }
