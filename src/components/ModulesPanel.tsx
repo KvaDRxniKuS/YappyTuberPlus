@@ -460,13 +460,18 @@ export function ModulesPanel(props: ModulesPanelProps) {
         })}
       </div>
 
-      <div className="module-add">
-        <button className={`button primary module-add-button ${paletteOpen ? "active" : ""}`} onClick={() => setPaletteOpen(!paletteOpen)}>
-          <Plus size={14} /> Добавить модуль
-        </button>
-      </div>
+      {/* Кнопка «Добавить модуль» — в прижатии к нижней границе вкладки: когда
+          список короткий, док стоит сразу за последним модулем, когда длинный —
+          висит над краем экрана и к нему не надо доезжать. Палитра открывается
+          внутри того же дока, поэтому они не наезжают друг на друга. */}
+      <div className="module-dock">
+        <div className="module-add">
+          <button className={`button primary module-add-button ${paletteOpen ? "active" : ""}`} onClick={() => setPaletteOpen(!paletteOpen)}>
+            <Plus size={14} /> Добавить модуль
+          </button>
+        </div>
 
-      {paletteOpen && (
+        {paletteOpen && (
         <div className="module-palette">
           <div className="module-search">
             <Search size={13} />
@@ -513,7 +518,8 @@ export function ModulesPanel(props: ModulesPanelProps) {
           </p>
           {library.error && <div className="inline-error">{library.error}</div>}
         </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

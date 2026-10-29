@@ -681,6 +681,33 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .tree-row.drop-before::before { top: -1px; }
 .tree-row.drop-after::after { bottom: -1px; }
 
+/* Прокрутка списков. Своего кода прокрутки в редакторе нет: список — это
+   нативный `overflow: auto`, ни `onScroll`, ни `scroll-snap`, ни `scroll-behavior`
+   нигде не навешено. Дёргалась она не из-за кода, а из-за того, что прокручиваемая
+   область не была изолирована: repaint строк валидировал район целиком, вплоть до
+   `.app-shell` с радиальным градиентом, и Chromium перерисовывал прокрутку на
+   основном потоке (сцена при этом оставалась плавной — она рисуется по своему
+   такту). `contain: paint` даёт списку собственный слой; `scrollbar-gutter:
+   stable` — чтобы полоса, появившаяся в середине прокрутки, не сдвигала строки;
+   `overscroll-behavior: contain` — чтобы в конце списка колесо не уезжало в
+   документ. Диалоги монтируются в корне приложения, поэтому отсечение по
+   красному краю панелей их не задевает. */
+.object-tree,
+.inspector-scroll,
+.behaviour-panel,
+.modules-panel,
+.inputs-panel,
+.dialog-body,
+.file-list,
+.multi-list,
+.runtime-diagnostics,
+.runtime-values,
+.editor-help-body {
+  contain: paint;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
 /* ---------- Модули и входы ---------- */
 /* Прокрутка вкладки — только вертикальная: горизонтальные полосы живут внутри
    таблиц модулей, иначе при сужении панели поля уезжают за край экрана. */
@@ -770,6 +797,23 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border-radius: 3px;
   color: #9fb4c2;
   font: 11px "Cascadia Code", ui-monospace, monospace;
+}
+
+/* Док кнопки «Добавить модуль»: прижат к нижней границе вкладки. Пока список
+   короче панели, док стоит сразу за последним модулем; как только список длиннее
+   окна — висит у края, и к кнопке не надо доезжать прокруткой. Фон — затухание
+   в цвет подложки, а не плашка: панели прозрачны и рисуются поверх градиента
+   `.app-shell`, поэтому плашка была бы светлее окружения. */
+.module-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 18px 0 2px;
+  background: linear-gradient(#12141900, var(--bg) 46%);
 }
 
 .module-add {
@@ -917,9 +961,6 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .module-add-button.active { border-color: var(--accent-dim); color: var(--accent); }
 
 .module-palette {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
