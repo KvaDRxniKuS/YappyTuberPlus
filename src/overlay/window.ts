@@ -183,7 +183,7 @@ export async function openOverlayWindow(
           transparent: true,
           decorations: false,
           shadow: false,
-          resizable: true,
+          resizable: false,
           skipTaskbar: true,
           alwaysOnTop: config.alwaysOnTop,
           focus: false,
@@ -210,6 +210,7 @@ export async function openOverlayWindow(
   if (!popup) {
     return { mode: "browser", ok: false, error: "Браузер заблокировал окно оверлея — разрешите всплывающие окна" };
   }
+  browserOverlay = popup;
   popup.focus();
   return { mode: "browser", ok: true };
 }
@@ -235,7 +236,11 @@ export async function applyOverlayWindow(
 }
 
 export async function closeOverlayWindow(): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    browserOverlay?.close();
+    browserOverlay = null;
+    return;
+  }
   try {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const window_ = await WebviewWindow.getByLabel(OVERLAY_LABEL);
@@ -257,6 +262,7 @@ export function captureUrl(): string {
 }
 
 let browserCapture: Window | null = null;
+let browserOverlay: Window | null = null;
 
 /**
  * Открывает окно захвата. В приложении это отдельное нативное окно без рамки и

@@ -1,8 +1,8 @@
-import type { LightShape } from "../types";
+import type { LightShape, RigPreset } from "../types";
 import { assetUrl } from "../engine/assets";
 import {
   LOBE_HALF_RATIO, SPECULAR_BODY_FLOOR, SPECULAR_EXPOSURE, SPECULAR_EXPOSURE_KNEE,
-  SPECULAR_PIXEL_FLOOR, SPECULAR_REACH,
+  SPECULAR_PIXEL_FLOOR, SPECULAR_REACH, materialSources,
 } from "./material";
 import { alphaOf, withAlpha } from "./light";
 
@@ -699,6 +699,29 @@ export function clearNormalSources(): void {
   }
   sources.clear();
   mapTextures.clear();
+}
+
+/** Освобождает декодированные карты, которые больше не входят в сцену. */
+export function retainLightingSources(preset: RigPreset): void {
+  const retained = new Set<string>();
+  for (const object of preset.objects) {
+    if (object.normal?.src) {
+      retained.add(`${object.normal.animate ? "a" : "s"}:${object.normal.src}`);
+    }
+    for (const source of materialSources(object.material)) retained.add(`a:${source}`);
+  }
+  for (const [key, entry] of sources) {
+    if (retained.has(key)) continue;
+    if (entry?.image instanceof HTMLVideoElement) {
+      entry.image.pause();
+      entry.image.removeAttribute("src");
+    } else if (entry?.image instanceof HTMLImageElement) {
+      entry.image.onload = null;
+      entry.image.onerror = null;
+      entry.image.removeAttribute("src");
+    }
+    sources.delete(key);
+  }
 }
 
 function ready(texture: TextureSource): boolean {

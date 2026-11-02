@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.1 · ядро 23 · файл 6 · мост 1 · модули 3 · оболочка 3`.
+ * `1.1 · ядро 23 · файл 6 · мост 2 · модули 3 · оболочка 7`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -47,8 +47,8 @@ export const SLOT_INFO: Record<VersionSlot, SlotInfo> = {
   },
   bridge: {
     label: "мост",
-    hint: "Протокол редактор ↔ оверлей. Оверлей другой сборки перестаёт получать кадры: "
-      + "в OBS картинка замирает.",
+    hint: "Протокол редактор ↔ оверлей: кадры и передача файлов по частям с ACK/retry. "
+      + "Старая страница OBS может перестать получать кадры и ассеты.",
   },
   modules: {
     label: "модули",
@@ -57,8 +57,8 @@ export const SLOT_INFO: Record<VersionSlot, SlotInfo> = {
   },
   shell: {
     label: "оболочка",
-    hint: "Приложение Tauri: окна, клавиши, планировщик кадров, файловые команды. "
-      + "Сборка старше пресета просто не умеет часть того, что он ждёт.",
+    hint: "Приложение Tauri: окна, клавиши, планировщик, управление размером и "
+      + "завершение дочерних окон. Старая оболочка не умеет часть нового поведения.",
   },
 };
 
@@ -121,9 +121,9 @@ export const VERSION: ProjectVersion = {
   release: [1, 1],
   core: 23,
   format: PRESET_FORMAT,
-  bridge: 1,
+  bridge: 2,
   modules: MODULE_FORMAT,
-  shell: 6,
+  shell: 7,
 };
 
 /** Номера поколений в порядке слотов: без релиза. */
@@ -131,12 +131,12 @@ export function generationNumbers(version: ProjectVersion = VERSION): number[] {
   return SLOT_ORDER.map((slot) => version[slot]);
 }
 
-/** Машинная строка версии: `1.1.22.4.1.1.1`. Её пишут в файл и копируют. */
+/** Машинная строка версии: `1.1.23.6.2.3.7`. Её пишут в файл и копируют. */
 export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 1 · модули 3 · оболочка 3`. */
+/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 3 · оболочка 7`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");

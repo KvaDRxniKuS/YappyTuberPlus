@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
 import { applyColors } from "../render/color";
-import { createCollector, resetCollector } from "../render/lighting";
+import { clearNormalSources, createCollector, resetCollector, retainLightingSources } from "../render/lighting";
 import { MediaAssets, MaskMedia } from "../render/media";
-import { assetIdsOfPreset, ensureAssetsOfPreset, onAssetsChanged, unresolvedAssetIds } from "../engine/assets";
+import {
+  assetFailure, assetIdsOfPreset, assetMissing, assetOwnersOfPreset,
+  ensureAssetsOfPreset, onAssetsChanged, retainAssetUrls, unresolvedAssetIds,
+} from "../engine/assets";
 import { createOverlayBus } from "./bus";
 import { OverlayClient, type OverlayClientSnapshot } from "./client";
 import { overlayBackground, scenePreset } from "./protocol";
-import { isTauri, overlayBridgeUrl } from "./window";
+import { isTauri, overlayBridgeUrl, overlaySize } from "./window";
 import { createOnDemandLoop } from "../engine/frameSignal";
 
 function transportOptions(params: URLSearchParams, bridgeUrl: string | null) {
@@ -54,6 +57,7 @@ export function OverlayApp() {
   const loop = useRef<{ request: () => void; stop: () => void } | null>(null);
   const markDirty = () => loop.current?.request();
   const [snapshot, setSnapshot] = useState<OverlayClientSnapshot | null>(null);
+  const [assetRevision, setAssetRevision] = useState(0);
   const [fps, setFps] = useState(0);
 
   useEffect(() => {
@@ -99,15 +103,26 @@ export function OverlayApp() {
   const { mode: background, color: backgroundColor } = overlayBackground(config, { capture, native: isTauri() });
 
   useEffect(() => {
-    // Оверлей и окно захвата живут на том же origin, что и редактор, поэтому
-    // файлы берутся из общего хранилища webview по ссылкам `asset:<id>`.
-    if (preset) ensureAssetsOfPreset(preset);
+    // OBS Browser Source имеет отдельный origin и получает ссылки через
+    // WebSocket, а нативное окно читает собственное хранилище webview.
+    const ids = preset ? assetIdsOfPreset(preset) : [];
+    retainAssetUrls(ids);
+    if (preset) {
+      retainLightingSources(preset);
+      ensureAssetsOfPreset(preset);
+    } else {
+      clearNormalSources();
+    }
     assets.current.sync(preset?.objects ?? []);
     markDirty();
   }, [preset]);
 
   useEffect(() => onAssetsChanged(() => {
-    if (presetRef.current) assets.current.sync(presetRef.current.objects);
+    if (presetRef.current) {
+      retainLightingSources(presetRef.current);
+      assets.current.sync(presetRef.current.objects);
+    }
+    setAssetRevision((revision) => revision + 1);
     loop.current?.request();
   }), []);
 
@@ -132,6 +147,39 @@ export function OverlayApp() {
   }, [preset, sceneVersion]);
 
   useEffect(() => assets.current.onChange(() => markDirty()), []);
+  useEffect(() => () => {
+    assets.current.dispose();
+    clearNormalSources();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri() || capture) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let resizeTimer: number | null = null;
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      if (disposed) return;
+      const currentWindow = getCurrentWindow();
+      await currentWindow.setIgnoreCursorEvents(snapshot?.windowControl ? false : (config?.clickThrough ?? true));
+      await currentWindow.setResizable(Boolean(snapshot?.windowControl));
+      unlisten = await currentWindow.onResized(() => {
+        if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+        resizeTimer = window.setTimeout(() => {
+          resizeTimer = null;
+          const latest = clientRef.current?.snapshot();
+          if (!latest?.windowControl) return;
+          const expected = latest.config ? overlaySize(latest.config, latest.scene?.canvas) : null;
+          if (expected?.width === window.innerWidth && expected.height === window.innerHeight) return;
+          clientRef.current?.reportWindowSize(window.innerWidth, window.innerHeight);
+        }, 120);
+      });
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+      unlisten?.();
+    };
+  }, [capture, snapshot?.windowControl, config?.clickThrough]);
 
   useEffect(() => {
     document.title = capture
@@ -238,11 +286,37 @@ export function OverlayApp() {
     };
   }, [guide, background, backgroundColor]);
 
-  const missingAssets = preset ? unresolvedAssetIds(assetIdsOfPreset(preset)).length : 0;
+  const missingAssetInfo = useMemo(() => {
+    if (!preset) return { ids: [] as string[], owners: [] as string[], reasons: [] as string[] };
+    const ids = [...assetIdsOfPreset(preset)].filter((id) => assetMissing(`asset:${id}`));
+    const ownerMap = assetOwnersOfPreset(preset);
+    const owners = [...new Set(ids.flatMap((id) => ownerMap.get(id) ?? []))];
+    const reasons = ids.map((id) => assetFailure(`asset:${id}`)).filter((reason): reason is string => !!reason);
+    return { ids, owners, reasons };
+  }, [preset, assetRevision]);
+  const missingAssets = missingAssetInfo.ids.length;
+  const assetDiagnostic = missingAssetInfo.reasons[0] ?? null;
+  const missingOwnerLabel = missingAssetInfo.owners.slice(0, 3).join(", ");
+  const missingOwnerOverflow = Math.max(0, missingAssetInfo.owners.length - 3);
 
   return (
     <div className={`overlay-root ${guide ? "guide" : ""} ${capture ? "capture" : ""}`}>
       <canvas ref={canvas} className="overlay-canvas" />
+      {!capture && isTauri() && snapshot?.windowControl && (
+        <div className="native-overlay-controls" role="toolbar" aria-label="Управление окном оверлея">
+          <button type="button" title="Переместить окно" onPointerDown={(event) => {
+            event.preventDefault();
+            void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().startDragging());
+          }}>Переместить</button>
+          <button type="button" title="Изменить размер окна" onPointerDown={(event) => {
+            event.preventDefault();
+            void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().startResizeDragging("SouthEast"));
+          }} className="native-overlay-resize">Размер</button>
+          <button type="button" title="Закрыть окно оверлея" onClick={() => {
+            void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().close());
+          }}>×</button>
+        </div>
+      )}
       {capture && isTauri() && (
         <div className="capture-bar" data-tauri-drag-region>
           <span data-tauri-drag-region>YappyTuberPlus · окно захвата</span>
@@ -277,7 +351,14 @@ export function OverlayApp() {
                 своё хранилище. Строка говорит об этом прямо, вместо того чтобы
                 оставлять пустое место в эфире. */}
             {missingAssets > 0 && (
-              <span className="overlay-missing">картинок не получено: {missingAssets}</span>
+              <span
+                className="overlay-missing"
+                title={`${missingAssetInfo.owners.join(", ") || missingAssetInfo.ids.join(", ")}\n${missingAssetInfo.reasons.join("\n")}`}
+              >
+                файлов не получено: {missingAssets}
+                {missingOwnerLabel ? ` · ${missingOwnerLabel}${missingOwnerOverflow ? ` и ещё ${missingOwnerOverflow}` : ""}` : ""}
+                {assetDiagnostic ? ` · ${assetDiagnostic}` : ""}
+              </span>
             )}
           </div>
           {!snapshot?.scene && (

@@ -178,6 +178,40 @@ test("overlay view transform and preset normalisation are predictable", () => {
   expect(merged.canvas.width).toBe(1000);
 });
 
+test("temporary window controls report a bounded native size to the editor", async () => {
+  const { hostBus, viewerBus } = channelPair(`overlay-window-control-${Date.now()}`);
+  const sizes: Array<[number, number]> = [];
+  const host = new OverlayHost(hostBus, {
+    hostName: "Окно",
+    announceIntervalMs: 50,
+    onWindowSize: (width, height) => sizes.push([width, height]),
+  });
+  const client = new OverlayClient(viewerBus, { helloIntervalMs: 60 });
+  try {
+    host.start();
+    host.setPreset(createDemoPreset());
+    client.start();
+    await expect.poll(() => client.scene?.version, { timeout: 4000 }).toBe(1);
+
+    host.setWindowControl(true);
+    await expect.poll(() => client.windowControl, { timeout: 4000 }).toBe(true);
+    client.reportWindowSize(9000, 80);
+    await expect.poll(() => sizes.length, { timeout: 4000 }).toBe(1);
+    expect(sizes).toEqual([[7680, 120]]);
+
+    host.setWindowControl(false);
+    await expect.poll(() => client.windowControl, { timeout: 4000 }).toBe(false);
+    client.reportWindowSize(640, 480);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sizes).toEqual([[7680, 120]]);
+  } finally {
+    client.dispose();
+    host.dispose();
+    hostBus.close();
+    viewerBus.close();
+  }
+});
+
 test("capture window shares the overlay background and keeps transparency", () => {
   const base = { ...DEFAULT_OVERLAY };
 

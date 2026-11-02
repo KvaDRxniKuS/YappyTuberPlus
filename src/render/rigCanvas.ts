@@ -65,6 +65,17 @@ export class SpriteAssets {
     return this.images.get(source) || null;
   }
 
+  /** Release decoded image references when an overlay window is torn down. */
+  dispose(): void {
+    for (const image of this.images.values()) {
+      image.onload = null;
+      image.onerror = null;
+      image.removeAttribute("src");
+    }
+    this.images.clear();
+    this.listeners.clear();
+  }
+
   private emit() {
     for (const listener of this.listeners) listener();
   }

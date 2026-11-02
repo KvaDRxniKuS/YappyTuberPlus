@@ -10,8 +10,9 @@ import type { RigObject, RigPreset } from "../types";
  * - автосохранение в `localStorage` больше не упирается в квоту: строка пресета
  *   весит килобайты, даже если в сцене видео на сотни мегабайт;
  * - редактор не переливает base64 на каждую правку и не ест память дважды;
- * - файл, который читают редактор, окно оверлея и окно захвата, лежит в одном
- *   месте (у них общий origin), поэтому достаточно один раз создать `blob:` URL.
+ * - байты файла лежат в IndexedDB редактора и доступны нативным окнам того же
+ *   origin; у каждого WebView свой `blob:` URL. OBS Browser Source работает на
+ *   другом origin и получает байты от редактора частями по протоколу оверлея.
  *
  * При сохранении пресета и при экспорте JSON ссылки **встраиваются обратно**
  * (`inlineAssets`): файл пресета остаётся самодостаточным и переносится на
@@ -58,10 +59,15 @@ export interface AssetInfo {
 
 /** Готовые `blob:` URL по id: их отдают канве и медиа-элементам. */
 const urls = new Map<string, string>();
+/** Последний активный набор сцены: неактивные URL освобождаются при смене сцены. */
+let retainedAssetIds: Set<string> | null = null;
 /** Загрузки в процессе: повторный запрос того же файла не читает хранилище снова. */
 const pending = new Map<string, Promise<void>>();
 /** Файлы, которых в хранилище нет: не пытаемся читать их на каждом кадре. */
 const missing = new Set<string>();
+const missingReasons = new Map<string, string>();
+/** Remote transfers suppress the expected local-origin miss until host responds. */
+const remotePending = new Set<string>();
 /**
  * Пресет на диске: рядом с ним лежит папка файлов `<имя>.assets`
  * (`src-tauri/src/lib.rs`, команды `preset_*_assets`). Пока путь не задан,
@@ -70,9 +76,9 @@ const missing = new Set<string>();
 let diskPath: string | null = null;
 /** Паспорта файлов из папки пресета: имя и тип нужны, чтобы сохранить их обратно. */
 const diskIndex = new Map<string, { name: string; mime: string }>();
-/** Прочитанные с диска data URL: второй раз файл не читаем. */
-const diskCache = new Map<string, string | Promise<string | null>>();
-/** Один раз прочитанный data URL на файл: экспорт не перекодирует видео повторно. */
+/** Параллельное чтение с диска объединяется; готовая base64-строка сразу отпускается. */
+const diskCache = new Map<string, Promise<string | null>>();
+/** Один data URL на файл удерживается только пока идёт параллельное чтение/кодирование. */
 const inlined = new Map<string, Promise<string | null>>();
 const listeners = new Set<() => void>();
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -108,10 +114,69 @@ export function setAssetDisk(
   diskCache.clear();
   // Другая папка — прежние «файла нет» больше не в силе: файл мог найтись.
   missing.clear();
+  missingReasons.clear();
+  remotePending.clear();
 }
 
 export function assetDiskPath(): string | null {
   return diskPath;
+}
+
+/** Оставляет blob URL только для файлов, используемых текущей сценой. */
+export function retainAssetUrls(ids: Iterable<string>): void {
+  retainedAssetIds = new Set(ids);
+  let changed = false;
+  for (const [id, url] of urls) {
+    if (retainedAssetIds.has(id)) continue;
+    URL.revokeObjectURL(url);
+    urls.delete(id);
+    changed = true;
+  }
+  for (const id of missing) {
+    if (retainedAssetIds.has(id)) continue;
+    missing.delete(id);
+    missingReasons.delete(id);
+  }
+  for (const id of remotePending) if (!retainedAssetIds.has(id)) remotePending.delete(id);
+  if (changed) emit();
+}
+
+/** Локальное отсутствие ожидаемо у Browser Source, пока хост передаёт файл. */
+export function markAssetRequestPending(id: string): void {
+  if (!id || (retainedAssetIds && !retainedAssetIds.has(id))) return;
+  remotePending.add(id);
+  clearAssetFailure(id);
+}
+
+/** Снимает отметку при закрытии клиента или смене хоста. */
+export function clearAssetRequestPending(id: string): void {
+  remotePending.delete(id);
+}
+
+/** Отмечает окончательную ошибку передачи; HUD называет объект и причину. */
+export function markAssetRequestFailed(id: string, reason: string): void {
+  remotePending.delete(id);
+  markAssetMissing(id, reason);
+}
+
+/** Отмечает локально несостоявшуюся загрузку, если она не заменяется запросом к хосту. */
+export function markAssetMissing(id: string, reason: string): void {
+  if (!id || remotePending.has(id) || urls.has(id)
+      || (retainedAssetIds && !retainedAssetIds.has(id))) return;
+  missing.add(id);
+  missingReasons.set(id, reason);
+  emit();
+}
+
+export function assetFailure(source: string | null | undefined): string | null {
+  const id = assetIdOf(source);
+  return id ? missingReasons.get(id) ?? null : null;
+}
+
+export function clearAssetFailure(id: string): void {
+  const wasMissing = missing.delete(id);
+  const hadReason = missingReasons.delete(id);
+  if (wasMissing || hadReason) emit();
 }
 
 /** Паспорт файла из папки пресета (если он там есть). */
@@ -161,13 +226,26 @@ export function ensureAsset(id: string): void {
  * хранилища у неё нет, поэтому data URL превращается в `blob:` на месте.
  */
 export function acceptAssetData(id: string, dataUrl: string): void {
-  if (urls.has(id) || !dataUrl) return;
+  if (!dataUrl) return;
+  try { acceptAssetBlob(id, dataUrlToBlob(dataUrl)); }
+  catch { markAssetRequestFailed(id, "Полученный файл не удалось прочитать."); }
+}
+
+/** Принимает уже собранный файл без промежуточной base64 data URL. */
+export function acceptAssetBlob(id: string, blob: Blob, force = false): void {
+  if (!id || (!force && retainedAssetIds && !retainedAssetIds.has(id))) return;
+  remotePending.delete(id);
+  if (urls.has(id)) {
+    clearAssetFailure(id);
+    return;
+  }
   try {
-    urls.set(id, URL.createObjectURL(dataUrlToBlob(dataUrl)));
+    urls.set(id, URL.createObjectURL(blob));
     missing.delete(id);
+    missingReasons.delete(id);
     emit();
   } catch {
-    missing.delete(id);
+    markAssetMissing(id, "Полученный файл не удалось открыть в браузере.");
   }
 }
 
@@ -219,6 +297,21 @@ export function assetIdsOfPreset(preset: RigPreset): Set<string> {
 
 export function ensureAssetsOfPreset(preset: RigPreset): void {
   for (const id of assetIdsOfPreset(preset)) ensureAsset(id);
+}
+
+/** Объекты, которым нужен каждый внешний файл: используется диагностикой HUD. */
+export function assetOwnersOfPreset(preset: RigPreset): Map<string, string[]> {
+  const owners = new Map<string, string[]>();
+  for (const object of preset.objects) {
+    for (const source of sourcesOf(object)) {
+      const id = assetIdOf(source);
+      if (!id) continue;
+      const names = owners.get(id) ?? [];
+      if (!names.includes(object.name)) names.push(object.name);
+      owners.set(id, names);
+    }
+  }
+  return owners;
 }
 
 /**
@@ -281,58 +374,62 @@ async function readAsset(id: string): Promise<void> {
   if (db) {
     try {
       const record = await done<AssetRecord | undefined>(transaction(db, "readonly").get(id));
-      if (record?.blob) {
-        urls.set(id, URL.createObjectURL(record.blob));
-        emit();
-        return;
-      }
+      if (record?.blob) { acceptAssetBlob(id, record.blob); return; }
     } catch {
-      // Хранилище ответило ошибкой — не повод сдаваться: файл может лежать
-      // в папке пресета.
+      // Хранилище ответило ошибкой — файл может лежать в папке пресета.
     }
   }
   // Пресет открыли из файла: байты лежат в `<имя>.assets` рядом с ним.
   const data = await readDiskData(id);
-  if (!data) { missing.add(id); return; }
-  acceptAssetData(id, data);
-  void remember(id, data);
+  if (urls.has(id)) return;
+  if (!data) { markAssetMissing(id, "Файл не найден в хранилище или папке пресета."); return; }
+  const blob = dataUrlToBlob(data);
+  acceptAssetBlob(id, blob);
+  void rememberBlob(id, blob);
 }
 
 /**
- * Файл из папки `<имя>.assets` рядом с пресетом.
- *
- * Читается лениво, по одному файлу: видео на сотни мегабайт не попадает в
- * память, пока объект не попросят нарисовать. Успешное чтение кладётся в
- * хранилище webview (`remember`), поэтому следующий запуск не трогает диск.
+ * Файл из папки `<имя>.assets` рядом с пресетом. Готовый data URL не кэшируем:
+ * он нужен лишь на время преобразования в Blob или встраивания при сохранении.
  */
 function readDiskData(id: string): Promise<string | null> {
   const path = diskPath;
   if (!path) return Promise.resolve(null);
   const cached = diskCache.get(id);
-  if (typeof cached === "string") return Promise.resolve(cached);
   if (cached) return cached;
   const job = (async () => {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      const data = await invoke<string | null>("preset_read_asset", { path, id });
-      if (data) diskCache.set(id, data);
-      else diskCache.delete(id);
-      return data;
-    } catch {
-      diskCache.delete(id);
-      return null;
-    }
+      return await invoke<string | null>("preset_read_asset", { path, id });
+    } catch { return null; }
   })();
   diskCache.set(id, job);
+  void job.then(() => { if (diskCache.get(id) === job) diskCache.delete(id); },
+    () => { if (diskCache.get(id) === job) diskCache.delete(id); });
   return job;
 }
 
-/** Кладёт прочитанный с диска файл в хранилище под тем же id. */
-async function remember(id: string, dataUrl: string): Promise<void> {
+/** Читает Blob из IndexedDB или папки пресета без удержания data URL. */
+export async function readAssetBlob(id: string): Promise<Blob | null> {
+  const db = await openDb();
+  if (db) {
+    try {
+      const record = await done<AssetRecord | undefined>(transaction(db, "readonly").get(id));
+      if (record?.blob) return record.blob;
+    } catch { /* fallback to the preset folder */ }
+  }
+  const data = await readDiskData(id);
+  if (!data) return null;
+  const blob = dataUrlToBlob(data);
+  void rememberBlob(id, blob);
+  return blob;
+}
+
+/** Кладёт прочитанный файл в хранилище под тем же id. */
+async function rememberBlob(id: string, blob: Blob): Promise<void> {
   const db = await openDb();
   if (!db) return;
   try {
-    const blob = dataUrlToBlob(dataUrl);
     const meta = diskIndex.get(id);
     const name = meta?.name || id;
     const mime = meta?.mime || blob.type || "application/octet-stream";
@@ -430,8 +527,8 @@ export async function storeBlob(blob: Blob, name: string): Promise<string | null
     const same = await done<AssetInfo[]>(transaction(db, "readonly", META).index("hash").getAll(hash) as IDBRequest<AssetInfo[]>);
     const existing = same.find((info) => info.size === blob.size && info.mime === (blob.type || "application/octet-stream"));
     if (existing) {
-      if (!urls.has(existing.id)) urls.set(existing.id, URL.createObjectURL(blob));
-      missing.delete(existing.id);
+      if (!urls.has(existing.id)) acceptAssetBlob(existing.id, blob, true);
+      clearAssetFailure(existing.id);
       emit();
       return assetRef(existing.id);
     }
@@ -446,7 +543,7 @@ export async function storeBlob(blob: Blob, name: string): Promise<string | null
   } catch {
     return null;
   }
-  urls.set(id, URL.createObjectURL(blob));
+  acceptAssetBlob(id, blob, true);
   emit();
   return assetRef(id);
 }
@@ -513,6 +610,7 @@ async function removeAsset(db: IDBDatabase, id: string): Promise<void> {
   if (url) { URL.revokeObjectURL(url); urls.delete(id); }
   inlined.delete(id);
   missing.delete(id);
+  missingReasons.delete(id);
   backfilled = null;
 }
 
@@ -619,26 +717,22 @@ async function readDataUrl(id: string): Promise<string | null> {
   }
 }
 
-/** Ссылка на файл → data URL (с кэшем: один и тот же файл кодируется один раз). */
+/** Ссылка на файл → data URL; одинаковое параллельное чтение делится одной задачей. */
 export function inlineSource(source: string): Promise<string | null> {
   const id = assetIdOf(source);
   if (!id) return Promise.resolve(source);
   let job = inlined.get(id);
   if (!job) {
-    // Неудачу не кэшируем: файл могли импортировать заново, и следующая запись
-    // пресета должна попробовать ещё раз.
     job = (async () => {
       const stored = await readDataUrl(id);
       if (stored) return stored;
-      // Пресет открыт из файла: байты лежат в папке рядом с ним.
       const fromDisk = await readDiskData(id);
-      if (fromDisk) void remember(id, fromDisk);
+      if (fromDisk) void rememberBlob(id, dataUrlToBlob(fromDisk));
       return fromDisk;
-    })().then((data) => {
-      if (!data) inlined.delete(id);
-      return data;
-    });
+    })();
     inlined.set(id, job);
+    const release = () => { if (inlined.get(id) === job) inlined.delete(id); };
+    void job.then(release, release);
   }
   return job;
 }

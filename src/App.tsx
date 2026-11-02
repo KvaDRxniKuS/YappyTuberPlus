@@ -41,6 +41,7 @@ import {
   ensureAssetsOfPresetSettled,
   externalizePreset,
   pruneAssets,
+  retainAssetUrls,
 } from "./engine/assets";
 import { textChannel } from "./render/text";
 import { resolvedColors } from "./render/color";
@@ -57,7 +58,9 @@ import {
   savePreset,
   savePresetAs,
 } from "./engine/presetFile";
-import { applyCaptureWindow, applyOverlayWindow } from "./overlay/window";
+import {
+  applyCaptureWindow, applyOverlayWindow, closeCaptureWindow, closeOverlayWindow,
+} from "./overlay/window";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { WorkMeter } from "./components/WorkMeter";
 import { useModuleInputs } from "./hooks/useModuleInputs";
@@ -133,6 +136,35 @@ function clamp(value: number, min: number, max: number): number {
 
 export default function App() {
   const [preset, setPreset] = useState<RigPreset>(loadPreset);
+  useEffect(() => {
+    const closeOutputs = () => {
+      void Promise.all([closeOverlayWindow(), closeCaptureWindow()]);
+    };
+    window.addEventListener("beforeunload", closeOutputs);
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    if (isTauri()) {
+      void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+        if (disposed) return;
+        let allowed = false;
+        const main = getCurrentWindow();
+        const stopListening = await main.onCloseRequested(async (event) => {
+          if (allowed) return;
+          event.preventDefault();
+          allowed = true;
+          await Promise.all([closeOverlayWindow(), closeCaptureWindow()]);
+          await main.close();
+        });
+        if (disposed) stopListening();
+        else unlisten = stopListening;
+      }).catch(() => {});
+    }
+    return () => {
+      disposed = true;
+      window.removeEventListener("beforeunload", closeOutputs);
+      unlisten?.();
+    };
+  }, []);
   const [selection, setSelection] = useState<string[]>(() => (preset.objects[0] ? [preset.objects[0].id] : []));
   const [renameId, setRenameId] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -275,7 +307,14 @@ export default function App() {
   inputsRef.current = moduleInputs.inputs;
   selectionRef.current = selection;
 
-  const overlay = useOverlayHost(preset);
+  const recordOverlayWindowSize = useCallback((width: number, height: number) => {
+    setPreset((current) => {
+      const config = current.overlay || normalizeOverlay(undefined);
+      if (config.followCanvas === false && config.width === width && config.height === height) return current;
+      return { ...current, overlay: { ...config, followCanvas: false, width, height } };
+    });
+  }, []);
+  const overlay = useOverlayHost(preset, recordOverlayWindowSize);
   // Текстовый канал: последнее сообщение каждого модуля. Кадр получает уже
   // готовый текст, поэтому оверлею не нужен доступ к модулям.
   const textsRef = useRef<Record<string, { text: string; author?: string }>>({});
@@ -506,6 +545,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [usedAssetIds, historyState],
   );
+  useEffect(() => retainAssetUrls(usedAssetIds), [usedAssetIds]);
 
   /** «Сохранить как…» всегда спрашивает папку и имя; в браузере такого диалога нет. */
   const saveCurrentAs = useCallback(async () => {
@@ -633,7 +673,8 @@ export default function App() {
   useEffect(() => {
     void applyOverlayWindow(preset.overlay || normalizeOverlay(undefined), preset.canvas);
     void applyCaptureWindow(preset.overlay || normalizeOverlay(undefined), preset.canvas);
-  }, [preset.canvas.width, preset.canvas.height, preset.overlay?.followCanvas]);
+  }, [preset.canvas.width, preset.canvas.height, preset.overlay?.followCanvas,
+    preset.overlay?.width, preset.overlay?.height]);
 
   useEffect(() => {
     overlay.setFrozen(stopped, presetRef.current);
@@ -1609,6 +1650,8 @@ export default function App() {
         transport={overlay.transport}
         bridgeReady={overlay.bridgeReady}
         bridgeUrl={overlay.bridgeUrl}
+        windowControl={overlay.windowControl}
+        onWindowControl={overlay.setWindowControl}
         transportParam={new URLSearchParams(window.location.search).get("transport") || undefined}
         onChange={(patch) => commit({ ...presetRef.current, overlay: { ...(presetRef.current.overlay || overlayConfig), ...patch } }, false)}
         onClose={() => setOverlayOpen(false)}

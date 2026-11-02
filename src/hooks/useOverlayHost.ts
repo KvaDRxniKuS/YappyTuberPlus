@@ -14,6 +14,8 @@ export interface OverlayHostState {
   transport: string;
   bridgeUrl: string | null;
   bridgeReady: boolean;
+  windowControl: boolean;
+  setWindowControl: (enabled: boolean) => void;
   /** «Стоп»: оверлей показывает нейтральную позу вместо живых кадров. */
   setFrozen: (frozen: boolean, preset?: RigPreset) => void;
   /** Цвета из модулей: без них в OBS цвет застынет на первом кадре. */
@@ -43,15 +45,22 @@ function transportOptions(bridgeUrl: string | null) {
  * the MVP form of docs/DESIGN.md §13.3 — one active driver, no double
  * advancement of stateful formulas.
  */
-export function useOverlayHost(preset: RigPreset): OverlayHostState {
+export function useOverlayHost(
+  preset: RigPreset,
+  onWindowSize?: (width: number, height: number) => void,
+): OverlayHostState {
   const [viewers, setViewers] = useState<string[]>([]);
   /** Оверлеи другой сборки: их страницу нужно перезагрузить. */
   const [staleViewers, setStaleViewers] = useState<string[]>([]);
   const [transport, setTransport] = useState("подключение…");
   const [bridgeReady, setBridgeReady] = useState(false);
+  const [windowControl, setWindowControlState] = useState(false);
   const [bridgeUrl, setBridgeUrl] = useState<string | null>(null);
   const sinkRef = useRef<((frame: RigFrame) => void) | null>(null);
   const frozenRef = useRef(false);
+  const windowControlRef = useRef(false);
+  const onWindowSizeRef = useRef(onWindowSize);
+  onWindowSizeRef.current = onWindowSize;
   const hostRef = useRef<OverlayHost | null>(null);
   const busRef = useRef<CompositeBus | null>(null);
   const presetRef = useRef(preset);
@@ -74,6 +83,7 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
       busRef.current = bus;
       const host = new OverlayHost(bus, {
         hostName: presetRef.current.name,
+        onWindowSize: (width, height) => onWindowSizeRef.current?.(width, height),
         onViewers: (ids) => {
           if (disposed) return;
           setViewers(ids);
@@ -83,6 +93,7 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
       host.start();
       host.setPreset(presetRef.current);
       host.setFrozen(frozenRef.current, presetRef.current);
+      host.setWindowControl(windowControlRef.current);
       hostRef.current = host;
       sinkRef.current = (frame) => host.pushFrame(frame);
       setTransport(bus.label);
@@ -119,10 +130,19 @@ export function useOverlayHost(preset: RigPreset): OverlayHostState {
     hostRef.current?.setColors(colors);
   }, []);
 
+  const setWindowControl = useCallback((enabled: boolean) => {
+    windowControlRef.current = enabled;
+    setWindowControlState(enabled);
+    hostRef.current?.setWindowControl(enabled);
+  }, []);
+
   const setFrozen = useCallback((frozen: boolean, preset?: RigPreset) => {
     frozenRef.current = frozen;
     hostRef.current?.setFrozen(frozen, preset ?? presetRef.current);
   }, []);
 
-  return { sinkRef, viewers, staleViewers, transport, bridgeUrl, bridgeReady, setFrozen, setColors };
+  return {
+    sinkRef, viewers, staleViewers, transport, bridgeUrl, bridgeReady,
+    windowControl, setWindowControl, setFrozen, setColors,
+  };
 }

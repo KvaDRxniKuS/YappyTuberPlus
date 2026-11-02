@@ -17,6 +17,8 @@ interface OverlayDialogProps {
   transport: string;
   bridgeReady: boolean;
   bridgeUrl: string | null;
+  windowControl: boolean;
+  onWindowControl: (enabled: boolean) => void;
   /** `?transport=` of the editor page, forwarded so the overlay matches it. */
   transportParam?: string;
   onChange: (patch: Partial<OverlayConfig>) => void;
@@ -226,6 +228,19 @@ export function OverlayDialog(props: OverlayDialogProps) {
               <Toggle label="Пропускать клики" checked={props.config.clickThrough} onChange={(value) => change({ clickThrough: value })} />
               <Toggle label="Служебная рамка" checked={props.config.showGuide} onChange={(value) => change({ showGuide: value })} />
             </div>
+            {isTauri() && (
+              <div className="behaviour-state overlay-control-setting">
+                <span>
+                  Управление окном
+                  <small>Временно показать перемещение, изменение размера и закрытие</small>
+                </span>
+                <Switch
+                  checked={props.windowControl}
+                  title="Включить временные кнопки на нативном окне оверлея"
+                  onChange={props.onWindowControl}
+                />
+              </div>
+            )}
           </section>
 
           <section className="dialog-section">
@@ -279,10 +294,10 @@ export function OverlayDialog(props: OverlayDialogProps) {
           <section className="dialog-section">
             <div className="section-title"><span>Как захватить в OBS</span></div>
             <ol className="overlay-steps">
-              <li><b>Прозрачное окно.</b> Нажмите «Открыть оверлей» и добавьте в OBS источник «Захват окна» → YappyTuberPlus Overlay. Окно без рамки, с прозрачным фоном и без тени.</li>
-              <li><b>Окно захвата.</b> Если «Захват окна» с прозрачного оверлея не работает, нажмите «Открыть окно захвата» и выберите в OBS окно «YappyTuberPlus — окно захвата».</li>
-              <li><b>Источник браузера.</b> Откройте в OBS «Источник браузера» и вставьте ссылку выше: страницу и релей отдаёт встроенный сервер приложения. В браузерной разработке вместо него — <code>npm run overlay:bridge</code>.</li>
-              <li><b>Проверка.</b> Включите «Служебную рамку», чтобы видеть статус, FPS и границы холста; перед эфиром выключите её.</li>
+              <li><b>Основной способ — источник браузера.</b> В OBS добавьте «Источник браузера» и вставьте ссылку выше. В браузерной разработке ссылка использует локальный мост.</li>
+              <li><b>Резерв — прозрачное окно.</b> Нажмите «Открыть оверлей» и при необходимости выберите в OBS «Захват окна» → YappyTuberPlus Overlay.</li>
+              <li><b>Отдельное окно захвата.</b> Для Discord, Game Bar и других программ нажмите «Открыть окно захвата». Это самостоятельный запасной способ, он не исправляет ошибку Browser Source.</li>
+              <li><b>Диагностика.</b> Включите «Служебную рамку»: в ней видны статус, FPS, границы холста и причина неполученного ассета.</li>
             </ol>
           </section>
         </div>
