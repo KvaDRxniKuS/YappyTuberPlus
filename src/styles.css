@@ -732,6 +732,8 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
    таблиц модулей, иначе при сужении панели поля уезжают за край экрана. */
 .modules-panel,
 .inputs-panel { display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow-y: auto; overflow-x: hidden; }
+.modules-panel { position: relative; flex: 1 1 0; min-height: 0; }
+.modules-panel.palette-open { overflow: hidden; }
 
 .module-actions { display: flex; align-items: center; gap: 8px; }
 
@@ -818,23 +820,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   font: 11px "Cascadia Code", ui-monospace, monospace;
 }
 
-/* Док кнопки «Добавить модуль»: прижат к нижней границе вкладки. Пока список
-   короче панели, док стоит сразу за последним модулем; как только список длиннее
-   окна — висит у края, и к кнопке не надо доезжать прокруткой. Фон — затухание
-   в цвет подложки, а не плашка: панели прозрачны и рисуются поверх градиента
-   `.app-shell`, поэтому плашка была бы светлее окружения. */
-.module-dock {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 2px;
-  padding: 18px 0 2px;
-  background: linear-gradient(#12141900, var(--bg) 46%);
-}
-
+/* Кнопка добавления — вверху вне списка; палитра накрывает подключённые карточки. */
 .module-add {
   display: flex;
   align-items: center;
@@ -843,6 +829,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   padding-top: 4px;
   border-top: 1px solid var(--border-soft);
 }
+.module-add-top { flex: none; flex-wrap: nowrap; padding: 0; border: 0; }
 
 .module-add > span { display: flex; align-items: center; gap: 5px; color: #7f8a94; font-size: 11px; }
 .module-add > div { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -980,6 +967,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .module-add-button.active { border-color: var(--accent-dim); color: var(--accent); }
 
 .module-palette {
+  position: absolute;
+  inset: 50px 10px 10px;
+  z-index: 5;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -987,10 +979,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #171b20;
-  box-shadow: 0 -10px 26px #00000066;
+  box-shadow: 0 10px 26px #00000066;
 }
 
-.module-palette-list { display: flex; flex-direction: column; gap: 3px; max-height: 230px; overflow: auto; }
+.module-palette-list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 3px; overflow: auto; }
 
 .module-palette-item {
   display: flex;
