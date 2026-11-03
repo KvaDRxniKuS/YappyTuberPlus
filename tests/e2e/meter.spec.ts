@@ -1,5 +1,21 @@
 import { test, expect } from "@playwright/test";
-import { countArrival, countDraw, countFrame, resetMeter, takeWork } from "../../src/engine/meter";
+import {
+  countArrival, countDraw, countFrame, forgetResources, readResources, reportResources, resetMeter, takeWork,
+} from "../../src/engine/meter";
+
+test("оценки известных ресурсов складываются и снимаются при освобождении владельца", () => {
+  const before = readResources();
+  const owner = {};
+  reportResources(owner, { images: 2, imageBytes: 1024, textures: 1, textureBytes: 4096 });
+  expect(readResources()).toMatchObject({
+    images: before.images + 2,
+    imageBytes: before.imageBytes + 1024,
+    textures: before.textures + 1,
+    textureBytes: before.textureBytes + 4096,
+  });
+  forgetResources(owner);
+  expect(readResources()).toEqual(before);
+});
 
 test("счётчик работы окна считает частоты и обнуляется на каждом замере", () => {
   resetMeter();

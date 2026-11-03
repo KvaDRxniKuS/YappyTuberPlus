@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.1 · ядро 23 · файл 6 · мост 2 · модули 3 · оболочка 7`.
+ * `1.1 · ядро 23 · файл 6 · мост 2 · модули 4 · оболочка 7`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -83,12 +83,13 @@ export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, 4, 5, PRESET_FO
  *
  * 1 — первые шаблоны (звук, клавиши, мышь, внешние источники), 2 — виды
  * «Цвет» и «Свет из экрана»: у модуля появились свои списки входов (каналы и
- * точки выборки), а к цвету объекта можно привязать готовый цвет.
+ * точки выборки), а к цвету объекта можно привязать готовый цвет. 4 — новый
+ * контракт Mouse: x/y со знаком и настраиваемое начало координат вместо px/py.
  *
  * Растёт вместе с новым видом или новым полем настроек: шаблон новее редактора
  * читается частично, а незнакомый вид молча становится «Manual».
  */
-export const MODULE_FORMAT = 3;
+export const MODULE_FORMAT = 4;
 
 export interface ProjectVersion {
   /** Релиз продукта: то, что видит пользователь и установщик. */
@@ -131,12 +132,12 @@ export function generationNumbers(version: ProjectVersion = VERSION): number[] {
   return SLOT_ORDER.map((slot) => version[slot]);
 }
 
-/** Машинная строка версии: `1.1.23.6.2.3.7`. Её пишут в файл и копируют. */
+/** Машинная строка версии: `1.1.23.6.2.4.7`. Её пишут в файл и копируют. */
 export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 3 · оболочка 7`. */
+/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 4 · оболочка 7`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");

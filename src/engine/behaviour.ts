@@ -325,6 +325,7 @@ export function isDefault(behaviour: Behaviour): boolean {
     && behaviour.wiggleXAmp === 0 && behaviour.wiggleYAmp === 0
     && behaviour.wiggleRotAmp === 0
     && behaviour.mouth === "none" && behaviour.eye === "none"
+    && behaviour.voiceModule === "" && behaviour.eyeModule === "" && behaviour.eyeInput === "blink"
     && behaviour.physRotation === null && behaviour.physSpace === "world"
     && behaviour.followMouseModule === ""
     && behaviour.followMouseRotX === 0 && behaviour.followMouseRotY === 0
@@ -561,7 +562,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     const halfH = Math.max(1, behaviour.followMouseHeight / 2);
     /** Ход одной оси: −1…1, с мёртвой зоной и инверсией. */
     const travel = (axis: "x" | "y"): string => {
-      const raw = `((${followModule}.${axis} - 0.5) * 2)`;
+      const raw = `${followModule}.${axis}`;
       const signed = behaviour.followMouseInvert ? `(-${raw})` : raw;
       if (dead <= 0) return signed;
       // После вырезания середины остаток растягивается на весь ход: иначе
@@ -822,7 +823,9 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     body.push(`opacity = 1 - ${num(flicker)} * (0.5 - 0.5 * ${wave})`);
   }
 
-  if (!body.length) return "";
+  // Источник можно выбрать до включения правила. Сохраняем метаданные, иначе
+  // контролируемый селектор после перерисовки вернулся бы к первому модулю.
+  if (!body.length && !voice && !eye) return "";
   return [
     START,
     `${META}${JSON.stringify(behaviour)}`,

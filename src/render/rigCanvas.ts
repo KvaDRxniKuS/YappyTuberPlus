@@ -9,6 +9,7 @@ import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
 import { paintLight } from "./light";
 import { DEFAULT_LIGHT, lightHeight } from "../types";
+import { forgetResources, reportResources } from "../engine/meter";
 import { shadeLayer, type LightingCollector, type ShadeSample } from "./lighting";
 import { materialBinding } from "./material";
 import type { MaskSpec, ShapeSpec } from "../types";
@@ -39,25 +40,41 @@ export class SpriteAssets {
    * после чтения файла, поэтому вызов повторяется по событию хранилища.
    */
   sync(objects: RigObject[]): void {
-    const sources: Array<string | null> = [];
+    const required = new Set<string>();
     for (const object of objects) {
       // Маска-файл рисуется через тот же спрайтовый кэш: она тоже картинка.
-      sources.push(object.image, object.mask?.kind === "file" ? object.mask.file : null);
+      if (object.image) required.add(object.image);
+      if (object.mask?.kind === "file" && object.mask.file) required.add(object.mask.file);
     }
-    for (const source of sources) {
-      if (!source) continue;
-      const url = assetUrl(source);
-      if (!url) continue;
+    for (const [source, image] of this.images) {
+      if (required.has(source)) continue;
+      image.onload = null;
+      image.onerror = null;
+      image.removeAttribute("src");
+      this.images.delete(source);
+    }
+    for (const source of required) {
       const existing = this.images.get(source);
+      const url = assetUrl(source);
+      if (!url) {
+        if (existing) {
+          existing.onload = null;
+          existing.onerror = null;
+          existing.removeAttribute("src");
+          this.images.delete(source);
+        }
+        continue;
+      }
       if (existing?.dataset.source === url) continue;
       const image = existing ?? new Image();
       image.decoding = "async";
-      image.onload = () => { this.emit(); };
-      image.onerror = () => { this.emit(); };
+      image.onload = () => { this.updateResourceEstimate(); this.emit(); };
+      image.onerror = () => { this.updateResourceEstimate(); this.emit(); };
       image.dataset.source = url;
       image.src = url;
       this.images.set(source, image);
     }
+    this.updateResourceEstimate();
   }
 
   get(source: string | null): HTMLImageElement | null {
@@ -74,6 +91,18 @@ export class SpriteAssets {
     }
     this.images.clear();
     this.listeners.clear();
+    forgetResources(this);
+  }
+
+  private updateResourceEstimate(): void {
+    let images = 0;
+    let imageBytes = 0;
+    for (const image of this.images.values()) {
+      if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) continue;
+      images += 1;
+      imageBytes += image.naturalWidth * image.naturalHeight * 4;
+    }
+    reportResources(this, { images, imageBytes });
   }
 
   private emit() {

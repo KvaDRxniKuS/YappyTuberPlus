@@ -195,13 +195,19 @@ export function composeValues(modules: ModuleInstance[], sources: ModuleSources)
       const space = mouseSpaceOf(module.config);
       const monitorIndex = Number(module.config.monitor ?? 0);
       const area = mouseArea(space, Number.isFinite(monitorIndex) ? monitorIndex : 0, sources.pointer?.screen);
-      // Инверсия Y — тоже свойство экземпляра: у одного модуля курсор «как в 2D»,
-      // у другого «как в 3D», и оба живут в одном пресете.
+      // Смещение начала отсчёта задаётся относительно центра: 0 — центр,
+      // −1 — левый/верхний край, +1 — правый/нижний.
+      const originOffset = {
+        x: Number.isFinite(Number(module.config.offsetX)) ? Number(module.config.offsetX) : 0,
+        y: Number.isFinite(Number(module.config.offsetY)) ? Number(module.config.offsetY) : 0,
+      };
+      // Инверсия Y — тоже свойство экземпляра: знаковую координату достаточно
+      // умножить на −1, не меняя её начала и диапазона.
       const invertY = module.config.invertY === true;
       for (const spec of specs) {
         if (!inputEnabled(module, spec.name)) continue;
-        let value = mouseValue(mouse, spec.name, area);
-        if (invertY && spec.name === "y") value = 1 - value;
+        let value = mouseValue(mouse, spec.name, area, originOffset);
+        if (invertY && spec.name === "y") value = -value;
         else if (invertY && spec.name === "dy") value = -value;
         values[inputKey(module, spec.name)] = Number.isFinite(value) ? value : 0;
       }

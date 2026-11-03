@@ -6,7 +6,7 @@ import {
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
-import { createCollector, resetCollector } from "../render/lighting";
+import { createCollector, disposeLighting, resetCollector, retainLightingSources } from "../render/lighting";
 import { applyColors, type ColorField, type Rgba } from "../render/color";
 import { sceneSampler } from "../render/sceneSample";
 import {
@@ -378,8 +378,9 @@ export function Scene(props: SceneProps) {
   const imageKey = props.preset.objects.map((object) => object.image).filter(Boolean).join("|");
   useEffect(() => {
     assets.current.sync(props.preset.objects);
+    retainLightingSources(props.preset);
     markDirty();
-  }, [imageKey, props.preset.objects]);
+  }, [imageKey, props.preset, props.preset.objects]);
 
   useEffect(() => assets.current.onChange(() => { markDirty(); }), []);
   // Замер для ambient нужен и в простое (стоп, расстановка), когда кадров нет:
@@ -392,8 +393,16 @@ export function Scene(props: SceneProps) {
     markDirty();
   }), []);
   useEffect(() => () => {
+    assets.current.dispose();
     mediaAssets.current.dispose();
     maskMedia.current.dispose();
+    sceneSampler.reset();
+    if (shadowRef.current) {
+      shadowRef.current.width = 0;
+      shadowRef.current.height = 0;
+      shadowRef.current = null;
+    }
+    disposeLighting();
   }, []);
 
   useEffect(() => {

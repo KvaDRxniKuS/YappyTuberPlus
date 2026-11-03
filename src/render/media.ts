@@ -1,5 +1,6 @@
 import type { MediaCue, MediaSpec, RigFrame, RigPreset } from "../types";
 import { assetUrl } from "../engine/assets";
+import { forgetResources, reportResources } from "../engine/meter";
 
 /** Настройки медиа по умолчанию: старые пресеты и новый объект без файла. */
 export const DEFAULT_MEDIA: MediaSpec = {
@@ -114,6 +115,7 @@ export class MediaAssets {
       this.release(entry);
       this.entries.delete(id);
     }
+    this.updateResourceEstimate();
   }
 
   /** Есть ли сейчас видео, которое надо перерисовывать кадр за кадром. */
@@ -140,6 +142,27 @@ export class MediaAssets {
   dispose(): void {
     for (const entry of this.entries.values()) this.release(entry);
     this.entries.clear();
+    forgetResources(this);
+  }
+
+  private updateResourceEstimate(): void {
+    let images = 0;
+    let imageBytes = 0;
+    let videos = 0;
+    let videoBytes = 0;
+    for (const entry of this.entries.values()) {
+      const image = entry.image;
+      if (image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        images += 1;
+        imageBytes += image.naturalWidth * image.naturalHeight * 4;
+      }
+      const video = entry.video;
+      if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+        videos += 1;
+        videoBytes += video.videoWidth * video.videoHeight * 4;
+      }
+    }
+    reportResources(this, { images, imageBytes, videos, videoBytes });
   }
 
   private entry(id: string, spec: MediaSpec): Entry {
@@ -147,11 +170,12 @@ export class MediaAssets {
     const existing = this.entries.get(id);
     if (existing && existing.spec.src === spec.src && existing.spec.type === spec.type) {
       existing.spec = spec;
-      // Ссылка на файл разрешилась позже — подключаем источник, не сбрасывая
-      // состояние воспроизведения.
-      if (!existing.source && source) {
+      // URL asset:<id> может появиться позже, исчезнуть или смениться после
+      // замены файла. Переподключаем элементы и сразу отпускаем старый декодер.
+      if (existing.source !== source) {
+        this.release(existing);
         existing.source = source;
-        this.attach(existing, spec, source);
+        if (source) this.attach(existing, spec, source);
       }
       return existing;
     }
@@ -385,7 +409,12 @@ export class MediaAssets {
       entry.video.load();
       entry.video = null;
     }
-    entry.image = null;
+    if (entry.image) {
+      entry.image.onload = null;
+      entry.image.onerror = null;
+      entry.image.removeAttribute("src");
+      entry.image = null;
+    }
     this.stopVoices(entry, 0);
     entry.voices = [];
   }
@@ -446,6 +475,7 @@ export class MaskMedia {
       video.load();
       this.videos.delete(source);
     }
+    this.updateResourceEstimate();
   }
 
   /** Готовый кадр или `null`, пока фильм не догрузился. */
@@ -468,5 +498,17 @@ export class MaskMedia {
       video.load();
     }
     this.videos.clear();
+    forgetResources(this);
+  }
+
+  private updateResourceEstimate(): void {
+    let videos = 0;
+    let videoBytes = 0;
+    for (const video of this.videos.values()) {
+      if (video.videoWidth <= 0 || video.videoHeight <= 0) continue;
+      videos += 1;
+      videoBytes += video.videoWidth * video.videoHeight * 4;
+    }
+    reportResources(this, { videos, videoBytes });
   }
 }

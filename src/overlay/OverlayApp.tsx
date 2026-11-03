@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
 import { applyColors } from "../render/color";
-import { clearNormalSources, createCollector, resetCollector, retainLightingSources } from "../render/lighting";
+import { clearNormalSources, createCollector, disposeLighting, resetCollector, retainLightingSources } from "../render/lighting";
 import { MediaAssets, MaskMedia } from "../render/media";
 import {
   assetFailure, assetIdsOfPreset, assetMissing, assetOwnersOfPreset,
@@ -149,7 +149,7 @@ export function OverlayApp() {
   useEffect(() => assets.current.onChange(() => markDirty()), []);
   useEffect(() => () => {
     assets.current.dispose();
-    clearNormalSources();
+    disposeLighting();
   }, []);
 
   useEffect(() => {

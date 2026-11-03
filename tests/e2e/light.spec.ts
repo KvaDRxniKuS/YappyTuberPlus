@@ -312,7 +312,7 @@ test("следование за мышью: доворот в градусах �
   // Пределы сустава ограничивают доворот: limit стоит на отклонении от покоя.
   const limited = { ...turned, rotationalLimitLeft: 20, rotationalLimitRight: 40 };
   expect(behaviourBlock(limited, head)).toContain(
-    "rotation = 0 + limit(0 + ((mouse.x - 0.5) * 2) * 30 + ((mouse.y - 0.5) * 2) * -10 - (0), -20, 40)",
+    "rotation = 0 + limit(0 + mouse.x * 30 + mouse.y * -10 - (0), -20, 40)",
   );
   const withSmooth = { ...limited, followMouseRotSmooth: 150 };
   const smoothBlock = behaviourBlock(withSmooth, head);
@@ -324,10 +324,10 @@ test("следование за мышью: доворот в градусах �
 
   // Мёртвая зона и инверсия действуют и на доворот: это тот же ход курсора.
   expect(behaviourBlock({ ...base, followMouseRotX: 30, followMouseDead: 0.5 }, head)).toContain("max(abs(");
-  expect(behaviourBlock({ ...base, followMouseRotX: 30, followMouseInvert: true }, head)).toContain("(-((");
+  expect(behaviourBlock({ ...base, followMouseRotX: 30, followMouseInvert: true }, head)).toContain("(-mouse.x)");
   // Одна ось — по второй доворота нет (позиция при этом выключена силой 0).
   const onlyX = behaviourBlock({ ...base, followMouseStrength: 0, followMouseRotX: 30 }, head);
-  expect(onlyX).toContain("rotation = 0 + ((mouse.x - 0.5) * 2) * 30");
+  expect(onlyX).toContain("rotation = 0 + mouse.x * 30");
   expect(onlyX).not.toContain("mouse.y");
 
   // Настройки переживают запись и чтение блока.
@@ -355,6 +355,25 @@ test("следование за мышью: доворот в градусах �
  * относительно середины холста и уезжает вместе с камерой. Проверяем формулы,
  * потому что браузерного WebGL в тестах нет.
  */
+test("live-текстуры обновляются без повторного выделения GPU-памяти", () => {
+  const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
+  const upload = source.slice(source.indexOf("function createMapTexture"), source.indexOf("export function invertMatrix3"));
+  expect(upload).toContain("if (!entry.uploaded || resized)");
+  expect(upload).toContain("else if (entry.live)");
+  expect(upload).toContain("gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source.image)");
+  expect(upload).not.toContain("if (!entry.uploaded || entry.live)");
+
+  const sceneUpload = source.slice(source.indexOf("function sceneTexture("), source.indexOf("function disposeSceneTexture"));
+  expect(sceneUpload).toContain("const resized = !sceneTextureUploaded || sceneTextureWidth !== canvas.width || sceneTextureHeight !== canvas.height");
+  expect(sceneUpload).toContain("gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas)");
+  expect(sceneUpload).toContain("if (resized)");
+
+  // Удалённые источники освобождают браузерные декодеры и GPU-объекты.
+  expect(source).toContain("entry.gl.deleteTexture(entry.texture)");
+  expect(source).toContain("releaseMapTexture(key)");
+  expect(source).toContain("gl.deleteTexture(sceneTextureCache)");
+});
+
 test("объём: карта нормалей пишется в буфер сверху вниз, как холст", () => {
   const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
   // Вершинный шейдер нормалей: верх объекта идёт в первую строку буфера.
@@ -420,7 +439,7 @@ test("объём: чёрное и прозрачное в карте — «зд�
 
   const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
   // Пороги подставляются в шейдер из тех же чисел: второго источника нет.
-  expect(source).toContain("smoothstep(${NORMAL_COVERAGE_DARK.toFixed(2)}, ${NORMAL_COVERAGE_LIT.toFixed(2)}, level)");
+  expect(source).toContain("smoothstep(${glslFloat(NORMAL_COVERAGE_DARK)}, ${glslFloat(NORMAL_COVERAGE_LIT)}, level)");
   // Прозрачные пиксели карты — тоже пусто; карта без альфы даёт 1.
   expect(source).toContain("smoothstep(0.02, 0.5, map.a)");
   // Покрытие уходит в синий канал: его читает проход объёма.

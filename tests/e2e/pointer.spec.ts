@@ -165,8 +165,8 @@ function screen(overrides: Partial<ScreenSpace> = {}): ScreenSpace {
   };
 }
 
-test("мышь: позиция, смещение, кнопки и колесо как входы", () => {
-  // По умолчанию модуль смотрит на монитор: (500, 350) из 1920×1080.
+test("мышь: знаковая позиция, смещение, кнопки и колесо как входы", () => {
+  // По умолчанию начало в центре монитора: координаты от −1 до +1.
   const mouse = module("cursor", "mouse");
   const frame: PointerFrame = {
     keys: {},
@@ -174,11 +174,11 @@ test("мышь: позиция, смещение, кнопки и колесо �
     screen: screen(),
   };
   const values = composeValues([mouse], { audio: {}, manual: {}, auto: {}, pointer: frame });
-  expect(values["cursor.x"]).toBeCloseTo(500 / 1920, 6);
-  expect(values["cursor.y"]).toBeCloseTo(350 / 1080, 6);
-  // Пиксели внутри области — то же место, но без деления на размер.
-  expect(values["cursor.px"]).toBe(500);
-  expect(values["cursor.py"]).toBe(350);
+  expect(values["cursor.x"]).toBeCloseTo((500 - 960) / 960, 6);
+  expect(values["cursor.y"]).toBeCloseTo((350 - 540) / 540, 6);
+  // У Mouse остались только x/y как положение — отдельных px/py больше нет.
+  expect(values).not.toHaveProperty("cursor.px");
+  expect(values).not.toHaveProperty("cursor.py");
   // Смещение — пиксели за кадр, а не доли.
   expect(values["cursor.dx"]).toBe(-10);
   expect(values["cursor.dy"]).toBe(20);
@@ -196,16 +196,39 @@ test("мышь: область чтения — окно, монитор и сц
   const inScene = module("inscene", "mouse", { space: "scene" });
   const onSecond = module("second", "mouse", { space: "monitor", monitor: "1" });
   const values = composeValues([inWindow, inScene, onSecond], { audio: {}, manual: {}, auto: {}, pointer: frame });
-  // Окно начинается в (100, 50) и имеет размер 800×600.
-  expect(values["inwindow.x"]).toBeCloseTo(400 / 800, 6);
-  expect(values["inwindow.y"]).toBeCloseTo(300 / 600, 6);
-  expect(values["inwindow.px"]).toBe(400);
-  // Сцена начинается в (300, 150) и имеет размер 400×400.
-  expect(values["inscene.x"]).toBeCloseTo(200 / 400, 6);
-  expect(values["inscene.py"]).toBe(200);
-  // Второй монитор начинается с x = 1920: курсор левее него — отрицательные пиксели.
-  expect(values["second.px"]).toBe(500 - 1920);
-  expect(values["second.x"]).toBe(0);
+  // В центре и окна, и сцены обе координаты равны нулю.
+  expect(values["inwindow.x"]).toBe(0);
+  expect(values["inwindow.y"]).toBe(0);
+  expect(values["inscene.x"]).toBe(0);
+  expect(values["inscene.y"]).toBe(0);
+  // Второй монитор целиком правее курсора: X ограничивается левым пределом −1.
+  expect(values["second.x"]).toBe(-1);
+  expect(values["second.y"]).toBeCloseTo((350 - 512) / 512, 6);
+  expect(values).not.toHaveProperty("second.px");
+});
+
+test("мышь: смещение начала меняет знак и диапазон координат", () => {
+  const frame: PointerFrame = {
+    keys: {},
+    mouse: { screenX: 500, screenY: 350, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 },
+    screen: screen(),
+  };
+  const corner = module("corner", "mouse", { offsetX: -1, offsetY: -1 });
+  const opposite = module("opposite", "mouse", { offsetX: 1, offsetY: 1 });
+  const values = composeValues([corner, opposite], { audio: {}, manual: {}, auto: {}, pointer: frame });
+  // Начало у левого/верхнего края переводит шкалу в 0…1.
+  expect(values["corner.x"]).toBeCloseTo(500 / 1920, 6);
+  expect(values["corner.y"]).toBeCloseTo(350 / 1080, 6);
+  // Правый/нижний край — начало отсчёта, поэтому курсор слева/выше него < 0.
+  expect(values["opposite.x"]).toBeCloseTo((500 - 1920) / 1920, 6);
+  expect(values["opposite.y"]).toBeCloseTo((350 - 1080) / 1080, 6);
+
+  const rect = { x: 0, y: 0, width: 1920, height: 1080 };
+  const atCorner: PointerFrame["mouse"] = { screenX: 0, screenY: 0, dx: 0, dy: 0, left: 0, right: 0, wheel: 0 };
+  expect(mouseValue(atCorner, "x", rect)).toBe(-1);
+  expect(mouseValue(atCorner, "x", rect, { x: -1 })).toBe(0);
+  expect(mouseValue(atCorner, "y", rect, { y: -1 })).toBe(0);
+  expect(mouseValue({ ...atCorner, screenX: 1920, screenY: 1080 }, "x", rect, { x: -1 })).toBe(1);
 });
 
 test("мышь: без геометрии экрана координаты нулевые, кнопки работают", () => {
@@ -216,7 +239,8 @@ test("мышь: без геометрии экрана координаты ну
   };
   const values = composeValues([mouse], { audio: {}, manual: {}, auto: {}, pointer: frame });
   expect(values["cursor.x"]).toBe(0);
-  expect(values["cursor.px"]).toBe(0);
+  expect(values["cursor.y"]).toBe(0);
+  expect(values).not.toHaveProperty("cursor.px");
   expect(values["cursor.left"]).toBe(1);
   expect(values["cursor.dx"]).toBe(4);
 });
@@ -230,12 +254,12 @@ test("мышь: инверсия Y — свойство экземпляра", (
   const plain = module("plain", "mouse", { space: "window" });
   const flipped = module("flipped", "mouse", { space: "window", invertY: true });
   const values = composeValues([plain, flipped], { audio: {}, manual: {}, auto: {}, pointer: frame });
-  expect(values["plain.y"]).toBeCloseTo(0.1, 6);
+  expect(values["plain.y"]).toBeCloseTo(-0.8, 6);
   expect(values["plain.dy"]).toBe(20);
-  expect(values["flipped.y"]).toBeCloseTo(0.9, 6);
+  expect(values["flipped.y"]).toBeCloseTo(0.8, 6);
   expect(values["flipped.dy"]).toBe(-20);
   // Инверсия не трогает X.
-  expect(values["flipped.x"]).toBeCloseTo(0.25, 6);
+  expect(values["flipped.x"]).toBeCloseTo(-0.5, 6);
 });
 
 test("бинда нет: модуль key отдаёт нули, пустая строка переживает загрузку", () => {
@@ -295,9 +319,8 @@ test("стоп обнуляет счётчики hits, но не состоян�
   expect(state.snapshot(600).keys.Space.hits).toBe(1);
 });
 
-test("мышь: пиксели физические — как разрешение монитора, а не «логические»", () => {
-  // Монитор 3440×1440 с масштабом 125 %: подпись и `px` обязаны показывать
-  // настоящее разрешение, иначе числа расходятся с тем, что видит человек.
+test("мышь: физическое разрешение задаёт границы выбранной области", () => {
+  // Масштаб 125 % не меняет физические границы монитора 3440×1440.
   const physical: ScreenSpace = {
     window: { x: 0, y: 0, width: 800, height: 600, scale: 1.25 },
     monitors: [
@@ -315,8 +338,9 @@ test("мышь: пиксели физические — как разрешен�
     screen: physical,
   };
   const wide = composeValues([module("wide", "mouse")], { audio: {}, manual: {}, auto: {}, pointer: frame });
-  // Центр монитора: половина по долям и 1720 физических пикселей.
-  expect(wide["wide.x"]).toBeCloseTo(0.5, 6);
-  expect(wide["wide.px"]).toBe(1720);
-  expect(wide["wide.py"]).toBe(720);
+  // Центр монитора — ноль; координаты не добавляют отдельные пиксельные выходы.
+  expect(wide["wide.x"]).toBe(0);
+  expect(wide["wide.y"]).toBe(0);
+  expect(wide).not.toHaveProperty("wide.px");
+  expect(wide).not.toHaveProperty("wide.py");
 });

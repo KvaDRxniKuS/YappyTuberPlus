@@ -114,12 +114,10 @@ function StateRow({ label, value, onChange, titles }: {
 }
 
 /**
- * Выбор модуля, когда их несколько.
+ * Явный источник речи или моргания рядом с настройкой видимости.
  *
- * Пока в пресете один микрофон (или одно моргание), выбирать нечего — строки
- * нет. Второй модуль того же типа делает выбор осмысленным: поведение читает
- * ровно тот, чьё имя записано в блоке. Переименовали модуль — здесь видно,
- * что формулы смотрят в старое имя.
+ * Строка видна и при одном модуле: селектор тогда неактивен, но показывает,
+ * какой именно источник используется. При нескольких имя можно переключить.
  */
 function ModulePicker({ label, modules, value, onPick }: {
   label: string;
@@ -127,17 +125,18 @@ function ModulePicker({ label, modules, value, onPick }: {
   value: string;
   onPick: (name: string) => void;
 }) {
-  if (modules.length < 2) return null;
-  const known = modules.some((module) => module.name === value);
+  if (!modules.length) return null;
+  const selected = modules.some((module) => module.name === value) ? value : modules[0].name;
   return (
-    <div className="behaviour-state">
-      <span>{label}<small>какой модуль слушать</small></span>
+    <div className="behaviour-state behaviour-source-picker">
+      <span>{label}<small>{modules.length > 1 ? "выберите источник" : "единственный источник"}</small></span>
       <select
-        value={known ? value : modules[0].name}
+        value={selected}
+        disabled={modules.length < 2}
+        aria-label={label}
         title="Модуль, чьи входы читает поведение"
         onChange={(event) => onPick(event.target.value)}
       >
-        {!known && <option value={modules[0].name}>выберите модуль</option>}
         {modules.map((module) => <option key={module.name} value={module.name}>{module.name}</option>)}
       </select>
     </div>
@@ -288,14 +287,18 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
   /**
    * Правка поведения.
    *
-   * Заодно дописывается имя модуля, если его ещё нет: блок без имени не знает,
-   * чей вход читать, а модуль в пресете уже есть. Пока блок не нужен, имя
-   * никуда не сохраняется — `writeBehaviour` просто удаляет пустой блок.
+   * Для остальных настроек первый доступный источник подставляется по
+   * умолчанию. Явный выбор селектора имеет приоритет и сохраняется в метаданных
+   * даже до включения правила видимости.
    */
   const patch = (next: Partial<Behaviour>) => {
     const filled: Partial<Behaviour> = { ...next };
-    if (voiceModules.length && behaviour.voiceModule === "") filled.voiceModule = voiceModules[0].name;
-    if (eyeModules.length && behaviour.eyeModule === "") filled.eyeModule = eyeModules[0].name;
+    if (filled.voiceModule === undefined && voiceModules.length && behaviour.voiceModule === "") {
+      filled.voiceModule = voiceModules[0].name;
+    }
+    if (filled.eyeModule === undefined && eyeModules.length && behaviour.eyeModule === "") {
+      filled.eyeModule = eyeModules[0].name;
+    }
     onChange(writeBehaviourFor(targets, object, filled));
   };
 
@@ -564,12 +567,6 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
               <Row label="Длительность прыжка" hint="сколько держится вверху" unit="мс" value={behaviour.bounceHold}
                 min={100} max={3000} step={50} onCommit={(bounceHold) => patch({ bounceHold })} />
             )}
-            <ModulePicker
-              label="Микрофон"
-              modules={voiceModules}
-              value={behaviour.voiceModule}
-              onPick={(voiceModule) => patch({ voiceModule })}
-            />
           </>
         ) : null}
       </section>
@@ -786,16 +783,24 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         <section className="behaviour-section">
           <div className="section-title"><span><X size={13} /> Видимость</span></div>
           {hasVoice && (
-            <StateRow
-              label="Рот"
-              value={behaviour.mouth}
-              onChange={(mouth) => patch({ mouth })}
-              titles={{
-                none: "не управлять видимостью",
-                open: "виден, когда персонаж говорит",
-                closed: "виден, когда персонаж молчит",
-              }}
-            />
+            <>
+              <StateRow
+                label="Рот"
+                value={behaviour.mouth}
+                onChange={(mouth) => patch({ mouth })}
+                titles={{
+                  none: "не управлять видимостью",
+                  open: "виден, когда персонаж говорит",
+                  closed: "виден, когда персонаж молчит",
+                }}
+              />
+              <ModulePicker
+                label="Источник речи"
+                modules={voiceModules}
+                value={behaviour.voiceModule}
+                onPick={(voiceModule) => patch({ voiceModule })}
+              />
+            </>
           )}
           {hasEye && (
             <StateRow
@@ -810,7 +815,7 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
             />
           )}
           <ModulePicker
-            label="Моргание"
+            label="Источник моргания"
             modules={eyeModules}
             value={behaviour.eyeModule}
             onPick={(eyeModule) => {

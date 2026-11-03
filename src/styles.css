@@ -439,6 +439,22 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .behaviour-value-wrap small { color: #5f6a74; }
 .behaviour-state span small { display: block; color: #5b656f; font-size: 0.85em; }
 .behaviour-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: #85909a; font-size: 11px; }
+.behaviour-source-picker > span { min-width: 0; }
+.behaviour-source-picker select {
+  flex: 0 1 46%;
+  min-width: 92px;
+  max-width: 46%;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #313740;
+  border-radius: 4px;
+  background: #181b20;
+  color: #b8c2cc;
+  color-scheme: dark;
+  font-size: 11px;
+}
+.behaviour-source-picker select:focus { outline: none; border-color: #609c8c; }
+.behaviour-source-picker select:disabled { opacity: .8; }
 .overlay-control-setting { margin-top: 12px; }
 .overlay-control-setting > span { line-height: 1.5; }
 .overlay-control-setting small { max-width: 320px; }

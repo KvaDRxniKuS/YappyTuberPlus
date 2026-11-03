@@ -1,5 +1,6 @@
 import type { LightShape, RigPreset } from "../types";
 import { assetUrl } from "../engine/assets";
+import { reportResources } from "../engine/meter";
 import {
   LOBE_HALF_RATIO, SPECULAR_BODY_FLOOR, SPECULAR_EXPOSURE, SPECULAR_EXPOSURE_KNEE,
   SPECULAR_PIXEL_FLOOR, SPECULAR_REACH, materialSources,
@@ -571,6 +572,7 @@ interface Programs {
 
 let state: Programs | null = null;
 let failed = false;
+const resourceOwner = {};
 
 /** Есть ли WebGL2 и собрались ли шейдеры: решается один раз. */
 export function lightingAvailable(): boolean {
@@ -625,6 +627,9 @@ function link(gl: WebGL2RenderingContext, vertex: string, fragment: string): Web
 function init(): boolean {
   try {
     const canvas = document.createElement("canvas");
+    // Не держим дефолтный буфер 300×150, пока объём не понадобится.
+    canvas.width = 1;
+    canvas.height = 1;
     const gl = canvas.getContext("webgl2", {
       alpha: true,
       premultipliedAlpha: false,
@@ -647,6 +652,7 @@ function init(): boolean {
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     state = { gl, normal, volume, quad, normalFramebuffer, normalTexture, width: 0, height: 0 };
+    updateResourceEstimate();
     return true;
   } catch (reason) {
     giveUp(reason);
@@ -657,6 +663,10 @@ function init(): boolean {
 /** Карта нормалей: картинка или видео, уже декодированные браузером. */
 interface TextureSource {
   image: HTMLImageElement | HTMLVideoElement;
+  /** Готовый URL: asset:<id> может получить новый blob после замены файла. */
+  url: string;
+  /** Ключ совпадает с ключом кеша GPU-текстуры и позволяет точечно его чистить. */
+  key: string;
   /** Видео и анимация дают новый кадр каждый раз — такую карту льём заново. */
   live: boolean;
 }
@@ -665,9 +675,20 @@ const sources = new Map<string, TextureSource | null>();
 
 function sourceOf(src: string, animate: boolean): TextureSource | null {
   const key = `${animate ? "a" : "s"}:${src}`;
-  if (sources.has(key)) return sources.get(key) ?? null;
+  const existing = sources.get(key);
   const url = assetUrl(src);
-  if (!url) return null;
+  if (!url) {
+    if (existing) {
+      releaseTextureSource(existing);
+      sources.set(key, null);
+      releaseMapTexture(key);
+      updateResourceEstimate();
+    }
+    return null;
+  }
+  if (existing?.url === url) return existing;
+  if (existing) releaseTextureSource(existing);
+  if (sources.has(key)) releaseMapTexture(key);
   const video = animate && /\.(mp4|webm|mov|mkv|m4v)(\?|#|$)/i.test(src);
   if (video) {
     const element = document.createElement("video");
@@ -677,31 +698,81 @@ function sourceOf(src: string, animate: boolean): TextureSource | null {
     element.playsInline = true;
     element.autoplay = true;
     void element.play().catch(() => undefined);
-    sources.set(key, { image: element, live: true });
-    return sources.get(key) ?? null;
+    const result = { image: element, url, key, live: true };
+    sources.set(key, result);
+    return result;
   }
   const image = new Image();
   image.decoding = "async";
+  const result = { image, url, key, live: animate };
+  image.onerror = () => {
+    image.onerror = null;
+    image.onload = null;
+    image.removeAttribute("src");
+    if (sources.get(key) === result) {
+      sources.set(key, null);
+      releaseMapTexture(key);
+      updateResourceEstimate();
+    }
+  };
   image.src = url;
-  image.onerror = () => sources.set(key, null);
   // Анимированная картинка тоже живая: браузер обновляет её кадр сам.
-  sources.set(key, { image, live: animate });
-  return sources.get(key) ?? null;
+  sources.set(key, result);
+  return result;
+}
+
+/** Остановить декодер и разорвать ссылку на исходный файл. */
+function releaseTextureSource(entry: TextureSource | null): void {
+  if (!entry) return;
+  if (typeof HTMLVideoElement !== "undefined" && entry.image instanceof HTMLVideoElement) {
+    entry.image.pause();
+    entry.image.removeAttribute("src");
+    entry.image.load();
+  } else if (typeof HTMLImageElement !== "undefined" && entry.image instanceof HTMLImageElement) {
+    entry.image.onload = null;
+    entry.image.onerror = null;
+    entry.image.removeAttribute("src");
+  }
+}
+
+function releaseMapTexture(key: string): void {
+  const entry = mapTextures.get(key);
+  if (!entry) return;
+  entry.gl.deleteTexture(entry.texture);
+  mapTextures.delete(key);
 }
 
 /** Сбрасывает кеш карт: пресет сменился, файлов может не стать. */
 export function clearNormalSources(): void {
-  for (const entry of sources.values()) {
-    if (entry && entry.image instanceof HTMLVideoElement) {
-      entry.image.pause();
-      entry.image.removeAttribute("src");
-    }
-  }
+  for (const entry of sources.values()) releaseTextureSource(entry);
   sources.clear();
-  mapTextures.clear();
+  for (const key of [...mapTextures.keys()]) releaseMapTexture(key);
+  if (state) {
+    const { gl } = state;
+    if (sceneTextureCache) gl.deleteTexture(sceneTextureCache);
+    if (whiteTexture) gl.deleteTexture(whiteTexture);
+    sceneTextureCache = null;
+    sceneTextureGl = null;
+    sceneTextureUploaded = false;
+    whiteTexture = null;
+    sceneTextureWidth = 0;
+    sceneTextureHeight = 0;
+    // Храним только минимальный буфер, пока объём не понадобится снова.
+    gl.canvas.width = 1;
+    gl.canvas.height = 1;
+    gl.bindTexture(gl.TEXTURE_2D, state.normalTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    state.width = 1;
+    state.height = 1;
+  }
+  if (scratch) {
+    scratch.width = 0;
+    scratch.height = 0;
+  }
+  updateResourceEstimate();
 }
 
-/** Освобождает декодированные карты, которые больше не входят в сцену. */
+/** Освобождает декодированные карты и GPU-текстуры, которые больше не входят в сцену. */
 export function retainLightingSources(preset: RigPreset): void {
   const retained = new Set<string>();
   for (const object of preset.objects) {
@@ -712,16 +783,29 @@ export function retainLightingSources(preset: RigPreset): void {
   }
   for (const [key, entry] of sources) {
     if (retained.has(key)) continue;
-    if (entry?.image instanceof HTMLVideoElement) {
-      entry.image.pause();
-      entry.image.removeAttribute("src");
-    } else if (entry?.image instanceof HTMLImageElement) {
-      entry.image.onload = null;
-      entry.image.onerror = null;
-      entry.image.removeAttribute("src");
-    }
+    releaseTextureSource(entry);
     sources.delete(key);
   }
+  for (const key of [...mapTextures.keys()]) {
+    if (!retained.has(key)) releaseMapTexture(key);
+  }
+  updateResourceEstimate();
+}
+
+/** Освободить ресурсы освещения при уничтожении окна/редактора. */
+export function disposeLighting(): void {
+  clearNormalSources();
+  if (state) {
+    const { gl } = state;
+    gl.deleteProgram(state.normal);
+    gl.deleteProgram(state.volume);
+    gl.deleteBuffer(state.quad);
+    gl.deleteFramebuffer(state.normalFramebuffer);
+    gl.deleteTexture(state.normalTexture);
+    state = null;
+  }
+  scratch = null;
+  updateResourceEstimate();
 }
 
 function ready(texture: TextureSource): boolean {
@@ -777,6 +861,7 @@ function ensureSize(target: Programs, width: number, height: number): void {
   gl.bindFramebuffer(gl.FRAMEBUFFER, target.normalFramebuffer);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.normalTexture, 0);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  updateResourceEstimate();
 }
 
 /** Рамка работы в пикселях холста: объём считается только внутри неё. */
@@ -810,8 +895,10 @@ let scratch: HTMLCanvasElement | null = null;
 function scratchOf(source: HTMLCanvasElement, box: ShadeBox): HTMLCanvasElement | null {
   if (typeof document === "undefined") return null;
   if (!scratch) scratch = document.createElement("canvas");
+  const resized = scratch.width !== box.width || scratch.height !== box.height;
   if (scratch.width !== box.width) scratch.width = box.width;
   if (scratch.height !== box.height) scratch.height = box.height;
+  if (resized) updateResourceEstimate();
   const ctx = scratch.getContext("2d");
   if (!ctx) return null;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -911,7 +998,7 @@ export function shadeLayer(
       gl.uniform1f(gl.getUniformLocation(program.normal, "uStrength"), Math.min(2, Math.max(0, normalStrength)));
       gl.uniform1i(gl.getUniformLocation(program.normal, "uMap"), 0);
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, createMapTexture(gl, `${normalSource!.src}|${normalTexture.live}`, normalTexture));
+      gl.bindTexture(gl.TEXTURE_2D, createMapTexture(gl, normalTexture));
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
 
@@ -936,7 +1023,7 @@ export function shadeLayer(
     const bindChannel = (index: number, unit: number, name: string, source: TextureSource | null) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
       gl.bindTexture(gl.TEXTURE_2D, source
-        ? createMapTexture(gl, `${name}|${source.live}`, source)
+        ? createMapTexture(gl, source)
         : white(gl));
       gl.uniform1i(gl.getUniformLocation(program.volume, name), unit);
     };
@@ -1065,6 +1152,7 @@ function white(gl: WebGL2RenderingContext): WebGLTexture {
       gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
       textureSettings(gl);
+      updateResourceEstimate();
     }
   }
   return whiteTexture!;
@@ -1079,29 +1167,49 @@ function textureSettings(gl: WebGL2RenderingContext): void {
 
 /** Текстуры карт нормалей: у каждого файла своя, статичная заливается раз. */
 interface MapTexture {
+  gl: WebGL2RenderingContext;
   texture: WebGLTexture;
   live: boolean;
   uploaded: boolean;
+  width: number;
+  height: number;
 }
 
 const mapTextures = new Map<string, MapTexture>();
 
-function createMapTexture(gl: WebGL2RenderingContext, key: string, source: TextureSource): WebGLTexture {
-  let entry = mapTextures.get(key);
+function createMapTexture(gl: WebGL2RenderingContext, source: TextureSource): WebGLTexture {
+  let entry = mapTextures.get(source.key);
+  if (entry && entry.gl !== gl) {
+    entry.gl.deleteTexture(entry.texture);
+    mapTextures.delete(source.key);
+    entry = undefined;
+  }
   if (!entry) {
     const texture = gl.createTexture();
     if (!texture) throw new Error("texture");
-    entry = { texture, live: source.live, uploaded: false };
-    mapTextures.set(key, entry);
+    entry = { gl, texture, live: source.live, uploaded: false, width: 0, height: 0 };
+    mapTextures.set(source.key, entry);
   }
   gl.bindTexture(gl.TEXTURE_2D, entry.texture);
-  // Статичную карту заливаем один раз, живую — каждый кадр: видео и
-  // анимация дают новый кадр сами.
-  if (!entry.uploaded || entry.live) {
+  const dimensions = source.image instanceof HTMLVideoElement
+    ? [source.image.videoWidth, source.image.videoHeight]
+    : [source.image.naturalWidth, source.image.naturalHeight];
+  const resized = entry.width !== dimensions[0] || entry.height !== dimensions[1];
+  // Статичную карту заливаем один раз. Для live-источника выделяем память
+  // только при первом кадре или смене размера, а дальше обновляем texel-данные
+  // в том же хранилище: texImage2D каждый кадр заставлял драйвер перевыделять
+  // GPU-текстуру и создавал лишнюю нагрузку на память.
+  if (!entry.uploaded || resized) {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source.image);
     textureSettings(gl);
     entry.uploaded = true;
+    entry.width = dimensions[0];
+    entry.height = dimensions[1];
+    updateResourceEstimate();
+  } else if (entry.live) {
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source.image);
   }
   return entry.texture;
 }
@@ -1124,18 +1232,72 @@ export function invertMatrix3(matrix: readonly number[]): Float32Array {
 }
 
 let sceneTextureCache: WebGLTexture | null = null;
+let sceneTextureGl: WebGL2RenderingContext | null = null;
+let sceneTextureUploaded = false;
+let sceneTextureWidth = 0;
+let sceneTextureHeight = 0;
 
 function sceneTexture(gl: WebGL2RenderingContext, canvas: HTMLCanvasElement): WebGLTexture {
-  if (!sceneTextureCache) sceneTextureCache = gl.createTexture();
+  if (sceneTextureGl !== gl) {
+    if (sceneTextureGl && sceneTextureCache) sceneTextureGl.deleteTexture(sceneTextureCache);
+    sceneTextureCache = gl.createTexture();
+    sceneTextureGl = gl;
+    sceneTextureUploaded = false;
+    sceneTextureWidth = 0;
+    sceneTextureHeight = 0;
+  } else if (!sceneTextureCache) {
+    sceneTextureCache = gl.createTexture();
+    sceneTextureUploaded = false;
+  }
   const texture = sceneTextureCache!;
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
-  textureSettings(gl);
+  const resized = !sceneTextureUploaded || sceneTextureWidth !== canvas.width || sceneTextureHeight !== canvas.height;
+  if (resized) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    textureSettings(gl);
+    sceneTextureUploaded = true;
+    sceneTextureWidth = canvas.width;
+    sceneTextureHeight = canvas.height;
+    updateResourceEstimate();
+  } else {
+    // Живой снимок сцены обновляем в уже выделенном GPU-хранилище.
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  }
   return texture;
 }
 
 function disposeSceneTexture(gl: WebGL2RenderingContext): void {
   gl.activeTexture(gl.TEXTURE0);
+}
+
+/** Estimate retained RGBA storage; browser/driver overhead is intentionally omitted. */
+function updateResourceEstimate(): void {
+  let textureBytes = 0;
+  for (const entry of mapTextures.values()) textureBytes += entry.width * entry.height * 4;
+  let textures = mapTextures.size;
+  if (sceneTextureCache) {
+    textures += 1;
+    textureBytes += sceneTextureWidth * sceneTextureHeight * 4;
+  }
+  if (whiteTexture) {
+    textures += 1;
+    textureBytes += 4;
+  }
+  if (state) {
+    textures += 1;
+    textureBytes += state.width * state.height * 4;
+  }
+  let offscreenCanvases = 0;
+  let offscreenCanvasBytes = 0;
+  if (scratch && scratch.width > 0 && scratch.height > 0) {
+    offscreenCanvases += 1;
+    offscreenCanvasBytes += scratch.width * scratch.height * 4;
+  }
+  if (state) {
+    offscreenCanvases += 1;
+    offscreenCanvasBytes += state.gl.canvas.width * state.gl.canvas.height * 4;
+  }
+  reportResources(resourceOwner, { textures, textureBytes, offscreenCanvases, offscreenCanvasBytes });
 }

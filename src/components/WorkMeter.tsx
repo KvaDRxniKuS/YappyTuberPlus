@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { readCapture, takeWork, type WorkRates } from "../engine/meter";
+import { readCapture, readResources, takeWork, type WorkRates } from "../engine/meter";
 
 interface Ambient {
   /** Запущенные анимации (CSS и Web Animations): каждая гонит кадры сама по себе. */
@@ -13,13 +13,15 @@ interface Ambient {
   /** Сколько холстов в документе и сколько памяти занимают их битмапы. */
   canvases: number;
   canvasMb: number;
+  /** Оценка известных декодированных кадров и ресурсов рендера. */
+  resourcesMb: number;
   /** Живой захват звука: микрофоны, которые сейчас слушаются. */
   mic: number;
 }
 
 const EMPTY: WorkRates & Ambient = {
   draws: 0, frames: 0, arrivals: 0, animations: 0, playing: 0, longTasks: 0, heap: 0,
-  canvases: 0, canvasMb: 0, mic: 0,
+  canvases: 0, canvasMb: 0, resourcesMb: 0, mic: 0,
 };
 
 /** Память битмапов всех холстов документа: 4 байта на пиксель. */
@@ -70,7 +72,11 @@ export function WorkMeter() {
       const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
       const heap = memory ? Math.round(memory.usedJSHeapSize / (1024 * 1024)) : 0;
       const mic = readCapture().streams;
-      setWork({ ...rates, animations, playing, longTasks: longTasks.current, heap, mic, ...canvasMemory() });
+      const resources = readResources();
+      const resourceBytes = resources.imageBytes + resources.videoBytes + resources.textureBytes
+        + resources.bufferBytes + resources.offscreenCanvasBytes;
+      const resourcesMb = Math.round((resourceBytes / (1024 * 1024)) * 10) / 10;
+      setWork({ ...rates, animations, playing, longTasks: longTasks.current, heap, mic, resourcesMb, ...canvasMemory() });
       longTasks.current = 0;
     }, 1000);
     return () => window.clearInterval(timer);
@@ -80,12 +86,13 @@ export function WorkMeter() {
   return (
     <span
       className={`work-meter ${idle ? "idle" : "busy"}`}
-      title="Живая работа окна в секунду: отрисовки сцены · кадры движка · кадры от планировщика · запущенные анимации · играющие видео и звук · подключённые микрофоны · занятая JS-куча · память холстов · долгие задачи главного потока. В паузе и стопе — нули."
+      title="Живая работа окна: отрисовки, кадры, анимации, медиа, микрофоны и долгие задачи. Память: отдельно JS-куча; холсты и приблизительная оценка известных RGBA-кадров, текстур и буферов. Это не полная память WebView и не причина роста сама по себе."
     >
       {work.draws} рис · {work.frames} кадр · {work.arrivals} вход · {work.animations} аним · {work.playing} медиа
       {work.mic > 0 ? ` · ${work.mic} мик` : ""}
-      {work.heap > 0 ? ` · ${work.heap} МБ` : ""}
+      {work.heap > 0 ? ` · JS ${work.heap} МБ` : ""}
       {` · ${work.canvases} холст ${work.canvasMb} МБ`}
+      {work.resourcesMb > 0 ? ` · ресурсы ≈${work.resourcesMb} МБ` : ""}
       {work.longTasks > 0 ? ` · ${work.longTasks} задерж` : ""}
     </span>
   );

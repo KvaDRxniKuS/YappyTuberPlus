@@ -1,4 +1,5 @@
 import type { Rgba } from "./color";
+import { reportResources } from "../engine/meter";
 
 /**
  * Средний цвет области сцены.
@@ -120,6 +121,14 @@ class SceneSampler {
   /** Замер больше не нужен: модулей ambient нет. */
   stop(): void {
     this.requested = false;
+    this.pixels = null;
+    this.width = 0;
+    this.height = 0;
+    if (this.canvas) {
+      this.canvas.width = 0;
+      this.canvas.height = 0;
+    }
+    this.updateResourceEstimate();
   }
 
   get wanted(): boolean {
@@ -151,6 +160,7 @@ class SceneSampler {
     }
     this.width = width;
     this.height = height;
+    this.updateResourceEstimate();
     this.context.setTransform(scale, 0, 0, scale, 0, 0);
     this.context.clearRect(0, 0, canvasWidth, canvasHeight);
     return { ctx: this.context, scale };
@@ -166,6 +176,7 @@ class SceneSampler {
       this.pixels = null;
     }
     this.requested = false;
+    this.updateResourceEstimate();
   }
 
   /** Средний цвет области последнего замера. `null` — замера ещё не было. */
@@ -179,6 +190,21 @@ class SceneSampler {
     this.requested = false;
     this.width = 0;
     this.height = 0;
+    if (this.canvas) {
+      this.canvas.width = 0;
+      this.canvas.height = 0;
+    }
+    this.updateResourceEstimate();
+  }
+
+  private updateResourceEstimate(): void {
+    const canvasBytes = this.canvas ? this.canvas.width * this.canvas.height * 4 : 0;
+    const bufferBytes = this.pixels ? this.pixels.width * this.pixels.height * 4 : 0;
+    reportResources(this, {
+      offscreenCanvases: canvasBytes > 0 ? 1 : 0,
+      offscreenCanvasBytes: canvasBytes,
+      bufferBytes,
+    });
   }
 }
 

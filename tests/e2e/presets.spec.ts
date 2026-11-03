@@ -190,6 +190,8 @@ test("поведение: следование за мышью с огранич
   expect(ellipseBlock).toContain("min(1, 1 / max(");
   expect(ellipseBlock).toContain("mouse.x");
   expect(ellipseBlock).toContain("mouse.y");
+  expect(ellipseBlock).not.toContain("mouse.x - 0.5");
+  expect(ellipseBlock).not.toContain("mouse.y - 0.5");
 
   // Разные полуоси: эллипс, а не круг — по X шире, чем по Y.
   const wide = behaviourBlock({ ...ellipse, followMouseWidth: 400, followMouseHeight: 100 }, object);
@@ -214,7 +216,7 @@ test("поведение: следование за мышью с огранич
   expect(behaviourBlock(dead, object)).toContain("/ 0.5");
 
   // Инверсия меняет знак хода.
-  expect(behaviourBlock({ ...ellipse, followMouseInvert: true }, object)).toContain("(-((");
+  expect(behaviourBlock({ ...ellipse, followMouseInvert: true }, object)).toContain("(-mouse.x)");
 
   // Сглаживание — снаружи смещения.
   expect(behaviourBlock({ ...ellipse, followMouseSmooth: 90 }, object)).toContain("smooth(");

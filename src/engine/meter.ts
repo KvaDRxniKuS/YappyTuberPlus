@@ -74,3 +74,50 @@ export function resetMeter(): void {
   counters.arrivals = 0;
   since = typeof performance === "undefined" ? Date.now() : performance.now();
 }
+
+/** Известные декодированные кадры и GPU-хранилища, не вся память процесса. */
+export interface ResourceEstimate {
+  images: number;
+  imageBytes: number;
+  videos: number;
+  videoBytes: number;
+  textures: number;
+  textureBytes: number;
+  bufferBytes: number;
+  offscreenCanvases: number;
+  offscreenCanvasBytes: number;
+}
+
+const EMPTY_RESOURCES: ResourceEstimate = {
+  images: 0, imageBytes: 0, videos: 0, videoBytes: 0,
+  textures: 0, textureBytes: 0, bufferBytes: 0,
+  offscreenCanvases: 0, offscreenCanvasBytes: 0,
+};
+const resourceOwners = new Map<object, ResourceEstimate>();
+
+/** Опубликовать оценку одного владельца кеша; вызывается при изменении ресурсов. */
+export function reportResources(owner: object, estimate: Partial<ResourceEstimate>): void {
+  resourceOwners.set(owner, { ...EMPTY_RESOURCES, ...estimate });
+}
+
+/** Удалить оценку при размонтировании владельца. */
+export function forgetResources(owner: object): void {
+  resourceOwners.delete(owner);
+}
+
+/** Сумма только известных RGBA-ресурсов всех живых подсистем окна. */
+export function readResources(): ResourceEstimate {
+  const total = { ...EMPTY_RESOURCES };
+  for (const estimate of resourceOwners.values()) {
+    total.images += estimate.images;
+    total.imageBytes += estimate.imageBytes;
+    total.videos += estimate.videos;
+    total.videoBytes += estimate.videoBytes;
+    total.textures += estimate.textures;
+    total.textureBytes += estimate.textureBytes;
+    total.bufferBytes += estimate.bufferBytes;
+    total.offscreenCanvases += estimate.offscreenCanvases;
+    total.offscreenCanvasBytes += estimate.offscreenCanvasBytes;
+  }
+  return total;
+}

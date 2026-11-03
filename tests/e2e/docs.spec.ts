@@ -87,6 +87,13 @@ test("документы не ссылаются на несуществующи
 
 test("модуль мыши в шаблоне и в документации говорит одно и то же", () => {
   const template = JSON.parse(read("public/modules/mouse.json"));
+  expect(template.format).toBe(4);
+  expect(template.inputs.filter((spec: { name: string }) => spec.name === "x" || spec.name === "y")
+    .map((spec: { name: string }) => spec.name)).toEqual(["x", "y"]);
+  expect(template.inputs.some((spec: { name: string }) => spec.name === "px" || spec.name === "py")).toBe(false);
+  expect(template.fields.map((field: { key: string }) => field.key)).toEqual(
+    expect.arrayContaining(["offsetX", "offsetY"]),
+  );
   const wheel = template.inputs.find((spec: { name: string }) => spec.name === "wheel");
   // Колесо — целые щелчки: шаг 1 и честный предел за кадр.
   expect(wheel.step).toBe(1);

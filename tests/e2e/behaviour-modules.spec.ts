@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { BehaviourPanel } from "../../src/components/BehaviourPanel";
 import {
   DEFAULT_BEHAVIOUR, behaviourBlock, readBehaviour, writeBehaviour, type Behaviour,
 } from "../../src/engine/behaviour";
-import { DEFAULT_BASE, type RigObject } from "../../src/types";
+import { DEFAULT_BASE, type ModuleInstance, type RigObject } from "../../src/types";
 
 /*
  * Правило вкладки «Поведение»: **поле живёт, пока в пресете есть его модуль**.
@@ -51,6 +54,61 @@ test("глаз живёт только со своим модулем морга
   expect(block({ eye: "open", eyeModule: "auto" })).toContain("1 - auto.blink");
   // Другой экземпляр — другое имя.
   expect(block({ eye: "closed", eyeModule: "blink_2" })).toContain("blink_2.blink");
+});
+
+test("явно выбранные источники сохраняются до включения правил", () => {
+  const selected = { ...DEFAULT_BEHAVIOUR, voiceModule: "mic_2", eyeModule: "auto_2" };
+  const script = writeBehaviour("", selected, object).script;
+  expect(script).toContain("@behaviour");
+  expect(script).not.toContain(".speak");
+  expect(script).not.toContain(".blink");
+  expect(readBehaviour(script)).toMatchObject({ voiceModule: "mic_2", eyeModule: "auto_2" });
+
+  const rewritten = writeBehaviour(script, readBehaviour(script), object).script;
+  expect(readBehaviour(rewritten)).toMatchObject({ voiceModule: "mic_2", eyeModule: "auto_2" });
+});
+
+test("селекторы речи и моргания видны с одним источником и показывают выбранный второй", () => {
+  const mic = (name: string): ModuleInstance => ({
+    name, type: "loudness", enabled: true, source: "live", config: {},
+  });
+  const auto = (name: string): ModuleInstance => ({
+    name, type: "autoblink", enabled: true, source: "manual", config: {},
+  });
+  const render = (script: string, modules: ModuleInstance[]) => renderToStaticMarkup(createElement(
+    BehaviourPanel,
+    { object: { ...object, script }, selection: [{ ...object, script }], onChange: () => {}, modules },
+  ));
+  const picker = (markup: string, label: string) => {
+    const labelAt = markup.indexOf(`aria-label="${label}"`);
+    expect(labelAt).toBeGreaterThanOrEqual(0);
+    const start = markup.lastIndexOf("<select", labelAt);
+    const end = markup.indexOf("</select>", labelAt) + "</select>".length;
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return markup.slice(start, end);
+  };
+
+  const single = render("", [mic("mic"), auto("auto")]);
+  for (const [label, name] of [["Источник речи", "mic"], ["Источник моргания", "auto"]]) {
+    const select = picker(single, label);
+    expect(select).toContain("disabled=\"\"");
+    expect(select).toContain(`<option value="${name}" selected="">${name}</option>`);
+  }
+
+  const saved = writeBehaviour("", {
+    ...DEFAULT_BEHAVIOUR, voiceModule: "mic_2", eyeModule: "auto_2",
+  }, object).script;
+  const multiple = render(saved, [mic("mic"), mic("mic_2"), auto("auto"), auto("auto_2")]);
+  for (const [label, selected, other] of [
+    ["Источник речи", "mic_2", "mic"],
+    ["Источник моргания", "auto_2", "auto"],
+  ]) {
+    const select = picker(multiple, label);
+    expect(select).not.toContain("disabled=\"\"");
+    expect(select).toContain(`<option value="${selected}" selected="">${selected}</option>`);
+    expect(select).toContain(`<option value="${other}">${other}</option>`);
+  }
 });
 
 test("битое имя модуля не становится текстом скрипта", () => {

@@ -207,10 +207,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function clamp01(value: number): number {
-  return clamp(value, 0, 1);
-}
-
 /** Человеческая подпись клавиши по `event.code`: в скрипте остаётся код. */
 export function keyLabel(code: string): string {
   if (!code) return "—";
@@ -308,41 +304,34 @@ export function mouseArea(
   return wanted ?? primary ?? monitors[0];
 }
 
-/** Доли 0…1 внутри области: край области — 0 или 1. */
-function fraction(value: number, start: number, size: number): number {
+/** Знаковое положение относительно смещаемого начала в пределах [-1, 1]. */
+function signedPosition(value: number, start: number, size: number, offsetFromCenter: number): number {
   if (!Number.isFinite(size) || size <= 0) return 0;
-  return clamp01((value - start) / size);
-}
-
-/**
- * Пиксели внутри области.
- *
- * Ровно те же пиксели, в которых приходит курсор: системный хук отдаёт
- * физические, и доли `x`/`y` считаются по той же ширине. Делить на масштаб
- * монитора нельзя — тогда `px` живёт в другом пространстве, чем `x`, и на
- * мониторе с масштабом 125 % числа расходятся с реальным разрешением.
- */
-function offset(value: number, start: number): number {
-  return value - start;
+  const offset = clamp(offsetFromCenter, -1, 1);
+  const origin = start + size * ((offset + 1) / 2);
+  // Масштабируем по дальней границе: центр даёт -1…1, левый верхний
+  // угол — 0…1, правый нижний — -1…0.
+  const reach = Math.max(origin - start, start + size - origin);
+  if (reach <= 0) return 0;
+  return clamp((value - origin) / reach, -1, 1);
 }
 
 /**
  * Число мыши по имени входа.
  *
- * `x`/`y` — доли 0…1 внутри области, `px`/`py` — пиксели внутри неё,
- * `dx`/`dy` — смещение за кадр в пикселях. Без области остаются только
- * кнопки: координаты не к чему привязать.
+ * `x`/`y` — знаковые координаты от смещаемого начала, в диапазоне −1…1;
+ * `dx`/`dy` — смещение за кадр в пикселях. Без области координаты равны нулю,
+ * но кнопки продолжают работать.
  */
 export function mouseValue(
   mouse: MouseSample | undefined,
   name: string,
   area: ScreenRect | null = null,
+  originOffset: { x?: number; y?: number } = {},
 ): number {
   if (!mouse) return 0;
-  if (name === "x" && area) return fraction(mouse.screenX, area.x, area.width);
-  if (name === "y" && area) return fraction(mouse.screenY, area.y, area.height);
-  if (name === "px" && area) return offset(mouse.screenX, area.x);
-  if (name === "py" && area) return offset(mouse.screenY, area.y);
+  if (name === "x" && area) return signedPosition(mouse.screenX, area.x, area.width, originOffset.x ?? 0);
+  if (name === "y" && area) return signedPosition(mouse.screenY, area.y, area.height, originOffset.y ?? 0);
   if (name === "dx") return mouse.dx;
   if (name === "dy") return mouse.dy;
   if (name === "left") return mouse.left;
@@ -363,10 +352,9 @@ export interface MonitorOption {
 /**
  * Подпись монитора: его настоящее разрешение в пикселях.
  *
- * Раньше размер делился на масштаб — «чтобы как в настройках Windows», — и
- * монитор 3440×1440 при масштабе 125 % показывался как 2752×1152. Путаница
- * стоила доверия ко всем числам модуля, поэтому теперь показываем физические
- * пиксели (ровно те, в которых считаются `px`/`py`), а масштаб — подсказкой.
+ * Размер монитора и координаты системного курсора приходят в физических
+ * пикселях. Масштаб интерфейса — только подсказка: пересчёт здесь разошёлся бы
+ * с реальной областью, относительно которой считаются `x`/`y`.
  */
 export function monitorLabel(monitor: ScreenMonitor): string {
   const width = Math.round(monitor.width);
