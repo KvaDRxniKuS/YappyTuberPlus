@@ -395,6 +395,29 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .behaviour-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
 .behaviour-head b { color: #ccd5dd; font-size: 13.5px; font-weight: 600; }
 .behaviour-note { margin: 0 0 11px; color: #77828c; font-size: 11px; line-height: 1.5; }
+/* ---------- Сворачивание секций «Поведения» ---------- */
+/* Заголовок — кнопка: секция прячет всё, кроме него. Состояние живёт в панели,
+   поэтому свёрнутая секция остаётся свёрнутой при смене объекта. */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.section-toggle:hover { color: var(--accent); }
+.section-chevron { flex: none; color: var(--faint); transition: transform .12s ease; transform: rotate(-90deg); }
+.section-chevron.open { transform: rotate(0deg); }
+.section-toggle:hover .section-chevron { color: var(--accent); }
+.behaviour-section.collapsed > *:not(:first-child) { display: none; }
+.behaviour-section.collapsed { padding-bottom: 6px; }
+
 .behaviour-section { padding: 9px 0; border-top: 1px solid #262b32; }
 .behaviour-section .section-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: #adb6bf; font-size: 11.5px; font-weight: 650; }
 .behaviour-section .section-title span { display: flex; align-items: center; gap: 6px; }
@@ -829,7 +852,21 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   padding-top: 4px;
   border-top: 1px solid var(--border-soft);
 }
-.module-add-top { flex: none; flex-wrap: nowrap; padding: 0; border: 0; }
+/* «Добавить модуль» закреплена при прокрутке: карточек в списке много, а
+   кнопка нужна всегда. Свой фон и отрицательный отступ — чтобы строки списка
+   уходили под неё, а не просвечивали сквозь неё. */
+.module-add-top {
+  position: sticky;
+  top: -10px;
+  z-index: 4;
+  flex: none;
+  flex-wrap: nowrap;
+  padding: 10px 0 6px;
+  margin: -10px 0 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface);
+}
 
 .module-add > span { display: flex; align-items: center; gap: 5px; color: #7f8a94; font-size: 11px; }
 .module-add > div { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1010,7 +1047,15 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .module-palette-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .module-palette-text b { color: #cdd8df; font-size: 12px; font-weight: 600; }
 .module-palette-text small { color: #6d7883; font-size: 10.5px; line-height: 1.35; }
-.module-palette-inputs { color: #55606a; font: 10px "Cascadia Code", ui-monospace, monospace; white-space: nowrap; }
+/* Входы шаблона — подпись под описанием: переносятся по словам и не отбирают
+   ширину у названия. */
+.module-palette-inputs {
+  color: #55606a;
+  font: 10px "Cascadia Code", ui-monospace, monospace;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 .module-palette-note { margin: 0; color: #5d6872; font-size: 10px; line-height: 1.45; }
 .module-palette-note code { color: #7f8a94; }
 
@@ -1619,6 +1664,20 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   background: #101418;
 }
 .preset-rule-head { display: flex; gap: 6px; align-items: center; }
+/* Источник видимости — такая же карточка, как условие по пресетам: имя слева,
+   убрать справа, настройки под ним. */
+.visibility-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #101418;
+}
+.visibility-source .preset-rule-head select { flex: 1; min-width: 0; }
+
 .preset-rule-head select { flex: 1; min-width: 0; }
 .preset-rule-list { display: flex; flex-wrap: wrap; gap: 2px 14px; }
 

@@ -2,6 +2,7 @@ import type { ObjectFrame, RigFrame, RigObject, RigPreset } from "../types";
 import { frontness, structurePaths } from "./structure";
 import { resolveLayer } from "./layers";
 import { DEFAULT_TEXT, resolveTemplate, type TextChannel } from "../render/text";
+import { EMPTY_VISIBILITY_CONTEXT, applyVisibility, type VisibilityContext } from "./visibility";
 
 /**
  * Нейтральная поза: динамические параметры выключены, видны только базовые.
@@ -154,9 +155,22 @@ export function applyTexts(preset: RigPreset, frame: RigFrame, channel?: TextCha
   return texts ? { ...frame, texts } : frame;
 }
 
-/** Всё, что редактор доделывает поверх кадра движка: текст, enabled и порядок. */
-export function prepareFrame(preset: RigPreset, frame: RigFrame, channel?: TextChannel): RigFrame {
-  return applyTreeOrder(preset, applyTexts(preset, applyEnabled(preset, frame), channel));
+/**
+ * Всё, что редактор доделывает поверх кадра движка: видимость из источников,
+ * текст, enabled и порядок.
+ *
+ * Видимость считается первой, а `enabled` — последней: выключенный объект не
+ * должен оживать от множителей, это флаг самой структуры. Текст и порядок от
+ * видимости не зависят.
+ */
+export function prepareFrame(
+  preset: RigPreset,
+  frame: RigFrame,
+  channel?: TextChannel,
+  visibility: VisibilityContext = EMPTY_VISIBILITY_CONTEXT,
+): RigFrame {
+  const shown = applyVisibility(preset, frame, visibility);
+  return applyTreeOrder(preset, applyTexts(preset, applyEnabled(preset, shown), channel));
 }
 
 /**

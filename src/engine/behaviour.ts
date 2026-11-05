@@ -1,4 +1,5 @@
 import type { RigObject, Vec2 } from "../types";
+import { BEHAVIOUR_META, readVisibilitySources, type VisibilitySource } from "./visibility";
 
 /**
  * Поведение объекта — это «пресет» в духе PNGTuber: несколько ползунков,
@@ -137,6 +138,15 @@ export interface Behaviour {
   /** Условия видимости по пресетам одежды и эмоций. */
   presets: PresetRule[];
   /**
+   * Источники видимости — множители, которые редактор считает сам.
+   *
+   * В скрипт они не превращаются: `visible` и `opacity` уже заняты формулами, а
+   * доля видимости должна умножать прозрачность, а не заменять её. Поэтому
+   * список лежит в блоке настроек, а кадр правится на выходе из движка — так
+   * одно и то же поведение видят и редактор, и оверлей.
+   */
+  visibility: VisibilitySource[];
+  /**
    * Имя модуля мыши, за которой следует объект. Пусто — следование выключено.
    *
    * Имя хранится снимком, как у пресетов: генератору нужно написать
@@ -233,6 +243,7 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
   physSmooth: 0.4,
   physForce: 0.4,
   presets: [],
+  visibility: [],
   followMouseModule: "",
   followMouseStrength: 1,
   followMouseLimit: "ellipse",
@@ -253,7 +264,8 @@ export const DEFAULT_BEHAVIOUR: Behaviour = {
 
 const START = "// ── поведение: вкладка «Поведение» ──";
 const END = "// ── конец поведения ──";
-const META = "// @behaviour ";
+/** Маркер блока: общий с модулем видимости, который читает его на каждом кадре. */
+const META = BEHAVIOUR_META;
 
 /** Параметры, которые переписывает блок: остальное в скрипте не трогаем. */
 const MANAGED = ["x", "y", "rotation", "sizeX", "sizeY", "visible"] as const;
@@ -328,6 +340,7 @@ export function isDefault(behaviour: Behaviour): boolean {
     && behaviour.voiceModule === "" && behaviour.eyeModule === "" && behaviour.eyeInput === "blink"
     && behaviour.physRotation === null && behaviour.physSpace === "world"
     && behaviour.followMouseModule === ""
+    && behaviour.visibility.length === 0
     && behaviour.followMouseRotX === 0 && behaviour.followMouseRotY === 0
     && behaviour.flickerAmplitude === 0;
 }
@@ -435,6 +448,9 @@ export function readBehaviour(script: string): Behaviour {
           names: rule.names.filter((name) => typeof name === "string" && !!name),
         }))
         : [];
+      // Источники видимости: те же правила, что и у панели. Битые записи
+      // отбрасываются, иначе объект гас бы от пустого множителя.
+      merged.visibility = readVisibilitySources(source.visibility);
       /**
        * В блок уходят только известные ключи и в порядке `DEFAULT_BEHAVIOUR`.
        *
@@ -825,7 +841,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
 
   // Источник можно выбрать до включения правила. Сохраняем метаданные, иначе
   // контролируемый селектор после перерисовки вернулся бы к первому модулю.
-  if (!body.length && !voice && !eye) return "";
+  if (!body.length && !voice && !eye && !behaviour.visibility.length) return "";
   return [
     START,
     `${META}${JSON.stringify(behaviour)}`,

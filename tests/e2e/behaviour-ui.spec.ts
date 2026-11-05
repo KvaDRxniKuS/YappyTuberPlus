@@ -63,3 +63,80 @@ test("source selectors show one source and retain an explicit second-source choi
   await expect(page.locator(".engine-status")).toHaveClass(/ready/, { timeout: 15_000 });
   await expect(page.getByLabel("Источник речи")).toHaveValue("loudness");
 });
+
+test("секции «Поведения» сворачиваются по одной и сначала раскрыты", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".right-tabs button").filter({ hasText: "Поведение" }).click();
+
+  const wiggle = page.locator(".behaviour-panel .section-toggle").filter({ hasText: "Покачивание" });
+  const reaction = page.locator(".behaviour-panel .section-toggle").filter({ hasText: "Реакция" });
+  // Начальное состояние — раскрыто: длинную вкладку не надо разворачивать руками.
+  await expect(wiggle).toHaveAttribute("aria-expanded", "true");
+  await expect(reaction).toHaveAttribute("aria-expanded", "true");
+
+  await wiggle.click();
+  await expect(wiggle).toHaveAttribute("aria-expanded", "false");
+  // Соседняя секция остаётся раскрытой: состояния независимы.
+  await expect(reaction).toHaveAttribute("aria-expanded", "true");
+  // Свёрнутая секция прячет всё, кроме заголовка.
+  const wiggleSection = page.locator(".behaviour-section.collapsed").filter({ hasText: "Покачивание" });
+  await expect(wiggleSection).toHaveCount(1);
+  await expect(wiggleSection.locator(".behaviour-state").first()).toBeHidden();
+
+  // Состояние переживает смену объекта: дерево не раскрывается заново.
+  await page.locator(".tree-row").nth(1).click();
+  await page.locator(".tree-row").first().click();
+  await expect(wiggle).toHaveAttribute("aria-expanded", "false");
+});
+
+test("сброс поведения — возврат к значениям, а не закрытие панели", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".right-tabs button").filter({ hasText: "Поведение" }).click();
+  const reset = page.locator(".behaviour-head .icon-button");
+  await expect(reset).toHaveAttribute("title", /Сбросить поведение/);
+  // Иконка — круглая стрелка: крестик читался как «закрыть».
+  await expect(reset.locator("svg.lucide-rotate-ccw")).toHaveCount(1);
+});
+
+test("«Добавить модуль» остаётся на виду при прокрутке, а входы шаблона — под описанием", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".right-tabs button").filter({ hasText: "Модули" }).click();
+
+  // Кнопка закреплена: после прокрутки списка она не уезжает вверх.
+  const panel = page.locator(".modules-panel");
+  const addButton = page.getByRole("button", { name: "Добавить модуль" });
+  const before = await addButton.boundingBox();
+  await panel.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  const after = await addButton.boundingBox();
+  expect(before).not.toBeNull();
+  expect(after).not.toBeNull();
+  expect(Math.abs(after!.y - before!.y)).toBeLessThan(2);
+  await expect(addButton).toBeVisible();
+
+  // Палитра: входы шаблона стоят под описанием, внутри текстового блока.
+  await addButton.click();
+  const item = page.locator(".module-palette-item").first();
+  const insideText = await item.evaluate((element) => {
+    const inputs = element.querySelector(".module-palette-inputs");
+    if (!inputs) return null;
+    return inputs.parentElement?.classList.contains("module-palette-text") ?? false;
+  });
+  expect(insideText).toBe(true);
+  const description = await item.locator("small").first().boundingBox();
+  const inputs = await item.locator(".module-palette-inputs").boundingBox();
+  expect(description).not.toBeNull();
+  expect(inputs).not.toBeNull();
+  expect(inputs!.y).toBeGreaterThan(description!.y);
+});
+
+test("следование за мышью без модуля объясняет, каких входов нет", async ({ page }) => {
+  await openStudio(page);
+  await page.locator(".right-tabs button").filter({ hasText: "Поведение" }).click();
+
+  // В стартовом пресете модуля мыши нет: секция есть, но говорит об этом прямо.
+  const follow = page.locator(".behaviour-section").filter({ hasText: "Следование за мышью" });
+  await expect(follow.locator(".behaviour-warning")).toContainText("mouse.x");
+  await expect(follow.locator(".behaviour-warning")).toContainText("mouse.y");
+  // Выбирать нечего — выбора источника нет вовсе.
+  await expect(page.getByLabel("Источник мыши")).toHaveCount(0);
+});

@@ -489,17 +489,19 @@ export function ModulesPanel(props: ModulesPanelProps) {
                 <span className="module-palette-text">
                   <b>{definition.title}</b>
                   <small>{definition.description || definition.id}</small>
-                </span>
-                <span className="module-palette-inputs">
-                  {definition.kind === "viseme"
-                    ? "свои виземы"
-                    : definition.kind === "color"
-                      ? "каналы: r · g · b · a · яркость"
-                    : definition.kind === "ambient"
-                      ? "точки: r · g · b · a · яркость"
-                    : definition.kind === "keyboard"
-                      ? "клавиши из настроек"
-                      : definition.inputs.map((input) => input.name).join(" · ")}
+                  {/* Входы — подпись к шаблону, поэтому идут под описанием:
+                      справа они отбирали ширину у текста и уезжали за край. */}
+                  <span className="module-palette-inputs">
+                    {definition.kind === "viseme"
+                      ? "свои виземы"
+                      : definition.kind === "color"
+                        ? "каналы: r · g · b · a · яркость"
+                      : definition.kind === "ambient"
+                        ? "точки: r · g · b · a · яркость"
+                      : definition.kind === "keyboard"
+                        ? "клавиши из настроек"
+                        : definition.inputs.map((input) => input.name).join(" · ")}
+                  </span>
                 </span>
               </button>
             ))}

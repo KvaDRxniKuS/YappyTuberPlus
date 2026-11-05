@@ -149,6 +149,21 @@ test("настройки речи сохраняются в блоке, даже
   expect(readBehaviour(revived).squash).toBe(0.7);
 });
 
+test("следование за мышью пишет имя выбранного модуля напрямую", () => {
+  // Источник — снимок имени из блока: генератор не знает списка модулей.
+  const script = writeBehaviour("", {
+    ...DEFAULT_BEHAVIOUR, followMouseModule: "cursor", followMouseStrength: 1,
+  }, object).script;
+  expect(script).toContain("cursor.x");
+  expect(script).toContain("cursor.y");
+  // Жёсткого `mouse` в формуле нет: второй модуль мыши повезёт объект за собой.
+  expect(script).not.toContain("mouse.x");
+  expect(script).not.toContain("mouse.y");
+  // Шкала не пересчитывается: вход читается ровно как его отдаёт модуль.
+  expect(script).not.toContain("cursor.px");
+  expect(readBehaviour(script).followMouseModule).toBe("cursor");
+});
+
 test("в блоке нет старых полей следования за мышью", () => {
   const script = writeBehaviour("", {
     ...DEFAULT_BEHAVIOUR, followMouseModule: "mouse", followMouseWidth: 300, followMouseHeight: 160,

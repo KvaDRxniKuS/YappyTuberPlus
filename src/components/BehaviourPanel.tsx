@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
-import { Lightbulb, MousePointer2, Palette, Plus, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import {
+  ChevronDown, Lightbulb, MousePointer2, Palette, Plus, RotateCcw, RotateCw, Shirt, Spline, Trash2, Waves, Wind, X,
+} from "lucide-react";
 import type { ColorLink, ModuleInstance, RigObject, TextSpec } from "../types";
 import { normalizeText } from "../engine/preset";
 import { hasQuotedPlaceholder, quotePlaceholders, unquotePlaceholders } from "../render/text";
@@ -14,6 +16,8 @@ import { moduleDefinition } from "../modules/registry";
 import { COLOR_FIELD_LABEL, colorFieldsOf, ownColorOf, type ColorField } from "../render/color";
 import { Switch } from "./Switch";
 import { autoBlinkEyeInput, autoBlinkOutputs } from "../modules/autoblink";
+import { instanceInputs } from "../modules/values";
+import { sourceKey, sourceReady, type VisibilitySource } from "../engine/visibility";
 
 interface BehaviourPanelProps {
   /** Основной объект: по нему показаны значения. */
@@ -176,14 +180,50 @@ function TextNumber({ label, value, min, max, step, suffix, onCommit }: {
  * сообщение из модуля). Если нужно показать саму ссылку текстом, её экранируют
  * одинарными кавычками — `'{twitch.chat.message}'`; кнопка делает это сама.
  */
-function TextSettings({ spec, onPatch }: {
+/**
+ * Заголовок секции, по которому она сворачивается.
+ *
+ * Состояние живёт в панели, а не в самой секции: свернуть «Покачивание» и
+ * перейти на другой объект — обычный ход работы, и раскрытое заново дерево
+ * заставляло бы искать место каждый раз. Кнопка нажимается целиком, поэтому
+ * попасть по ней легко и мышью, и с клавиатуры.
+ */
+function SectionToggle({ id, open, onToggle, children }: {
+  id: string;
+  open: boolean;
+  onToggle: (id: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className="section-toggle"
+      aria-expanded={open}
+      aria-controls={`behaviour-section-${id}`}
+      title={open ? "Свернуть секцию" : "Развернуть секцию"}
+      onClick={() => onToggle(id)}
+    >
+      <ChevronDown size={13} className={`section-chevron${open ? " open" : ""}`} />
+      {children}
+    </button>
+  );
+}
+
+function TextSettings({ spec, onPatch, open, onToggle }: {
   spec: TextSpec;
   onPatch: (patch: Partial<TextSpec>) => void;
+  /** Раскрыта ли секция: заголовок сворачивает её так же, как остальные. */
+  open: boolean;
+  onToggle: (id: string) => void;
 }) {
   const quoted = hasQuotedPlaceholder(spec.template);
   return (
     <>
-      <div className="section-title"><span>Текст</span><small>ИСТОЧНИК И ОФОРМЛЕНИЕ</small></div>
+      <div className="section-title">
+        <SectionToggle id="text" open={open} onToggle={onToggle}><span>Текст</span></SectionToggle>
+        <small>ИСТОЧНИК И ОФОРМЛЕНИЕ</small>
+      </div>
+      {!open ? null : <>
       <p className="behaviour-hint">
         Свой текст пишется как есть. Ссылка вида <b>{"{twitch.chat.message}"}</b> читается из
         модуля: подставляется последнее сообщение, <b>{"{twitch.chat.user}"}</b> — автор.
@@ -253,6 +293,7 @@ function TextSettings({ spec, onPatch }: {
           <div><input type="color" value={spec.strokeColor} onChange={(event) => onPatch({ strokeColor: event.target.value })} /></div>
         </label>
       </div>
+      </>}
     </>
   );
 }
@@ -272,6 +313,18 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
   // часть полей исчезла, но не должно висеть поверх работы, когда человек и
   // так всё понял.
   const [dismissed, setDismissed] = useState(false);
+
+  /**
+   * Свёрнутые секции: набор помнит только то, что свернули руками, — всё
+   * остальное раскрыто. Секции независимы друг от друга, поэтому длинную
+   * вкладку можно привести к нужному виду: открытой остаётся та, с которой
+   * сейчас работают.
+   */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const isOpen = (id: string) => !collapsed[id];
+  const toggleSection = (id: string) => setCollapsed((previous) => ({ ...previous, [id]: !previous[id] }));
+  /** Класс секции: свёрнутая прячет всё, кроме заголовка. */
+  const foldClass = (id: string) => (isOpen(id) ? "behaviour-section" : "behaviour-section collapsed");
 
   // Кому пишем правку: всё выделение. Значения в панели — по основному объекту,
   // у остальных меняется только то поле, которое тронули, остальное своё.
@@ -364,9 +417,15 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
    * включения, секция показывает предупреждение и выключает следование одним
    * нажатием — молча оставлять сломанную формулу нельзя.
    */
-  const mouseModules = (modules ?? []).filter((module) => module.type === "mouse");
+  const allMouseModules = (modules ?? []).filter((module) => module.type === "mouse");
+  // Следовать можно только за включённым модулем: у выключенного координаты
+  // не считаются, и объект молча стоял бы на месте.
+  const mouseModules = allMouseModules.filter((module) => module.enabled);
   const followModule = behaviour.followMouseModule;
-  const followMissing = followModule !== "" && !mouseModules.some((module) => module.name === followModule);
+  const followMissing = followModule !== "" && !allMouseModules.some((module) => module.name === followModule);
+  /** Модуль есть, но выключен: имя верное, а входы стоят нулями. */
+  const followDisabled = followModule !== "" && !followMissing
+    && !mouseModules.some((module) => module.name === followModule);
 
   /**
    * Модули, без которых часть вкладки не имеет смысла.
@@ -381,6 +440,24 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
    * новом пресете. Пересозданный микрофон получает имя `loudness`, и формулы
    * должны поехать за ним, а не сломаться.
    */
+  /**
+   * Входы включённых модулей — общий список для источников видимости.
+   *
+   * Разделения по видам нет: видимость может зависеть от любого входа любого
+   * модуля — от громкости и до колеса мыши. Числа берутся из паспорта входа,
+   * поэтому галочка «min/max входа» показывает те же границы, что у модуля, а
+   * булев вход сразу становится воротами.
+   */
+  const visibilityInputs = (modules ?? [])
+    .filter((module) => module.enabled)
+    .flatMap((module) => instanceInputs(module).map((input) => ({
+      key: `${module.name}.${input.name}`,
+      label: `${module.name} → ${input.label}`,
+      gate: input.kind === "flag",
+      min: input.min,
+      max: input.max,
+    })));
+
   const voiceModules = (modules ?? []).filter((module) => module.type === "loudness");
   const eyeModules = (modules ?? []).filter((module) => module.type === "autoblink");
   const hasVoice = voiceModules.length > 0;
@@ -418,7 +495,7 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
             : "Сбросить поведение: блок из скрипта удалится"}
           onClick={reset}
         >
-          <X size={16} />
+          <RotateCcw size={16} />
         </button>
       </div>
       <p className="behaviour-note">
@@ -445,8 +522,10 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
       )}
 
       {object.kind === "text" && (
-        <section className="behaviour-section behaviour-text-section">
+        <section className={`${foldClass("text")} behaviour-text-section`}>
           <TextSettings
+            open={isOpen("text")}
+            onToggle={toggleSection}
             spec={normalizeText(object.text)}
             onPatch={(patch) => {
               if (!onText) return;
@@ -462,8 +541,11 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
       )}
 
       {colorFields.length > 0 && (
-        <section className="behaviour-section colour-section">
-          <div className="section-title"><span><Palette size={13} /> Цвет</span><small>ИЗ МОДУЛЯ</small></div>
+        <section className={`${foldClass("colour")} colour-section`}>
+          <div className="section-title">
+            <SectionToggle id="colour" open={isOpen("colour")} onToggle={toggleSection}><Palette size={13} /> Цвет</SectionToggle>
+            <small>ИЗ МОДУЛЯ</small>
+          </div>
           <p className="behaviour-hint">
             Каждый цвет можно взять из модуля: «Цвет» даёт палитру и режим, «Свет из экрана» —
             средний цвет участка картинки. Объект только берёт готовый цвет, «свой цвет» — как раньше.
@@ -513,8 +595,8 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         </section>
       )}
 
-      <section className="behaviour-section">
-        <div className="section-title"><span><Waves size={13} /> Реакция</span></div>
+      <section className={foldClass("reaction")}>
+        <div className="section-title"><SectionToggle id="reaction" open={isOpen("reaction")} onToggle={toggleSection}><Waves size={13} /> Реакция</SectionToggle></div>
         <p className="behaviour-hint">
           Фильтр стоит на итоговой цели, поэтому влияет на всё движение объекта: наследство
           родителя, покачивание, подпрыгивание, доворот. Сглаживание — тормоз: именно оно гасит
@@ -532,8 +614,8 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
           min={0} max={1} step={0.01} onCommit={(rotationSpring) => patch({ rotationSpring })} />
       </section>
 
-      <section className="behaviour-section">
-        <div className="section-title"><span><Wind size={13} /> Размер, деформация и подпрыгивание</span></div>
+      <section className={foldClass("size")}>
+        <div className="section-title"><SectionToggle id="size" open={isOpen("size")} onToggle={toggleSection}><Wind size={13} /> Размер, деформация и подпрыгивание</SectionToggle></div>
         <p className="behaviour-hint">
           «Размер X/Y» — скаляры к базовому размеру спрайта: цифра прямо в скрипте, поэтому высоту и
           ширину можно править здесь, не заходя в инспектор. Они умножаются на «Масштаб X/Y» из
@@ -571,8 +653,8 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         ) : null}
       </section>
 
-      <section className="behaviour-section">
-        <div className="section-title"><span><RotateCw size={13} /> Доворот и пределы</span></div>
+      <section className={foldClass("rotation")}>
+        <div className="section-title"><SectionToggle id="rotation" open={isOpen("rotation")} onToggle={toggleSection}><RotateCw size={13} /> Доворот и пределы</SectionToggle></div>
         {hasVoice && (
           <>
             <Row label="Поворот при речи" hint="максимум, 0 — выключено" unit="°" value={behaviour.dragAngle}
@@ -618,8 +700,8 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         </p>
       </section>
 
-      <section className="behaviour-section">
-        <div className="section-title"><span><Waves size={13} /> Покачивание</span></div>
+      <section className={foldClass("wiggle")}>
+        <div className="section-title"><SectionToggle id="wiggle" open={isOpen("wiggle")} onToggle={toggleSection}><Waves size={13} /> Покачивание</SectionToggle></div>
         <p className="behaviour-hint">
           Покачивание работает само по себе: «Поворот при речи» ему не нужен и ничего к нему
           не добавляет — это два независимых генератора. Заданная амплитуда включает его сразу
@@ -664,9 +746,9 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
           min={0} max={90} step={0.5} onCommit={(wiggleRotAmp) => patch({ wiggleRotAmp })} />
       </section>
 
-      <section className="behaviour-section">
+      <section className={foldClass("follow")}>
         <div className="section-title">
-          <span><MousePointer2 size={13} /> Следование за мышью</span>
+          <SectionToggle id="follow" open={isOpen("follow")} onToggle={toggleSection}><MousePointer2 size={13} /> Следование за мышью</SectionToggle>
           <Switch
             checked={followModule !== "" && !followMissing}
             onChange={(on) => patch({ followMouseModule: on ? (mouseModules[0]?.name ?? "") : "" })}
@@ -684,15 +766,39 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
             <code> mouse.x</code> и <code>mouse.y</code> в скрипте нет.
           </p>
         )}
+        {followDisabled && (
+          <p className="behaviour-hint behaviour-warning">
+            Модуль «{followModule}» выключен: формулы читают <code>{followModule}.x</code> и
+            {" "}<code>{followModule}.y</code>, а выключенный модуль отдаёт нули — объект стоит на месте.
+            Включите модуль во вкладке «Модули» или выберите другой источник.
+            {mouseModules.length > 0 && <>{" "}
+              <button className="link-button" onClick={() => patch({ followMouseModule: mouseModules[0].name })}>
+                Взять «{mouseModules[0].name}»
+              </button>
+            </>}
+          </p>
+        )}
         {followMissing && (
           <p className="behaviour-hint behaviour-warning">
-            Модуль «{followModule}» больше не в пресете — формулы ссылаются на несуществующий вход.
+            Модуль «{followModule}» больше не в пресете — формулы читают{" "}
+            <code>{followModule}.x</code> и <code>{followModule}.y</code>, а таких входов в скрипте нет.
             {" "}
             <button className="link-button" onClick={() => patch({ followMouseModule: "" })}>Выключить следование</button>
           </p>
         )}
         {followModule !== "" && !followMissing && (
           <>
+            <ModulePicker
+              label="Источник мыши"
+              modules={mouseModules}
+              value={followModule}
+              onPick={(next) => patch({ followMouseModule: next })}
+            />
+            <p className="behaviour-hint">
+              Формулы берут входы выбранного модуля напрямую: <code>{followModule}.x</code> и
+              {" "}<code>{followModule}.y</code>. Другой модуль мыши — другой источник, и объект
+              поедет за ним без правки скрипта.
+            </p>
             <div className="segmented small inline" title="Форма предела: эллипс или прямоугольник">
               <button
                 className={behaviour.followMouseLimit === "ellipse" ? "active" : ""}
@@ -761,8 +867,8 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
       </section>
 
       {object.kind === "light" && (
-        <section className="behaviour-section">
-          <div className="section-title"><span><Lightbulb size={13} /> Мерцание</span></div>
+        <section className={foldClass("flicker")}>
+          <div className="section-title"><SectionToggle id="flicker" open={isOpen("flicker")} onToggle={toggleSection}><Lightbulb size={13} /> Мерцание</SectionToggle></div>
           <p className="behaviour-hint">
             Яркость пятна считается обычным `opacity`, поэтому мерцание — просто формула.
             Синус даёт ровное «дыхание» лампы, шум — неровное, как у свечи. Форма, радиус и
@@ -779,9 +885,22 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         </section>
       )}
 
-      {(hasVoice || hasEye) && (
-        <section className="behaviour-section">
-          <div className="section-title"><span><X size={13} /> Видимость</span></div>
+      <section className={foldClass("visibility")}>
+        <div className="section-title">
+          <SectionToggle id="visibility" open={isOpen("visibility")} onToggle={toggleSection}><X size={13} /> Видимость</SectionToggle>
+        </div>
+        <p className="behaviour-hint">
+          Видимость — это множители. Каждый источник даёт число 0…1, они перемножаются:
+          ноль гасит объект, единица ничего не меняет, дробь делает его полупрозрачным.
+          Флаг «виден» остаётся двоичным, а доля уходит в прозрачность. Источники бывают
+          любые: вход включённого модуля, <code>signal.*</code> или <code>state.*</code>
+          предыдущего кадра — в том числе своя переменная из скрипта.
+        </p>
+        {(hasVoice || hasEye) && (<>
+          <p className="behaviour-hint">
+            Рот и глаз — частный случай того же правила: это ворота из речевого модуля и
+            модуля моргания.
+          </p>
           {hasVoice && (
             <>
               <StateRow
@@ -844,11 +963,173 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
             моргание — из {hasEye ? `«${behaviour.eyeModule || eyeModules[0].name}» (${eyeInput})` : "модуля моргания"}.
             Строки есть только у тех модулей, что добавлены в пресет.
           </p>
-        </section>
-      )}
+        </>)}
 
-      <section className="behaviour-section">
-        <div className="section-title"><span><RotateCw size={13} /> Физика поворота</span></div>
+        {behaviour.visibility.map((source, index) => (
+          <div className="visibility-source" key={`${sourceKey(source)}-${index}`}>
+            <div className="preset-rule-head">
+              <select
+                value={sourceKey(source)}
+                title="Источник видимости"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  const next = [...behaviour.visibility];
+                  if (value.startsWith("signal:") || value.startsWith("state:")) {
+                    const kind = value.startsWith("signal:") ? "signal" : "state";
+                    next[index] = {
+                      ...source, kind, module: "", name: value.slice(value.indexOf(":") + 1),
+                      // Сигнал — обычно «событие»: по умолчанию это ворота.
+                      gate: kind === "signal" ? true : source.gate,
+                    };
+                  } else {
+                    const input = visibilityInputs.find((item) => item.key === value);
+                    if (!input) return;
+                    const dot = value.indexOf(".");
+                    next[index] = {
+                      ...source,
+                      kind: "input",
+                      module: value.slice(0, dot),
+                      name: value.slice(dot + 1),
+                      gate: input.gate,
+                      min: input.min,
+                      max: input.max,
+                      range: false,
+                    };
+                  }
+                  patch({ visibility: next });
+                }}
+              >
+                <optgroup label="Входы модулей">
+                  {visibilityInputs.map((input) => (
+                    <option key={input.key} value={input.key}>{input.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Сигнал и переменная">
+                  <option value="signal:">signal.… — своё имя</option>
+                  <option value="state:">state.… — прошлый кадр</option>
+                </optgroup>
+              </select>
+              <button
+                className="icon-button danger"
+                title="Убрать источник"
+                onClick={() => patch({ visibility: behaviour.visibility.filter((_, position) => position !== index) })}
+              ><Trash2 size={13} /></button>
+            </div>
+
+            {source.kind !== "input" && (
+              <label className="module-field">
+                <span className="module-field-label">
+                  {source.kind === "signal" ? "Имя сигнала" : "Имя переменной"}
+                </span>
+                <input
+                  value={source.name}
+                  spellCheck={false}
+                  placeholder={source.kind === "signal" ? "reward" : "mood"}
+                  onChange={(event) => {
+                    // Имя — это текст скрипта: оставляем только латиницу, цифры
+                    // и подчёркивание, иначе ядро не поймёт ссылку.
+                    const name = event.target.value.replace(/[^A-Za-z0-9_]/g, "");
+                    const next = [...behaviour.visibility];
+                    next[index] = { ...source, name };
+                    patch({ visibility: next });
+                  }}
+                />
+              </label>
+            )}
+
+            {!sourceReady(source) && (
+              <p className="behaviour-hint behaviour-warning">
+                Имя не задано: источник не участвует, пока его не допишут.
+              </p>
+            )}
+
+            {source.gate ? (
+              <p className="behaviour-hint">
+                Ворота: больше 0.5 — открыто, иначе закрыто. Шкалы у булева входа нет.
+              </p>
+            ) : (
+              <>
+                <div className="behaviour-state">
+                  <span>
+                    Брать min/max входа
+                    <small>{source.min}…{source.max} растягивается в 0…1</small>
+                  </span>
+                  <Switch
+                    checked={source.range}
+                    title="Считать собственный диапазон входа: его минимум даёт 0, максимум — 1"
+                    onChange={(range) => {
+                      const next = [...behaviour.visibility];
+                      next[index] = { ...source, range };
+                      patch({ visibility: next });
+                    }}
+                  />
+                </div>
+                {source.range && (
+                  <Row
+                    label="Верхняя граница"
+                    hint={`нижняя граница — ${source.min}`}
+                    unit=""
+                    value={source.max}
+                    min={source.min + 0.01}
+                    max={10000}
+                    step={0.01}
+                    onCommit={(max) => {
+                      const next = [...behaviour.visibility];
+                      next[index] = { ...source, max };
+                      patch({ visibility: next });
+                    }}
+                  />
+                )}
+              </>
+            )}
+
+            <div className="behaviour-state">
+              <span>Инвертировать<small>1 − значение: «виден, пока нет»</small></span>
+              <Switch
+                checked={source.invert}
+                title="Обратная видимость: ноль источника показывает объект"
+                onChange={(invert) => {
+                  const next = [...behaviour.visibility];
+                  next[index] = { ...source, invert };
+                  patch({ visibility: next });
+                }}
+              />
+            </div>
+          </div>
+        ))}
+
+        <button
+          className="button secondary"
+          title="Добавить множитель видимости"
+          onClick={() => {
+            const first = visibilityInputs[0];
+            const source: VisibilitySource = first
+              ? {
+                kind: "input",
+                module: first.key.slice(0, first.key.indexOf(".")),
+                name: first.key.slice(first.key.indexOf(".") + 1),
+                gate: first.gate,
+                range: false,
+                min: first.min,
+                max: first.max,
+                invert: false,
+              }
+              : { kind: "signal", module: "", name: "", gate: true, range: false, min: 0, max: 1, invert: false };
+            patch({ visibility: [...behaviour.visibility, source] });
+          }}
+        >
+          <Plus size={13} /> Добавить источник
+        </button>
+        {visibilityInputs.length === 0 && (
+          <p className="behaviour-hint">
+            В пресете нет включённых модулей с входами: остаются <code>signal.*</code> и
+            <code> state.*</code>.
+          </p>
+        )}
+      </section>
+
+      <section className={foldClass("physics")}>
+        <div className="section-title"><SectionToggle id="physics" open={isOpen("physics")} onToggle={toggleSection}><RotateCw size={13} /> Физика поворота</SectionToggle></div>
         <p className="behaviour-hint">
           Физика — это свободный маятник: пружина тянет «тяжёлую» сторону (ту, что дальше от
           пивота) к углу 0° — вниз, 90° — вправо, 180° — вверх. Речь не давит на угол постоянно,
@@ -920,7 +1201,13 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
           )}
       </section>
 
-      <PresetSection behaviour={behaviour} modules={modules ?? []} onPatch={patch} />
+      <PresetSection
+        behaviour={behaviour}
+        modules={modules ?? []}
+        onPatch={patch}
+        open={isOpen("presets")}
+        onToggle={toggleSection}
+      />
     </div>
   );
 }
@@ -931,10 +1218,13 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
  * Это не отдельный язык: генератор дописывает множитель в ту же строку
  * `visible`, что и рот с глазом, поэтому условия спокойно работают вместе.
  */
-function PresetSection({ behaviour, modules, onPatch }: {
+function PresetSection({ behaviour, modules, onPatch, open, onToggle }: {
   behaviour: Behaviour;
   modules: ModuleInstance[];
   onPatch: (patch: Partial<Behaviour>) => void;
+  /** Раскрыта ли секция: подпись «Пресеты» сворачивает её, как и остальные. */
+  open: boolean;
+  onToggle: (id: string) => void;
 }) {
   const available = presetModules(modules);
   if (!available.length) return null;
@@ -946,8 +1236,10 @@ function PresetSection({ behaviour, modules, onPatch }: {
   };
 
   return (
-    <section className="behaviour-section">
-      <div className="section-title"><span><Shirt size={13} /> Пресеты</span></div>
+    <section className={open ? "behaviour-section" : "behaviour-section collapsed"}>
+      <div className="section-title">
+        <SectionToggle id="presets" open={open} onToggle={onToggle}><Shirt size={13} /> Пресеты</SectionToggle>
+      </div>
       <p className="behaviour-hint">
         Отметьте пресеты, при которых объект нужен: «только при» показывает его на выбранных
         образах, «кроме» — на всех остальных. Пресеты заводятся во вкладке «Модули», там же

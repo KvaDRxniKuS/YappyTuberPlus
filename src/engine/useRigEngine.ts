@@ -265,7 +265,22 @@ export function useRigEngine(
     countFrame();
     // Номер кадра сквозной: движок мог пересоздаться и начать с единицы, а
     // оверлей отбрасывает «старые» номера и замер бы навсегда.
-    const gated = { ...prepareFrame(presetRef.current, response.frame, textsRef?.current), seq: nextFrameSeq() };
+    /**
+     * Видимость считается здесь, а не в скрипте: её множители — это входы
+     * модулей и `state.*` предыдущего кадра, а доля должна умножать `opacity`,
+     * которую ядро уже посчитало. Кадр до этого — ровно то состояние, из
+     * которого читается `state.<имя>`.
+     */
+    const inputs = inputsRef.current;
+    const visibility = {
+      values: inputs.values,
+      signals: inputs.signals ?? {},
+      previous: frameRef.current,
+    };
+    const gated = {
+      ...prepareFrame(presetRef.current, response.frame, textsRef?.current, visibility),
+      seq: nextFrameSeq(),
+    };
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
     // Окна рисуют не по вечному rAF, а по этому сигналу: новый кадр — новый
