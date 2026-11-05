@@ -87,7 +87,9 @@ test("документы не ссылаются на несуществующи
 
 test("модуль мыши в шаблоне и в документации говорит одно и то же", () => {
   const template = JSON.parse(read("public/modules/mouse.json"));
-  expect(template.format).toBe(4);
+  // Формат 5: стороны начала нормируются по отдельности, об общей шкале
+  // больше речи нет.
+  expect(template.format).toBe(5);
   expect(template.inputs.filter((spec: { name: string }) => spec.name === "x" || spec.name === "y")
     .map((spec: { name: string }) => spec.name)).toEqual(["x", "y"]);
   expect(template.inputs.some((spec: { name: string }) => spec.name === "px" || spec.name === "py")).toBe(false);
@@ -101,6 +103,9 @@ test("модуль мыши в шаблоне и в документации г�
 
   const modules = read("docs/MODULES.md");
   expect(modules).toContain("целые щелчки");
+  // Новый смысл «Начала» описан там же, где о нём спросят: у модуля Mouse.
+  expect(modules).toContain("стороны нормируются");
+  expect(modules).toContain("0.5` — ноль на 75 %");
   expect(modules).toContain("−20…20");
   // Средняя кнопка есть и в шаблоне, и в сводной таблице документации.
   expect(template.inputs.some((spec: { name: string }) => spec.name === "middle")).toBe(true);

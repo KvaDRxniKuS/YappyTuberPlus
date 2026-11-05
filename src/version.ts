@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.1 · ядро 23 · файл 6 · мост 2 · модули 4 · оболочка 7`.
+ * `1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 8`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -85,11 +85,13 @@ export const PRESET_FORMATS_READABLE: readonly number[] = [2, 3, 4, 5, PRESET_FO
  * «Цвет» и «Свет из экрана»: у модуля появились свои списки входов (каналы и
  * точки выборки), а к цвету объекта можно привязать готовый цвет. 4 — новый
  * контракт Mouse: x/y со знаком и настраиваемое начало координат вместо px/py.
+ * 5 — Mouse нормирует стороны начала по отдельности: «Начало 0.5» — это ноль на
+ * 75 % области, и каждая половина получает свой полный ход −1…0 и 0…1.
  *
  * Растёт вместе с новым видом или новым полем настроек: шаблон новее редактора
  * читается частично, а незнакомый вид молча становится «Manual».
  */
-export const MODULE_FORMAT = 4;
+export const MODULE_FORMAT = 5;
 
 export interface ProjectVersion {
   /** Релиз продукта: то, что видит пользователь и установщик. */
@@ -124,7 +126,10 @@ export const VERSION: ProjectVersion = {
   format: PRESET_FORMAT,
   bridge: 2,
   modules: MODULE_FORMAT,
-  shell: 7,
+  // Оболочка 8: видимость объекта считается в редакторе и умножает прозрачность
+  // готового кадра. Та же сцена даёт другую картинку — это модель кадра, а не
+  // только интерфейс.
+  shell: 8,
 };
 
 /** Номера поколений в порядке слотов: без релиза. */
@@ -132,12 +137,12 @@ export function generationNumbers(version: ProjectVersion = VERSION): number[] {
   return SLOT_ORDER.map((slot) => version[slot]);
 }
 
-/** Машинная строка версии: `1.1.23.6.2.4.7`. Её пишут в файл и копируют. */
+/** Машинная строка версии: `1.1.23.6.2.5.8`. Её пишут в файл и копируют. */
 export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 4 · оболочка 7`. */
+/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 8`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");

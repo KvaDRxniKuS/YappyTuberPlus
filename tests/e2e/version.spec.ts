@@ -19,16 +19,16 @@ test("паспорт: шесть чисел и подписи слотов", () 
   expect(versionString()).toBe(
     `${VERSION.release.join(".")}.${VERSION.core}.${PRESET_FORMAT}.${OVERLAY_PROTOCOL}.${MODULE_FORMAT}.${VERSION.shell}`,
   );
-  // Версия 4.7: Mouse получил новый контракт x/y, мост 2 и оболочка 7
-  // остаются прежними.
-  expect(versionString()).toBe("1.1.23.6.2.4.7");
+  // Версия 5.8: Mouse нормирует стороны начала по отдельности (формат 5), а
+  // видимость объекта умножает прозрачность кадра (оболочка 8).
+  expect(versionString()).toBe("1.1.23.6.2.5.8");
   // Мост в паспорте и протокол оверлея — одно число, иначе они разъедутся.
   expect(VERSION.bridge).toBe(OVERLAY_PROTOCOL);
   expect(VERSION.format).toBe(PRESET_FORMAT);
   expect(VERSION.modules).toBe(MODULE_FORMAT);
 
   // Для человека — подписями, в том же порядке.
-  expect(versionLabel()).toBe("1.1 · ядро 23 · файл 6 · мост 2 · модули 4 · оболочка 7");
+  expect(versionLabel()).toBe("1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 8");
   expect(versionShort()).toBe("1.1");
   // В установщик уходят только три числа: поколения туда не помещаются.
   expect(packagingVersion()).toBe("1.1.0");

@@ -6,19 +6,19 @@
   "core": 23,
   "format": 6,
   "bridge": 2,
-  "modules": 4,
-  "shell": 7,
-  "version": "1.1.23.6.2.4.7",
+  "modules": 5,
+  "shell": 8,
+  "version": "1.1.23.6.2.5.8",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-03T11:26:04.801Z",
-  "commit": "c8e6279",
+  "builtAt": "2026-11-05T17:08:30.489Z",
+  "commit": "53b4cd1",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-BJw1-5Eq.js",
-      "size": 444457,
-      "sha256": "4dee58061275c78bba7064283ab018a0f00de0cd604fa538708ed81853cd9351"
+      "path": "assets/bus-BQ1zMW6H.js",
+      "size": 446654,
+      "sha256": "b1f5ef057f3e99e403f61ee3f82d4b45fb812c0ad0bb01b90805d020ec3288bf"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -81,19 +81,19 @@
       "sha256": "c3e2e840a4471974f263e6af8b0b067bbc2caeed80c71b0b0d09959b1f173018"
     },
     {
-      "path": "assets/overlay-DgYZ1iCx.js",
+      "path": "assets/overlay-DkW2huch.js",
       "size": 17276,
-      "sha256": "774909b91cf0aeab63c71885af2d5dfadb2e7eedade3848528cc60bb4dd377b0"
+      "sha256": "fde7c8ac4731bf0c527f5b8b1d2e2c2122844aa0ac7cc040c9e6cff6be2c608d"
     },
     {
-      "path": "assets/studio-CAbn9k94.js",
-      "size": 811193,
-      "sha256": "d0fa2a2edba94dc30cead700d1ff2b6ba5e40d60e3e9ebe3e3ab9256d3419b1d"
+      "path": "assets/studio-BRkrxHqf.js",
+      "size": 818552,
+      "sha256": "50f31d11fdffee024af1f6126755b77a30dc8928cebddc7e6ddddeff85881d86"
     },
     {
-      "path": "assets/studio-CBRGH-Df.css",
-      "size": 71970,
-      "sha256": "6eaf1b83c9ecf32bfc5032deac8b20684d490633b376834e8ca82bcacd96960d"
+      "path": "assets/studio-CnP1Fs6I.css",
+      "size": 72865,
+      "sha256": "94778d03b46155a30aa2bba1b4aa91d4c1b1407ca9c1534808fcca44bf94b046"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "04a105209ba09503b0800328f690bf4b2b62d01ebacd7cfc12835259607c437c"
+      "sha256": "1d2500a8328138e464285ba8587dfe51c1cf6e74ca7f6d7029de58e1b113bee3"
     },
     {
       "path": "modules/ambient.json",
@@ -157,8 +157,8 @@
     },
     {
       "path": "modules/mouse.json",
-      "size": 3872,
-      "sha256": "04e59dacffd1f7f291b2a936c7d0842557cf1480e66a2eb05fbb519e39d88673"
+      "size": 4248,
+      "sha256": "434347ff0134e1aea1f42d75014c939ab562011b14c4399372b57135e0cdae30"
     },
     {
       "path": "modules/presets.json",
@@ -183,7 +183,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "edf48bd2e26cbcc32c863f2f7a4b8a792330f7345745301c6770ed4ffffbf190"
+      "sha256": "bbadca8fb9bbb5bc63d358af08d2f084be9f545a6d44421b17907ac047c41c0e"
     },
     {
       "path": "rig_core.wasm",
