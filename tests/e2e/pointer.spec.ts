@@ -231,6 +231,29 @@ test("мышь: смещение начала меняет знак и диап�
   expect(mouseValue({ ...atCorner, screenX: 1920, screenY: 1080 }, "x", rect, { x: -1 })).toBe(1);
 });
 
+test("мышь: стороны начала нормируются по отдельности", () => {
+  const rect = { x: 0, y: 0, width: 1920, height: 1080 };
+  const at = (x: number, y = 540): PointerFrame["mouse"] => ({
+    screenX: x, screenY: y, dx: 0, dy: 0, left: 0, right: 0, wheel: 0,
+  });
+  // Начало 0.5 — это 75 % ширины: 1440 из 1920.
+  expect(mouseValue(at(1440), "x", rect, { x: 0.5 })).toBeCloseTo(0, 6);
+  // Левая половина растянута на весь свой ход: край области — ровно −1,
+  // середина левой части — половина пути.
+  expect(mouseValue(at(0), "x", rect, { x: 0.5 })).toBeCloseTo(-1, 6);
+  expect(mouseValue(at(720), "x", rect, { x: 0.5 })).toBeCloseTo(-0.5, 6);
+  // Правая половина — тоже полный ход 0…1 на своих 25 % ширины.
+  expect(mouseValue(at(1920), "x", rect, { x: 0.5 })).toBeCloseTo(1, 6);
+  expect(mouseValue(at(1680), "x", rect, { x: 0.5 })).toBeCloseTo(0.5, 6);
+  // То же по вертикали: начало 0.5 — 810 из 1080.
+  expect(mouseValue(at(0, 810), "y", rect, { y: 0.5 })).toBeCloseTo(0, 6);
+  expect(mouseValue(at(0, 1080), "y", rect, { y: 0.5 })).toBeCloseTo(1, 6);
+  expect(mouseValue(at(0, 0), "y", rect, { y: 0.5 })).toBeCloseTo(-1, 6);
+  // В центре шкала остаётся симметричной: 0.5 в обе стороны.
+  expect(mouseValue(at(480), "x", rect)).toBeCloseTo(-0.5, 6);
+  expect(mouseValue(at(1440), "x", rect)).toBeCloseTo(0.5, 6);
+});
+
 test("мышь: без геометрии экрана координаты нулевые, кнопки работают", () => {
   const mouse = module("cursor", "mouse");
   const frame: PointerFrame = {

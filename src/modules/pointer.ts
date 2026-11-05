@@ -304,16 +304,30 @@ export function mouseArea(
   return wanted ?? primary ?? monitors[0];
 }
 
-/** Знаковое положение относительно смещаемого начала в пределах [-1, 1]. */
+/**
+ * Знаковое положение относительно смещаемого начала в пределах [-1, 1].
+ *
+ * Стороны нормируются **по отдельности**: ноль стоит там, куда его поставило
+ * «Начало», а каждая половина области растягивается на свой полный ход.
+ *
+ * - начало в центре — обе стороны по половине ширины, шкала симметричная;
+ * - начало в 0.5 (то есть на 75 % ширины) — слева 0…75 % дают −1…0, справа
+ *   75…100 % дают 0…1;
+ * - начало у края — вся область с одной стороны, шкала 0…1.
+ *
+ * Так «Начало» означает ровно то, что нарисовано: точку нуля, а не множитель
+ * одной общей шкалы.
+ */
 function signedPosition(value: number, start: number, size: number, offsetFromCenter: number): number {
   if (!Number.isFinite(size) || size <= 0) return 0;
   const offset = clamp(offsetFromCenter, -1, 1);
   const origin = start + size * ((offset + 1) / 2);
-  // Масштабируем по дальней границе: центр даёт -1…1, левый верхний
-  // угол — 0…1, правый нижний — -1…0.
-  const reach = Math.max(origin - start, start + size - origin);
-  if (reach <= 0) return 0;
-  return clamp((value - origin) / reach, -1, 1);
+  if (value >= origin) {
+    const span = start + size - origin;
+    return span > 0 ? clamp((value - origin) / span, 0, 1) : 0;
+  }
+  const span = origin - start;
+  return span > 0 ? clamp((value - origin) / span, -1, 0) : 0;
 }
 
 /**
