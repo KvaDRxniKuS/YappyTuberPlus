@@ -2,7 +2,7 @@ import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
 import { neutralFrame } from "../engine/frame";
 import { nextFrameSeq } from "../engine/frameSeq";
 import { readAssetBlob, assetRef, inlineSource } from "../engine/assets";
-import type { CompositeBus } from "./bus";
+import type { CompositeBus, TransportStats } from "./bus";
 import {
   basesOf, configSignature, OVERLAY_PROTOCOL, poseSignature, structureSignature,
   toOverlayScene, type FrameColors, type HelloMessage, type OverlayScene, type WireMessage,
@@ -120,6 +120,14 @@ export class OverlayHost {
 
   get sceneVersionValue(): number {
     return this.sceneVersion;
+  }
+
+  /**
+   * Здоровье линии до оверлеев: сколько кадров ушло, сколько выброшено из-за
+   * занятого буфера и до какого размера он доходил.
+   */
+  transportStats(): TransportStats {
+    return this.bus.stats();
   }
 
   start(): void {

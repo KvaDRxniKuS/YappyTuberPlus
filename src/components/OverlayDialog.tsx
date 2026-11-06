@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppWindow, Check, Copy, Link2, MonitorPlay, Radio, Settings2, X } from "lucide-react";
 import type { OverlayConfig } from "../types";
+import type { TransportStats } from "../overlay/bus";
 import { Switch } from "./Switch";
 import {
   applyCaptureWindow, applyOverlayWindow, captureWindowOpen,
@@ -15,6 +16,8 @@ interface OverlayDialogProps {
   canvas: CanvasSize;
   viewers: string[];
   transport: string;
+  /** Счётчики линии до оверлеев: кадры, выбросы, буфер отправки. */
+  stats: TransportStats;
   bridgeReady: boolean;
   bridgeUrl: string | null;
   windowControl: boolean;
@@ -162,6 +165,21 @@ export function OverlayDialog(props: OverlayDialogProps) {
             </span>
           )}
           {relayClients !== null && <span>через сервер: {relayClients}</span>}
+          {/* Числа линии: «отстаёт» и «не успевает приёмник» — разные болезни, и
+              лечатся они по-разному. Буфер и выбросы показывают, кто виноват. */}
+          {(props.stats.frames > 0 || props.stats.dropped > 0) && (
+            <span
+              title={[
+                `кадров ушло: ${props.stats.frames}`,
+                `выброшено устаревших: ${props.stats.dropped}`,
+                `пик буфера отправки: ${Math.round(props.stats.peakBuffered / 1024)} КБ`,
+                `отправлено: ${Math.round(props.stats.bytes / 1024)} КБ`,
+              ].join("\n")}
+            >
+              кадров: {props.stats.frames} · пропущено: {props.stats.dropped}
+              {" "}· буфер: {Math.round(props.stats.buffered / 1024)} КБ
+            </span>
+          )}
           {isTauri() && !serverUrl && (
             <span className="overlay-state-warn">
               встроенный сервер не запустился — источник браузера в OBS не получит кадры

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { RigFrame, RigPreset } from "../types";
-import { createOverlayBus, type CompositeBus } from "../overlay/bus";
+import { createOverlayBus, EMPTY_STATS, type CompositeBus, type TransportStats } from "../overlay/bus";
 import { OverlayHost } from "../overlay/host";
 import type { FrameColors } from "../overlay/protocol";
 import { overlayBridgeUrl } from "../overlay/window";
@@ -12,6 +12,8 @@ export interface OverlayHostState {
   /** Подключённые оверлеи другой сборки: им нужно обновить страницу. */
   staleViewers: string[];
   transport: string;
+  /** Очередь отправки: сколько кадров ушло, сколько выброшено, какой был буфер. */
+  transportStats: TransportStats;
   bridgeUrl: string | null;
   bridgeReady: boolean;
   windowControl: boolean;
@@ -56,6 +58,7 @@ export function useOverlayHost(
   const [bridgeReady, setBridgeReady] = useState(false);
   const [windowControl, setWindowControlState] = useState(false);
   const [bridgeUrl, setBridgeUrl] = useState<string | null>(null);
+  const [transportStats, setTransportStats] = useState<TransportStats>({ ...EMPTY_STATS });
   const sinkRef = useRef<((frame: RigFrame) => void) | null>(null);
   const frozenRef = useRef(false);
   const windowControlRef = useRef(false);
@@ -105,7 +108,16 @@ export function useOverlayHost(
       if (!bus) return;
       const socket = bus.parts.find((part) => part.kind === "websocket");
       setBridgeReady(!!socket?.ready);
-    }, 2000);
+      // Счётчики обновляем по изменению, а не по таймеру: иначе диалог
+      // перерисовывался бы каждую секунду даже на неподвижной картинке.
+      const stats = bus.stats();
+      setTransportStats((prev) => {
+        const same = prev.frames === stats.frames && prev.dropped === stats.dropped
+          && Math.round(prev.buffered / 1024) === Math.round(stats.buffered / 1024)
+          && Math.round(prev.peakBuffered / 1024) === Math.round(stats.peakBuffered / 1024);
+        return same ? prev : stats;
+      });
+    }, 1000);
 
     return () => {
       disposed = true;
@@ -142,7 +154,7 @@ export function useOverlayHost(
   }, []);
 
   return {
-    sinkRef, viewers, staleViewers, transport, bridgeUrl, bridgeReady,
+    sinkRef, viewers, staleViewers, transport, transportStats, bridgeUrl, bridgeReady,
     windowControl, setWindowControl, setFrozen, setColors,
   };
 }

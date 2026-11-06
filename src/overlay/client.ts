@@ -1,5 +1,5 @@
 import type { BasePose, OverlayConfig, RigFrame } from "../types";
-import type { CompositeBus } from "./bus";
+import type { CompositeBus, TransportStats } from "./bus";
 import {
   OVERLAY_PROTOCOL, type AssetStartMessage, type FrameColors, type OverlayScene, type WireMessage,
 } from "./protocol";
@@ -17,7 +17,22 @@ export interface OverlayClientSnapshot {
   config: OverlayConfig | null;
   bases: Record<string, BasePose> | null;
   frameCount: number;
+  /**
+   * Кадров не пришло вовсе: номера между принятыми кадрами пропущены.
+   *
+   * Это не ошибка: когда приёмник не успевает, транспорт выбрасывает старые
+   * кадры и оставляет свежий — так оверлей остаётся в реальном времени, а не
+   * отстаёт навсегда. Число показывает, насколько линия загружена.
+   */
+  skipped: number;
+  /**
+   * Сколько миллисекунд назад пришёл последний кадр. Больше периода кадров
+   * редактора — значит линия встала, а не «просто медленно рисует».
+   */
+  frameAgeMs: number;
   transport: string;
+  /** Счётчики очереди отправки: сколько ушло, сколько выброшено, какой буфер. */
+  stats: TransportStats;
   windowControl: boolean;
 }
 
@@ -80,6 +95,10 @@ export class OverlayClient {
   status: OverlayStatus = "connecting";
   host: string | null = null;
   frameCount = 0;
+  /** Пропущенные номера кадров: см. `skipped` в снимке состояния. */
+  skipped = 0;
+  /** Момент последнего принятого кадра: по нему видно, жива ли линия сейчас. */
+  private frameAt = -1;
   windowControl = false;
   private lastSeq = -1;
   /**
@@ -146,7 +165,10 @@ export class OverlayClient {
       config: this.config,
       bases: this.bases,
       frameCount: this.frameCount,
+      skipped: this.skipped,
+      frameAgeMs: this.frameAt < 0 ? -1 : Math.max(0, this.now() - this.frameAt),
       transport: this.bus.label,
+      stats: this.bus.stats(),
       windowControl: this.windowControl,
     };
   }
@@ -221,8 +243,10 @@ export class OverlayClient {
           this.lastHostSender = message.sender;
           this.scene = null;
           this.frame = null;
+          this.frameAt = -1;
           this.lastSender = null;
           this.lastSeq = -1;
+          this.skipped = 0;
           this.windowControl = false;
           for (const id of this.assetRequests.keys()) {
             this.clearAssetRequestTimer(id);
@@ -269,10 +293,17 @@ export class OverlayClient {
         if (this.lastSender !== message.sender) {
           this.lastSender = message.sender;
           this.lastSeq = -1;
+          this.skipped = 0;
         }
         if (message.frame.seq <= this.lastSeq) break;
+        // Разрыв номеров — это выброшенные кадры. Считаем их, чтобы «оверлей
+        // отстаёт» можно было отличить от «редактор не успевает» числом.
+        if (this.lastSeq >= 0 && message.frame.seq > this.lastSeq + 1) {
+          this.skipped += message.frame.seq - this.lastSeq - 1;
+        }
         this.lastSeq = message.frame.seq;
         this.frame = message.frame;
+        this.frameAt = this.now();
         this.colors = message.colors ?? null;
         this.frameCount += 1;
         for (const listener of this.frameListeners) listener();

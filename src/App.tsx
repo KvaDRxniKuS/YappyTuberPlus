@@ -1648,6 +1648,7 @@ export default function App() {
         canvas={preset.canvas}
         viewers={overlay.viewers}
         transport={overlay.transport}
+        stats={overlay.transportStats}
         bridgeReady={overlay.bridgeReady}
         bridgeUrl={overlay.bridgeUrl}
         windowControl={overlay.windowControl}

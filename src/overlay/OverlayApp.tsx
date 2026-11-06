@@ -59,6 +59,12 @@ export function OverlayApp() {
   const [snapshot, setSnapshot] = useState<OverlayClientSnapshot | null>(null);
   const [assetRevision, setAssetRevision] = useState(0);
   const [fps, setFps] = useState(0);
+  /**
+   * Сколько миллисекунд занимает отрисовка кадра. Это цена самого оверлея:
+   * если она сравнима с периодом кадров, отстаёт рисование, а не передача, и
+   * крутить надо разрешение, а не транспорт.
+   */
+  const [renderMs, setRenderMs] = useState(0);
 
   useEffect(() => {
     let disposed = false;
@@ -192,6 +198,9 @@ export function OverlayApp() {
   useEffect(() => {
     let lastSeq = -1;
     let frames = 0;
+    /** Сумма и число отрисовок за окно: по ним считается среднее время кадра. */
+    let drawnMs = 0;
+    let drawnCount = 0;
     let windowStart = performance.now();
 
     /**
@@ -233,6 +242,7 @@ export function OverlayApp() {
       }
       if (!current) return;
       const transform = viewTransform(current.overlay.scaleMode, current.canvas, width, height);
+      const drawStart = performance.now();
       ctx.save();
       ctx.translate(transform.offsetX, transform.offsetY);
       ctx.scale(transform.scaleX, transform.scaleY);
@@ -262,9 +272,14 @@ export function OverlayApp() {
       if (mediaAssets.current.active() || maskMedia.current.active()) loop.current?.request();
 
       const now = performance.now();
+      drawnMs += now - drawStart;
+      drawnCount += 1;
       if (guide && now - windowStart >= 1000) {
         setFps(Math.round(frames * 1000 / (now - windowStart)));
+        setRenderMs(drawnCount ? Math.round((drawnMs / drawnCount) * 10) / 10 : 0);
         frames = 0;
+        drawnMs = 0;
+        drawnCount = 0;
         windowStart = now;
       }
     };
@@ -343,9 +358,22 @@ export function OverlayApp() {
           <div className="overlay-meta">
             <span>{snapshot?.scene ? `${snapshot.scene.canvas.width} × ${snapshot.scene.canvas.height}` : "нет сцены"}</span>
             <span>{fps} FPS рендера</span>
+            <span title="Среднее время отрисовки одного кадра: цена самого оверлея">{renderMs} мс на кадр</span>
             <span>{snapshot?.config?.scaleMode ?? "contain"}</span>
             <span>транспорт: {snapshot?.transport || "…"}</span>
             <span>{snapshot?.frameCount ?? 0} кадров</span>
+            {/* Пропущенные кадры — не ошибка, а признак загруженной линии: транспорт
+                выбрасывает устаревшие кадры, чтобы оверлей не отставал навсегда. */}
+            <span title="Кадры, которые не дошли: транспорт оставил свежий кадр вместо устаревших">
+              пропущено {snapshot?.skipped ?? 0}
+            </span>
+            {/* Возраст последнего кадра: если он растёт и не падает, линия
+                встала; если он стабилен, а картинка рваная — не успевает OBS. */}
+            {(snapshot?.frameAgeMs ?? -1) >= 0 && (
+              <span title="Сколько прошло с последнего принятого кадра">
+                последний кадр: {snapshot?.frameAgeMs} мс назад
+              </span>
+            )}
             {/* Невидимый слой чаще всего — картинка, которую оверлей ещё не
                 получил: байты лежат в хранилище редактора, а у страницы в OBS
                 своё хранилище. Строка говорит об этом прямо, вместо того чтобы
