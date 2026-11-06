@@ -2,10 +2,11 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  LOBE_HALF_RATIO, MATERIAL_PRESETS, MIN_AMBIENT, SPECULAR_BODY_FLOOR, SPECULAR_EXPOSURE,
-  SPECULAR_EXPOSURE_KNEE, SPECULAR_REACH, applyPreset, baseReflectance, channelBinding, defaultMaterial,
-  fresnel, ggxDistribution, matchPreset, materialBinding, materialSources, materialSourceSummary,
-  normalizeEnvironment, normalizeMaterial, outlineRay, shadePoint, shapeEdge, specLobe, specLobeWidth,
+  AO_FLOOR, MATERIAL_PRESETS, MIN_AMBIENT, SPECULAR_EDGE_BLUR, SPECULAR_EXPOSURE,
+  SPECULAR_EXPOSURE_KNEE, SPECULAR_PIXEL_FLOOR, applyPreset, baseReflectance, channelBinding,
+  defaultMaterial, fresnel, matchPreset, materialBinding, materialSources, materialSourceSummary,
+  normalizeEnvironment, normalizeMaterial, occluded, reflectRay, reflectedLocal, shadePoint, shapeEdge,
+  specularDim, specularEdgeBlur, specularMask,
   usesPacked,
   type LightBody, type LightPoint, type MaterialPoint,
 } from "../../src/render/material";
@@ -88,17 +89,36 @@ const mirrorOnly = (patch: Partial<MaterialPoint> = {}): MaterialPoint => point(
   ...patch,
 });
 
-/** Яркость блика в точке, отстоящей от источника на `distance` пикселей. */
-const glint = (distance: number, roughness: number, body: Partial<LightBody> = {}) => {
-  const height = TEST_HEIGHT;
-  const length = Math.hypot(distance, height);
-  const L: [number, number, number] = [-distance / length, 0, height / length];
-  return shadePoint(mirrorOnly({ roughness }), [light({
+/**
+ * Точка металла для блика: альбедо у металла — это F0 отражения, поэтому оно
+ * не нулевое; окружение чёрное, диффуза нет — значит видно только отражение.
+ */
+const mirrorMetal = (patch: Partial<MaterialPoint> = {}): MaterialPoint => point({
+  albedo: [0.8, 0.8, 0.8],
+  metallic: 1,
+  ao: 1,
+  environment: { color: [0, 0, 0], level: 0 },
+  ...patch,
+});
+
+/**
+ * Яркость отражения в точке. `toLight` — смещение от точки к центру пятна: та
+ * же величина, что уходит в шейдер, поэтому знак и направление совпадают.
+ */
+const glintAt = (
+  makePoint: (patch: Partial<MaterialPoint>) => MaterialPoint,
+  toLight: [number, number],
+  patch: Partial<MaterialPoint>,
+  body: Partial<LightBody> = {},
+): number => {
+  const length = Math.hypot(toLight[0], toLight[1], TEST_HEIGHT) || 1;
+  const L: [number, number, number] = [toLight[0] / length, toLight[1] / length, TEST_HEIGHT / length];
+  return shadePoint(makePoint(patch), [light({
     L,
     color: [1, 1, 1],
     body: {
-      toLight: [distance, 0],
-      height,
+      toLight,
+      height: TEST_HEIGHT,
       span: TEST_RADIUS,
       shape: 0,
       halfAngle: (120 * Math.PI) / 180 / 2,
@@ -111,136 +131,131 @@ const glint = (distance: number, roughness: number, body: Partial<LightBody> = {
   })], { normalStrength: 1, material: true })[0];
 };
 
-test("блик: пик лежит под источником и убывает монотонно", () => {
-  // Это и был основной дефект: в знаменателе стояло 4·NdotL без геометричного
-  // множителя, косое падение оказывалось ярче прямого, и максимум уползал на
-  // кольцо в 40 % радиуса пятна. На плоской поверхности это выглядит полосой:
-  // яркий пояс по краю подсветки вместо точки под светом.
-  for (const roughness of [0.05, 0.2, 0.5, 0.85, 1]) {
-    const samples: number[] = [];
-    for (let distance = 0; distance <= 200; distance += 8) {
-      samples.push(glint(distance, roughness));
-    }
-    expect(samples[0], `шероховатость ${roughness}: максимум не под светом`).toBeGreaterThan(0);
-    for (let i = 1; i < samples.length; i += 1) {
-      expect(samples[i], `шероховатость ${roughness}: рост яркости на ${i * 8} px`).toBeLessThanOrEqual(
-        samples[i - 1] + 1e-9,
-      );
-    }
-  }
+/** Блик в точке на оси X: точка отстоит от центра света на `distance`. */
+const along = (distance: number): [number, number] => [-distance, 0];
+
+/** Блик диэлектрика: 4 % отражения без альбедо и без окружения. */
+const glint = (distance: number, roughness: number, body: Partial<LightBody> = {}) =>
+  glintAt(mirrorOnly, along(distance), { roughness }, body);
+
+/** Блик металла: альбедо = F0, поэтому отражение видно целиком. */
+const metalGlint = (
+  distance: number,
+  roughness: number,
+  body: Partial<LightBody> = {},
+  patch: Partial<MaterialPoint> = {},
+) => glintAt(mirrorMetal, along(distance), { roughness, ...patch }, body);
+
+test("блик: отражённый луч на плоской поверхности смотрит в зрителя", () => {
+  // Из этого и следует, что отражение источника равно его силуэту: луч из
+  // плоской точки уходит прямо в камеру и попадает туда же, где стоит лампа.
+  expect(reflectRay([0, 0, 1])).toEqual([0, 0, 1]);
+  const tilted = reflectRay([Math.SQRT1_2, 0, Math.SQRT1_2]);
+  expect(tilted[0]).toBeCloseTo(1, 6);
+  expect(tilted[2]).toBeCloseTo(0, 6);
+  // Грань круче 45° отражать нечего: луч уходит за плоскость холста, и это не
+  // потеря блика, а физика наклона.
+  expect(reflectRay([0.866, 0, 0.5])[2]).toBeLessThan(0);
+  expect(reflectedLocal([0, 0], reflectRay([0.866, 0, 0.5]), 1, 0, TEST_HEIGHT, TEST_RADIUS)).toBeNull();
+
+  // Плоская нормаль: попадание равно самой точке, в каких бы единицах ни мерить.
+  expect(reflectedLocal([0.3, -0.2], reflectRay([0, 0, 1]), 1, 0, TEST_HEIGHT, TEST_RADIUS))
+    .toEqual([0.3, -0.2]);
+  // Наклон 30°: R = (0.866, 0, 0.5), поэтому точка «уезжает» на 0.866 радиуса —
+  // так изображение источника едет по рельефу.
+  const shifted = reflectedLocal(
+    [0, 0], reflectRay([0.5, 0, Math.sqrt(0.75)]), 1, 0, TEST_HEIGHT, TEST_RADIUS,
+  )!;
+  expect(shifted[0]).toBeCloseTo(0.866, 3);
+  // Вдвое выше свет — вдвое дальше сдвиг: высота входит множителем, а не углом.
+  const higher = reflectedLocal(
+    [0, 0], reflectRay([0.5, 0, Math.sqrt(0.75)]), 1, 0, TEST_HEIGHT * 2, TEST_RADIUS,
+  )!;
+  expect(higher[0]).toBeCloseTo(shifted[0] * 2, 3);
 });
 
-test("блик: лепесток ограничен собственным максимумом", () => {
-  // Ограниченность — не «потолок», который надо помнить, а свойство формулы:
-  // доля делится на собственный пик. Поэтому ни поля снизу, ни clamp сверху в
-  // шейдере больше нет.
-  for (const width of [0.002, 0.02, 0.1, 0.4]) {
-    expect(specLobe(0, width)).toBeCloseTo(1, 6);
-    let previous = Number.POSITIVE_INFINITY;
-    for (let angle = 0; angle <= 1.5; angle += 0.05) {
-      const value = specLobe(angle, width);
-      expect(value).toBeLessThanOrEqual(1 + 1e-6);
-      expect(value).toBeLessThanOrEqual(previous + 1e-9);
-      previous = value;
-    }
-    // «Полуширина» называется полушириной не за красоту: ровно на этом угле
-    // доля падает до половины, и только от неё зависит, где у блика край.
-    expect(specLobe(width, width)).toBeCloseTo(0.5, 6);
-  }
-  // Сплав экспоненциальный, а не обрыв: за полушириной блик ещё виден, но
-  // быстро уходит в единицы процента.
-  expect(specLobe(0.4, 0.1)).toBeLessThan(0.02);
+test("блик: при нулевой шероховатости отражение равно силуэту источника", () => {
+  // Металл: диффузной части нет, окружение чёрное — всё видимое и есть блик.
+  const center = metalGlint(0, 0.02);
+  expect(center).toBeGreaterThan(0.5);
+  // Внутри силуэта яркость одна и та же: это изображение лампы, а не точка с
+  // гало вокруг неё. Раньше на 40 px оставалась пятая часть пика — отсюда и
+  // «блик виден только в центре пятна».
+  expect(metalGlint(120, 0.02)).toBeCloseTo(center, 2);
+  expect(metalGlint(TEST_RADIUS * 0.9, 0.02)).toBeCloseTo(center, 2);
+  // За краем силуэта отражения нет вовсе.
+  expect(metalGlint(TEST_RADIUS * 1.4, 0.02)).toBe(0);
+  // Край силуэта резкий: ровно на границе — половина яркости.
+  const edge = metalGlint(TEST_RADIUS, 0.02);
+  expect(edge).toBeGreaterThan(center * 0.35);
+  expect(edge).toBeLessThan(center * 0.65);
 });
 
-test("блик: полуширина — шероховатость, но не уже тела света и не уже пикселя", () => {
-  // Полы и есть ответ на «блика нет»: голый GGX при шероховатости 0.05 уже
-  // пикселя, а без углового тела света зеркало схлопывалось в точку.
-  const dist = TEST_HEIGHT;
-  const psi = 0.3;
-  expect(specLobeWidth(0.02, psi, dist)).toBeCloseTo(psi * SPECULAR_BODY_FLOOR, 9);
-  expect(specLobeWidth(1, psi, dist)).toBeCloseTo(LOBE_HALF_RATIO, 6);
-  // Пиксельный пол: чем ближе поверхность к источнику (меньше dist), тем он
-  // заметнее — это сглаживание, а не размытие.
-  expect(specLobeWidth(0.02, 0, 10)).toBeGreaterThan(specLobeWidth(0.02, 0, 400));
-  // Узкий блик остаётся узким: широкому свету пол даёт ширину, гладкому — нет.
-  expect(specLobeWidth(0.4, 0.3, dist)).toBeLessThan(specLobeWidth(0.4, 2.4, dist));
+test("блик: шероховатость размывает край отражения, а не сужает лепесток", () => {
+  // Ширина ползунка работает на всём ходу: край размывается ровно на столько,
+  // на сколько просят, и не зависит от «полов» ширины лепестка.
+  expect(specularEdgeBlur(0, TEST_RADIUS)).toBeCloseTo(SPECULAR_PIXEL_FLOOR / TEST_RADIUS, 9);
+  expect(specularEdgeBlur(1, TEST_RADIUS)).toBeCloseTo(SPECULAR_EDGE_BLUR, 9);
+  let previous = 0;
+  for (const roughness of [0.02, 0.2, 0.4, 0.6, 0.8, 1]) {
+    const blur = specularEdgeBlur(roughness, TEST_RADIUS);
+    expect(blur).toBeGreaterThan(previous);
+    previous = blur;
+  }
+  // Мелкий источник размывается на те же доли своего радиуса, но пиксельный пол
+  // у него крупнее — это сглаживание края, а не размытие.
+  expect(specularEdgeBlur(0, 20)).toBeGreaterThan(specularEdgeBlur(0, 400));
+
+  // Маска: 1 в центре, половина на краю силуэта, 0 за ним.
+  expect(specularMask(0, 0.1)).toBeCloseTo(1, 9);
+  expect(specularMask(1, 0.1)).toBeCloseTo(0.5, 9);
+  expect(specularMask(2, 0.1)).toBe(0);
+  // Ослабление: шире изображение — ниже пик, иначе матовая поверхность
+  // отражала бы столько же света, сколько зеркало.
+  expect(specularDim(0)).toBe(1);
+  expect(specularDim(1)).toBeLessThan(specularDim(0.2));
+
+  // И в картинке: чем шероховатее, тем шире видимая зона отражения и ниже пик.
+  const sharp = metalGlint(0, 0.02);
+  const matte = metalGlint(0, 1);
+  expect(matte).toBeLessThan(sharp);
+  expect(metalGlint(TEST_RADIUS * 1.3, 1)).toBeGreaterThan(0);
+  expect(metalGlint(TEST_RADIUS * 1.3, 0.02)).toBe(0);
 });
 
 test("блик: форма источника переходит в форму отражения", () => {
-  // Круглый свет даёт круглое пятно, прямоугольный — квадратное: по диагонали
-  // у прямоугольника край дальше, чем по оси, а у круга одинаково во всех
-  // направлениях. Проверка сравнивает эти два отношения.
-  const diagonal = { toLight: [120, 0], rotation: Math.PI / 4 };
-  const circleAxis = glint(120, 0.3);
-  const circleDiagonal = glint(120, 0.3, diagonal);
-  const rectAxis = glint(120, 0.3, { shape: 1 });
-  const rectDiagonal = glint(120, 0.3, { ...diagonal, shape: 1 });
-  // Круг: поворот источника ничего менять не должен.
-  expect(circleDiagonal).toBeCloseTo(circleAxis, 6);
-  // Прямоугольник: по диагонали отражение тянется дальше √2 раз.
-  expect(rectDiagonal).toBeGreaterThan(rectAxis * 1.05);
-  // Форма видна и в контуре. Бисекция из восьми шагов даёт около 1 %, поэтому
-  // сравниваем с допуском, а не «в ноль»: смысл проверки в порядке величин.
-  expect(outlineRay([1, 0], 0, 1, 0.6)).toBeGreaterThan(0.97);
-  expect(outlineRay([1, 0], 0, 1, 0.6)).toBeLessThanOrEqual(1);
-  // У квадрата по диагонали край дальше в √2 раз — оттуда и «квадратное» пятно.
-  expect(outlineRay([Math.SQRT1_2, Math.SQRT1_2], 1, 1, 0.6))
-    .toBeGreaterThan(outlineRay([1, 0], 1, 1, 0.6) * 1.3);
-  // У треугольника по направлению к вершине контур дальше, чем к середине стороны.
-  expect(outlineRay([0, -1], 2, 1, 0.6)).toBeGreaterThan(outlineRay([0, 1], 2, 1, 0.6));
-  // Вне фигуры контур «бесконечный»: бисекция упирается в нижнюю границу.
-  const outside = shapeEdge([-2, 0], 2, 1, 0.6);
-  expect(outside.cover).toBe(0);
+  // Точка на диагонали круга уже за краем силуэта (расстояние = радиусу), а у
+  // прямоугольника та же точка внутри: отражение прямоугольное, а не круглое.
+  const diagonal: [number, number] = [-TEST_RADIUS / Math.SQRT2, -TEST_RADIUS / Math.SQRT2];
+  const base = { roughness: 0.02 };
+  const circle = glintAt(mirrorMetal, diagonal, base);
+  const rect = glintAt(mirrorMetal, diagonal, base, { shape: 1 });
+  expect(rect).toBeGreaterThan(circle * 1.5);
+  // Угол прямоугольника лежит на диагонали (√2 радиуса), а его сторона — на
+  // 1. Поворот на 45° подставляет под диагональ сторону, и отражение тает до
+  // половины — ровно как у круга на том же расстоянии.
+  const turned = glintAt(mirrorMetal, diagonal, base, { shape: 1, rotation: Math.PI / 4 });
+  expect(turned).toBeLessThan(rect);
+  expect(turned).toBeCloseTo(circle, 6);
+  // Сектор отражается только внутри своего угла: точка выше центра попадает в
+  // луч, а повёрнутый на 180° сектор её уже не освещает — отражения нет.
+  const sector = { shape: 3, halfAngle: Math.PI / 12 };
+  const above: [number, number] = [0, TEST_RADIUS * 0.5];
+  expect(glintAt(mirrorMetal, above, { roughness: 0.02 }, sector)).toBeGreaterThan(0);
+  expect(glintAt(mirrorMetal, above, { roughness: 0.02 }, { ...sector, rotation: Math.PI })).toBe(0);
 });
 
-test("блик: за краем пятна гаснет плавно, подсветка — нет", () => {
-  // Reflection видно и там, куда пятно не дотянулось: до SPECULAR_REACH.
-  // Границна мягкая, поэтому на 1.4 радиуса блик есть, а на 2 — уже нет.
-  const far = glint(TEST_RADIUS * 1.4, 0.3);
-  const beyond = glint(TEST_RADIUS * 2.2, 0.3);
-  expect(far).toBeGreaterThan(0);
-  expect(beyond).toBe(0);
-  // Спад между ними не обрывается ступенькой.
-  expect(far).toBeLessThan(glint(TEST_RADIUS * 0.9, 0.3));
-});
-
-test("блик: экспозиция тянет диэлектрик и не трогает металл", () => {
-  // Жалоба «металлик не даёт блика» была обратной стороной экспозиции: множитель
-  // в 6 нужен поверх 4 % отражения, а металлу F0 — цвет самого объекта, и с
-  // тем же множителем его пик выбеливал пол-пятна. Колено гасит подтяжку там,
-  // где отражение и так яркое.
-  const bright = shadePoint(mirrorOnly({ roughness: 0.2, metallic: 1, albedo: [0.55, 0.55, 0.55] }),
-    [light({ L: [0, 0, 1], color: [1, 1, 1] })], { normalStrength: 1 });
-  const dull = shadePoint(mirrorOnly({ roughness: 0.2, albedo: [0.55, 0.55, 0.55] }),
-    [light({ L: [0, 0, 1], color: [1, 1, 1] })], { normalStrength: 1 });
-  // Яркость металла под источником: выше диффузной части диэлектрика, но без
-  // клиппинга в бесконечность (шейдер всё равно clamp'ит к 8, здесь важно,
-  // что значение остаётся в пределах одного-двух).
-  expect(bright[0]).toBeGreaterThan(0.3);
-  expect(bright[0]).toBeLessThan(1.6);
-  expect(Number.isFinite(bright[0]) && Number.isFinite(dull[0])).toBe(true);
-  // Колено работает: пока F0 ниже 0.32, подтяжка есть, выше — её нет.
+test("блик: диэлектрик бликует тише металла, и его тянет экспозиция", () => {
+  // Пластик бликует всегда — вопрос только в яркости. Экспозиция нужна ровно
+  // потому, что 4 % отражения без неё не видно на фоне диффузной части.
+  const plastic = glint(0, 0.02);
+  const metal = metalGlint(0, 0.02);
+  expect(plastic).toBeGreaterThan(0);
+  expect(plastic).toBeLessThan(metal);
   expect(SPECULAR_EXPOSURE).toBeGreaterThan(1);
   expect(SPECULAR_EXPOSURE_KNEE).toBeGreaterThan(0.04);
-});
-
-test("материал: блик по GGX — глаже значит ярче и уже", () => {
-  // Пик распределения при нормали, смотрящей на свет: чем меньше шероховатость,
-  // тем он выше. Это и есть «металл отполирован».
-  expect(ggxDistribution(1, 0.1)).toBeGreaterThan(ggxDistribution(1, 0.5));
-  expect(ggxDistribution(1, 0.5)).toBeGreaterThan(ggxDistribution(1, 1));
-  // Вдали от пика гладкая поверхность почти не даёт отражения: блик узкий.
-  expect(ggxDistribution(0.7, 0.1)).toBeLessThan(ggxDistribution(0.7, 1));
-  // Деления на ноль при нулевой шероховатости нет.
-  expect(Number.isFinite(ggxDistribution(1, 0))).toBe(true);
-
-  // Френель: при взгляде по нормали — ровно база, к скользящему углу растёт.
-  expect(fresnel(1, [0.04, 0.04, 0.04])[0]).toBeCloseTo(0.04, 6);
-  expect(fresnel(0, [0.04, 0.04, 0.04])[0]).toBeCloseTo(1, 6);
-
-  // Диэлектрик отражает 4 %, металл — цветом самого объекта.
-  expect(baseReflectance([0.9, 0.2, 0.1], 0)).toEqual([0.04, 0.04, 0.04]);
-  expect(baseReflectance([0.9, 0.2, 0.1], 1)).toEqual([0.9, 0.2, 0.1]);
+  // Сила блика 0 — отражения нет вовсе: ползунок не «уменьшает», а выключает.
+  expect(metalGlint(0, 0.02, {}, { specular: 0 })).toBe(0);
 });
 
 test("материал: металл вне пятна света не проваливается в чёрный", () => {
@@ -302,27 +317,35 @@ test("материал: свет даёт блик, тень блика не д�
   expect(noSpec[0]).toBeCloseTo(0.8 + (0.8 + 0.04) * MIN_AMBIENT, 5);
 });
 
-test("материал: окклюзия гасит диффузную часть, блик не трогает", () => {
-  const bright = shadePoint(
-    point({ ao: 1, specular: 0 }), [light()], { normalStrength: 1, material: true },
-  );
-  const dark = shadePoint(
-    point({ ao: 0, specular: 0 }), [light()], { normalStrength: 1, material: true },
-  );
-  expect(bright[0]).toBeCloseTo(0.8 + (0.8 + 0.04) * MIN_AMBIENT, 5);
-  expect(dark[0]).toBe(0);
+test("окклюзия: гасит непрямой свет с полом, блик не трогает", () => {
+  // AO — про непрямой свет. Ноль окклюзии раньше стирал материал до чёрного
+  // силуэта: у металла видимый цвет и есть отражение окружения.
+  expect(occluded(1)).toBe(1);
+  expect(occluded(0)).toBeCloseTo(AO_FLOOR, 9);
+  expect(AO_FLOOR).toBeGreaterThan(0.2);
 
-  // Блик при нулевой окклюзии остаётся: он не диффузный.
-  const specOnly = shadePoint(
-    point({ ao: 0, roughness: 0.15, albedo: [0, 0, 0], specular: 1 }),
-    [light()], { normalStrength: 1, material: true },
-  );
-  expect(specOnly[0]).toBeGreaterThan(0);
+  const bright = shadePoint(point({ ao: 1, specular: 0 }), [light()], { normalStrength: 1, material: true });
+  const dark = shadePoint(point({ ao: 0, specular: 0 }), [light()], { normalStrength: 1, material: true });
+  // Прямой свет окклюзия не гасит: в обоих случаях диффузная часть полная.
+  expect(bright[0]).toBeCloseTo(0.8 + (0.8 + 0.04) * MIN_AMBIENT, 5);
+  expect(dark[0]).toBeCloseTo(0.8 + (0.8 + 0.04) * MIN_AMBIENT * AO_FLOOR, 5);
+  // Металл при нулевой окклюзии остаётся видимым, а не чёрным.
+  const metal = shadePoint(point({ metallic: 1, ao: 0 }), [], { normalStrength: 1, material: true });
+  expect(metal[0]).toBeCloseTo(0.8 * MIN_AMBIENT * AO_FLOOR, 5);
+  expect(metal[0]).toBeGreaterThan(0.05);
+
+  // Блик окклюзия не трогает вовсе: он не непрямой свет.
+  const glints = [0, 0.4, 1].map((ao) => metalGlint(0, 0.02, {}, { ao }));
+  expect(glints[1]).toBeCloseTo(glints[0], 9);
+  expect(glints[2]).toBeCloseTo(glints[0], 9);
+  expect(glints[0]).toBeGreaterThan(0.5);
 });
 
 test("материал: свечение не зависит от светов и складывается с ними", () => {
   const glow = shadePoint(
-    point({ emissive: [0.2, 0.6, 1], ao: 0 }), [], { normalStrength: 1, material: true },
+    point({ emissive: [0.2, 0.6, 1], ao: 0, environment: { color: [0, 0, 0], level: 0 } }),
+    [],
+    { normalStrength: 1, material: true },
   );
   expect(glow[0]).toBeCloseTo(0.2, 6);
   expect(glow[2]).toBeCloseTo(1, 6);
@@ -440,50 +463,38 @@ test("материал: реализация в редакторе и в ген�
 
 test("материал: шейдер считает по той же модели, что тесты", () => {
   const source = readFileSync(join(process.cwd(), "src", "render", "lighting.ts"), "utf8");
-  // GGX и Шлик — в шейдере, а не «примерное затемнение».
-  expect(source).toContain("float ggx(float NdotH, float roughness)");
-  expect(source).toContain("vec3 F = F0 + (1.0 - F0) * k;");
   // Отражение диэлектрика приходит из IOR, а не зашито в 4 %.
   expect(source).toContain("F0 = mix(vec3(uF0), scene.rgb, metallic);");
   expect(source).toContain('getUniformLocation(program.volume, "uF0")');
-  // Блик больше не привязан к покрытию пятна: отражение видно и за его краем,
-  // а гаснет плавно до SPECULAR_REACH.
-  expect(source).toContain("specSum += color0.rgb * F * (lobe * reach * amp * NdotL);");
-  expect(source).toContain("float reach = color0.a * (1.0 - smoothstep(1.0, SPECULAR_REACH, d));");
-  // Одна функция формы на пятно и на блик — иначе отражение не могло бы
-  // наследовать форму источника.
-  expect(source).toContain("float d = shapeEdge(local, shape, halfAngle, soft, cover);");
-  expect(source).toContain("float lobe = specLobe(angDev, width);");
-  // Полуширина лепестка и колено экспозиции приходят из модели материала,
-  // а не удвоены литералом в тексте шейдера.
-  expect(source).toContain("#define LOBE_HALF_RATIO ${glslFloat(LOBE_HALF_RATIO)}");
-  expect(source).toContain("#define SPECULAR_BODY_FLOOR ${glslFloat(SPECULAR_BODY_FLOOR)}");
-  expect(source).toContain("#define SPECULAR_EXPOSURE_KNEE ${glslFloat(SPECULAR_EXPOSURE_KNEE)}");
-  // Направление для контура не вырождается под центром света: иначе бисекция
-  // упиралась в свою границу и раздувала блик втрое (было плато с обрывом).
-  expect(source).toContain("vec2 tangent = devLen > 1e-4");
-  expect(source).not.toContain("* 0.15, 0.0),\n          roughness");
-  expect(source).not.toContain("psi * outlineRay(dirH, shape, halfAngle, soft) * 0.15");
-  // Диффузная часть остаётся внутри пятна, блик — снаружи тоже.
+  // Блик — отражение силуэта источника: луч, пересечение с плоскостью света,
+  // форма в координатах источника. Никакого лепестка вокруг точки больше нет.
+  expect(source).toContain("vec3 ray = vec3(2.0 * n.z * n.xy, 2.0 * n.z * n.z - 1.0);");
+  expect(source).toContain("vec2 hit = reflectedLocal(local, ray, c, s, height, span);");
+  expect(source).toContain("float dRefl = shapeEdge(hit, shape, halfAngle, soft, coverHit);");
+  expect(source).toContain("float mask = coverHit > 0.0");
+  expect(source).not.toContain("specLobe");
+  expect(source).not.toContain("SPECULAR_REACH");
+  // Числа модели приходят из `material.ts`, а не удвоены литералами.
+  expect(source).toContain("vec2 reflectedLocal(vec2 local, vec3 ray, float cosRotation, float sinRotation,");
+  expect(source).toContain("float specularEdgeBlur(float roughness, float span)");
+  expect(source).toContain("float specularMask(float dRefl, float blur)");
+  expect(source).toContain("#define SPECULAR_EDGE_BLUR ${glslFloat(SPECULAR_EDGE_BLUR)}");
+  expect(source).toContain("#define SPECULAR_BLUR_DIM ${glslFloat(SPECULAR_BLUR_DIM)}");
+  expect(source).toContain("#define AO_FLOOR ${glslFloat(AO_FLOOR)}");
+  // Блик не зависит от NdotL: это яркость отражения, а не косинус падения.
+  expect(source).toContain("* (mask * exposure * uSpecular * uLightExtra[i].y);");
+  // Окклюзия гасит непрямой свет и не трогает ни прямой свет, ни блик.
+  expect(source).toContain("float indirect = AO_FLOOR + (1.0 - AO_FLOOR) * clamp(occlusion, 0.0, 1.0);");
+  expect(source).toContain("vec3 rgb = (diffuse + ambientReflect * indirect) * shade + specSum + emissive;");
+  // Диффузная часть остаётся внутри пятна, отражение живёт по своему лучу.
   expect(source).toContain("if (inPatch) lightSum += color0.rgb * a * NdotL;");
-  // Окклюзия гасит диффузную часть, а не блик.
-  expect(source).toContain("float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);");
-  // Высота света участвует в направлении на свет вместе с настоящим смещением
-  // до пятна: нормированная отдельно горизонталь давала «свет сверху» везде.
-  expect(source).toContain("vec2 toLight = (center - p) / uScale;");
-  expect(source).toContain("normalize(vec3(toLight, max(uLightExtra[i].x / uScale, 0.001)))");
-  // Старая схема с полками выключена: именно она делала пояс вместо точки.
-  expect(source).not.toContain("float denom = 4.0 * max(NdotL, 0.02)");
-  expect(source).not.toContain("clamp(D / denom");
-  expect(source).not.toContain("MAX_SPECULAR_GAIN");
-  // Экспозиция и досягаемость приходят из модели, а не удвоены литералом, и
-  // уходят в текст вещественными литералами (GLSL ES 3.00 не приводит int).
-  expect(source).toContain("#define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}");
-  expect(source).toContain("#define SPECULAR_REACH ${SPECULAR_REACH}");
-  expect(SPECULAR_EXPOSURE).toBe(6);
-  expect(SPECULAR_REACH).toBe(1.8);
-  // Минимум окружения — общий с моделью в тестах.
-  expect(source).toContain("vec3 ambient = uEnvironment.rgb * max(uEnvironment.w, 0.35);");
+  // README ведёт в руководство, иначе его никто не найдёт.
+  const readme = readFileSync(join(process.cwd(), "README.md"), "utf8");
+  expect(readme).toContain("docs/MATERIALS.md");
+  // Ползунок силы блика у света — то, что обещает руководство.
+  const lightSection = readFileSync(join(process.cwd(), "src", "components", "LightSection.tsx"), "utf8");
+  expect(lightSection).toContain("Сила блика");
+  expect(lightSection).toContain("specular");
 });
 
 test("материал: имена в редакторе совпадают с ядром", () => {
@@ -564,7 +575,10 @@ test("материал: отражение считается из IOR, а не 
   const plastic = spec(f0FromIor(1.5));
   const skin = spec(f0FromIor(1.4));
   // 2.8 % против 4 % — блик слабее примерно на треть, а не «на глаз».
-  expect(skin / plastic).toBeCloseTo(0.0278 / 0.04, 2);
+  // Экспозиция тянет слабый F0 чуть сильнее (колено 0.32), поэтому отношение
+  // не ровно 0.0278/0.04, а около 0.72 — «примерно на треть слабее».
+  expect(skin / plastic).toBeGreaterThan(0.65);
+  expect(skin / plastic).toBeLessThan(0.8);
 });
 
 test("материал: пресет — список значений, а не режим", () => {

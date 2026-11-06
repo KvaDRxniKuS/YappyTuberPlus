@@ -545,7 +545,7 @@ function shadeSheet(name, material) {
  */
 const PLATE = 240;
 const LIGHT_PLATE_COLOR = [0.9, 0.86, 0.78];
-const PLATE_LIGHT = { x: PLATE / 2 - 46, y: PLATE / 2 - 26, span: 78, height: 260, cover: 0.85 };
+const PLATE_LIGHT = { x: PLATE / 2, y: PLATE / 2, span: 78, height: 260, cover: 0.85 };
 // Подписи без цифр «9» и «0»: в растровом шрифте генератора их нет.
 const SHAPES = [
   { caption: "CIRCLE", shape: 0 },
@@ -554,10 +554,11 @@ const SHAPES = [
 ];
 
 /**
- * Пластина под одним светом данной формы. Второй проход рисует контур
- * полуширины блика — там, где его яркость упала вдвое от пика: именно этот
- * контур и повторяет форму источника (его угловое тело входит в ширину
- * лепестка через `outlineRay`), а не силуэт лампы.
+ * Пластина под одним светом данной формы. Показываем **сам блик**, без
+ * альбедо и без окружения: на плоской пластине отражение совпадает с силуэтом
+ * источника, поэтому круглый свет даёт круглое отражение, прямоугольный —
+ * прямоугольное, треугольный — треугольное. Контур полуширины обводит край
+ * этого силуэта: по нему видно, что форма пришла от источника, а не от лепестка.
  */
 /** Свет пластины: один и тот же во обоих проходах — и для цвета, и для поля. */
 function plateLight(shape, toLight, length) {
@@ -586,13 +587,17 @@ function plateLight(shape, toLight, length) {
 function plateSheet(shape) {
   const out = blank(PLATE, PLATE);
   const platePoint = {
-    albedo: [0.5, 0.5, 0.52],
+    // Альбедо металла — это цвет отражения (F0), поэтому оно не нулевое: у
+    // металла диффузной части нет, и всё видимое на панели и есть блик.
+    albedo: [0.62, 0.62, 0.66],
     normal: [0, 0, 1],
     // Один и тот же материал на всех трёх панелях: отличается только форма
-    // света — иначе сравнивать было бы нечего. Глянец выбран заведомо
-    // гладким, чтобы ширина блика шла от углового тела источника.
-    roughness: 0.05,
-    metallic: 0,
+    // света — иначе сравнивать было бы нечего. Шероховатость нулевая: при ней
+    // блик равен силуэту источника, и его форма видна без размытия.
+    roughness: 0.02,
+    // Металл: отражение источника яркое и цветное, поэтому силуэт видно
+    // целиком. У диэлектрика тот же силуэт, но в шесть раз тише.
+    metallic: 1,
     ao: 1,
     emissive: [0, 0, 0],
     specular: 1,
@@ -609,9 +614,7 @@ function plateSheet(shape) {
       const toLight = [PLATE_LIGHT.x - x, PLATE_LIGHT.y - y];
       const length = Math.hypot(toLight[0], toLight[1], PLATE_LIGHT.height);
       const light = plateLight(shape, toLight, length);
-      // «Только блик»: нулевой альбедо и без окружения — всё, что останется в
-      // канале, и есть отражение источника.
-      const only = shadePoint({ ...platePoint, albedo: [0, 0, 0] }, [light], { normalStrength: 1, material: true });
+      const only = shadePoint(platePoint, [light], { normalStrength: 1, material: true });
       const value = Math.max(only[0], only[1], only[2]);
       glintField[y * PLATE + x] = value;
       if (value > glintMax) glintMax = value;
@@ -626,6 +629,8 @@ function plateSheet(shape) {
       const toLight = [PLATE_LIGHT.x - x, PLATE_LIGHT.y - y];
       const length = Math.hypot(toLight[0], toLight[1], PLATE_LIGHT.height);
       const light = plateLight(shape, toLight, length);
+      // Цвет панели — только отражение: окружение чёрное, диффуза у металла
+      // нет, поэтому силуэт источника виден целиком.
       const rgb = shadePoint(platePoint, [light], { normalStrength: 1, material: true });
       const i = (y * PLATE + x) * 4;
       // Контур полуширины: пиксель, чей блик вдвое меньше пикового, и сосед

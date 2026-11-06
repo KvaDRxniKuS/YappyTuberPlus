@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { lightDirection } from "../../scripts/material-math.mjs";
 import { SHADER_SOURCES, glslFloat, invertMatrix3 } from "../../src/render/lighting";
-import { SPECULAR_EXPOSURE, SPECULAR_REACH } from "../../src/render/material";
+import { AO_FLOOR, SPECULAR_BLUR_DIM, SPECULAR_EDGE_BLUR, SPECULAR_EXPOSURE } from "../../src/render/material";
 import { join } from "node:path";
 
 /*
@@ -102,7 +102,9 @@ test("шейдер объёма: числа материала подставл�
   const volume = SHADER_SOURCES.volumeFragment;
   // Не «6» и не «1.8000000000000002 — а ровно то, что принимает GLSL.
   expect(volume).toContain(`#define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}`);
-  expect(volume).toContain(`#define SPECULAR_REACH ${glslFloat(SPECULAR_REACH)}`);
+  expect(volume).toContain(`#define SPECULAR_EDGE_BLUR ${glslFloat(SPECULAR_EDGE_BLUR)}`);
+  expect(volume).toContain(`#define SPECULAR_BLUR_DIM ${glslFloat(SPECULAR_BLUR_DIM)}`);
+  expect(volume).toContain(`#define AO_FLOOR ${glslFloat(AO_FLOOR)}`);
   expect(volume).not.toContain(`#define SPECULAR_EXPOSURE ${SPECULAR_EXPOSURE}\n`);
 });
 
@@ -189,26 +191,24 @@ test("объём: материал и свечение работают без �
   expect(canvas).toContain("if (sample && (options.lighting?.lights.length || sample.material)) {");
 });
 
-test("шейдер объёма: блик не вырождается в линию и не гасится дважды", () => {
+test("шейдер объёма: блик — отражение силуэта, а не лепесток вокруг точки", () => {
   const volume = SHADER_SOURCES.volumeFragment;
-  // Блик — лепесток GGX, нормированный на собственный максимум. Прежняя схема
-  // (D, делённая на 4·NdotL, с полкой снизу и потолком сверху) делала косое
-  // падение ярче прямого: на плоской поверхности максимум уползал на кольцо, и
-  // вместо точки под источником была полоса по краю пятна.
-  expect(volume).toContain("float lobe = specLobe(angDev, width);");
-  expect(volume).toContain("float specLobe(float angle, float halfWidth)");
+  // Луч от поверхности к зрителю и пересечение с плоскостью света: на плоской
+  // поверхности попадание равно самой точке, поэтому отражение повторяет силуэт
+  // источника. Прежний лепесток вокруг полувектора давал точку в центре пятна —
+  // отсюда жалоба «металл не даёт блика».
+  expect(volume).toContain("vec3 ray = vec3(2.0 * n.z * n.xy, 2.0 * n.z * n.z - 1.0);");
+  expect(volume).toContain("vec2 hit = reflectedLocal(local, ray, c, s, height, span);");
+  expect(volume).toContain("float dRefl = shapeEdge(hit, shape, halfAngle, soft, coverHit);");
+  expect(volume).toContain("float blur = specularEdgeBlur(roughness, span);");
+  expect(volume).toContain("float mask = coverHit > 0.0");
+  expect(volume).not.toContain("float lobe = specLobe(angDev, width);");
+  expect(volume).not.toContain("outlineRay");
   // Колено экспозиции: без него металл с F0 = цвет объекта выбеливал пол-пятна.
   expect(volume).toContain("float exposure = mix(1.0, SPECULAR_EXPOSURE,");
-  expect(volume).not.toContain("4.0 * max(NdotL, 0.02)");
-  expect(volume).not.toContain("clamp(D / denom");
-  // Отражение не обрезается краем пятна: оно спадает до SPECULAR_REACH плавно,
-  // а подсветка холста остаётся внутри пятна.
-  expect(volume).toContain("float reach = color0.a * (1.0 - smoothstep(1.0, SPECULAR_REACH, d));");
+  // Блик не обрезается краем пятна и не гасится покрытием: он живёт по лучу.
   expect(volume).toContain("if (inPatch) lightSum += color0.rgb * a * NdotL;");
-  // Форма блика берётся из той же функции, что и форма пятна: прямоугольный
-  // свет даёт прямоугольное отражение.
-  expect(volume).toContain("float d = shapeEdge(local, shape, halfAngle, soft, cover);");
-  expect(volume).toContain("float outlineRay(vec2 dir, float shape, float halfAngle, float soft)");
+  expect(volume).toContain("* (mask * exposure * uSpecular * uLightExtra[i].y);");
   // Один множитель силы блика на весь шейдер: в сумме его больше нет.
   expect(volume).toContain("specSum + emissive");
   expect(volume).not.toContain("specSum * uSpecular");

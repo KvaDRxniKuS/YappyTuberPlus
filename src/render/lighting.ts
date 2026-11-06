@@ -2,8 +2,8 @@ import type { LightShape, RigPreset } from "../types";
 import { assetUrl } from "../engine/assets";
 import { reportResources } from "../engine/meter";
 import {
-  LOBE_HALF_RATIO, SPECULAR_BODY_FLOOR, SPECULAR_EXPOSURE, SPECULAR_EXPOSURE_KNEE,
-  SPECULAR_PIXEL_FLOOR, SPECULAR_REACH, materialSources,
+  AO_FLOOR, SPECULAR_BLUR_DIM, SPECULAR_EDGE_BLUR, SPECULAR_EXPOSURE,
+  SPECULAR_EXPOSURE_KNEE, SPECULAR_PIXEL_FLOOR, materialSources,
 } from "./material";
 import { alphaOf, withAlpha } from "./light";
 
@@ -202,11 +202,11 @@ precision highp float;
  * разойтись: подстановка происходит при сборке строки шейдера.
  */
 #define SPECULAR_EXPOSURE ${glslFloat(SPECULAR_EXPOSURE)}
-#define SPECULAR_REACH ${glslFloat(SPECULAR_REACH)}
 #define SPECULAR_EXPOSURE_KNEE ${glslFloat(SPECULAR_EXPOSURE_KNEE)}
-#define LOBE_HALF_RATIO ${glslFloat(LOBE_HALF_RATIO)}
-#define SPECULAR_BODY_FLOOR ${glslFloat(SPECULAR_BODY_FLOOR)}
+#define SPECULAR_EDGE_BLUR ${glslFloat(SPECULAR_EDGE_BLUR)}
 #define SPECULAR_PIXEL_FLOOR ${glslFloat(SPECULAR_PIXEL_FLOOR)}
+#define SPECULAR_BLUR_DIM ${glslFloat(SPECULAR_BLUR_DIM)}
+#define AO_FLOOR ${glslFloat(AO_FLOOR)}
 in vec2 vUv;
 
 uniform sampler2D uScene;
@@ -306,23 +306,30 @@ float shapeEdge(vec2 local, float shape, float halfAngle, float soft, out float 
 }
 
 /**
- * Насколько далеко по направлению dir лежит край формы источника: угловой
- * контур света. Бисекция идёт по той же функции формы, поэтому блик наследует
- * и треугольник, и сектор, и поворот — всё, что умеет сам свет.
+ * Отражение источника: где отражённый луч пересекает плоскость света, в
+ * координатах источника (0 — центр пятна, 1 — край). На плоской поверхности луч
+ * смотрит в зрителя, поэтому попадание равно самой точке — и блик совпадает с
+ * силуэтом лампы. Расстояние до плоскости света — в долях радиуса: и высота, и
+ * радиус уже в пикселях холста.
  */
-float outlineRay(vec2 dir, float shape, float halfAngle, float soft) {
-  float low = 0.05;
-  float high = 3.0;
-  for (int step = 0; step < 8; step++) {
-    float mid = (low + high) * 0.5;
-    float insideCover = 1.0;
-    if (shapeEdge(dir * mid, shape, halfAngle, soft, insideCover) <= 1.0 && insideCover > 0.0) {
-      low = mid;
-    } else {
-      high = mid;
-    }
-  }
-  return low;
+vec2 reflectedLocal(vec2 local, vec3 ray, float cosRotation, float sinRotation,
+                    float height, float span) {
+  vec2 turned = vec2(
+    cosRotation * ray.x + sinRotation * ray.y,
+    -sinRotation * ray.x + cosRotation * ray.y
+  );
+  return local + turned * (height / (ray.z * max(span, 0.001)));
+}
+
+/** Ширина размытого края отражения в координатах источника. */
+float specularEdgeBlur(float roughness, float span) {
+  return max(SPECULAR_PIXEL_FLOOR / max(span, 1.0), SPECULAR_EDGE_BLUR * clamp(roughness, 0.0, 1.0));
+}
+
+/** Маска отражения: 1 внутри силуэта источника, 0 снаружи, край размыт. */
+float specularMask(float dRefl, float blur) {
+  float width = max(blur, 1e-4);
+  return 1.0 - smoothstep(1.0 - width, 1.0 + width, dRefl);
 }
 
 /** Значение канала в точке: константа, свой файл или буква упакованной карты. */
@@ -335,33 +342,6 @@ float channelValue(int mode, int channel, float constant, sampler2D own, vec2 uv
   if (channel == 1) return packedTexel.g;
   if (channel == 2) return packedTexel.b;
   return packedTexel.a;
-}
-
-/** Распределение GGX: чем меньше шероховатость, тем уже и ярче блик. */
-float ggx(float NdotH, float roughness) {
-  float alpha = max(roughness * roughness, 0.002);
-  float a2 = alpha * alpha;
-  float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
-  return a2 / (3.14159265 * d * d);
-}
-
-/**
- * Доля блика: 1 в точном зеркальном направлении, 0.5 на полуширине лепестка,
- * дальше спад по тому же закону, что у GGX по углу (1/θ⁴), — поэтому ни
- * «полки», ни кольца, ни потолка усиления не нужно: лепесток ограничен своим
- * максимумом по построению.
- *
- * 0.41421 = √2 − 1 — множитель, при котором знаменатель равен 2 ровно на
- * полуширине.
- *
- * Прежний множитель D / (4·NdotL) требовал и полок, и потолка: без них косое
- * падение оказывалось ярче прямого, и максимум уползал на кольцо в 40 %
- * радиуса пятна. Отсюда и «полоса» вместо точки.
- */
-float specLobe(float angle, float halfWidth) {
-  float k = (angle * angle) / max(halfWidth * halfWidth, 1e-8) * 0.41421;
-  float d = 1.0 + k;
-  return 1.0 / (d * d);
 }
 
 void main() {
@@ -430,13 +410,10 @@ void main() {
     float kernel = 1.0 - soft;
     float t = clamp((d - kernel) / max(1.0 - kernel, 0.001), 0.0, 1.0);
     float a = mix(color0.a, color1.a, t) * cover;
-    if (!material) {
-      // Прежний проход объёма: только пятно подсветки, ни на пиксель шире.
-      if (!inPatch || a <= 0.0005) continue;
-    } else if (!inPatch && d > SPECULAR_REACH) {
-      // За пределами досягаемости блика считать нечего: остаётся окружение.
-      continue;
-    }
+    // Прежний проход объёма считает только пятно подсветки, ни на пиксель
+    // шире. Материалу нужны и точки вне пятна: отражение источника живёт по
+    // своему лучу, а не по краю подсветки.
+    if (!material && (!inPatch || a <= 0.0005)) continue;
 
     // Направление на свет: настоящее смещение до центра пятна плюс высота
     // света. Горизонталь нельзя нормировать отдельно: единичный вектор против
@@ -459,60 +436,43 @@ void main() {
         if (inPatch) shadowSum += a * 0.9;
       } else if (NdotL > 0.0) {
         // Диффузная часть — это и есть подсветка холста, она остаётся внутри
-        // пятна. Блик живёт по своим правилам: отражение видно и там, куда
-        // само пятно не дотянулось.
+        // пятна. Блик считается по отражённому лучу: он попадает в тело
+        // источника там, где поверхность его действительно отражает.
         if (inPatch) lightSum += color0.rgb * a * NdotL;
-        // Полувектор источника и взгляда смотрит ровно на нормаль там, где
-        // поверхность повёрнута к зеркальному отражению. Значит, угол между
-        // H и n — это «насколько мимо блика» лежит точка: ноль в центре
-        // пятна, рост к краям. Такая геометрия работает на любом наклоне
-        // грани, в отличие от трассировки отражённого луча: под ортографической
-        // камерой он на грани круче 45° уходит за спину, и блика нет вовсе.
-        vec3 H = normalize(lightDir + vec3(0.0, 0.0, 1.0));
-        float NdotH = clamp(dot(n, H), 0.0, 1.0);
-        float angDev = acos(NdotH);
-        // Шлик по-прежнему по полувектору и взгляду: V у нас смотрит вдоль
-        // нормали холста, поэтому VdotH = H.z, а не NdotH.
-        float k = pow(1.0 - max(H.z, 0.0), 5.0);
-        vec3 F = F0 + (1.0 - F0) * k;
-        // Угловой радиус тела источника: его отражение и есть блик. Край
-        // формы берётся в направлении отклонения, поэтому у прямоугольного
-        // света пятно прямоугольное, у треугольного — треугольное, поворот общий.
-        float dist = max(length(vec3(rel, max(uLightExtra[i].x, 1.0))), 1.0);
-        float body = max(span * (1.0 - soft), span * 0.15);
-        // Направление, в котором точка отклоняется от зеркала. Ровно под
-        // центром света отклонение нулевое и направление вырождено — тогда
-        // берём направление от центра пятна: иначе бисекция контура упиралась
-        // бы в свою верхнюю границу и раздувала блик втрое.
-        vec2 dev = H.xy - n.xy * NdotH;
-        float devLen = length(dev);
-        float relLen = length(rel);
-        vec2 tangent = devLen > 1e-4
-          ? dev / devLen
-          : (relLen > 1e-4 ? rel / relLen : vec2(1.0, 0.0));
-        vec2 dirH = vec2(c * tangent.x + s * tangent.y, -s * tangent.x + c * tangent.y);
-        // Угловой радиус края формы света в этом направлении: он и задаёт,
-        // какую форму будет иметь блик, — прямоугольник остаётся прямоугольником.
-        float psi = atan(body * outlineRay(dirH, shape, halfAngle, soft), dist);
-        // Полуширина лепестка: шероховатость, но не уже 15 % углового тела
-        // света и не уже пикселя холста. Без второго «зеркало» молча
-        // схлопывалось в субпиксель, и блика не было видно вовсе — ровно та
-        // жалоба, на которую ответили. Числа приходят из модели материала.
-        float width = max(LOBE_HALF_RATIO * max(roughness * roughness, 0.002),
-          max(psi * SPECULAR_BODY_FLOOR, SPECULAR_PIXEL_FLOOR / dist));
-        float lobe = specLobe(angDev, width);
-        // Узкий блик чуть ярче широкого — так глянец читается на мелком зуме.
-        // Потолка усилению больше не нужно: лепесток ограничен сам собой.
-        // Экспозиция нужна слабым отражателям: у диэлектрика F0 = 4 %, и без
-        // подтяжки блик тонул бы в диффузной части. У металла F0 — цвет самого
-        // объекта, и там она гаснет до единицы, иначе пол-пятна выбеливалось.
-        float f0Max = max(F0.x, max(F0.y, F0.z));
-        float exposure = mix(1.0, SPECULAR_EXPOSURE,
-          clamp(1.0 - f0Max / SPECULAR_EXPOSURE_KNEE, 0.0, 1.0));
-        float amp = mix(1.0, 2.0, 1.0 - roughness) * exposure
-          * uSpecular * uLightExtra[i].y;
-        float reach = color0.a * (1.0 - smoothstep(1.0, SPECULAR_REACH, d));
-        specSum += color0.rgb * F * (lobe * reach * amp * NdotL);
+        // Отражённый луч от поверхности к зрителю: 2(N·V)N − V. На плоской
+        // поверхности это ровно взгляд, поэтому отражение источника совпадает
+        // с его силуэтом, а не с точкой около центра пятна. Наклон нормали
+        // уводит луч в сторону — изображение источника едет по рельефу.
+        vec3 ray = vec3(2.0 * n.z * n.xy, 2.0 * n.z * n.z - 1.0);
+        if (ray.z > 1e-4) {
+          float height = max(uLightExtra[i].x, 1.0);
+          vec2 hit = reflectedLocal(local, ray, c, s, height, span);
+          float coverHit = 1.0;
+          float dRefl = shapeEdge(hit, shape, halfAngle, soft, coverHit);
+          // Шероховатость размывает край отражения, а не расширяет лепесток
+          // вокруг точки: ползунок работает на всём ходу, от зеркала до мата.
+          // Угловой край (сектор, треугольник) остаётся резким: это граница
+          // самого тела света, а не его мягкость.
+          float blur = specularEdgeBlur(roughness, span);
+          float mask = coverHit > 0.0
+            ? specularMask(dRefl, blur) * (1.0 / (1.0 + SPECULAR_BLUR_DIM * blur))
+            : 0.0;
+          // Шлик по углу взгляда к поверхности: отражается сама поверхность,
+          // поэтому V·N = n.z, а не полувектор.
+          float k = pow(1.0 - clamp(n.z, 0.0, 1.0), 5.0);
+          vec3 F = F0 + (1.0 - F0) * k;
+          // Экспозиция нужна слабым отражателям: у диэлектрика F0 = 4 %, и без
+          // подтяжки блик тонул бы в диффузной части. У металла F0 — цвет
+          // самого объекта, и там она гаснет до единицы.
+          float f0Max = max(F0.x, max(F0.y, F0.z));
+          float exposure = mix(1.0, SPECULAR_EXPOSURE,
+            clamp(1.0 - f0Max / SPECULAR_EXPOSURE_KNEE, 0.0, 1.0));
+          // NdotL в блик не входит: отражение источника — его собственная
+          // яркость, а не косинус падения, иначе край отражения темнел бы с
+          // наклоном и «зеркало» снова становилось размытым пятном.
+          specSum += color0.rgb * color0.a * F
+            * (mask * exposure * uSpecular * uLightExtra[i].y);
+        }
       }
     }
   }
@@ -525,8 +485,11 @@ void main() {
     return;
   }
 
-  // Окклюзия гасит диффузную часть и окружение, блик не трогает.
-  float shade = clamp(occlusion * (1.0 - clamp(shadowSum, 0.0, 1.0)), 0.0, 1.0);
+  // Окклюзия — про непрямой свет, и у неё есть пол: на нуле AO материал иначе
+  // стирался до чёрного силуэта (у металла видимый цвет — это и есть
+  // отражение окружения). Прямой свет и блик она не гасит: это не их дело.
+  float indirect = AO_FLOOR + (1.0 - AO_FLOOR) * clamp(occlusion, 0.0, 1.0);
+  float shade = clamp(1.0 - clamp(shadowSum, 0.0, 1.0), 0.0, 1.0);
   // Минимум окружения: металл вне пятна света иначе чёрный, потому что
   // диффузной части у него нет вовсе, а отражать нечего. Это не «подсветка
   // ради красоты»: даже в тёмной комнате поверхность что-то отражает.
@@ -541,7 +504,7 @@ void main() {
     if (uEmissiveMode == 1) emissive *= texture(uEmissiveTex, uv).rgb;
   }
   // uSpecular уже учтён в amp: второй множитель гасил бы блик дважды.
-  vec3 rgb = (diffuse + ambientReflect) * shade + specSum + emissive;
+  vec3 rgb = (diffuse + ambientReflect * indirect) * shade + specSum + emissive;
   outColor = vec4(clamp(rgb, 0.0, 8.0), scene.a);
 }`;
 

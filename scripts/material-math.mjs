@@ -18,49 +18,56 @@ export const SPECULAR_EXPOSURE = 6;
 /** Колено экспозиции: F0, выше которого блик не подтягивается. */
 export const SPECULAR_EXPOSURE_KNEE = 0.32;
 
-/** Досягаемость блика в радиусах пятна: за краем света нет, а отражение есть. */
-export const SPECULAR_REACH = 1.8;
+/** Размытие края отражения при шероховатости 1 — доля радиуса источника. */
+export const SPECULAR_EDGE_BLUR = 1;
+/** Край отражения не уже пикселя холста: сглаживание, а не размытие. */
+export const SPECULAR_PIXEL_FLOOR = 1;
+/** Ослабление отражения размытием: шире изображение источника, ниже пик. */
+export const SPECULAR_BLUR_DIM = 1.5;
+/** Пол окклюзии: ноль AO не стирает материал до чёрного. */
+export const AO_FLOOR = 0.35;
 
-export function ggx(NdotH, roughness) {
-  const alpha = Math.max(roughness * roughness, 0.002);
-  const a2 = alpha * alpha;
-  const d = NdotH * NdotH * (a2 - 1) + 1;
-  return a2 / (Math.PI * d * d);
-}
-
-export function fresnel(VdotH, F0) {
-  const k = Math.pow(1 - clamp(VdotH, 0, 1), 5);
+export function fresnel(VdotN, F0) {
+  const k = Math.pow(1 - clamp(VdotN, 0, 1), 5);
   return [F0[0] + (1 - F0[0]) * k, F0[1] + (1 - F0[1]) * k, F0[2] + (1 - F0[2]) * k];
 }
 
-/** Половина ширины чистого GGX по углу: θ½ = √(√2 − 1)·α = 0.64359·roughness². */
-export const LOBE_HALF_RATIO = 0.64359;
-/** Пол ширины блика: доля углового тела света — 15 %. */
-export const SPECULAR_BODY_FLOOR = 0.15;
-/** Шаг одного пикселя холста в доле блика (сглаживание, не размытие). */
-export const SPECULAR_PIXEL_FLOOR = 1;
-
-/**
- * Доля блика: 1 в зеркальном направлении, 0.5 на полуширине, дальше спад по
- * закону GGX по углу (1/θ⁴). Ограничен максимумом по построению — ни полки, ни
- * потолка. Множитель √2 − 1 ставит знаменатель в 2 ровно на полуширине.
- */
-export function specLobe(angle, halfWidth) {
-  const k = ((angle * angle) / Math.max(halfWidth * halfWidth, 1e-8)) * (Math.SQRT2 - 1);
-  const d = 1 + k;
-  return 1 / (d * d);
+/** Отражённый луч от поверхности к зрителю: `R = 2(N·V)N − V` при `V = (0,0,1)`. */
+export function reflectRay(normal) {
+  const VdotN = normal[2];
+  return [2 * VdotN * normal[0], 2 * VdotN * normal[1], 2 * VdotN * VdotN - 1];
 }
 
-/**
- * Полуширина лепестка: шероховатость, но не уже 15 % углового тела света и не
- * уже пикселя холста. Повторяет `specLobeWidth` из материала и шейдера.
- */
-export function specLobeWidth(roughness, psi, dist) {
-  const alpha = Math.max(roughness * roughness, 0.002);
-  return Math.max(
-    LOBE_HALF_RATIO * alpha,
-    Math.max(psi * SPECULAR_BODY_FLOOR, SPECULAR_PIXEL_FLOOR / dist),
-  );
+/** Точка пересечения отражённого луча с плоскостью света — в координатах источника. */
+export function reflectedLocal(local, ray, cos, sin, height, span) {
+  if (!(ray[2] > 1e-4)) return null;
+  const travel = height / (ray[2] * Math.max(span, 1e-3));
+  return [
+    local[0] + (cos * ray[0] + sin * ray[1]) * travel,
+    local[1] + (-sin * ray[0] + cos * ray[1]) * travel,
+  ];
+}
+
+/** Ширина размытого края отражения в координатах источника. */
+export function specularEdgeBlur(roughness, span) {
+  const pixel = SPECULAR_PIXEL_FLOOR / Math.max(span, 1);
+  return Math.max(pixel, SPECULAR_EDGE_BLUR * clamp(roughness, 0, 1));
+}
+
+/** Маска отражения: 1 внутри силуэта источника, 0 снаружи. */
+export function specularMask(dRefl, blur) {
+  const width = Math.max(blur, 1e-4);
+  return 1 - smoothstep(1 - width, 1 + width, dRefl);
+}
+
+/** Ослабление отражения размытием. */
+export function specularDim(blur) {
+  return 1 / (1 + SPECULAR_BLUR_DIM * Math.max(blur, 0));
+}
+
+/** Окклюзия непрямого света с полом. */
+export function occluded(ao) {
+  return AO_FLOOR + (1 - AO_FLOOR) * clamp(ao, 0, 1);
 }
 
 /** Знаковая площадь внутри треугольника: больше нуля значит «внутри». */
@@ -94,23 +101,6 @@ export function shapeEdge(local, shape, halfAngle, soft) {
     };
   }
   return { d: Math.hypot(local[0], local[1]), cover: 1 };
-}
-
-/**
- * Насколько далеко по направлению dir лежит край формы источника: угловой
- * контур света. Бисекция идёт по той же shapeEdge — блик наследует и
- * треугольник, и сектор, и поворот. Восемь шагов — это около 1 % по краю: больше не нужно, спорит с ценой пикселя.
- */
-export function outlineRay(dir, shape, halfAngle, soft) {
-  let low = 0.05;
-  let high = 3;
-  for (let step = 0; step < 8; step += 1) {
-    const mid = (low + high) / 2;
-    const probe = shapeEdge([dir[0] * mid, dir[1] * mid], shape, halfAngle, soft);
-    if (probe.d <= 1 && probe.cover > 0) low = mid;
-    else high = mid;
-  }
-  return low;
 }
 
 function smoothstep(edge0, edge1, value) {
@@ -164,73 +154,47 @@ export function shadePoint(point, lights, options) {
   // он чёрный вне пятна света — ровно так «половина куба» и пропадала.
   const ambientLevel = Math.max(clamp(point.environment.level, 0, 2), MIN_AMBIENT);
   const ambient = point.environment.color.map((channel) => channel * ambientLevel);
+  // Окклюзия — про непрямой свет, и у неё есть пол: ноль AO не стирает материал.
+  const indirect = occluded(point.ao);
   const out = [
-    (point.albedo[0] * (1 - metallic) + F0[0]) * ambient[0] * point.ao + point.emissive[0],
-    (point.albedo[1] * (1 - metallic) + F0[1]) * ambient[1] * point.ao + point.emissive[1],
-    (point.albedo[2] * (1 - metallic) + F0[2]) * ambient[2] * point.ao + point.emissive[2],
+    (point.albedo[0] * (1 - metallic) + F0[0]) * ambient[0] * indirect + point.emissive[0],
+    (point.albedo[1] * (1 - metallic) + F0[1]) * ambient[1] * indirect + point.emissive[1],
+    (point.albedo[2] * (1 - metallic) + F0[2]) * ambient[2] * indirect + point.emissive[2],
   ];
-  const diffuseWeight = (1 - metallic) * point.ao;
+  // Прямой свет окклюзия не гасит.
+  const diffuseWeight = 1 - metallic;
+  // Отражённый луч и Шлик зависят от нормали, а не от света.
+  const ray = reflectRay(N);
+  const F = fresnel(Math.max(N[2], 0), F0);
+  const f0Max = Math.max(F0[0], Math.max(F0[1], F0[2]));
+  const exposure = 1 + (SPECULAR_EXPOSURE - 1) * clamp(1 - f0Max / SPECULAR_EXPOSURE_KNEE, 0, 1);
+
   for (const light of lights) {
-    // Тёмный свет — это тень: в материале он гасит диффузную часть (это делает
-    // шейдер), а сам ничего не добавляет.
+    // Тёмный свет — тень: сам он ничего не добавляет, блика не даёт.
     if (light.polarity <= 0) continue;
     const body = light.body;
     const cos = Math.cos(body.rotation);
     const sin = Math.sin(body.rotation);
-    // Смещение точки от центра света в системе источника — ровно то же, что
-    // считает шейдер (rel, local).
+    const NdotL = dot(N, light.L);
+    if (NdotL <= 0) continue;
     const rel = [-body.toLight[0], -body.toLight[1]];
     const inSource = [
       (cos * rel[0] + sin * rel[1]) / body.span,
       (-sin * rel[0] + cos * rel[1]) / body.span,
     ];
-    const patch = shapeEdge(inSource, body.shape, body.halfAngle, body.soft);
-    // Блик спадает к SPECULAR_REACH, а не обрывается краем пятна. Диффузную
-    // часть это не касается: покрытие пятна уже умножено в `color`.
-    const specAllowed = patch.d <= SPECULAR_REACH;
-    const NdotL = dot(N, light.L);
-    if (NdotL <= 0) continue;
-    const H = norm([light.L[0] + V[0], light.L[1] + V[1], light.L[2] + V[2]]);
-    const F = fresnel(Math.max(H[2], 0), F0);
-    // Угол между полувектором и нормалью = «насколько мимо блика» лежит точка:
-    // 0 в центре отражения, рост к краям. Не трассировка луча: под ортографией
-    // отражённый луч на грани круче 45° уходит за спину, и блика нет вовсе.
-    const NdotH = clamp(dot(N, H), 0, 1);
-    const angDev = Math.acos(NdotH);
-    // Угловой радиус тела источника: его отражение и есть блик. Край формы
-    // берётся в направлении отклонения, поэтому у прямоугольного света пятно
-    // прямоугольное, у треугольного — треугольное, поворот общий.
-    const dist = Math.max(Math.hypot(rel[0], rel[1], Math.max(body.height, 1)), 1);
-    // Пол в 15 % тела: у очень мягкого источника тело тоньше своего края.
-    const bulk = Math.max(body.span * (1 - body.soft), body.span * 0.15);
-    const dev = [H[0] - N[0] * NdotH, H[1] - N[1] * NdotH];
-    const devLen = Math.hypot(dev[0], dev[1]);
-    const relLen = Math.hypot(rel[0], rel[1]);
-    // Под центром света отклонение нулевое, направление вырождено — берём
-    // направление от центра пятна, иначе бисекция контура раздувает блик.
-    const tangent = devLen > 1e-4
-      ? [dev[0] / devLen, dev[1] / devLen]
-      : (relLen > 1e-4 ? [rel[0] / relLen, rel[1] / relLen] : [1, 0]);
-    const dirH = [
-      cos * tangent[0] + sin * tangent[1],
-      -sin * tangent[0] + cos * tangent[1],
-    ];
-    // Угловой радиус края формы света в направлении отклонения: он решает,
-    // какую форму имеет блик, и поворот наследует у самого источника.
-    const psi = Math.atan((bulk * outlineRay(dirH, body.shape, body.halfAngle, body.soft)) / dist);
-    const lobe = specLobe(angDev, specLobeWidth(roughness, psi, dist));
-    // Узкий блик чуть ярче широкого: mix(1, 2, 1 − roughness) — это 2 − roughness.
-    // Экспозиция гаснет там, где отражение и так яркое (металл): см. material.ts.
-    const f0Max = Math.max(F0[0], Math.max(F0[1], F0[2]));
-    const exposure = 1 + (SPECULAR_EXPOSURE - 1) * clamp(1 - f0Max / SPECULAR_EXPOSURE_KNEE, 0, 1);
-    const amp = (2 - roughness) * exposure;
-    const reach = specAllowed ? body.core * (1 - smoothstep(1, SPECULAR_REACH, patch.d)) : 0;
-    const specScale = lobe * reach * amp * NdotL * point.specular * light.specular
-      * Math.max(0, light.polarity);
+    // Блик — отражение силуэта источника: где отражённый луч попал на плоскость
+    // света, там и проверяем форму. На плоской поверхности попадание равно самой
+    // точке, поэтому при шероховатости 0 отражение равно силуэту лампы.
+    const hit = reflectedLocal(inSource, ray, cos, sin, body.height, body.span);
+    const blur = specularEdgeBlur(roughness, body.span);
+    let mask = 0;
+    if (hit) {
+      const reflected = shapeEdge(hit, body.shape, body.halfAngle, body.soft);
+      if (reflected.cover > 0) mask = specularMask(reflected.d, blur) * specularDim(blur);
+    }
+    const specScale = mask * exposure * point.specular * light.specular * body.core;
     const diffScale = NdotL * diffuseWeight;
     for (let c = 0; c < 3; c += 1) {
-      // Диффузная часть идёт через color (в нём уже лежит покрытие пятна),
-      // блик — через tint и reach: отражение от пятна не зависит.
       out[c] += light.color[c] * diffScale * point.albedo[c] + body.tint[c] * F[c] * specScale;
     }
   }

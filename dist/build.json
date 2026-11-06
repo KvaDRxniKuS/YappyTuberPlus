@@ -7,18 +7,18 @@
   "format": 6,
   "bridge": 2,
   "modules": 5,
-  "shell": 8,
-  "version": "1.1.23.6.2.5.8",
+  "shell": 9,
+  "version": "1.1.23.6.2.5.9",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-06T00:14:09.581Z",
-  "commit": "be618fb",
+  "builtAt": "2026-11-06T00:58:28.278Z",
+  "commit": "2f3fa5a",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-5syD4Tk_.js",
-      "size": 446654,
-      "sha256": "bc0a8c2219e69395f7c0612deaf2c83d37a8e0ef74cf5a7aa7fa857e71e38753"
+      "path": "assets/bus-Cb6W8MPH.js",
+      "size": 444401,
+      "sha256": "5512c7eb91a0de3403d0d02c6771aba241831ccc000aad0d7e23bf9692a49a49"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,14 +76,14 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-CVGh6Ejm.js",
-      "size": 17276,
-      "sha256": "07d97fd1eecb4d9681485745de628508758d56e9313deb87801951ef43bd77a0"
-    },
-    {
       "path": "assets/overlay-D8-ZKqmu.css",
       "size": 3377,
       "sha256": "c3e2e840a4471974f263e6af8b0b067bbc2caeed80c71b0b0d09959b1f173018"
+    },
+    {
+      "path": "assets/overlay-XmANGwId.js",
+      "size": 17276,
+      "sha256": "b402e31f38e3a61114c061398d293d249bdf47382327cc17335e373c50535a33"
     },
     {
       "path": "assets/studio-CnP1Fs6I.css",
@@ -91,9 +91,9 @@
       "sha256": "94778d03b46155a30aa2bba1b4aa91d4c1b1407ca9c1534808fcca44bf94b046"
     },
     {
-      "path": "assets/studio-DDTXNfoM.js",
+      "path": "assets/studio-SPNwAf3s.js",
       "size": 821289,
-      "sha256": "76d60f1d89dcfadd8e780056f79fc74178c28d29001464d923318f0c3c88ba8a"
+      "sha256": "c8269c3100ae8465cbe58a1429cf9637a6830c22c37e8e2c8010894a78d85333"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "3e863411866d7476f76fda4eef6ec69e4737e2f8f2ba194777f4b6af88aef960"
+      "sha256": "d762ee012763124b136a70487de4e86052d7bd5f9d60510785176be73d409164"
     },
     {
       "path": "modules/ambient.json",
@@ -183,7 +183,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "561d90e3f0b3e848577b768d3b5b1c4e3540f83b997520066e683c744e945e5c"
+      "sha256": "b9447113e1c545b2e11097fefad6ca79d1a9b02db754d80010e461361cb25dd9"
     },
     {
       "path": "rig_core.wasm",
