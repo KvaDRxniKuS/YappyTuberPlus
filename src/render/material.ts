@@ -365,8 +365,13 @@ export interface LightBody {
   soft: number;
   /** Поворот источника в радианах. */
   rotation: number;
-  /** Альфа света в центре пятна: яркость отражения. */
+  /** Альфа света в центре пятна: `color0.a` шейдера. */
   core: number;
+  /**
+   * Альфа света у края пятна: `color1.a` шейдера. Не задана — свет ровный, и
+   * отражение заливается одной яркостью, как до профиля.
+   */
+  edge?: number;
   /** Цвет света в центре пятна, 0…1 на канал: `color0.rgb` шейдера. */
   tint: [number, number, number];
 }
@@ -473,17 +478,28 @@ export function shadePoint(point: MaterialPoint, lights: LightPoint[], options: 
     const hit = reflectedLocal(inSource, ray, cos, sin, body.height, body.span);
     const blur = specularEdgeBlur(roughness, body.span);
     let mask = 0;
+    // Яркость света в точке попадания: у лампы своё тело — она ярче в центре и
+    // тише к краю. Раньше сюда шла альфа центра, и отражение заливалось ровным
+    // пятном без ядра: зеркало показывало трафарет света, а не сам свет.
+    let alphaHit = body.core;
     if (hit) {
       const reflected = shapeEdge(hit, body.shape, body.halfAngle, body.soft);
       // Силуэт источника: край по радиусу размывает шероховатость, а угловой
       // край (сектор, треугольник) остаётся резким — это граница самого тела
       // света, а не его мягкость.
-      if (reflected.cover > 0) mask = specularMask(reflected.d, blur) * specularDim(blur);
+      if (reflected.cover > 0) {
+        mask = specularMask(reflected.d, blur) * specularDim(blur);
+        // Тот же профиль, что рисует пятно: `a = mix(color0.a, color1.a, t)`,
+        // только t берётся в точке попадания отражённого луча.
+        const kernel = 1 - body.soft;
+        const tHit = clamp((reflected.d - kernel) / Math.max(1 - kernel, 0.001), 0, 1);
+        alphaHit = body.core + ((body.edge ?? body.core) - body.core) * tHit;
+      }
     }
     // NdotL в блик не входит: отражение источника — это его собственная
     // яркость, а не косинус падения. Иначе край отражения темнел бы пропорционально
     // наклону, и «зеркало» снова выглядело бы размытым пятном.
-    const specScale = mask * exposure * point.specular * light.specular * body.core;
+    const specScale = mask * exposure * point.specular * light.specular * alphaHit;
     const diffScale = NdotL * diffuseWeight;
 
     for (let c = 0; c < 3; c += 1) {

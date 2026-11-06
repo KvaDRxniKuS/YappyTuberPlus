@@ -209,6 +209,12 @@ test("шейдер объёма: блик — отражение силуэта,
   // Блик не обрезается краем пятна и не гасится покрытием: он живёт по лучу.
   expect(volume).toContain("if (inPatch) lightSum += color0.rgb * a * NdotL;");
   expect(volume).toContain("* (mask * exposure * uSpecular * uLightExtra[i].y);");
+  // Яркость отражения — профиль света в точке попадания, а не альфа его центра:
+  // иначе отражение заливается ровным пятном и блика не видно.
+  expect(volume).toContain("float tHit = clamp((dRefl - kernel) / max(1.0 - kernel, 0.001), 0.0, 1.0);");
+  expect(volume).toContain("float alphaHit = mix(color0.a, color1.a, tHit) * step(0.0, coverHit);");
+  expect(volume).toContain("specSum += color0.rgb * alphaHit * F");
+  expect(volume).not.toContain("specSum += color0.rgb * color0.a * F");
   // Один множитель силы блика на весь шейдер: в сумме его больше нет.
   expect(volume).toContain("specSum + emissive");
   expect(volume).not.toContain("specSum * uSpecular");

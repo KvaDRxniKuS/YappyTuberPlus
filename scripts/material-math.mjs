@@ -188,11 +188,18 @@ export function shadePoint(point, lights, options) {
     const hit = reflectedLocal(inSource, ray, cos, sin, body.height, body.span);
     const blur = specularEdgeBlur(roughness, body.span);
     let mask = 0;
+    // Яркость света в точке попадания (см. `shadePoint` в `src/render/material.ts`).
+    let alphaHit = body.core;
     if (hit) {
       const reflected = shapeEdge(hit, body.shape, body.halfAngle, body.soft);
-      if (reflected.cover > 0) mask = specularMask(reflected.d, blur) * specularDim(blur);
+      if (reflected.cover > 0) {
+        mask = specularMask(reflected.d, blur) * specularDim(blur);
+        const kernel = 1 - body.soft;
+        const tHit = clamp((reflected.d - kernel) / Math.max(1 - kernel, 0.001), 0, 1);
+        alphaHit = body.core + ((body.edge ?? body.core) - body.core) * tHit;
+      }
     }
-    const specScale = mask * exposure * point.specular * light.specular * body.core;
+    const specScale = mask * exposure * point.specular * light.specular * alphaHit;
     const diffScale = NdotL * diffuseWeight;
     for (let c = 0; c < 3; c += 1) {
       out[c] += light.color[c] * diffScale * point.albedo[c] + body.tint[c] * F[c] * specScale;

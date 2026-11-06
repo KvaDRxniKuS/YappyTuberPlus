@@ -775,3 +775,24 @@ test("материал: кнопка сброса есть в разделе и 
   expect(at("<span>Пресет</span>")).toBeLessThan(at("Сбросить материал"));
   expect(at("Сбросить материал")).toBeLessThan(at("<PackedRow"));
 });
+
+test("блик показывает профиль света, а не его центр", () => {
+  // Свет с мягким краем: яркий в центре (core) и тихий у края (edge). Раньше
+  // блик заливался альфой центра на всей площади отражения — зеркало показывало
+  // трафарет света: ровное пятно, «как будто наоборот с максимальной
+  // шероховатостью». Теперь яркость берётся там, куда попал отражённый луч.
+  const body = { soft: 0.6, core: 1, edge: 0 } as const;
+  const centre = metalGlint(0, 0.02, body);
+  const middle = metalGlint(TEST_RADIUS * 0.7, 0.02, body);
+  const rim = metalGlint(TEST_RADIUS * 0.95, 0.02, body);
+  // Ядро ярче края, спад монотонный: у отражения появился пик.
+  expect(centre).toBeGreaterThan(middle);
+  expect(middle).toBeGreaterThan(rim);
+  expect(rim / centre).toBeLessThan(0.3);
+  // Ровный свет (без `edge`) остаётся ровным: старое поведение не сдвинулось.
+  const flatCentre = metalGlint(0, 0.02);
+  const flatRim = metalGlint(TEST_RADIUS * 0.95, 0.02);
+  expect(flatRim / flatCentre).toBeGreaterThan(0.9);
+  // Профиль не отменяет шероховатость: на матовой поверхности пик ниже.
+  expect(metalGlint(0, 1, body)).toBeLessThan(centre);
+});
