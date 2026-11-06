@@ -11,14 +11,14 @@
   "version": "1.1.23.6.2.5.8",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-05T17:08:30.489Z",
-  "commit": "53b4cd1",
+  "builtAt": "2026-11-06T00:14:09.581Z",
+  "commit": "be618fb",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-BQ1zMW6H.js",
+      "path": "assets/bus-5syD4Tk_.js",
       "size": 446654,
-      "sha256": "b1f5ef057f3e99e403f61ee3f82d4b45fb812c0ad0bb01b90805d020ec3288bf"
+      "sha256": "bc0a8c2219e69395f7c0612deaf2c83d37a8e0ef74cf5a7aa7fa857e71e38753"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,24 +76,24 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
+      "path": "assets/overlay-CVGh6Ejm.js",
+      "size": 17276,
+      "sha256": "07d97fd1eecb4d9681485745de628508758d56e9313deb87801951ef43bd77a0"
+    },
+    {
       "path": "assets/overlay-D8-ZKqmu.css",
       "size": 3377,
       "sha256": "c3e2e840a4471974f263e6af8b0b067bbc2caeed80c71b0b0d09959b1f173018"
     },
     {
-      "path": "assets/overlay-DkW2huch.js",
-      "size": 17276,
-      "sha256": "fde7c8ac4731bf0c527f5b8b1d2e2c2122844aa0ac7cc040c9e6cff6be2c608d"
-    },
-    {
-      "path": "assets/studio-BRkrxHqf.js",
-      "size": 818552,
-      "sha256": "50f31d11fdffee024af1f6126755b77a30dc8928cebddc7e6ddddeff85881d86"
-    },
-    {
       "path": "assets/studio-CnP1Fs6I.css",
       "size": 72865,
       "sha256": "94778d03b46155a30aa2bba1b4aa91d4c1b1407ca9c1534808fcca44bf94b046"
+    },
+    {
+      "path": "assets/studio-DDTXNfoM.js",
+      "size": 821289,
+      "sha256": "76d60f1d89dcfadd8e780056f79fc74178c28d29001464d923318f0c3c88ba8a"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "1d2500a8328138e464285ba8587dfe51c1cf6e74ca7f6d7029de58e1b113bee3"
+      "sha256": "3e863411866d7476f76fda4eef6ec69e4737e2f8f2ba194777f4b6af88aef960"
     },
     {
       "path": "modules/ambient.json",
@@ -183,7 +183,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "bbadca8fb9bbb5bc63d358af08d2f084be9f545a6d44421b17907ac047c41c0e"
+      "sha256": "561d90e3f0b3e848577b768d3b5b1c4e3540f83b997520066e683c744e945e5c"
     },
     {
       "path": "rig_core.wasm",
