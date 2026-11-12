@@ -71,6 +71,8 @@ interface RightPanelProps {
   onProbeSource?: (name: string) => Promise<string>;
   /** Последние тексты источников (чат): видны во «Входах». */
   externalTexts?: Record<string, ExternalTextLine[]>;
+  /** Последний кадр трекеров лица: живая таблица полей в карточке модуля. */
+  externalPreviews?: Record<string, Record<string, number>>;
   /** OBS у модулей «Свет из экрана»: состояние и списки сцен/источников. */
   ambientObs?: Record<string, ObsModuleInfo>;
   onProbeAmbient?: (name: string) => void;
@@ -227,6 +229,7 @@ export function RightPanel(props: RightPanelProps) {
           onSignOutSource={props.onSignOutSource}
           externalLogs={props.externalLogs}
           onProbeSource={props.onProbeSource}
+          externalPreviews={props.externalPreviews}
           ambientObs={props.ambientObs}
           onProbeAmbient={props.onProbeAmbient}
           calibrate={props.calibrate}

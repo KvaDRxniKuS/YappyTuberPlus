@@ -1,0 +1,36 @@
+{
+  "id": "vtuberstudio",
+  "title": "VTube Studio (телефон)",
+  "description": "Трекинг из мобильного VTube Studio: включите «3rd Party PC Clients» в настройках телефона. Приложение шлёт 52 блендшейпа, повороты головы и глаз на порт 21412 по запросу компьютера.",
+  "kind": "external",
+  "format": 1,
+  "audio": false,
+  "inputs": [
+    {
+      "name": "value",
+      "label": "Значение",
+      "kind": "level",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "hint": "Запасной вход: пока таблица пуста, берётся из него"
+    }
+  ],
+  "fields": [],
+  "editor": {
+    "columns": {
+      "path": 104
+    }
+  },
+  "defaults": {
+    "source": {
+      "transport": "vtuberstudio",
+      "url": "",
+      "host": "",
+      "port": 21412,
+      "listenPort": 21412,
+      "mapping": [],
+      "reconnect": true
+    }
+  }
+}

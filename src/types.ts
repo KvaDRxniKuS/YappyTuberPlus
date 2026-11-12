@@ -701,7 +701,14 @@ export type ModuleKind =
  * `osc` выполняет Rust: только так запросы идут мимо CORS, а UDP вообще доступен
  * лишь из нативного слоя.
  */
-export type ExternalSourceTransport = "ws" | "http" | "sse" | "osc" | "twitch";
+export type ExternalSourceTransport =
+  | "ws" | "http" | "sse" | "osc" | "twitch"
+  /**
+   * Трекер лица: приложение на телефоне шлёт кадры напрямую, без посредников.
+   * У каждого приложения свой транспорт, поэтому и модулей три: ненужный можно
+   * просто не добавлять в проект.
+   */
+  | "ifacialmocap" | "vtuberstudio" | "facemotion3d";
 
 /** Правило отображения: поле JSON → вход модуля. */
 export interface ExternalSourceRule {
@@ -776,6 +783,15 @@ export interface ExternalSourceConfig {
   channel?: string;
   /** Откуда брать текст для показа в панели (чат, награды). */
   text?: ExternalTextConfig;
+  /**
+   * Трекер: адрес телефона. Пусто — рукопожатие идёт широковещательно, а
+   * настоящий адрес запоминается из первого пришедшего кадра.
+   */
+  host?: string;
+  /** Трекер: порт приложения на телефоне (49983 у iFacialMocap, 21412 у VTS). */
+  port?: number;
+  /** Трекер: порт, на который приходят кадры; у iFacialMocap он же 49983. */
+  listenPort?: number;
 }
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */

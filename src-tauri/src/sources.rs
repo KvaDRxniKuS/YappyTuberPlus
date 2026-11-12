@@ -35,6 +35,15 @@ pub struct SourceConfig {
     pub url: String,
     #[serde(default)]
     pub interval_ms: Option<u64>,
+    /// Трекер: адрес телефона. Пусто — рукопожатие идёт широковещательно.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// Трекер: порт приложения на телефоне.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Трекер: порт, на который приходят кадры.
+    #[serde(default)]
+    pub listen_port: Option<u16>,
 }
 
 #[derive(Clone, Serialize)]
@@ -65,7 +74,7 @@ fn stop_one(sources: &Sources, name: &str) {
     }
 }
 
-fn emit_state(app: &AppHandle, name: &str, state: &str, message: Option<String>) {
+pub(crate) fn emit_state(app: &AppHandle, name: &str, state: &str, message: Option<String>) {
     let payload = SourceEvent::State {
         name: name.to_string(),
         state: state.to_string(),
@@ -76,7 +85,7 @@ fn emit_state(app: &AppHandle, name: &str, state: &str, message: Option<String>)
     }
 }
 
-fn emit_text(app: &AppHandle, name: &str, text: String) {
+pub(crate) fn emit_text(app: &AppHandle, name: &str, text: String) {
     let payload = SourceEvent::Text {
         name: name.to_string(),
         text,
@@ -123,6 +132,14 @@ pub fn source_start(
         }
         "ws" => {
             return Err("WebSocket работает в окне и не требует Rust".into());
+        }
+        // Трекеры лица: приёмник сам просит поток и слушает UDP. Разбор кадров
+        // живёт в окне, здесь только сеть.
+        transport if crate::trackers::is_tracker(transport) => {
+            let app = app.clone();
+            let flag = flag.clone();
+            let task = config.clone();
+            tauri::async_runtime::spawn(async move { crate::trackers::tracker_loop(app, task, flag).await });
         }
         other => {
             return Err(format!("транспорт «{other}» пока не поддержан"));

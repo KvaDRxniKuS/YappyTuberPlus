@@ -3,6 +3,7 @@ mod pointer;
 mod overlay_server;
 mod schedule;
 mod sources;
+mod trackers;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -527,7 +528,8 @@ pub fn run() {
             sources::source_probe,
             sources::source_start,
             sources::source_stop,
-            sources::source_stop_all
+            sources::source_stop_all,
+            trackers::tracker_discover
         ])
         .run(tauri::generate_context!())
         .expect("error while running YappyTuberPlus");

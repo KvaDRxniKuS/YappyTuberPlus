@@ -5,6 +5,9 @@ import {
 } from "./external";
 import { isTauri } from "../engine/presetFile";
 import { TwitchChannel, type TwitchInfo, type TwitchState } from "./twitch";
+import {
+  discoverTrackers, flattenFrame, isTrackerTransport, parseTrackerFrame, trackerPorts, TRACKER_INFO,
+} from "./tracker";
 
 /**
  * Хост внешних источников.
@@ -99,6 +102,13 @@ interface Entry {
   textRetainMs: number;
   /** Отметки активности: когда и с каким весом сработали правила. */
   marks: Record<string, ExternalMark[]>;
+  /**
+   * Последний кадр трекера плоско: `{ "arkit.jawOpen": 0.12 }`.
+   *
+   * Хранится только у трекеров: таблица отображения читает эти же пути, а
+   * живая таблица полей показывает значения до того, как их куда-то отнесли.
+   */
+  preview: Record<string, number>;
 }
 
 /** Событие из Rust: состояние источника или сырой текст пакета. */
@@ -193,6 +203,20 @@ export class ExternalSourceHost {
     this.entries.get(name)?.twitch?.signOut();
   }
 
+  /**
+   * Последние кадры трекеров: живая таблица полей в карточке модуля.
+   *
+   * Отдаётся только трекерам: у остальных источников полей «до отображения»
+   * нет — их интересует вход, а не пакет целиком.
+   */
+  previews(): Record<string, Record<string, number>> {
+    const result: Record<string, Record<string, number>> = {};
+    for (const [name, entry] of this.entries) {
+      if (isTrackerTransport(entry.source.transport)) result[name] = entry.preview;
+    }
+    return result;
+  }
+
   /** Состояния всех источников: панель показывает их в карточке модуля. */
   statuses(): Record<string, ExternalStatus> {
     const result: Record<string, ExternalStatus> = {};
@@ -244,6 +268,15 @@ export class ExternalSourceHost {
     const source = entry.source;
     if (isTwitchTransport(source.transport)) {
       return entry.twitch ? entry.twitch.probe() : "Twitch не запущен: укажите Client ID и канал";
+    }
+    if (isTrackerTransport(source.transport)) {
+      const ports = trackerPorts(source, source.transport);
+      const found = await discoverTrackers(source.transport, ports.port);
+      const text = found.hosts.length > 0
+        ? `отозвался ${found.hosts.join(", ")}: впишите этот адрес в поле «Телефон»`
+        : found.message ?? "никто не отозвался";
+      this.record(entry, found.hosts.length > 0 ? "packet" : "warn", `поиск: ${text}`);
+      return text;
     }
     if (!source.url) return "не указан адрес источника";
     if (source.transport === "ws") {
@@ -302,6 +335,8 @@ export class ExternalSourceHost {
     // Twitch — не адрес, а сервис: своего URL у него нет, поэтому проверка
     // адреса идёт после него, а не до.
     const twitch = isTwitchTransport(source.transport);
+    // Трекеру адрес-URL не нужен: он слушает порт, а адрес телефона — отдельное поле.
+    const tracker = isTrackerTransport(source.transport);
     const native = isNativeTransport(source.transport) && !twitch;
     const entry: Entry = {
       source, key, socket: null, status: emptyStatus(), values: {}, holds: {},
@@ -313,13 +348,14 @@ export class ExternalSourceHost {
       // сами, даже если новых сообщений нет.
       textRetainMs: Math.max(0, (source.text?.retainSeconds ?? TEXT_RETAIN_DEFAULT) * 1000),
       marks: {},
+      preview: {},
     };
     this.entries.set(name, entry);
     if (twitch) {
       this.startTwitch(entry);
       return;
     }
-    if (!source.url) {
+    if (!source.url && !tracker) {
       entry.status = emptyStatus("idle", "не указан адрес источника");
       return;
     }
@@ -396,12 +432,19 @@ export class ExternalSourceHost {
     }
     if (entry.closed) return;
     try {
+      const transport = entry.source.transport;
+      const ports = isTrackerTransport(transport) ? trackerPorts(entry.source, transport) : null;
       await invokeSource("source_start", {
         config: {
           name,
           transport: entry.source.transport,
           url: entry.source.url,
           intervalMs: entry.source.intervalMs,
+          // Трекер: адрес телефона и оба порта. Пустой адрес законен — приёмник
+          // сначала ищет телефон широковещательно, а поток просит у него.
+          host: ports ? entry.source.host ?? "" : undefined,
+          port: ports?.port,
+          listenPort: ports?.listenPort,
         },
       });
     } catch (reason) {
@@ -410,6 +453,10 @@ export class ExternalSourceHost {
   }
 
   private nativeHint(source: ExternalSourceConfig): string {
+    if (isTrackerTransport(source.transport)) {
+      const info = TRACKER_INFO[source.transport];
+      return `Трекер слушает UDP: ${info.label} работает только в приложении (в браузере сокеты недоступны)`;
+    }
     if (source.transport === "osc") {
       return "OSC нужен нативный слой: откройте приложение (в браузере UDP недоступен)";
     }
@@ -433,6 +480,8 @@ export class ExternalSourceHost {
         entry.holds = {};
         entry.counters = {};
         entry.marks = {};
+        // Кадр трекера тоже обнуляется: залипшие «глаза» хуже пустоты.
+        entry.preview = {};
       }
       if (state === "error" && payload.message) this.record(entry, "error", payload.message);
       return;
@@ -469,12 +518,23 @@ export class ExternalSourceHost {
   private ingest(entry: Entry, text: string): void {
     if (!text) return;
     let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      // Самая частая причина: источник шлёт не JSON (например, OSC-строку).
-      this.record(entry, "warn", `не JSON: ${text.slice(0, 80)}`);
-      return;
+    if (isTrackerTransport(entry.source.transport)) {
+      // Трекер отдаёт кадр в своём формате (строка iFacialMocap или JSON VTS):
+      // разбор общий, поэтому таблица отображения не зависит от приложения.
+      parsed = parseTrackerFrame(text, entry.source.transport);
+      if (!parsed) {
+        this.record(entry, "warn", `кадр не разобран: ${text.slice(0, 80)}`);
+        return;
+      }
+      entry.preview = flattenFrame(parsed);
+    } else {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // Самая частая причина: источник шлёт не JSON (например, OSC-строку).
+        this.record(entry, "warn", `не JSON: ${text.slice(0, 80)}`);
+        return;
+      }
     }
     const mapping = entry.source.mapping;
     const mapped = applyMapping(parsed, mapping);

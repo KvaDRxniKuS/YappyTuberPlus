@@ -1,5 +1,6 @@
 import type { ExternalSourceConfig, ExternalSourceRule, ExternalTextConfig, ModuleInstance } from "../types";
 import type { ModuleInputSpec } from "./registry";
+import { TRACKER_INFO, TRACKER_TRANSPORTS } from "./tracker";
 
 /**
  * Внешний источник: значения приходят из сети и превращаются во входы модуля.
@@ -16,7 +17,20 @@ import type { ModuleInputSpec } from "./registry";
  * доступны только в приложении.
  */
 
-export const EXTERNAL_TRANSPORTS: ExternalSourceConfig["transport"][] = ["ws", "http", "sse", "osc", "twitch"];
+/**
+ * Все транспорты, которые понимает движок источников.
+ *
+ * Трекеры лица стоят здесь наравне с остальными: у них та же таблица
+ * отображения и тот же приём значений, отличается только приёмник. В общем
+ * списке «Внешнего источника» их нет — для них есть отдельные модули со своим
+ * редактором (`GENERIC_TRANSPORTS`).
+ */
+export const EXTERNAL_TRANSPORTS: ExternalSourceConfig["transport"][] = [
+  "ws", "http", "sse", "osc", "twitch", ...TRACKER_TRANSPORTS,
+];
+
+/** Транспорты общего модуля «Внешний источник»: трекеры настраиваются отдельно. */
+export const GENERIC_TRANSPORTS: ExternalSourceConfig["transport"][] = ["ws", "http", "sse", "osc", "twitch"];
 
 /** Подсказка адреса и поведение транспорта: одна таблица для панели и проверок. */
 export const TRANSPORT_INFO: Record<ExternalSourceConfig["transport"], {
@@ -31,6 +45,10 @@ export const TRANSPORT_INFO: Record<ExternalSourceConfig["transport"], {
   osc: { label: "OSC (UDP)", placeholder: "udp://0.0.0.0:9000", native: true },
   // Twitch — не адрес, а сервис: поля у него свои (Client ID, канал, события).
   twitch: { label: "Twitch", placeholder: "", native: true },
+  // Трекеры: адрес — это телефон, а не сервер. Подсказка показывает IP.
+  ifacialmocap: { label: TRACKER_INFO.ifacialmocap.label, placeholder: "192.168.1.7", native: true },
+  vtuberstudio: { label: TRACKER_INFO.vtuberstudio.label, placeholder: "192.168.1.7", native: true },
+  facemotion3d: { label: TRACKER_INFO.facemotion3d.label, placeholder: "192.168.1.7", native: true },
 };
 
 /** Транспорт выполняет Rust: у него своя нативная часть и своя пауза опроса. */
@@ -137,6 +155,15 @@ function readInputName(raw: unknown): string {
   return /^[a-z_]/.test(name) ? name.slice(0, 24) : name ? `v_${name}`.slice(0, 24) : "";
 }
 
+/** Порт из настроек: целое 1…65535, иначе «не задан» (возьмётся умолчание). */
+function readPort(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const port = Math.round(parsed);
+  return port >= 1 && port <= 65_535 ? port : undefined;
+}
+
 /** Источник из настроек экземпляра: битые поля заменяются безопасными. */
 export function readExternalSource(config: Record<string, unknown> | undefined): ExternalSourceConfig {
   const raw = (config?.source ?? undefined) as Partial<ExternalSourceConfig> | undefined;
@@ -191,6 +218,11 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
     reconnect: source.reconnect !== false,
     intervalMs: Math.min(600_000, Math.max(100, readNumber(source.intervalMs, 1000))),
     clientId: typeof source.clientId === "string" && source.clientId.trim() ? source.clientId.trim() : undefined,
+    // Трекер: адрес телефона и порты. Пустой адрес — законное состояние,
+    // поэтому он не превращается в undefined: панель правит поле как есть.
+    host: typeof source.host === "string" ? source.host.trim() : "",
+    port: readPort(source.port),
+    listenPort: readPort(source.listenPort),
     text: readTextConfig(source.text),
     channel: typeof source.channel === "string" && source.channel.trim()
       ? source.channel.trim().toLowerCase().replace(/^@/, "")

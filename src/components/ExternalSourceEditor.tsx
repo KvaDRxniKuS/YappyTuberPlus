@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Activity, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { ExternalSourceRule, ExternalSourceConfig, ModuleInstance } from "../types";
 import {
-  EXTERNAL_TRANSPORTS, TEXT_HISTORY_DEFAULT, TEXT_HISTORY_MAX, TEXT_HISTORY_MIN,
+  GENERIC_TRANSPORTS, TEXT_HISTORY_DEFAULT, TEXT_HISTORY_MAX, TEXT_HISTORY_MIN,
   TEXT_RETAIN_DEFAULT, TEXT_RETAIN_MAX, TEXT_RETAIN_MIN, TRANSPORT_INFO,
   defaultRule, externalInputName, readExternalSource,
 } from "../modules/external";
@@ -196,7 +196,7 @@ export function ExternalSourceEditor(props: ExternalSourceEditorProps) {
               value={source.transport}
               onChange={(event) => patch({ transport: event.target.value as ExternalSourceConfig["transport"] }, "Транспорт источника")}
             >
-              {EXTERNAL_TRANSPORTS.map((transport) => (
+              {GENERIC_TRANSPORTS.map((transport) => (
                 <option key={transport} value={transport}>{TRANSPORT_INFO[transport].label}</option>
               ))}
             </select>

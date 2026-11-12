@@ -93,7 +93,13 @@ const FALLBACK: ModuleDefinition = {
 };
 
 /** Порядок карточек в палитре: сначала источники сигнала, потом ручные. */
-const ORDER = ["loudness", "viseme", "keyboard", "key", "mouse", "external", "presets", "color", "ambient", "autoblink", "manual"];
+const ORDER = [
+  "loudness", "viseme", "keyboard", "key", "mouse",
+  // Трекеры стоят рядом с «Внешним источником»: это тоже приём значений извне,
+  // только с телефона и без таблицы путей вручную.
+  "external", "ifacialmocap", "vtuberstudio", "facemotion3d",
+  "presets", "color", "ambient", "autoblink", "manual",
+];
 
 const library = new Map<string, ModuleDefinition>();
 const listeners = new Set<() => void>();

@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 12`.
+ * `1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 13`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -133,7 +133,9 @@ export const VERSION: ProjectVersion = {
   // яркость отражения — профиль света в точке попадания, поэтому у блика есть
   // ядро и спад, а не ровная заливка формы источника. Оболочка 12: крестик
   // закрывает приложение, а выбор микрофона восстанавливается после запуска.
-  shell: 12,
+  // Оболочка 13: трекер лица принимается напрямую с телефона (iFacialMocap,
+  // Facemotion3D, VTube Studio Mobile) — появился приёмник UDP с рукопожатием.
+  shell: 13,
 };
 
 /** Номера поколений в порядке слотов: без релиза. */
@@ -146,7 +148,7 @@ export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 12`. */
+/** Строка для человека: `1.1 · ядро 23 · файл 6 · мост 2 · модули 5 · оболочка 13`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");

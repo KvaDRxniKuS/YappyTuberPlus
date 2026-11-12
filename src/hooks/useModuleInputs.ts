@@ -46,6 +46,8 @@ export interface ModuleInputsApi {
   signOutSource: (name: string) => void;
   /** Последние строки журнала источников: что пришло и что не разобралось. */
   externalLogs: Record<string, ExternalLogEntry[]>;
+  /** Последний кадр трекеров лица: живая таблица полей в карточке модуля. */
+  externalPreviews: Record<string, Record<string, number>>;
   /** Проверка источника по кнопке «Проверить». */
   probeSource: (name: string) => Promise<string>;
   /** Последние тексты источников (чат): показываются во «Входах». */
@@ -357,6 +359,7 @@ export function useModuleInputs(
     authorizeSource: externalInputs.authorize,
     signOutSource: externalInputs.signOut,
     externalLogs: externalInputs.logs,
+    externalPreviews: externalInputs.previews,
     probeSource: externalInputs.probe,
     externalTexts: externalInputs.texts,
     ambientObs: ambient.obs,

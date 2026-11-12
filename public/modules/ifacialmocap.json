@@ -1,0 +1,36 @@
+{
+  "id": "ifacialmocap",
+  "title": "iFacialMocap",
+  "description": "Мимика с телефона напрямую: 52 блендшейпа ARKit, повороты головы и глаз. Приложение шлёт кадры на порт 49983, посредник не нужен. Кнопка «Найти телефон» подскажет адрес.",
+  "kind": "external",
+  "format": 1,
+  "audio": false,
+  "inputs": [
+    {
+      "name": "value",
+      "label": "Значение",
+      "kind": "level",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "hint": "Запасной вход: пока таблица пуста, берётся из него"
+    }
+  ],
+  "fields": [],
+  "editor": {
+    "columns": {
+      "path": 104
+    }
+  },
+  "defaults": {
+    "source": {
+      "transport": "ifacialmocap",
+      "url": "",
+      "host": "",
+      "port": 49983,
+      "listenPort": 49983,
+      "mapping": [],
+      "reconnect": true
+    }
+  }
+}

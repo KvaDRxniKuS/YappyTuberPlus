@@ -19,6 +19,7 @@ import { EnumStatesEditor } from "./EnumStatesEditor";
 import { ENUM_STATES_BASE } from "../modules/manual";
 import { MouseButtonsEditor } from "./MouseButtonsEditor";
 import { ExternalSourceEditor } from "./ExternalSourceEditor";
+import { FaceTrackerEditor } from "./FaceTrackerEditor";
 import { PresetsEditor } from "./PresetsEditor";
 import { ColorEditor } from "./ColorEditor";
 import { AmbientEditor } from "./AmbientEditor";
@@ -26,6 +27,8 @@ import { AutoBlinkEditor } from "./AutoBlinkEditor";
 import type { ObsModuleInfo } from "../hooks/useAmbientSample";
 import { NumberField } from "./NumberField";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
+import { isTrackerTransport } from "../modules/tracker";
+import { sourceConfig } from "../modules/sources";
 import { useVisemeRecorder, type CalibrationApi } from "./VisemeCalibration";
 
 interface ModulesPanelProps extends CalibrationApi {
@@ -53,6 +56,11 @@ interface ModulesPanelProps extends CalibrationApi {
   /** Журнал источников и проверка соединения. */
   externalLogs?: Record<string, ExternalLogEntry[]>;
   onProbeSource?: (name: string) => Promise<string>;
+  /**
+   * Последний кадр трекеров лица: живая таблица полей в карточке модуля.
+   * Показывается до отображения — по ней и добавляются входы.
+   */
+  externalPreviews?: Record<string, Record<string, number>>;
 }
 
 /**
@@ -313,17 +321,35 @@ export function ModulesPanel(props: ModulesPanelProps) {
                     />
                   )}
 
-                  {definition.kind === "external" && (
-                    <ExternalSourceEditor
-                      module={module}
-                      status={props.externalStatuses?.[module.name]}
-                      onAuthorize={props.onAuthorizeSource ? () => props.onAuthorizeSource?.(module.name) : undefined}
-                      onSignOut={props.onSignOutSource ? () => props.onSignOutSource?.(module.name) : undefined}
-                      logs={props.externalLogs?.[module.name]}
-                      onProbe={props.onProbeSource ? () => props.onProbeSource!(module.name) : undefined}
-                      onChange={(source, label) => patchConfig(module, "source", source, label)}
-                    />
-                  )}
+                  {definition.kind === "external" && (() => {
+                    // Трекер узнаётся по транспорту, а не по имени модуля: три
+                    // шаблона (iFacialMocap, VTube Studio, Facemotion3D) делят
+                    // один движок, но получают свой редактор со списком полей.
+                    const transport = sourceConfig(module).transport;
+                    if (isTrackerTransport(transport)) {
+                      return (
+                        <FaceTrackerEditor
+                          module={module}
+                          transport={transport}
+                          status={props.externalStatuses?.[module.name]}
+                          preview={props.externalPreviews?.[module.name]}
+                          logs={props.externalLogs?.[module.name]}
+                          onChange={(source, label) => patchConfig(module, "source", source, label)}
+                        />
+                      );
+                    }
+                    return (
+                      <ExternalSourceEditor
+                        module={module}
+                        status={props.externalStatuses?.[module.name]}
+                        onAuthorize={props.onAuthorizeSource ? () => props.onAuthorizeSource?.(module.name) : undefined}
+                        onSignOut={props.onSignOutSource ? () => props.onSignOutSource?.(module.name) : undefined}
+                        logs={props.externalLogs?.[module.name]}
+                        onProbe={props.onProbeSource ? () => props.onProbeSource!(module.name) : undefined}
+                        onChange={(source, label) => patchConfig(module, "source", source, label)}
+                      />
+                    );
+                  })()}
 
                   {definition.kind === "presets" && (
                     <PresetsEditor

@@ -7,18 +7,18 @@
   "format": 6,
   "bridge": 2,
   "modules": 5,
-  "shell": 12,
-  "version": "1.1.23.6.2.5.12",
+  "shell": 13,
+  "version": "1.1.23.6.2.5.13",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-12T17:20:20.211Z",
-  "commit": "becc25a",
+  "builtAt": "2026-11-12T21:52:39.282Z",
+  "commit": "b2b63ac",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-BbWNPKiz.js",
-      "size": 447151,
-      "sha256": "d9aaf34177ad733b6b39a06f225b70c8917e2075cba9ddf30358468b944cade6"
+      "path": "assets/bus-CbonoVmj.js",
+      "size": 458186,
+      "sha256": "5a514324c57f0b8a46e56841239012b2929365001bc7b45c955d1bcf48c0340f"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,9 +76,9 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-CFvh6e9B.js",
+      "path": "assets/overlay-BeNKfbI0.js",
       "size": 18252,
-      "sha256": "701ee18ee4306d7a74bd0caf31dc3901aba98d4e887475391899e9b5810d2e3c"
+      "sha256": "fae29d5fa070b9c8690fc968c1d6c0116804d3822470b2291e1984b732ed3af3"
     },
     {
       "path": "assets/overlay-D8-ZKqmu.css",
@@ -86,14 +86,14 @@
       "sha256": "c3e2e840a4471974f263e6af8b0b067bbc2caeed80c71b0b0d09959b1f173018"
     },
     {
-      "path": "assets/studio-CnP1Fs6I.css",
-      "size": 72865,
-      "sha256": "94778d03b46155a30aa2bba1b4aa91d4c1b1407ca9c1534808fcca44bf94b046"
+      "path": "assets/studio-B4i314xf.css",
+      "size": 74628,
+      "sha256": "8578bc6d4353fc64b2eff9947911266f7968bdf9b55ce0eb27c953de92af45af"
     },
     {
-      "path": "assets/studio-DFD7AWUn.js",
-      "size": 822310,
-      "sha256": "180ea6d244093615353cacbe5fe54af973180115fd95ff4987ff1a380239a304"
+      "path": "assets/studio-DEbO3CaJ.js",
+      "size": 833039,
+      "sha256": "b5ed62cb19974e4451d1011f30bdf8d2529dfe82bdb4672c4a685625d2231468"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "92afa36733584a0fad7de81035c2a4c413647aca239df850386bbe2a0328024d"
+      "sha256": "e128ce99768b348c098ffec5540be53284dcce972f106084f05c6f60031a92d0"
     },
     {
       "path": "modules/ambient.json",
@@ -131,9 +131,19 @@
       "sha256": "bb2ed8a735e7b1bd8e2ed81d925577eeb7c380469347f809350f95e715938328"
     },
     {
+      "path": "modules/facemotion3d.json",
+      "size": 933,
+      "sha256": "b8a3657acbf4b4d457a816cf6f4b439fde3ecfed65fcc4a9bb4790bdedadefd5"
+    },
+    {
+      "path": "modules/ifacialmocap.json",
+      "size": 980,
+      "sha256": "10b629e7e364ca5119904c64926bd9e4e5bd43fc19bc5229ac4aa2fcca2b1cc9"
+    },
+    {
       "path": "modules/index.json",
-      "size": 209,
-      "sha256": "e412b37849c424dd977dcbcc6065ebfe7ae9d3b567e723cc2b2f82588542c983"
+      "size": 269,
+      "sha256": "175e6e82a16a8443b8336335fddfadec4b05b44a41900be153031c3a1f372ace"
     },
     {
       "path": "modules/key.json",
@@ -181,9 +191,14 @@
       "sha256": "cfe7077da3cf9078eeeada0f3468cb2fc717fd01394d20efeab990a25118ba42"
     },
     {
+      "path": "modules/vtuberstudio.json",
+      "size": 998,
+      "sha256": "c4eede9898ea4efd7d2b9e223375c3b98cf71d5e60e15adc43ee4609f1219f83"
+    },
+    {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "8089e35225488b3b7920d4e1b73df660f1f617140dc3eab35d06ba0c89e8ddf1"
+      "sha256": "85ce7998e36a8842e04d2996cbd210f79dd92dfa9eb36c597be60ac2cecb115b"
     },
     {
       "path": "rig_core.wasm",

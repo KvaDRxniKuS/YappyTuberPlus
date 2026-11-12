@@ -5,9 +5,12 @@ import {
   ExternalSourceHost, sourceConfig,
   type ExternalLogEntry, type ExternalStatus, type ExternalTextLine,
 } from "../modules/sources";
+import { isTrackerTransport } from "../modules/tracker";
 
 /** Кадр значений: 30 раз в секунду хватает, а поток пакетов не превращается в поток перерисовок. */
 const TICK = 33;
+/** Живая таблица полей трекера: показ, а не значения входов. */
+const PREVIEW_TICK = 150;
 
 export interface ExternalInputsApi {
   /** Готовые значения по имени модуля: `{ bridge: { hr: 72 } }`. */
@@ -16,6 +19,8 @@ export interface ExternalInputsApi {
   statuses: Record<string, ExternalStatus>;
   /** Последние строки журнала: что пришло и что не разобралось. */
   logs: Record<string, ExternalLogEntry[]>;
+  /** Последний кадр трекеров лица: живая таблица полей в карточке модуля. */
+  previews: Record<string, Record<string, number>>;
   /** Последние тексты (чат): только для показа, в формулы не идут. */
   texts: Record<string, ExternalTextLine[]>;
   /**
@@ -48,6 +53,7 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
   const [statuses, setStatuses] = useState<Record<string, ExternalStatus>>({});
   const [logs, setLogs] = useState<Record<string, ExternalLogEntry[]>>({});
   const [texts, setTexts] = useState<Record<string, ExternalTextLine[]>>({});
+  const [previews, setPreviews] = useState<Record<string, Record<string, number>>>({});
 
   const active = useMemo(
     () => modules.filter((module) => module.enabled && moduleDefinition(module.type).kind === "external"),
@@ -66,6 +72,7 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
       setStatuses({});
       setLogs({});
       setTexts({});
+      setPreviews({});
       return;
     }
     const tick = () => {
@@ -84,6 +91,26 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeKey]);
+
+  // Живая таблица полей трекера: 150 мс — достаточно, чтобы числа шевелились,
+  // и в шесть раз меньше перерисовок, чем у значений входов. Кадры при этом
+  // идут в полном темпе: медленный тик касается только показа.
+  const previewActive = active.some((module) => isTrackerTransport(sourceConfig(module).transport));
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !previewActive) {
+      setPreviews({});
+      return undefined;
+    }
+    const tick = () => {
+      const next = host.previews();
+      setPreviews((current) => (sameNested(current, next) ? current : next));
+    };
+    tick();
+    const timer = window.setInterval(tick, PREVIEW_TICK);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey, previewActive]);
 
   useEffect(() => () => hostRef.current?.dispose(), []);
 
@@ -124,7 +151,7 @@ export function useExternalSource(modules: ModuleInstance[], libraryVersion = 0)
     return text;
   }, []);
 
-  return { values, statuses, logs, texts, marks, probe, authorize, signOut };
+  return { values, statuses, logs, texts, previews, marks, probe, authorize, signOut };
 }
 
 function sameNested(left: Record<string, Record<string, number>>, right: Record<string, Record<string, number>>): boolean {
