@@ -68,7 +68,8 @@ test("каталог полей один для трёх приложений: 5
   expect(trackerField("$.arkit.jawOpen")?.max).toBe(1);
   // Кириллическая подпись и латинский вход — не одно и то же поле.
   expect(trackerInputName(trackerField("$.head.rx")!)).toBe("head_rx");
-  expect(trackerInputName(trackerField("$.arkit.jawOpen")!)).toBe("jawOpen");
+  // Имя входа — латиницей в нижнем регистре, как у остальных модулей.
+  expect(trackerInputName(trackerField("$.arkit.jawOpen")!)).toBe("jawopen");
   expect(trackerInputName(trackerField("$.faceFound")!)).toBe("face_found");
 });
 

@@ -11,14 +11,14 @@
   "version": "1.1.23.6.2.5.13",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-12T21:52:39.282Z",
-  "commit": "b2b63ac",
+  "builtAt": "2026-11-12T21:53:44.878Z",
+  "commit": "0b6a943",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-CbonoVmj.js",
-      "size": 458186,
-      "sha256": "5a514324c57f0b8a46e56841239012b2929365001bc7b45c955d1bcf48c0340f"
+      "path": "assets/bus-2Bly4sC3.js",
+      "size": 458343,
+      "sha256": "61299133f2383f94c25fb97ae76bd6c3af365df4139b5e7a9dca37d9f9a2c9c5"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -76,9 +76,9 @@
       "sha256": "841bf8e211589fad804136385a11901ab5dd92176a8a96e61fdf0eb284f6e3c9"
     },
     {
-      "path": "assets/overlay-BeNKfbI0.js",
+      "path": "assets/overlay-BF9nSeds.js",
       "size": 18252,
-      "sha256": "fae29d5fa070b9c8690fc968c1d6c0116804d3822470b2291e1984b732ed3af3"
+      "sha256": "31ff577283d15474f18cd683e8a62511e0154619427fc570778d4f4e99fe5ab9"
     },
     {
       "path": "assets/overlay-D8-ZKqmu.css",
@@ -91,9 +91,9 @@
       "sha256": "8578bc6d4353fc64b2eff9947911266f7968bdf9b55ce0eb27c953de92af45af"
     },
     {
-      "path": "assets/studio-DEbO3CaJ.js",
+      "path": "assets/studio-RO-tqaKd.js",
       "size": 833039,
-      "sha256": "b5ed62cb19974e4451d1011f30bdf8d2529dfe82bdb4672c4a685625d2231468"
+      "sha256": "bd3cea2b7396c03ad37c80e71fef8eb9bcab2780c1123677663850594deafada"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "e128ce99768b348c098ffec5540be53284dcce972f106084f05c6f60031a92d0"
+      "sha256": "03c9597eaa993517ac13dc927b0401e0fda7b6aa06215dbdf067a3453dd5ff4f"
     },
     {
       "path": "modules/ambient.json",
@@ -198,7 +198,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "85ce7998e36a8842e04d2996cbd210f79dd92dfa9eb36c597be60ac2cecb115b"
+      "sha256": "b5ee6228b1cc5a2ea586e196eeb80859fd02ef003f8c447123f05b17d2b8704c"
     },
     {
       "path": "rig_core.wasm",

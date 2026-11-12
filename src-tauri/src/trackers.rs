@@ -80,20 +80,36 @@ pub async fn tracker_loop(app: AppHandle, config: SourceConfig, stop: Arc<Atomic
     };
 
     emit_state(&app, &name, "connecting", None);
-    let socket = match UdpSocket::bind(("0.0.0.0", listen_port)).await {
-        Ok(socket) => socket,
-        Err(error) => {
-            emit_state(
-                &app,
-                &name,
-                "error",
-                Some(format!(
-                    "порт {listen_port} занят: {error}; закройте программу, которая его держит"
-                )),
-            );
+    // Правка адреса или порта в панели перезапускает источник: прежний цикл
+    // останавливается по флагу, но сокет закрывается не мгновенно. Несколько
+    // попыток избавляют от ложного «порт занят» прямо во время набора IP.
+    let mut bound: Option<UdpSocket> = None;
+    for attempt in 0..20 {
+        if stop.load(Ordering::SeqCst) {
             return;
         }
-    };
+        match UdpSocket::bind(("0.0.0.0", listen_port)).await {
+            Ok(socket) => {
+                bound = Some(socket);
+                break;
+            }
+            Err(error) => {
+                if attempt == 19 {
+                    emit_state(
+                        &app,
+                        &name,
+                        "error",
+                        Some(format!(
+                            "порт {listen_port} занят: {error}; закройте программу, которая его держит"
+                        )),
+                    );
+                } else {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+    let Some(socket) = bound else { return };
     // Широковещание нужно, пока адрес телефона неизвестен: иначе пришлось бы
     // вписывать IP руками ещё до первого кадра.
     let _ = socket.set_broadcast(true);

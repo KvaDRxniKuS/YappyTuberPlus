@@ -517,6 +517,7 @@ export class ExternalSourceHost {
   /** Разбор одного пакета: таблица отображения превращает его в числа. */
   private ingest(entry: Entry, text: string): void {
     if (!text) return;
+    const tracker = isTrackerTransport(entry.source.transport);
     let parsed: unknown;
     if (isTrackerTransport(entry.source.transport)) {
       // Трекер отдаёт кадр в своём формате (строка iFacialMocap или JSON VTS):
@@ -577,6 +578,14 @@ export class ExternalSourceHost {
       }
     }
     if (Object.keys(mapped).length === 0) {
+      // У трекера пустое отображение — нормальное начало работы: кадры уже идут,
+      // и видно их в живой таблице. Считать пакеты всё равно нужно, иначе
+      // карточка показывала бы «0 кадров» при живом потоке. Сообщение оратора
+      // («телефон 192.168.1.7») тоже не затираем: это адрес, а не статус пакета.
+      if (tracker) {
+        entry.status = { ...entry.status, state: "live", packets: entry.status.packets + 1 };
+        return;
+      }
       // Пакет разобрался, но ни одно правило не сработало: показываем, что искали.
       const paths = entry.source.mapping.map((rule) => rule.path).join(", ");
       const note = entry.source.text ? " (текст для показа собран)" : "";
@@ -594,8 +603,16 @@ export class ExternalSourceHost {
       else if (!rule?.count) delete entry.holds[input];
       entry.values[input] = value;
     }
-    this.record(entry, "packet", describeValues(mapped));
-    entry.status = { ...entry.status, state: "live", message: null, packets: entry.status.packets + 1 };
+    // Журнал трекера не забиваем: кадров 60 в секунду, и каждый — событие
+    // отображения. Карточка и так показывает значения; журнал нужен ошибкам.
+    if (!tracker) this.record(entry, "packet", describeValues(mapped));
+    entry.status = {
+      ...entry.status,
+      state: "live",
+      // Адрес телефона остаётся в статусе: по нему видно, с какого устройства идёт поток.
+      message: tracker ? entry.status.message : null,
+      packets: entry.status.packets + 1,
+    };
   }
 
   private connect(entry: Entry): void {

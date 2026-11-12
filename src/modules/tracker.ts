@@ -241,11 +241,17 @@ export function trackerField(path: string): TrackerField | undefined {
   return FIELD_BY_PATH.get(path) ?? FIELD_BY_KEY.get(path.replace(/^\$\./, ""));
 }
 
-/** Имя входа по умолчанию: `$.arkit.jawOpen` → `jawOpen`, `$.head.rx` → `head_rx`. */
+/**
+ * Имя входа по умолчанию: `$.arkit.jawOpen` → `jawopen`, `$.head.rx` → `head_rx`.
+ *
+ * Имена входов в проекте латиницей в нижнем регистре (`mic.speak`, `twitch.cheer`),
+ * и пресет всё равно приведёт их к этому виду: предлагать `jawOpen` значило бы
+ * показывать одно, а записывать другое.
+ */
 export function trackerInputName(item: TrackerField): string {
-  if (item.group === "arkit") return item.key.replace(/^arkit\./, "");
+  if (item.group === "arkit") return item.key.replace(/^arkit\./, "").toLowerCase();
   if (item.group === "service") return item.key === "faceFound" ? "face_found" : item.key;
-  return item.key.replace(/\./g, "_");
+  return item.key.replace(/\./g, "_").toLowerCase();
 }
 
 /**
