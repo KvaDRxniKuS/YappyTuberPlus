@@ -5,10 +5,12 @@ import {
   IFM_HELLO, TRACKER_FIELDS, TRACKER_INFO, TRACKER_TRANSPORTS,
   armName, flattenFrame, helloFor, isTrackerTransport, parseIfacialFrame,
   parseTrackerFrame, parseVtuberStudioFrame, trackerField, trackerInputName, trackerPorts,
+  allTrackerFieldsMapped, anyTrackerFieldMapped, clearAllTrackerFields, selectAllTrackerFields,
 } from "../../src/modules/tracker";
 import { GENERIC_TRANSPORTS, EXTERNAL_TRANSPORTS, readExternalSource } from "../../src/modules/external";
 import { applyMapping } from "../../src/modules/external";
 import { packetRate } from "../../src/modules/sources";
+import type { ExternalSourceRule } from "../../src/types";
 import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefinitions } from "../../src/modules/registry";
 
 /**
@@ -248,4 +250,45 @@ test("частота потока считается окном в секунд�
   expect(packetRate(0, 1000)).toBe(0);
   expect(packetRate(10, 0)).toBe(0);
   expect(packetRate(Number.NaN, 1000)).toBe(0);
+});
+
+test("«выбрать все» отмечает каждое поле один раз и не спорит с ручным выбором", () => {
+  const all = selectAllTrackerFields([]);
+  expect(all.length).toBe(TRACKER_FIELDS.length);
+  // Имена и пути не повторяются: иначе входы затирали бы друг друга.
+  expect(new Set(all.map((rule) => rule.input)).size).toBe(all.length);
+  expect(new Set(all.map((rule) => rule.path)).size).toBe(all.length);
+  expect(all.every((rule) => rule.label && rule.label.length > 0)).toBe(true);
+  // Повторное нажатие ничего не добавляет.
+  expect(selectAllTrackerFields(all).length).toBe(all.length);
+  // Поле, отмеченное вручную, сохраняет своё имя входа.
+  const manual = [{ input: "jaw", path: "$.arkit.jawOpen", min: 0, max: 1 } as ExternalSourceRule];
+  const mixed = selectAllTrackerFields(manual);
+  expect(mixed.length).toBe(TRACKER_FIELDS.length);
+  expect(mixed[0].input).toBe("jaw");
+});
+
+test("галочка «все» выводится из подопечных: снял одно — уже не все", () => {
+  expect(allTrackerFieldsMapped([])).toBe(false);
+  expect(anyTrackerFieldMapped([])).toBe(false);
+  const all = selectAllTrackerFields([]);
+  expect(allTrackerFieldsMapped(all)).toBe(true);
+  const less = all.filter((rule) => rule.path !== "$.arkit.jawOpen");
+  expect(allTrackerFieldsMapped(less)).toBe(false);
+  expect(anyTrackerFieldMapped(less)).toBe(true);
+  // Снятие не трогает чужие строки отображения.
+  const foreign = { input: "custom", path: "$.custom", min: 0, max: 1 } as ExternalSourceRule;
+  expect(clearAllTrackerFields([...all, foreign]).map((rule) => rule.path)).toEqual(["$.custom"]);
+});
+
+test("точки-выноска начинаются от конца текста, а не от невидимой границы", () => {
+  const editor = readFileSync(join(process.cwd(), "src", "components", "FaceTrackerEditor.tsx"), "utf8");
+  // Выноска — часть подписи: своя колонка начинала точки в пустоте.
+  expect(editor).toContain('className="tracker-live-text"');
+  expect(editor).not.toContain("tracker-leader");
+  const css = readFileSync(join(process.cwd(), "src", "styles.css"), "utf8");
+  expect(css).toContain(".tracker-live-label::after");
+  expect(css).not.toContain(".tracker-leader");
+  // Промежуточное состояние «выбрать все» рисует браузер, не мы.
+  expect(editor).toContain("allRef.current.indeterminate");
 });

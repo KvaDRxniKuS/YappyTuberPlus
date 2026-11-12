@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Radar } from "lucide-react";
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
 import { externalInputName, readExternalSource } from "../modules/external";
 import {
-  TRACKER_FIELDS, TRACKER_INFO, discoverTrackers, trackerField, trackerInputName, trackerPorts,
+  TRACKER_FIELDS, TRACKER_INFO, allTrackerFieldsMapped, anyTrackerFieldMapped, clearAllTrackerFields,
+  discoverTrackers, selectAllTrackerFields, trackerField, trackerInputName, trackerPorts, trackerRule,
+  uniqueTrackerInput,
   type TrackerField, type TrackerGroup, type TrackerTransport,
 } from "../modules/tracker";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
@@ -94,6 +96,7 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
   const [found, setFound] = useState<string[]>([]);
   const [searchNote, setSearchNote] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
+  const allRef = useRef<HTMLInputElement>(null);
 
   const patch = (change: Partial<ExternalSourceConfig>, label?: string) => {
     props.onChange({ ...source, ...change }, label);
@@ -112,24 +115,33 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
       patch({ mapping: source.mapping.filter((_, position) => position !== index) }, "Поле убрано из отображения");
       return;
     }
-    let input = trackerInputName(field);
-    let suffix = 2;
-    while (source.mapping.some((rule) => rule.input === input)) {
-      input = `${trackerInputName(field)}_${suffix}`;
-      suffix += 1;
-    }
-    patch({
-      mapping: [...source.mapping, {
-        input,
-        path: field.path,
-        label: field.label,
-        kind: field.kind,
-        min: field.min,
-        max: field.max,
-        holdMs: 0,
-      }],
-    }, `Вход «${field.label}»`);
+    const input = uniqueTrackerInput(field, new Set(source.mapping.map((rule) => rule.input)));
+    patch({ mapping: [...source.mapping, trackerRule(field, input)] }, `Вход «${field.label}»`);
   };
+  /**
+   * «Выбрать все» — не отдельная кнопка, а галочка-модификатор: её состояние
+   * целиком выводится из подопечных полей. Все отмечены — стоит галочка, часть —
+   * промежуточная, ни одного — пусто. Снял одно поле, и «все» тоже погасло;
+   * вернул — снова горит. Поэтому состояние нельзя рассинхронизировать с полями.
+   */
+  const mappedTrackers = TRACKER_FIELDS.filter((field) => source.mapping.some((rule) => rule.path === field.path));
+  const allSelected = allTrackerFieldsMapped(source.mapping);
+  const someSelected = anyTrackerFieldMapped(source.mapping);
+
+  useEffect(() => {
+    if (allRef.current) allRef.current.indeterminate = someSelected && !allSelected;
+  }, [someSelected, allSelected]);
+
+  const toggleAll = () => {
+    if (allSelected) {
+      // Убираются только поля этого трекера: чужие строки остаются, чтобы
+      // «выбрать все» не стирало чужую работу.
+      patch({ mapping: clearAllTrackerFields(source.mapping) }, "Все поля убраны из отображения");
+      return;
+    }
+    patch({ mapping: selectAllTrackerFields(source.mapping) }, "Все поля добавлены в отображение");
+  };
+
   const search = async () => {
     setSearching(true);
     try {
@@ -260,13 +272,28 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
         </button>
         {liveOpen && (
           <div className="tracker-live-body">
-            <input
-              className="tracker-live-search"
-              value={query}
-              spellCheck={false}
-              placeholder="поиск поля: рот, глаз, jaw, head"
-              onChange={(event) => setQuery(event.target.value)}
-            />
+            <div className="tracker-live-toolbar">
+              <input
+                className="tracker-live-search"
+                value={query}
+                spellCheck={false}
+                placeholder="поиск: рот, глаз, jaw…"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <label className="tracker-select-all" title="Отметить все 66 полей или снять все">
+                <input
+                  type="checkbox"
+                  className="tracker-check"
+                  ref={allRef}
+                  checked={allSelected}
+                  onChange={toggleAll}
+                />
+                Выбрать все
+              </label>
+              <span className="tracker-count">
+                {mappedTrackers.length} из {TRACKER_FIELDS.length}
+              </span>
+            </div>
             {GROUPS.map((group) => {
               const fields = visible.filter((field) => field.group === group);
               if (fields.length === 0) return null;
@@ -285,10 +312,12 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                           title={mapped ? "Убрать вход из отображения" : `Добавить вход «${trackerInputName(field)}»`}
                           onChange={() => toggleField(field)}
                         />
-                        <span className="tracker-live-label" title={field.path}>{field.label}</span>
-                        {/* Точки-выноска ведут глаз от названия к значению: в
-                            длинной строке иначе не понять, чьё это число. */}
-                        <span className="tracker-leader" />
+                        {/* Точки-выноска — часть подписи, а не отдельная колонка:
+                            иначе они начинались бы от невидимой границы колонки, а
+                            не от конца самого текста. */}
+                        <span className="tracker-live-label" title={field.path}>
+                          <span className="tracker-live-text">{field.label}</span>
+                        </span>
                         <span className="tracker-bar">
                           <i style={{ width: `${Math.round(shareOf(field, value) * 100)}%` }} />
                         </span>

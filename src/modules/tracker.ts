@@ -1,4 +1,4 @@
-import type { ExternalSourceConfig } from "../types";
+import type { ExternalSourceConfig, ExternalSourceRule } from "../types";
 
 /**
  * Трекер лица: прямой приём значений с телефона, без посредников.
@@ -491,4 +491,65 @@ export async function discoverTrackers(
   } catch (reason) {
     return { hosts: [], message: reason instanceof Error ? reason.message : String(reason) };
   }
+}
+
+/**
+ * Имя входа, которого ещё нет в отображении: `jawopen`, затем `jawopen_2`, `jawopen_3`.
+ * Общее для галочки у поля и для «выбрать все»: два поля с одним именем затирали
+ * бы друг друга, а имена входов должны оставаться предсказуемыми.
+ */
+export function uniqueTrackerInput(field: TrackerField, used: Set<string>): string {
+  const base = trackerInputName(field);
+  let input = base;
+  let suffix = 2;
+  while (used.has(input)) {
+    input = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return input;
+}
+
+/** Отмечены ли все поля трекера. Пустое отображение — «не все». */
+export function allTrackerFieldsMapped(mapping: { path: string }[]): boolean {
+  return TRACKER_FIELDS.every((field) => mapping.some((rule) => rule.path === field.path));
+}
+
+/** Отображение полей трекера есть хотя бы одно — для промежуточного состояния галочки. */
+export function anyTrackerFieldMapped(mapping: { path: string }[]): boolean {
+  return TRACKER_FIELDS.some((field) => mapping.some((rule) => rule.path === field.path));
+}
+
+/** Строка отображения по полю — ровно то, что создаёт галочка у поля. */
+export function trackerRule(field: TrackerField, input: string): ExternalSourceRule {
+  return {
+    input,
+    path: field.path,
+    label: field.label,
+    kind: field.kind,
+    min: field.min,
+    max: field.max,
+    holdMs: 0,
+  };
+}
+
+/**
+ * «Выбрать все»: добавить недостающие поля со свободными именами входов.
+ * Чужие строки (не поля трекера) остаются на месте, уже отмеченные — тоже:
+ * повторное нажатие ничего не дублирует.
+ */
+export function selectAllTrackerFields(mapping: ExternalSourceRule[]): ExternalSourceRule[] {
+  const result = [...mapping];
+  const used = new Set(result.map((rule) => rule.input));
+  for (const field of TRACKER_FIELDS) {
+    if (result.some((rule) => rule.path === field.path)) continue;
+    const input = uniqueTrackerInput(field, used);
+    used.add(input);
+    result.push(trackerRule(field, input));
+  }
+  return result;
+}
+
+/** «Снять все»: убрать из отображения только поля трекера. */
+export function clearAllTrackerFields(mapping: ExternalSourceRule[]): ExternalSourceRule[] {
+  return mapping.filter((rule) => !TRACKER_FIELDS.some((field) => field.path === rule.path));
 }
