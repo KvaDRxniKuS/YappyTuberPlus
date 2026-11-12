@@ -17,6 +17,7 @@
  */
 import type { ObjectKind, RigPreset } from "../types";
 import { VERSION } from "../version";
+import { isScriptName } from "./scriptNames";
 
 /** Один признак контракта: как называется, с какого поколения и как узнаётся. */
 export interface CoreFeature {
@@ -32,6 +33,12 @@ export interface CoreFeature {
   words?: string[];
   /** Синтаксис, который не сводится к одному слову. */
   syntax?: RegExp[];
+  /**
+   * Присваивание имени, которого язык не знает: слева заводится локальная
+   * переменная объекта. По словам такой признак не поймать — имя придумывает
+   * автор, поэтому проверка отдельная (см. `hasLocalAssignment`).
+   */
+  localAssignment?: boolean;
   /** Виды объектов, которым признак обязателен. */
   kinds?: ObjectKind[];
   /** Поля объекта: признак нужен, только если поле есть. */
@@ -216,6 +223,14 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
       "sizeX_behaviour", "sizeY_behaviour", "opacity_behaviour", "visible_behaviour",
     ],
   },
+  {
+    id: "local-variables",
+    label: "своя переменная объекта (`eye_target = …`, `state.имя`)",
+    since: 25,
+    // Имя придумывает автор, поэтому признак ловится не словом, а формой:
+    // слева имя, которого язык не знает (см. `hasLocalAssignment`).
+    localAssignment: true,
+  },
 ];
 
 /** Что сцена просит у ядра и почему. */
@@ -301,6 +316,29 @@ function scanScript(text: string): { code: string; calls: string[] } {
   return { code, calls };
 }
 
+/**
+ * Заводит ли скрипт локальную переменную.
+ *
+ * Слева имя, которого нет среди параметров, — это объявление своей переменной.
+ * Тело `on { … }` не считается: `a = a + 1` внутри события — переменная
+ * события, а не объекта, и ядро 25 для неё не нужно. Глубина скобок считается
+ * по уже очищенному коду (`scanScript`), где комментариев и строк нет.
+ */
+function hasLocalAssignment(code: string): boolean {
+  let depth = 0;
+  for (const line of code.split("\n")) {
+    if (depth === 0) {
+      const match = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=(?!=)/.exec(line);
+      if (match && !isScriptName(match[1])) return true;
+    }
+    for (const char of line) {
+      if (char === "{") depth += 1;
+      else if (char === "}") depth = Math.max(0, depth - 1);
+    }
+  }
+  return false;
+}
+
 /** Имена, которые сцена может вызывать, не поднимая требование выше первого поколения. */
 export function knownNames(): Set<string> {
   const names = new Set<string>(BASE_FUNCTIONS);
@@ -321,6 +359,11 @@ export function needsReport(preset: RigPreset): NeedsReport {
   const parts: string[] = [preset.globals ?? ""];
   for (const object of preset.objects) parts.push(object.script ?? "");
   const { code, calls } = scanScript(parts.join("\n"));
+  // Локальные переменные ищем только в скриптах объектов: в глобальном скрипте
+  // незнакомое имя слева — это глобальная переменная, а не своя.
+  const objectLocals = preset.objects.some((object) =>
+    hasLocalAssignment(scanScript(object.script ?? "").code),
+  );
 
   const reasons: Array<{ label: string; since: number }> = [];
   const removed: Array<{ label: string; removed: number }> = [];
@@ -330,7 +373,8 @@ export function needsReport(preset: RigPreset): NeedsReport {
     const byFunction = feature.functions?.some((name) => calls.includes(name));
     const byWord = feature.words?.some((name) => new RegExp(`\\b${name}\\b`).test(code));
     const bySyntax = feature.syntax?.some((pattern) => pattern.test(code));
-    return Boolean(byKind || byField || byFunction || byWord || bySyntax);
+    const byLocal = feature.localAssignment ? objectLocals : false;
+    return Boolean(byKind || byField || byFunction || byWord || bySyntax || byLocal);
   };
   for (const feature of CORE_FEATURES) {
     if (!hit(feature)) continue;

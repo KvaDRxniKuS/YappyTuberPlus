@@ -300,6 +300,10 @@ pub struct Rig {
     /// Значения каналов поведения в прошлом кадре: нужно для защиты от циклов
     /// и для повторного использования, как у параметров.
     previous_channels: HashMap<(String, Param), f64>,
+    /// Локальные переменные объектов в прошлом кадре: `state.имя` читает их
+    /// так же, как `state.x` читает параметр. Ключ — объект и имя, поэтому
+    /// одинаковая переменная у двух объектов не смешивается.
+    previous_locals: HashMap<(String, String), f64>,
     cache: HashMap<NodeKey, f64>,
     visiting: Vec<NodeKey>,
     cycle_nodes: BTreeSet<NodeKey>,
@@ -640,10 +644,26 @@ impl Rig {
                                 }
                             }
                             None => {
-                                compile_diagnostics.insert(format!(
-                                    "{}: нельзя присвоить неизвестный параметр '{}'",
-                                    object.id, name
-                                ));
+                                if looks_like_channel(name) {
+                                    // Похоже на канал с опечаткой: имя всё ещё
+                                    compile_diagnostics.insert(format!(
+                                        "{}: неизвестный параметр '{}' — каналы пишутся как <параметр>_behaviour",
+                                        object.id, name
+                                    ));
+                                } else if reserved_binding(name) {
+                                    compile_diagnostics.insert(format!(
+                                        "{}: имя '{}' занято встроенным — локальную переменную назовите иначе",
+                                        object.id, name
+                                    ));
+                                } else {
+                                    // Всё остальное слева — локальная переменная
+                                    // этого объекта: ядру её значение нужно
+                                    // только для его же формул.
+                                    expressions.insert(
+                                        NodeKey::Local(object.id.clone(), name.clone()),
+                                        expr.clone(),
+                                    );
+                                }
                             }
                         }
                     }
@@ -789,7 +809,7 @@ impl Rig {
                             }
                             None => {
                                 compile_diagnostics.insert(format!(
-                                    "{}: в блоке события нельзя присвоить '{}'",
+                                    "{}: в блоке события нельзя присвоить '{}' — локальные переменные задаются на верхнем уровне объекта",
                                     object.id, name
                                 ));
                                 continue;
@@ -880,6 +900,7 @@ impl Rig {
             global_names,
             previous,
             previous_channels: HashMap::new(),
+            previous_locals: HashMap::new(),
             cache: HashMap::new(),
             visiting: Vec::new(),
             cycle_nodes: BTreeSet::new(),
@@ -988,8 +1009,12 @@ impl Rig {
         for (key, expression) in writes {
             let context = match &key {
                 NodeKey::Global(_) => NodeKey::Global(String::new()),
-                NodeKey::Param(id, _) => NodeKey::Param(id.clone(), Param::X),
-                NodeKey::Channel(id, _) => NodeKey::Param(id.clone(), Param::X),
+                // Запись всегда в параметр или канал своего объекта: контекст —
+                // он же, чтобы `inherit`/`offset` считались от того же объекта.
+                other => match Self::context_object(other) {
+                    Some(id) => NodeKey::Param(id.clone(), Param::X),
+                    None => NodeKey::Global(String::new()),
+                },
             };
             let mut value = self.numeric(&expression, &context);
             if matches!(&key, NodeKey::Param(_, Param::Visible)) {
@@ -1084,6 +1109,15 @@ impl Rig {
             }
         }
         self.previous_channels = channels;
+        // Локальные переменные — тоже прошлый кадр: сглаживание через
+        // `state.имя` должно видеть именно его, а не значение этой формулы.
+        let mut locals: HashMap<(String, String), f64> = HashMap::new();
+        for (key, value) in &self.cache {
+            if let NodeKey::Local(id, name) = key {
+                locals.insert((id.clone(), name.clone()), *value);
+            }
+        }
+        self.previous_locals = locals;
         self.previous = frame.clone();
         frame
     }
@@ -1490,6 +1524,9 @@ impl Rig {
                 NodeKey::Param(id, param) => self.default_param(id, *param),
                 // Канал без формулы — нейтраль: поведение ничего не добавляет.
                 NodeKey::Channel(_, param) => param.channel_neutral(),
+                // Локальная переменная без формулы не бывает: узел создаётся
+                // ровно присваиванием. Ноль — на случай, если выражение убрали.
+                NodeKey::Local(_, _) => 0.0,
             }
         };
         self.visiting.pop();
@@ -1568,6 +1605,13 @@ impl Rig {
                 .copied()
                 .unwrap_or_else(|| param.channel_neutral()),
             NodeKey::Global(name) => self.previous.globals.get(name).copied().unwrap_or(0.0),
+            // До первого кадра переменной ещё нет: прошлое значение — 0, как у
+            // любой другой необъявленной величины.
+            NodeKey::Local(id, name) => self
+                .previous_locals
+                .get(&(id.clone(), name.clone()))
+                .copied()
+                .unwrap_or(0.0),
             NodeKey::Param(id, param) => self
                 .previous
                 .objects
@@ -1744,10 +1788,17 @@ impl Rig {
                     // редактор: глобальная переменная, параметр своего объекта или
                     // чужой объект (он и так читается целиком).
                     if base == "state" {
-                        if let Some((id, _)) = Self::context_param(context) {
+                        if let Some(id) = Self::context_object(context) {
                             if let Some(param) = Param::parse(name) {
                                 let own = NodeKey::Param(id.clone(), param);
                                 return Value::Number(self.previous_value(&own));
+                            }
+                            // `state.eye_target` — значение своей переменной в
+                            // прошлом кадре: по нему делают сглаживание и
+                            // сравнение «было/стало».
+                            let local = NodeKey::Local(id.clone(), name.to_string());
+                            if self.expressions.contains_key(&local) {
+                                return Value::Number(self.previous_value(&local));
                             }
                         }
                         let global = NodeKey::Global(name.to_string());
@@ -1961,6 +2012,18 @@ impl Rig {
     fn context_param(key: &NodeKey) -> Option<(&String, Param)> {
         match key {
             NodeKey::Param(id, param) | NodeKey::Channel(id, param) => Some((id, *param)),
+            NodeKey::Global(_) | NodeKey::Local(_, _) => None,
+        }
+    }
+
+    /// Объект, в чьём скрипте считается выражение.
+    ///
+    /// Шире, чем `context_param`: локальная переменная живёт в объекте, но не в
+    /// параметре — у неё нет своего `inherit`, зато `parent`, `offset`, `text` и
+    /// `state.x` означают то же, что в любом другом выражении этого объекта.
+    fn context_object(key: &NodeKey) -> Option<&String> {
+        match key {
+            NodeKey::Param(id, _) | NodeKey::Channel(id, _) | NodeKey::Local(id, _) => Some(id),
             NodeKey::Global(_) => None,
         }
     }
@@ -1981,7 +2044,7 @@ impl Rig {
             "signal" => return Value::Signals,
             _ => {}
         }
-        if let Some((id, param)) = Self::context_param(context) {
+        if let Some(id) = Self::context_object(context) {
             if name == "parent" {
                 return if let Some(parent) = self.object_parent(id) {
                     Value::Object(parent)
@@ -1990,6 +2053,13 @@ impl Rig {
                 };
             }
             if name == "inherit" {
+                // Наследство есть только у параметра: у локальной переменной
+                // родителя нет, поэтому `inherit` в ней — ошибка, а не ноль.
+                let Some((id, param)) = Self::context_param(context) else {
+                    return self.error_value(
+                        "inherit работает только в параметре или канале объекта".into(),
+                    );
+                };
                 return if let Some(parent) = self.object_parent(id) {
                     Value::Number(self.eval_node(&NodeKey::Param(parent, param)))
                 } else {
@@ -2028,6 +2098,13 @@ impl Rig {
             }
             if let Some(own) = Param::parse(name) {
                 return Value::Number(self.eval_node(&NodeKey::Param(id.clone(), own)));
+            }
+            // Своя переменная объекта: объявлена здесь же, справа от себя.
+            // Незнакомое имя в чужом скрипте остаётся ошибкой ниже — опечатка
+            // не превращается в молчаливый ноль.
+            let local = NodeKey::Local(id.clone(), name.to_string());
+            if self.expressions.contains_key(&local) {
+                return Value::Number(self.eval_node(&local));
             }
         }
         let global_key = NodeKey::Global(name.to_string());
@@ -2647,6 +2724,18 @@ fn foreign_key(
     Ok(NodeKey::Param(object.to_string(), parsed))
 }
 
+/// Похоже ли имя на канал поведения с опечаткой.
+///
+/// Каналы — закрытый список, а локальные переменные — открытый: без этой
+/// проверки `sizeY_behavour = 1` тихо стал бы переменной, и блок поведения
+/// молча ничего не делал бы. Смотрим на хвост после последнего `_`: у канала
+/// там `behaviour`.
+fn looks_like_channel(name: &str) -> bool {
+    name.rsplit_once('_')
+        .map(|(_, suffix)| suffix.starts_with("behav"))
+        .unwrap_or(false)
+}
+
 /// Имена, которые нельзя занимать переменной события.
 ///
 /// Параметры объекта — это те же переменные, только их читает сам объект:
@@ -2883,6 +2972,7 @@ fn key_name(key: &NodeKey) -> String {
         NodeKey::Global(name) => format!("global.{}", name),
         NodeKey::Param(id, param) => format!("{}.{}", id, param.as_str()),
         NodeKey::Channel(id, param) => format!("{}.{}", id, param.channel_name()),
+        NodeKey::Local(id, name) => format!("{}.{}", id, name),
     }
 }
 
@@ -4319,6 +4409,68 @@ mod tests {
         let frame = tick(&mut rig, 0.0);
         assert!(
             frame.diagnostics.iter().any(|line| line.contains("неизвестный параметр")),
+            "диагностика: {:?}",
+            frame.diagnostics
+        );
+    }
+
+    #[test]
+    fn local_variable_lives_in_its_own_object() {
+        // Тернарный оператор по входу трекера — исходная задача: переменная
+        // объекта выбирает, какое автоморгание взять, и живёт только здесь.
+        let script = "eye_target = tracker.face_found ? 0.2 : 1\nx = eye_target * 10";
+        let mut rig = Rig::new(preset(vec![object("o", None, script)], "")).unwrap();
+        let found = tick_with(&mut rig, 0.0, &[("tracker.face_found", 1.0)]);
+        assert_eq!(found.objects["o"]["x"], 2.0);
+        assert!(found.diagnostics.is_empty(), "диагностика: {:?}", found.diagnostics);
+        let lost = tick_with(&mut rig, 0.033, &[("tracker.face_found", 0.0)]);
+        assert_eq!(lost.objects["o"]["x"], 10.0);
+    }
+
+    #[test]
+    fn local_variable_is_invisible_outside_its_object() {
+        // Своя переменная не вытекает ни в чужой объект, ни в глобальный скрипт:
+        // там это по-прежнему незнакомое имя, а не молчаливый ноль.
+        let owner = object("a", None, "eye_target = 2\nx = eye_target");
+        let other = object("b", None, "y = eye_target");
+        let mut rig = Rig::new(preset(vec![owner, other], "z = eye_target")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert_eq!(frame.objects["a"]["x"], 2.0);
+        assert_eq!(frame.objects["b"]["y"], 0.0);
+        assert!(
+            frame.diagnostics.iter().any(|line| line.contains("неизвестное имя 'eye_target'")),
+            "диагностика: {:?}",
+            frame.diagnostics
+        );
+    }
+
+    #[test]
+    fn state_reads_previous_frame_of_local_variable() {
+        // `state.имя` — прошлый кадр именно своей переменной: на этом строится
+        // сглаживание и сравнение «было/стало».
+        let script = "eye_target = mouse.x\nsoft = (eye_target + state.eye_target) / 2\nx = soft";
+        let mut rig = Rig::new(preset(vec![object("o", None, script)], "")).unwrap();
+        let first = tick_with(&mut rig, 0.0, &[("mouse.x", 0.0)]);
+        // Первый кадр: прошлого нет, поэтому сглаживание — половина значения.
+        assert_eq!(first.objects["o"]["x"], 0.0);
+        tick_with(&mut rig, 0.033, &[("mouse.x", 1.0)]);
+        let third = tick_with(&mut rig, 0.066, &[("mouse.x", 1.0)]);
+        // Прошлый кадр 1.0, текущий 1.0 → 1.0.
+        assert_eq!(third.objects["o"]["x"], 1.0);
+        assert!(third.diagnostics.is_empty(), "диагностика: {:?}", third.diagnostics);
+    }
+
+    #[test]
+    fn local_variable_cannot_take_a_builtin_name() {
+        // Встроенное имя занято: `time = 1` не должно молча завести переменную,
+        // которую формулы всё равно не увидят.
+        let mut rig = Rig::new(preset(vec![object("a", None, "time = 1\nx = time")], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert!(
+            frame
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("занято встроенным")),
             "диагностика: {:?}",
             frame.diagnostics
         );

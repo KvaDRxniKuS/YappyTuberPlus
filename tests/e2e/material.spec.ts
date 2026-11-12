@@ -501,12 +501,15 @@ test("материал: имена в редакторе совпадают с �
   // Список параметров для подсказок — это подпись ядра в интерфейсе. Если он
   // отстанет, скрипт с `roughness` будет выглядеть ошибкой автора, а не новой
   // возможностью.
-  const editor = readFileSync(join(process.cwd(), "src", "components", "ScriptEditor.tsx"), "utf8");
-  const block = editor.slice(editor.indexOf("const PARAMETERS = ["), editor.indexOf("const TEXT_PARAMETER"));
+  // Список имён один на редактор и на разбор требований: он живёт в
+  // `engine/scriptNames.ts`, а редактор берёт его оттуда.
+  const names = readFileSync(join(process.cwd(), "src", "engine", "scriptNames.ts"), "utf8");
   for (const name of ["roughness", "metallic", "ao", "emissive", "ior"]) {
-    expect(block).toContain(`"${name}"`);
+    expect(names).toContain(`"${name}"`);
     expect(NEUTRAL_PARAMS[name]).toBe(name === "emissive" ? 0 : -1);
   }
+  const editor = readFileSync(join(process.cwd(), "src", "components", "ScriptEditor.tsx"), "utf8");
+  expect(editor).toContain("from \"../engine/scriptNames\"");
   // Ядро знает те же слова: таблица признаков — источник поколения.
   const features = readFileSync(join(process.cwd(), "src", "engine", "coreFeatures.ts"), "utf8");
   expect(features).toContain('words: ["roughness", "metallic", "ao", "emissive"]');

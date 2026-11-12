@@ -15,6 +15,7 @@ import {
   FUNCTION_NAMES, INPUT_FIELDS, SIGNATURES, hintAt, signatureAt, signatureLine, signatureOf,
 } from "../engine/signatures";
 import { useFavorites } from "../hooks/useFavorites";
+import { isScriptName, SCRIPT_PARAMETERS, TEXT_PARAMETER } from "../engine/scriptNames";
 
 const language = StreamLanguage.define({
   token(stream) {
@@ -53,26 +54,36 @@ const highlight = HighlightStyle.define([
   { tag: tags.punctuation, color: "#8a929c" },
 ]);
 
-const PARAMETERS = [
-  "x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer",
-  // Каналы поведения: блок вкладки «Поведение» пишет только их, а параметр
-  // складывает добавку с авторским кодом (см. `behaviourBlock`).
-  "x_behaviour", "y_behaviour", "rotation_behaviour", "sizeX_behaviour", "sizeY_behaviour",
-  "opacity_behaviour", "visible_behaviour",
-  // Маска: 1 — режет по контуру, 0 — объект целиком (см. «Маска» в инспекторе).
-  "mask",
-  // Деформация: углы в процентах размера зоны (см. «Деформация» в инспекторе).
-  "warpTLx", "warpTLy", "warpTRx", "warpTRy", "warpBRx", "warpBRy", "warpBLx", "warpBLy",
-  // Материал: три канала заменяют инспектор (−1 — «не задано»), свечение
-  // прибавляется (см. «Материал» в инспекторе).
-  "roughness", "metallic", "ao", "emissive", "ior",
-];
-// `text` — строковый параметр текстового объекта: база в скрипте объекта
-// (`text = "привет"`), переопределение — в блоке события. Отдельно от чисел,
-// потому что кадр отдаёт его строкой, а не числом.
-const TEXT_PARAMETER = "text";
+// Параметры и каналы — из общего списка: по нему же ядро отличает свою
+// переменную объекта от параметра (см. `engine/scriptNames.ts`).
+const PARAMETERS = SCRIPT_PARAMETERS;
 // Входы приходят из модулей и подставляются в автодополнение динамически.
 const INPUTS = ["time", "dt", "signal", "parent", "inherit", "offset", "width", "height", "canvasWidth", "canvasHeight", "state"];
+/**
+ * Свои переменные объекта: имена слева, которых язык не знает.
+ *
+ * Ядро заводит переменную для любого такого имени (`eye_target = 1`), поэтому
+ * подсказка берёт их прямо из текста — объявил, и имя уже под рукой. Тела
+ * `on { … }` не считаются: там живут переменные события, а не объекта.
+ */
+function localsOf(text: string): string[] {
+  const names: string[] = [];
+  let depth = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\/\/.*$/, "");
+    if (depth === 0) {
+      const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)/.exec(line);
+      const name = match?.[1] ?? "";
+      if (name && !isScriptName(name) && !INPUTS.includes(name)) names.push(name);
+    }
+    for (const char of line) {
+      if (char === "{") depth += 1;
+      else if (char === "}") depth = Math.max(0, depth - 1);
+    }
+  }
+  return [...new Set(names)];
+}
+
 // Порядок групп в списке функций под редактором.
 const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" | "media" | "text"; title: string }> = [
   { id: "math", title: "математика" },
@@ -519,13 +530,14 @@ export function ScriptEditor({
       const stateMember = /(?:^|[^\w.])state\.(\w*)$/.exec(prefix);
       if (stateMember) {
         const start = context.pos - stateMember[1].length;
+        const locals = localsOf(context.state.doc.toString());
         return {
           from: start,
           validFor: /^\w*$/,
-          options: [...new Set([...globalNames, ...PARAMETERS])].map((label) => ({
+          options: [...new Set([...globalNames, ...PARAMETERS, ...locals])].map((label) => ({
             label,
             type: PARAMETERS.includes(label) ? "property" : "variable",
-            detail: "значение прошлого кадра",
+            detail: locals.includes(label) ? "своя переменная: прошлый кадр" : "значение прошлого кадра",
           })),
         };
       }
@@ -544,9 +556,10 @@ export function ScriptEditor({
         };
       }
       const localEvents = declaredEvents(context.state);
+      const locals = localsOf(context.state.doc.toString());
       const options = [...new Set([
         ...ids, ...globalNames, ...PARAMETERS, TEXT_PARAMETER, ...INPUTS, ...inputNames,
-        ...localEvents, ...constantNames, ...FUNCTION_NAMES,
+        ...locals, ...localEvents, ...constantNames, ...FUNCTION_NAMES,
       ])].map((label) => {
         if (SIGNATURES[label]) {
           return {
@@ -559,7 +572,9 @@ export function ScriptEditor({
         }
         const detail = PARAMETERS.includes(label)
           ? "параметр объекта"
-          : inputNames.includes(label)
+          : locals.includes(label)
+            ? "своя переменная объекта"
+            : inputNames.includes(label)
             ? "вход модуля"
             : ids.includes(label)
               ? "объект"
@@ -838,6 +853,8 @@ export function ScriptEditor({
               <span>текст — переменная: <b>{'text = "привет"'}</b> — база, в событии переопределяет до «Стопа»</span>
               <span>число в текст: <b>text = text(mic.db)</b>, склейка — <b>{'text = "db " + text(mic.db)'}</b></span>
               <span>текст всегда в кавычках: <b>{'text("привет")'}</b>; кириллица без кавычек — ошибка разбора</span>
+              <span>своя переменная: <b>eye_target = tracker.face_found ? auto.blink : 1</b> — видна только этому объекту</span>
+              <span><b>state.eye_target</b> — та же переменная в прошлом кадре: сглаживание и «было/стало»</span>
             </div>
             <div className="function-chips">
               {GROUPS.map((group) => (

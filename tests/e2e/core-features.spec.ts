@@ -38,6 +38,21 @@ test("требование: простая сцена просит миниму�
   expect(needsCore(preset([{ warp: {} } as Partial<RigObject>]))).toBe(18);
 });
 
+test("требование: своя переменная — только имя слева, которого язык не знает", () => {
+  // Параметр, канал и их синонимы заняты языком: это не объявление.
+  expect(needsCore(preset([{ script: "rot = 5\nsize_x = 1\nx_behaviour = 0" }]))).toBeLessThan(25);
+
+  // Переменная события живёт в блоке: `a = a + 1` поколения не поднимает.
+  const inEvent = preset([{ script: "x = 1\non start {\n  a = a + 1\n}" }]);
+  expect(needsCore(inEvent)).toBeLessThan(25);
+
+  // Глобальный скрипт: незнакомое имя слева — глобальная переменная, а не своя.
+  expect(needsCore(preset([{ script: "x = 1" }], "face_seen = 1"))).toBeLessThan(25);
+
+  // А в объекте такое же имя — уже своя переменная.
+  expect(needsCore(preset([{ script: "face_seen = 1\nx = face_seen" }]))).toBe(25);
+});
+
 test("требование: строки и комментарии не считаются кодом", () => {
   // Сообщение с вызовом внутри — это текст, а не формула.
   const message = preset([{
@@ -107,18 +122,26 @@ test("требование: у числа есть причина, и она н�
   expect(ior.needs).toBe(23);
   expect(needsReason(ior)).toContain("отражение");
 
-  // Поведение-добавка — уже 24: старое ядро не знает канала и вернуло бы ноль.
+  // Поведение-добавка — 24: старое ядро не знает канала и вернуло бы ноль.
   const channel = preset([{ kind: "sprite", script: "x = inherit + x_behaviour" } as Partial<RigObject>]);
-  expect(needsReport(channel).needs).toBe(VERSION.core);
+  expect(needsReport(channel).needs).toBe(24);
   expect(needsReason(needsReport(channel))).toContain("поведение");
+
+  // Своя переменная объекта — 25: без неё ядро ответило бы «неизвестное имя».
+  const local = preset([{ script: "eye_target = 1\nx = eye_target" }]);
+  expect(needsReport(local).needs).toBe(25);
+  expect(needsReason(needsReport(local))).toContain("своя переменная");
 
   // Незнакомый вызов важнее подписей: он и есть причина текущего поколения.
   expect(needsReason(needsReport(preset([{ script: "x = mystery(1)" }])))).toContain("mystery()");
 });
 
 test("требование: файл уносит его с собой", () => {
-  // Самая новая механика — канал поведения: именно он держит сцену на текущем ядре.
-  const scene = preset([{ kind: "sprite", script: "sizeX = inherit * sizeX_behaviour" } as Partial<RigObject>]);
+  // Самая новая механика — своя переменная объекта: она держит сцену на текущем ядре.
+  const scene = preset([{
+    kind: "sprite",
+    script: "eye_target = 1\nsizeX = inherit * sizeX_behaviour\nx = eye_target",
+  } as Partial<RigObject>]);
   const stamped = stampPreset(scene);
   expect(stamped.built).toContain(VERSION.core.toString());
   expect(stamped.needs).toBe(VERSION.core);
