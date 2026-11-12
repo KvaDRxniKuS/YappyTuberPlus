@@ -146,14 +146,25 @@ export default function App() {
     if (isTauri()) {
       void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
         if (disposed) return;
-        let allowed = false;
         const main = getCurrentWindow();
-        const stopListening = await main.onCloseRequested(async (event) => {
-          if (allowed) return;
+        /**
+         * Крестик закрывает приложение всегда.
+         *
+         * Здесь нельзя ждать ни дочерние окна, ни `close()`: `close()` снова
+         * приходит в этот же обработчик, обработчик ждёт обещание, а обещание
+         * ждёт обработчик — окно не закрывается никогда, и программу остаётся
+         * только снимать через диспетчер задач. Поэтому окна закрываются
+         * «в фоне», а главное окно уничтожается `destroy()` — он не спрашивает
+         * разрешения и не ждёт ответа. Таймер — страховка на случай, если
+         * дочернее окно зависло и не ответило вовсе.
+         */
+        const finish = () => {
+          void main.destroy().catch(() => {});
+        };
+        const stopListening = await main.onCloseRequested((event) => {
           event.preventDefault();
-          allowed = true;
-          await Promise.all([closeOverlayWindow(), closeCaptureWindow()]);
-          await main.close();
+          void Promise.all([closeOverlayWindow(), closeCaptureWindow()]).finally(finish);
+          window.setTimeout(finish, 400);
         });
         if (disposed) stopListening();
         else unlisten = stopListening;

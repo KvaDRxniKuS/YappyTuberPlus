@@ -194,16 +194,26 @@ export function useModuleInputs(
       for (const name of current.attachedNames()) {
         if (!wanted.has(name)) current.detach(name);
       }
+      let failed = false;
       for (const module of liveModules) {
         if (cancelled) return;
         try {
           await current.attach(module.name, module.config, moduleDefinition(module.type).kind === "viseme");
         } catch (reason) {
           if (cancelled) return;
+          failed = true;
           setError(describe(reason));
         }
       }
-      if (!cancelled) setContextState(current.state);
+      if (cancelled) return;
+      setContextState(current.state);
+      // Разрешение получено только сейчас (его даёт первый удачный захват),
+      // поэтому до этого список микрофонов был без подписей и идентификаторов,
+      // и сохранённый в пресете микрофон в нём не находился. Обновляем список
+      // сразу после подключения — тогда выбор снова виден выбранным.
+      void refreshDevices();
+      const notice = current.takeNotice();
+      if (notice && !failed) setError(notice);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

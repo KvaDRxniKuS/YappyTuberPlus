@@ -56,6 +56,25 @@ interface Analyser {
 }
 
 /**
+ * Что показывать в списке микрофонов.
+ *
+ * Идентификатор устройства лежит в пресете, а список устройств — в системе.
+ * Пока приложение не получило разрешение на микрофон, подписи и идентификаторы
+ * в `enumerateDevices` пустые, поэтому сохранённого устройства в списке нет —
+ * и `<select>` молча показывал первый пункт «Системный по умолчанию», хотя в
+ * пресете выбран другой микрофон. Выбор выглядел потерянным после каждого
+ * запуска. Возвращаем правду: идентификатор свой и признак «его сейчас нет».
+ */
+export function deviceChoice(
+  devices: DeviceOption[],
+  stored: string | undefined,
+): { value: string; missing: boolean } {
+  const id = typeof stored === "string" ? stored : "";
+  if (!id) return { value: "default", missing: false };
+  return { value: id, missing: !devices.some((device) => device.id === id) };
+}
+
+/**
  * Живой звук для модулей. Один `AudioContext`, отдельный анализатор на модуль,
  * общий поток на устройство: два Loudness с одного микрофона не открывают его
  * дважды, а два разных микрофона работают независимо.
@@ -74,6 +93,12 @@ export class AudioInputEngine {
   private lastFrame: Record<string, AudioFrame> | null = null;
   /** Номер текущей калибровки: старый цикл записи видит смену и выходит. */
   private calibration = 0;
+  /**
+   * Замечание к последнему захвату: почему открыт не тот микрофон, что в
+   * пресете. Молчание в эфире хуже системного микрофона, но и молчать об этом
+   * нельзя — иначе выбор снова выглядит потерянным.
+   */
+  private notice: string | null = null;
 
   get state(): AudioContextState | "closed" {
     return this.context?.state ?? "closed";
@@ -81,6 +106,13 @@ export class AudioInputEngine {
 
   get hasInputs(): boolean {
     return this.analysers.size > 0;
+  }
+
+  /** Забрать замечание к захвату: возвращается один раз, чтобы не мигало. */
+  takeNotice(): string | null {
+    const notice = this.notice;
+    this.notice = null;
+    return notice;
   }
 
   /** Имена модулей, к которым уже подключён звук. */
@@ -237,6 +269,9 @@ export class AudioInputEngine {
       return existing;
     }
     const processing = settings.processing === true;
+    const plain: MediaStreamConstraints = {
+      audio: { echoCancellation: processing, noiseSuppression: processing, autoGainControl: false },
+    };
     const constraints: MediaStreamConstraints = {
       audio: {
         ...(streamKey === "default" ? {} : { deviceId: { exact: streamKey } }),
@@ -245,7 +280,18 @@ export class AudioInputEngine {
         autoGainControl: false,
       },
     };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (reason) {
+      // Идентификатор устройства мог смениться между запусками (в WebView2 он
+      // привязан к профилю и разрешению), а микрофон — исчезнуть из системы.
+      // Системный микрофон лучше тишины: звук продолжает идти, а модуль честно
+      // говорит, что открыт не тот вход, что записан в пресете.
+      if (streamKey === "default") throw reason;
+      stream = await navigator.mediaDevices.getUserMedia(plain);
+      this.notice = "Микрофон из пресета недоступен — взят системный по умолчанию.";
+    }
     const entry: StreamEntry = {
       stream,
       source: this.context!.createMediaStreamSource(stream),

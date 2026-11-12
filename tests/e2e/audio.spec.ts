@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { smoothingAlpha } from "../../src/modules/audio";
+import { deviceChoice, smoothingAlpha } from "../../src/modules/audio";
 import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefinitions } from "../../src/modules/registry";
+import { normalizePreset } from "../../src/engine/preset";
+import { PRESET_FORMAT } from "../../src/version";
 
 test.beforeAll(() => {
   const directory = join(process.cwd(), "public", "modules");
@@ -39,4 +41,41 @@ test("у Loudness настраиваются атака и спад, speak и п
   expect(speak?.hint).toMatch(/сглаж/i);
   expect(loudness?.label).toMatch(/пик/i);
   expect(loudness?.hint).toMatch(/без сглаживания/i);
+});
+
+test("выбор микрофона не подменяется на «системный», если устройства пока нет в списке", () => {
+  // Идентификатор лежит в пресете, а список устройств приходит из системы. До
+  // первого разрешения у устройств пустые идентификаторы и подписи, поэтому
+  // сохранённого микрофона в списке нет. Раньше <select> в этом случае молча
+  // показывал первый пункт — и выбор выглядел потерянным после каждого запуска.
+  const devices = [{ id: "mic-a", label: "Микрофон" }, { id: "mic-b", label: "Гарнитура" }];
+  expect(deviceChoice(devices, "mic-b")).toEqual({ value: "mic-b", missing: false });
+  // Пустое значение — это осознанный «системный по умолчанию».
+  expect(deviceChoice(devices, "")).toEqual({ value: "default", missing: false });
+  expect(deviceChoice(devices, undefined)).toEqual({ value: "default", missing: false });
+  // Устройства нет в списке: пункт остаётся своим, но помечается «не найден».
+  expect(deviceChoice(devices, "mic-old")).toEqual({ value: "mic-old", missing: true });
+});
+
+test("микрофон из пресета переживает сохранение и загрузку", () => {
+  const preset = normalizePreset({
+    version: PRESET_FORMAT,
+    name: "сцена",
+    canvas: { width: 1000, height: 600 },
+    objects: [],
+    modules: [{
+      name: "Голос",
+      type: "loudness",
+      enabled: true,
+      source: "live",
+      config: { deviceId: "mic-b", gain: 1.2, processing: true },
+    }],
+  });
+  expect(preset).not.toBeNull();
+  const module = preset!.modules[0];
+  // Идентификатор — часть настроек модуля: без него микрофон каждый запуск
+  // оказывался «системным по умолчанию».
+  expect(module.config.deviceId).toBe("mic-b");
+  expect(module.config.gain).toBe(1.2);
+  expect(module.config.processing).toBe(true);
 });

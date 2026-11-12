@@ -4,7 +4,7 @@ import {
   SlidersHorizontal, Trash2, Wifi, X,
 } from "lucide-react";
 import type { ModuleInstance, ModuleKind } from "../types";
-import type { DeviceOption } from "../modules/audio";
+import { deviceChoice, type DeviceOption } from "../modules/audio";
 import type { MonitorOption } from "../modules/pointer";
 import {
   fieldVisible, inputRange, moduleDefaults, moduleDefinition, refreshLibrary,
@@ -551,13 +551,19 @@ function FieldControl(props: {
   }
 
   if (field.type === "device") {
+    // Сохранённый микрофон может быть ещё не виден (до разрешения у устройств
+    // нет ни подписей, ни идентификаторов). Тогда показываем его отдельным
+    // пунктом, а не подсовываем первый: иначе выбор выглядит потерянным, хотя
+    // в пресете он на месте.
+    const choice = deviceChoice(props.devices, typeof value === "string" ? value : undefined);
     return (
       <div className="module-device">
         <select
-          value={typeof value === "string" && value ? value : "default"}
+          value={choice.value}
           onChange={(event) => props.onValue(event.target.value === "default" ? "" : event.target.value, "Микрофон модуля")}
         >
           <option value="default">Системный по умолчанию</option>
+          {choice.missing && <option value={choice.value}>Выбранный микрофон (не найден)</option>}
           {props.devices.map((device) => (
             <option key={device.id} value={device.id}>{device.label}</option>
           ))}
