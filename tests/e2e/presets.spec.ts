@@ -159,7 +159,7 @@ test("поведение: условие по пресетам дописыва�
   const block = behaviourBlock(only, object);
   expect(block).toContain("preset == presets_1_summer or preset == presets_1_winter ? 1 : 0");
   // Рот и пресеты перемножаются: одно не отменяет другое.
-  expect(block).toMatch(/visible = .+\* \(\(preset ==/);
+  expect(block).toMatch(/visible_behaviour = .+\* \(\(preset ==/);
 
   const except = { ...only, presets: [{ module: "presets_1", variable: "preset", mode: "except" as const, names: ["winter"] }] };
   expect(behaviourBlock(except, object)).toContain("preset == presets_1_winter ? 0 : 1");

@@ -207,6 +207,15 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
     since: 23,
     words: ["ior"],
   },
+  {
+    id: "behaviour-channels",
+    label: "поведение как добавка (`x_behaviour`, `sizeX_behaviour`…)",
+    since: 24,
+    words: [
+      "x_behaviour", "y_behaviour", "rotation_behaviour",
+      "sizeX_behaviour", "sizeY_behaviour", "opacity_behaviour", "visible_behaviour",
+    ],
+  },
 ];
 
 /** Что сцена просит у ядра и почему. */

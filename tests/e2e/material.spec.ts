@@ -520,8 +520,13 @@ test("материал: имена в редакторе совпадают с �
   }
   expect(model).toContain('"roughness" => Param::Roughness');
   expect(model).toContain('"ior" => Param::Ior');
+  // Поколение не дублируем числом: сверяем ядро с паспортом редактора, иначе
+  // каждая правка контракта ломала бы тест вместо проверки.
   const core = readFileSync(join(process.cwd(), "crates", "rig-core", "src", "lib.rs"), "utf8");
-  expect(core).toContain("CORE_GENERATION: u32 = 23");
+  const passport = readFileSync(join(process.cwd(), "src", "version.ts"), "utf8");
+  const coreSlot = /\bcore:\s*(\d+)/.exec(passport)?.[1];
+  expect(coreSlot).toBeTruthy();
+  expect(core).toContain(`CORE_GENERATION: u32 = ${coreSlot}`);
 });
 
 test("документация: руководство называет то же, что интерфейс", () => {

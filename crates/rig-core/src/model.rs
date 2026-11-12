@@ -345,12 +345,74 @@ impl Param {
             _ => return None,
         })
     }
+
+    /// Имена каналов поведения: `<параметр>_behaviour`.
+    ///
+    /// Список закрыт намеренно. Объектный скрипт по-прежнему принимает только
+    /// параметры, и опечатка остаётся ошибкой, а не молчаливой новой
+    /// переменной: `x_behavour` не станет каналом, ядро скажет о неизвестном
+    /// имени.
+    pub fn channel_name(self) -> &'static str {
+        match self {
+            Param::X => "x_behaviour",
+            Param::Y => "y_behaviour",
+            Param::Rotation => "rotation_behaviour",
+            Param::SizeX => "sizeX_behaviour",
+            Param::SizeY => "sizeY_behaviour",
+            Param::Opacity => "opacity_behaviour",
+            Param::Visible => "visible_behaviour",
+            _ => "",
+        }
+    }
+
+    /// Канал по имени в скрипте: только семь параметров, которые трогает
+    /// вкладка «Поведение».
+    pub fn channel_of(value: &str) -> Option<Self> {
+        Some(match value {
+            "x_behaviour" => Param::X,
+            "y_behaviour" => Param::Y,
+            "rotation_behaviour" => Param::Rotation,
+            "sizeX_behaviour" => Param::SizeX,
+            "sizeY_behaviour" => Param::SizeY,
+            "opacity_behaviour" => Param::Opacity,
+            "visible_behaviour" => Param::Visible,
+            _ => return None,
+        })
+    }
+
+    /// Нейтральное значение канала — «поведение ничего не добавляет».
+    ///
+    /// Позиция и поворот складываются (`+`), поэтому нейтраль — ноль. Размер,
+    /// прозрачность и видимость умножаются (`*`), поэтому нейтраль — единица.
+    /// Тип значения решает, какой оператор ставит редактор.
+    pub fn channel_neutral(self) -> f64 {
+        match self {
+            Param::SizeX | Param::SizeY | Param::Opacity | Param::Visible => 1.0,
+            _ => 0.0,
+        }
+    }
+
+    /// Канал умножается на параметр, а не складывается с ним.
+    pub fn channel_multiplicative(self) -> bool {
+        matches!(
+            self,
+            Param::SizeX | Param::SizeY | Param::Opacity | Param::Visible
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NodeKey {
     Global(String),
     Param(String, Param),
+    /// Добавка поведения объекта: канал `<параметр>_behaviour`.
+    ///
+    /// Вкладка «Поведение» больше не переопределяет параметр целиком. Блок
+    /// пишет только свою добавку — `x_behaviour = …`, — а авторская строка
+    /// складывает её с наследством: `x = inherit + x_behaviour + 3 * delta`.
+    /// Поэтому добавка живёт отдельным узлом: её видно в любом выражении того
+    /// же объекта, и правка поведения не может стереть авторскую строку.
+    Channel(String, Param),
 }
 
 /// Значения входов, приходящие от модулей редактора.

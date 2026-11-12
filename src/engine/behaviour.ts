@@ -10,10 +10,15 @@ import { BEHAVIOUR_META, readVisibilitySources, type VisibilitySource } from "./
  * вкладка «Объект» всегда показывают одно и то же, а продвинутый автор может
  * удалить блок и писать руками.
  *
+ * Блок — **добавка**, а не переопределение: он пишет каналы `<параметр>_behaviour`,
+ * а параметр складывает канал с авторским кодом (`x = inherit + x_behaviour + …`).
+ * Поэтому ползунки не стирают формулы, а формулы не спорят с ползунками.
+ *
  * Важное правило генератора: сглаживание и пружина стоят **последними** в
- * цепочке. Они фильтруют итоговую цель по оси — наследство родителя, `follow`,
- * покачивание и подпрыгивание вместе, — поэтому «drag» влияет и на bounce, а не
- * только на следование за родителем.
+ * цепочке и по умолчанию фильтруют только добавку — `follow`, покачивание и
+ * подпрыгивание, без `inherit`. Так объект не «тормозит» за родителем; галочка
+ * «сглаживать и наследство» возвращает прежнее ощущение, фильтруя сумму и
+ * вычитая из неё `inherit`.
  */
 
 export type VisibilityRule = "none" | "open" | "closed";
@@ -49,6 +54,12 @@ export interface Behaviour {
   smooth: number;
   /** Упругость позиции: 0 — выключено, 1 — мягкая пружина. */
   spring: number;
+  /**
+   * Сглаживать и наследство: фильтр позиции и поворота охватывает движение
+   * родителя. По умолчанию нет — блок поведения это добавка, и объект не
+   * «тормозит» за родителем, пока об этом не попросят.
+   */
+  smoothInherit: boolean;
   /** Сглаживание поворота. */
   rotationSmooth: number;
   /** Пружина на повороте. */
@@ -207,6 +218,7 @@ export interface Behaviour {
 export const DEFAULT_BEHAVIOUR: Behaviour = {
   smooth: 0,
   spring: 0,
+  smoothInherit: false,
   rotationSmooth: 0,
   rotationSpring: 0,
   scaleX: 1,
@@ -268,7 +280,47 @@ const END = "// ── конец поведения ──";
 const META = BEHAVIOUR_META;
 
 /** Параметры, которые переписывает блок: остальное в скрипте не трогаем. */
-const MANAGED = ["x", "y", "rotation", "sizeX", "sizeY", "visible"] as const;
+/**
+ * Параметры, у которых есть канал поведения.
+ *
+ * Блок больше ничего не переопределяет: он пишет `<параметр>_behaviour`, а
+ * авторская строка складывает канал со своими слагаемыми. Список задаёт и
+ * генератор, и склейку с хвостом скрипта, поэтому порядок здесь — порядок
+ * строк по умолчанию: сначала позиция, потом размер.
+ */
+const CHANNEL_PARAMS = ["x", "y", "rotation", "sizeX", "sizeY", "opacity", "visible"] as const;
+
+type ChannelParam = (typeof CHANNEL_PARAMS)[number];
+
+/** Имя канала в скрипте: `x` → `x_behaviour`. */
+function channelName(param: ChannelParam): string {
+  return `${param}_behaviour`;
+}
+
+/**
+ * Параметр умножается на канал, а не складывается с ним.
+ *
+ * Тип значения решает оператор: позиция и поворот — добавка (`+`), размер,
+ * прозрачность и видимость — множитель (`*`). Нейтраль у них тоже разная
+ * (0 и 1), поэтому ядро хранит её в таблице параметров.
+ */
+function channelMultiplicative(param: ChannelParam): boolean {
+  return param === "sizeX" || param === "sizeY" || param === "opacity" || param === "visible";
+}
+
+/** Как канал встаёт в авторскую строку. */
+function channelTerm(param: ChannelParam): string {
+  return `${channelMultiplicative(param) ? "*" : "+"} ${channelName(param)}`;
+}
+
+/** Строка по умолчанию, если её в скрипте нет. */
+function channelLine(param: ChannelParam, hasParent: boolean): string {
+  const channel = channelName(param);
+  if (!hasParent) return `${param} = ${channel}`;
+  return channelMultiplicative(param)
+    ? `${param} = inherit * ${channel}`
+    : `${param} = inherit + ${channel}`;
+}
 
 function num(value: number): string {
   return String(Math.round(value * 1000) / 1000);
@@ -526,14 +578,30 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
 
   // Фильтр ставится ПОСЛЕ сборки цели: так drag/пружина гасят и наследство
   // родителя, и покачивание, и подпрыгивание — реакцию объекта в абсолюте.
-  const filtered = (expression: string): string => {
-    let result = expression;
-    if (behaviour.smooth > 0) result = `smooth(${result}, ${num(behaviour.smooth * 260)})`;
-    if (behaviour.spring > 0) {
-      const { frequency, damping } = springParams(behaviour.spring);
-      result = `spring(${result}, ${num(frequency)}, ${num(damping)})`;
-    }
-    return result;
+  /**
+   * Фильтр добавки.
+   *
+   * По умолчанию сглаживается только реакция объекта: наследство родителя идёт
+   * как есть, иначе объект «тормозит» за родителем, хотя его об этом не
+   * просили — а поведение теперь добавка, а не переопределение.
+   *
+   * Галочка «сглаживать и наследство» возвращает прежнее ощущение: фильтруется
+   * сумма, но канал остаётся добавкой — из отфильтрованной суммы вычитается
+   * `inherit`, и `x = inherit + x_behaviour` даёт ровно отфильтрованный итог.
+   */
+  const filtered = (delta: string): string => {
+    if (!position) return delta;
+    const apply = (input: string): string => {
+      let result = input;
+      if (behaviour.smooth > 0) result = `smooth(${result}, ${num(behaviour.smooth * 260)})`;
+      if (behaviour.spring > 0) {
+        const { frequency, damping } = springParams(behaviour.spring);
+        result = `spring(${result}, ${num(frequency)}, ${num(damping)})`;
+      }
+      return result;
+    };
+    if (!behaviour.smoothInherit || !hasParent) return apply(delta);
+    return `(${apply(`(${delta}) + inherit`)} - inherit)`;
   };
 
   /**
@@ -636,17 +704,23 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
   })();
 
   const target = (axis: "x" | "y") => {
-    const base = hasParent ? `inherit + follow(offset, parent).${axis}` : "0";
+    // Наследство в добавку не входит: его складывает авторская строка
+    // (`x = inherit + x_behaviour`), поэтому канал можно править, не боясь
+    // стереть чужой код.
+    const parts: string[] = [];
+    if (hasParent) parts.push(`follow(offset, parent).${axis}`);
     const extra = follow ? follow[axis] : null;
-    return extra ? `${base} + (${extra})` : base;
+    if (extra) parts.push(`(${extra})`);
+    // Пусто — значит добавки нет: «0 + sin(…)» только мешало бы читать строку.
+    return parts.join(" + ");
   };
 
   if (position || wiggleX || follow?.x) {
-    const parts = [target("x"), wiggleX].filter(Boolean).join(" + ");
-    body.push(`x = ${filtered(parts)}`);
+    const parts = [target("x"), wiggleX].filter(Boolean).join(" + ") || "0";
+    body.push(`x_behaviour = ${filtered(parts)}`);
   }
   if (position || wiggleY || bounce || follow?.y) {
-    const parts = [target("y")];
+    const parts = [target("y")].filter((part, index) => index > 0 || part.length > 0);
     if (bounce && speak) {
       // Скорость подъёма задаётся отдельно от фильтра позиции, поэтому
       // «резкий прыжок при вязком следовании» — рабочая комбинация.
@@ -663,7 +737,7 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       parts.push(`- ${position ? hop : `spring(${hop}, 2.2, 0.55)`}`);
     }
     if (wiggleY) parts.push(`+ ${wiggleY}`);
-    body.push(`y = ${filtered(parts.join(" "))}`);
+    body.push(`y_behaviour = ${filtered(parts.join(" ").trim() || "0")}`);
   }
 
   // Доворот от речи без микрофона не на что опереть: поля нет — формулы нет.
@@ -715,6 +789,20 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     return result;
   };
 
+  /**
+   * Фильтр поворота как добавки.
+   *
+   * Предел сустава ставится на отклонение от родителя, а сглаживание по
+   * умолчанию не трогает наследство: объект не «тормозит» за родителем, пока
+   * об этом не попросили. Галочка «сглаживать и наследство» фильтрует сумму и
+   * возвращает разницу, поэтому канал остаётся добавкой.
+   */
+  const rotateDelta = (dev: string): string => {
+    if (!rotFilter) return dev;
+    if (!behaviour.smoothInherit || !hasParent) return rotateFilter(dev);
+    return `(${rotateFilter(`(${dev}) + inherit`)} - inherit)`;
+  };
+
   if (physical || rotFilter || deviation.length) {
     let expression: string;
     if (physical) {
@@ -759,56 +847,68 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       // «Сглаживание поворота» с физикой работает как трение: мотор тянет,
       // но движение выходит вязким. smooth не перелетает цель, поэтому предел,
       // посчитанный выше, остаётся честным.
-      const filtered = behaviour.rotationSmooth > 0
+      const damped = behaviour.rotationSmooth > 0
         ? `smooth(${inner}, ${num(behaviour.rotationSmooth * 260)})`
         : inner;
-      expression = limits
-        ? `${rest} + limit(${filtered} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
-        : filtered;
+      const absolute = limits
+        ? `${rest} + limit(${damped} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
+        : damped;
+      // Абсолютный угол превращается в добавку: авторская строка сама
+      // прибавит наследство.
+      expression = `${absolute} - (${rest})`;
     } else if (deviation.length) {
-      const rest = hasParent ? "inherit" : "0";
       let dev = deviation.join(" + ");
       // Без поворотного фильтра у доворота своя пружина: он не должен
       // появляться мгновенно.
       if (!rotFilter && drag) dev = `spring(${dev}, 2.4, 0.35)`;
-      // Предел ставится на отклонение от родителя, а фильтр — на итоговый угол:
-      // сглаживание и пружина поворота действуют на реакцию объекта целиком.
-      const filtered = rotateFilter(`${rest} + ${dev}`);
-      expression = limits
-        ? `${rest} + limit(${filtered} - (${rest}), ${num(-limitLeft)}, ${num(limitRight)})`
-        : filtered;
+      const delta = rotateDelta(dev);
+      // Предел — на отклонение от родителя: сумма с его углом не ограничена.
+      expression = limits ? `limit(${delta}, ${num(-limitLeft)}, ${num(limitRight)})` : delta;
     } else {
-      expression = rotateFilter(hasParent ? "inherit" : "0");
+      // Отклонения нет — остаётся только «провис» наследства, и лишь если его
+      // попросили галочкой: иначе добавка честно равна нулю.
+      expression = hasParent && behaviour.smoothInherit
+        ? `${rotateFilter("inherit")} - inherit`
+        : "0";
     }
-    body.push(`rotation = ${expression}`);
+    if (expression !== "0") body.push(`rotation_behaviour = ${expression}`);
   }
 
-  // Скаляры размера: отдельные числа, чтобы высоту и ширину можно было править
-  // здесь же, не заходя в инспектор. Умножаются на базовый «Масштаб» объекта.
-  const sizeBase = (value: number): string => {
-    if (value === 1) return scale;
-    return hasParent ? `inherit * ${num(value)}` : num(value);
+  /**
+   * Размер — множитель, а не слагаемое: нейтраль 1, и авторская строка
+   * выглядит как `sizeX = inherit * sizeX_behaviour`. Поэтому «Масштаб» из
+   * инспектора и сквош живут в одном канале и не спорят с ручной формулой.
+   */
+  const factorX = num(behaviour.scaleX);
+  const factorY = num(behaviour.scaleY);
+
+  // Абсолютная база нужна только для прошлого сквоша: `state.sizeY` — итоговый
+  // размер (наследство родителя × множитель канала), а база — тот же размер без
+  // сквоша. Разность в пикселях и была прошлым сквошем; менять на долю нельзя —
+  // сравнение с `abs(значение) * база` потеряло бы размерность.
+  const absoluteBase = (value: number): string => {
+    if (!hasParent) return num(value);
+    return value === 1 ? "inherit" : `inherit * ${num(value)}`;
   };
-  const scaledX = sizeBase(behaviour.scaleX);
-  const scaledY = sizeBase(behaviour.scaleY);
+  const baseY = absoluteBase(behaviour.scaleY);
+
   if (behaviour.squash !== 0 && speak) {
-    // Отдельной переменной в скрипте объекта быть не может (имя слева — это
-    // параметр), поэтому прошлое значение сквоша берём из `state.sizeY`:
-    // sizeY = база * (1 + s), значит s_prev = state.sizeY - база. Сравниваем
-    // модули: сквош бывает отрицательным, и тогда «рост» цели означает
-    // уменьшение sizeY.
+    // Сквош бывает отрицательным, и тогда «рост» цели означает уменьшение.
     const value = `${speak} * ${num(behaviour.squash)}`;
-    const past = `abs(state.sizeY - (${scaledY}))`;
-    const timing = `abs(${value}) * (${scaledY}) > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}`;
+    const past = `abs(state.sizeY - (${baseY}))`;
+    const timing = `abs(${value}) * (${baseY}) > ${past} ? ${num(behaviour.squashIn)} : ${num(behaviour.squashOut)}`;
+    // Объём держим вокруг новой базы: растянулись по Y — сжались по X.
+    // Множители: `2·scaleX − sizeY_behaviour·(scaleX/scaleY)`, что при равных
+    // масштабах даёт ровно `2 − sizeY_behaviour`.
     const ratio = behaviour.scaleX / behaviour.scaleY;
+    const ratioTerm = Math.abs(ratio - 1) < 1e-9 ? "" : ` * ${num(ratio)}`;
     body.push(
-      `sizeY = ${scaledY} * (1 + smooth(${value}, ${timing}))`,
-      // Объём держим вокруг новой базы: растянулись по Y — сжались по X.
-      `sizeX = ${scaledX} * 2 - ${ratio === 1 ? "sizeY" : `sizeY * ${num(ratio)}`}`,
+      `sizeY_behaviour = ${factorY} * (1 + smooth(${value}, ${timing}))`,
+      `sizeX_behaviour = 2 * ${factorX} - sizeY_behaviour${ratioTerm}`,
     );
-  } else if (behaviour.scaleX !== 1 || behaviour.scaleY !== 1) {
-    if (behaviour.scaleX !== 1) body.push(`sizeX = ${scaledX}`);
-    if (behaviour.scaleY !== 1) body.push(`sizeY = ${scaledY}`);
+  } else {
+    if (behaviour.scaleX !== 1) body.push(`sizeX_behaviour = ${factorX}`);
+    if (behaviour.scaleY !== 1) body.push(`sizeY_behaviour = ${factorY}`);
   }
 
   const rules: string[] = [];
@@ -825,7 +925,9 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
     const condition = terms.join(" or ");
     rules.push(presets.mode === "only" ? `(${condition} ? 1 : 0)` : `(${condition} ? 0 : 1)`);
   }
-  if (rules.length) body.push(`visible = ${rules.map((rule) => `(${rule})`).join(" * ")}`);
+  // Видимость — тоже множитель: канал равен 1, когда объект виден, и авторская
+  // строка — `visible = visible_behaviour`.
+  if (rules.length) body.push(`visible_behaviour = ${rules.map((rule) => `(${rule})`).join(" * ")}`);
 
   // Мерцание: волна 0…1, вычтенная из полной яркости. Синус — ровное «дыхание»
   // лампы, шум — неровное, как у свечи или костра.
@@ -836,7 +938,9 @@ export function behaviourBlock(behaviour: Behaviour, object: RigObject): string 
       ? `noise(${num(seedOf(object.id))}, ${num(speed)})`
       // Период синуса — 1 / скорость: 2π превращает герцы в радианы.
       : `sin(time * ${num(2 * Math.PI * speed)})`;
-    body.push(`opacity = 1 - ${num(flicker)} * (0.5 - 0.5 * ${wave})`);
+    // Прозрачность — множитель: полная яркость равна единице, и канал
+    // можно умножить на любую авторскую формулу.
+    body.push(`opacity_behaviour = 1 - ${num(flicker)} * (0.5 - 0.5 * ${wave})`);
   }
 
   // Источник можно выбрать до включения правила. Сохраняем метаданные, иначе
@@ -865,23 +969,68 @@ function blockRange(script: string): { start: number; end: number } | null {
 }
 
 /**
- * Убирает из «хвоста» присваивания тем параметрам, которые пишет блок.
- * Строки внутри блоков событий и комментарии не трогаем.
+ * Следит, чтобы в авторских строках стояло слагаемое канала.
+ *
+ * Блок поведения пишет `<параметр>_behaviour`, а параметр складывает канал со
+ * своим кодом. Значит, редактору нельзя «вырезать» присваивания, как раньше:
+ * надо вставить терм в существующую строку, не трогая остального, а если
+ * строки нет — добавить её. Сброс поведения терм убирает, но строку оставляет:
+ * `x = inherit` — это ровно то же поведение, что и по умолчанию.
+ *
+ * Строки внутри блоков событий не трогаем: `{}` считается глубиной.
  */
-function stripManaged(text: string, params: readonly string[]): string {
-  const kept: string[] = [];
+function bindChannels(text: string, channels: readonly ChannelParam[], hasParent: boolean): string {
+  const lines = text.split("\n");
+  const done = new Set<ChannelParam>();
   let depth = 0;
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    const assignment = /^(x|y|rotation|sizeX|sizeY|visible)\s*=/.exec(trimmed);
-    if (depth === 0 && assignment && params.includes(assignment[1])) {
-      continue;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (depth === 0) {
+      for (const param of CHANNEL_PARAMS) {
+        const match = new RegExp(`^(\\s*)${param}\\s*=\\s*(.*)$`).exec(line);
+        if (!match) continue;
+        const channel = channelName(param);
+        let rhs = stripTerm(match[2], param);
+        if (channels.includes(param)) rhs = insertTerm(rhs, channelTerm(param), channel);
+        lines[index] = rhs === match[2] ? line : `${match[1]}${param} = ${rhs}`;
+        done.add(param);
+        break;
+      }
     }
-    kept.push(line);
     depth += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
     if (depth < 0) depth = 0;
   }
-  return kept.join("\n").replace(/^\n+/, "").replace(/\s+$/, "");
+  const missing = channels.filter((param) => !done.has(param));
+  if (missing.length) {
+    const extra = missing.map((param) => channelLine(param, hasParent)).join("\n");
+    const body = lines.join("\n").replace(/\s+$/, "");
+    return body ? `${body}\n${extra}` : extra;
+  }
+  return lines.join("\n").replace(/^\n+/, "").replace(/\s+$/, "");
+}
+
+/** Убирает из правой части терм канала — только если он там есть. */
+function stripTerm(rhs: string, param: ChannelParam): string {
+  const channel = channelName(param);
+  const trimmed = rhs.trim();
+  // Строка была создана нами и состояла только из канала: возвращаем нейтраль.
+  if (trimmed === channel) return channelMultiplicative(param) ? "1" : "0";
+  return rhs.replace(new RegExp(`\\s*[+*]\\s*${channel}\\b`), "");
+}
+
+/**
+ * Вставляет терм канала в правую часть: сразу за `inherit`, если он есть
+ * (так строка читается как «наследство плюс поведение плюс моё»), иначе в конец.
+ * Уже стоящий терм не дублируется.
+ */
+function insertTerm(rhs: string, term: string, channel: string): string {
+  if (new RegExp(`\\b${channel}\\b`).test(rhs)) return rhs;
+  const inherit = /\binherit\b/.exec(rhs);
+  if (inherit) {
+    const at = inherit.index + inherit[0].length;
+    return `${rhs.slice(0, at)} ${term}${rhs.slice(at)}`;
+  }
+  return `${rhs.trimEnd()} ${term}`;
 }
 
 /**
@@ -952,10 +1101,12 @@ export function writeBehaviour(script: string, behaviour: Behaviour, object: Rig
   const range = blockRange(script);
   const tail = range ? script.slice(0, range.start) + script.slice(range.end) : script;
   const block = behaviourBlock(behaviour, object);
-  const params = block
-    ? MANAGED.filter((param) => new RegExp(`^\\s*(?:${param})\\s*=`, "m").test(block))
+  // Какие каналы блок действительно пишет — по его собственному тексту. Канал,
+  // который выключили, должен исчезнуть и из авторской строки.
+  const channels = block
+    ? CHANNEL_PARAMS.filter((param) => new RegExp(`^\\s*${channelName(param)}\\s*=`, "m").test(block))
     : [];
-  const rest = stripManaged(tail, params);
+  const rest = bindChannels(tail, channels, Boolean(object.parentId));
   const body = [block, rest].filter(Boolean).join("\n\n");
-  return { script: body ? `${body}\n` : "", params: [...params] };
+  return { script: body ? `${body}\n` : "", params: [...channels] };
 }

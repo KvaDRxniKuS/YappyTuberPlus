@@ -32,14 +32,14 @@ test("без микрофона речь не пишется: ни рта, ни 
   });
   expect(silent).not.toContain(".speak");
   expect(silent).not.toContain(".talking");
-  expect(silent).not.toContain("visible =");
+  expect(silent).not.toContain("visible_behaviour =");
 });
 
 test("модуль есть — формулы идут его именем, а не жёстким mic", () => {
   const withMic = block({ voiceModule: "mic", squash: 0.4, mouth: "open" });
   expect(withMic).toContain("mic.speak");
   expect(withMic).toContain("mic.talking");
-  expect(withMic).toContain("visible =");
+  expect(withMic).toContain("visible_behaviour =");
 
   // Пересозданный модуль получает имя шаблона: формулы должны поехать за ним.
   const renamed = block({ voiceModule: "loudness", squash: 0.4, mouth: "open" });
@@ -125,7 +125,7 @@ test("без микрофона объект всё равно двигаетс�
   const moving = block({
     scaleX: 1.2, wiggleXAmp: 6, wiggleXFreq: 1, wiggleRotAmp: 10, wiggleRotFreq: 1, rotationalLimitLeft: 30,
   });
-  expect(moving).toContain("sizeX =");
+  expect(moving).toContain("sizeX_behaviour =");
   expect(moving).toContain("sin(");
   expect(moving).toContain("limit(");
   expect(moving).not.toContain(".speak");
@@ -172,4 +172,75 @@ test("в блоке нет старых полей следования за м�
   expect(script).not.toContain("followMouseRange");
   expect(script).toContain("followMouseWidth");
   expect(readBehaviour(script).followMouseWidth).toBe(300);
+});
+
+const child: RigObject = { ...object, parentId: "torso" };
+
+test("блок поведения пишет только добавку и не переопределяет параметры", () => {
+  const written = block({ wiggleXAmp: 6, wiggleXFreq: 1, scaleX: 1.2 });
+  expect(written).toContain("x_behaviour =");
+  expect(written).toContain("sizeX_behaviour = 1.2");
+  // Своего присваивания параметру в блоке больше нет: параметр задаёт автор.
+  expect(written).not.toMatch(/^\s*x\s*=/m);
+  expect(written).not.toMatch(/^\s*sizeX\s*=/m);
+  // И наследства в добавке тоже нет — его складывает авторская строка.
+  expect(written).not.toContain("inherit");
+});
+
+test("склейка: терм встаёт сразу за inherit, ручной код остаётся целым", () => {
+  const behaviour: Behaviour = {
+    ...DEFAULT_BEHAVIOUR, wiggleXAmp: 6, wiggleXFreq: 1, wiggleYAmp: 4, wiggleYFreq: 1, scaleX: 1.5,
+  };
+  const script = "x = inherit + 3 * delta\ny = 2\nsizeX = inherit\nlayer = inherit";
+  const written = writeBehaviour(script, behaviour, child).script;
+  // Слагаемое вставлено после inherit: и наш терм, и авторское `3 * delta` на месте.
+  expect(written).toContain("x = inherit + x_behaviour + 3 * delta");
+  // Строка без inherit — терм в конец, остальное не тронуто.
+  expect(written).toContain("y = 2 + y_behaviour");
+  // Размер — множитель, а не слагаемое: тип значения решает оператор.
+  expect(written).toContain("sizeX = inherit * sizeX_behaviour");
+  // Чужие строки не тронуты вовсе.
+  expect(written).toContain("layer = inherit");
+});
+
+test("склейка идемпотентна и не дублирует слагаемое", () => {
+  const behaviour: Behaviour = { ...DEFAULT_BEHAVIOUR, wiggleXAmp: 6, wiggleXFreq: 1 };
+  const once = writeBehaviour("x = inherit + 3 * delta", behaviour, child).script;
+  const twice = writeBehaviour(once, behaviour, child).script;
+  expect(twice).toBe(once);
+  expect(twice.match(/x_behaviour/g)?.length).toBe(2); // блок + строка
+});
+
+test("сброс поведения убирает слагаемое, но оставляет авторскую строку", () => {
+  const behaviour: Behaviour = { ...DEFAULT_BEHAVIOUR, wiggleXAmp: 6, wiggleXFreq: 1 };
+  const written = writeBehaviour("x = inherit + 3 * delta", behaviour, child).script;
+  expect(written).toContain("x_behaviour");
+  const reset = writeBehaviour(written, DEFAULT_BEHAVIOUR, child).script;
+  expect(reset).not.toContain("x_behaviour");
+  expect(reset).toContain("x = inherit + 3 * delta");
+});
+
+test("строки нет — редактор её добавляет и сам ставит нужный оператор", () => {
+  const behaviour: Behaviour = { ...DEFAULT_BEHAVIOUR, wiggleXAmp: 6, wiggleXFreq: 1 };
+  // С родителем опора — inherit.
+  const withParent = writeBehaviour("", behaviour, child).script;
+  expect(withParent).toContain("x = inherit + x_behaviour");
+  // Без родителя inherit недоступен — берётся чистый канал.
+  const root = writeBehaviour("", behaviour, object).script;
+  expect(root).toContain("x = x_behaviour");
+  expect(root).not.toContain("inherit");
+});
+
+test("«сглаживать и наследство» возвращает прежнее ощущение через добавку", () => {
+  // По умолчанию фильтр стоит на добавке: наследство родителя не тормозит.
+  const plain = behaviourBlock({ ...DEFAULT_BEHAVIOUR, smooth: 0.5, wiggleYAmp: 4, wiggleYFreq: 1 }, child);
+  expect(plain).toContain("y_behaviour = smooth(");
+  expect(plain).not.toContain("+ inherit");
+  // С галочкой фильтруется сумма, но канал остаётся добавкой: из неё вычитается inherit.
+  const merged = behaviourBlock(
+    { ...DEFAULT_BEHAVIOUR, smooth: 0.5, smoothInherit: true, wiggleYAmp: 4, wiggleYFreq: 1 },
+    child,
+  );
+  expect(merged).toContain("+ inherit");
+  expect(merged).toMatch(/- inherit\)/);
 });

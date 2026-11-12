@@ -297,6 +297,9 @@ pub struct Rig {
     object_indices: HashMap<String, usize>,
     global_names: Vec<String>,
     previous: Frame,
+    /// Значения каналов поведения в прошлом кадре: нужно для защиты от циклов
+    /// и для повторного использования, как у параметров.
+    previous_channels: HashMap<(String, Param), f64>,
     cache: HashMap<NodeKey, f64>,
     visiting: Vec<NodeKey>,
     cycle_nodes: BTreeSet<NodeKey>,
@@ -595,6 +598,16 @@ impl Rig {
             for (target, expr) in &script.assignments {
                 match target {
                     AssignTarget::Local(name) => {
+                        // `<параметр>_behaviour` — добавка поведения, а не
+                        // переопределение параметра: она живёт своим узлом и не
+                        // спорит с авторской строкой `x = inherit + x_behaviour`.
+                        if let Some(channel) = Param::channel_of(name) {
+                            expressions.insert(
+                                NodeKey::Channel(object.id.clone(), channel),
+                                expr.clone(),
+                            );
+                            continue;
+                        }
                         // `text` — строковый параметр: у него своя запись, а не
                         // числовой кэш. База считается каждый кадр.
                         if name == "text" {
@@ -866,6 +879,7 @@ impl Rig {
             object_indices,
             global_names,
             previous,
+            previous_channels: HashMap::new(),
             cache: HashMap::new(),
             visiting: Vec::new(),
             cycle_nodes: BTreeSet::new(),
@@ -975,6 +989,7 @@ impl Rig {
             let context = match &key {
                 NodeKey::Global(_) => NodeKey::Global(String::new()),
                 NodeKey::Param(id, _) => NodeKey::Param(id.clone(), Param::X),
+                NodeKey::Channel(id, _) => NodeKey::Param(id.clone(), Param::X),
             };
             let mut value = self.numeric(&expression, &context);
             if matches!(&key, NodeKey::Param(_, Param::Visible)) {
@@ -1060,6 +1075,15 @@ impl Rig {
                 .then(a.1.cmp(&b.1))
         });
         frame.order = draw_order.into_iter().map(|(_, _, id)| id).collect();
+        // Каналы поведения — такой же прошлый кадр, как параметры: защита от
+        // циклов и `state` для канала читают именно это.
+        let mut channels: HashMap<(String, Param), f64> = HashMap::new();
+        for (key, value) in &self.cache {
+            if let NodeKey::Channel(id, param) = key {
+                channels.insert((id.clone(), *param), *value);
+            }
+        }
+        self.previous_channels = channels;
         self.previous = frame.clone();
         frame
     }
@@ -1464,6 +1488,8 @@ impl Rig {
                     0.0
                 }
                 NodeKey::Param(id, param) => self.default_param(id, *param),
+                // Канал без формулы — нейтраль: поведение ничего не добавляет.
+                NodeKey::Channel(_, param) => param.channel_neutral(),
             }
         };
         self.visiting.pop();
@@ -1536,6 +1562,11 @@ impl Rig {
 
     fn previous_value(&self, key: &NodeKey) -> f64 {
         match key {
+            NodeKey::Channel(id, param) => self
+                .previous_channels
+                .get(&(id.clone(), *param))
+                .copied()
+                .unwrap_or_else(|| param.channel_neutral()),
             NodeKey::Global(name) => self.previous.globals.get(name).copied().unwrap_or(0.0),
             NodeKey::Param(id, param) => self
                 .previous
@@ -1713,7 +1744,7 @@ impl Rig {
                     // редактор: глобальная переменная, параметр своего объекта или
                     // чужой объект (он и так читается целиком).
                     if base == "state" {
-                        if let NodeKey::Param(id, _) = context {
+                        if let Some((id, _)) = Self::context_param(context) {
                             if let Some(param) = Param::parse(name) {
                                 let own = NodeKey::Param(id.clone(), param);
                                 return Value::Number(self.previous_value(&own));
@@ -1922,6 +1953,18 @@ impl Rig {
         Some(if value.is_finite() { value } else { 0.0 })
     }
 
+    /// Параметр, от имени которого считается выражение.
+    ///
+    /// У канала это тот самый параметр: внутри `x_behaviour` слова `inherit`,
+    /// `offset`, `parent` и `state.x` означают ровно то же, что в строке `x`.
+    /// Без этого канал нельзя было бы сгладить вместе с наследством.
+    fn context_param(key: &NodeKey) -> Option<(&String, Param)> {
+        match key {
+            NodeKey::Param(id, param) | NodeKey::Channel(id, param) => Some((id, *param)),
+            NodeKey::Global(_) => None,
+        }
+    }
+
     fn eval_name(&mut self, name: &str, context: &NodeKey) -> Value {
         // Переменная события важнее объекта и глобальных формул: внутри `on`
         // это снимок на момент срабатывания, в условии — живой алиас.
@@ -1938,7 +1981,7 @@ impl Rig {
             "signal" => return Value::Signals,
             _ => {}
         }
-        if let NodeKey::Param(id, param) = context {
+        if let Some((id, param)) = Self::context_param(context) {
             if name == "parent" {
                 return if let Some(parent) = self.object_parent(id) {
                     Value::Object(parent)
@@ -1948,7 +1991,7 @@ impl Rig {
             }
             if name == "inherit" {
                 return if let Some(parent) = self.object_parent(id) {
-                    Value::Number(self.eval_node(&NodeKey::Param(parent, *param)))
+                    Value::Number(self.eval_node(&NodeKey::Param(parent, param)))
                 } else {
                     self.error_value(format!("{}: inherit недоступен без родителя", id))
                 };
@@ -1976,6 +2019,12 @@ impl Rig {
             }
             if name == "text" {
                 return Value::Text(self.text_of(id));
+            }
+            // Добавка поведения читается по имени `<параметр>_behaviour`:
+            // `x = inherit + x_behaviour + …` — авторская строка, а блок
+            // поведения живёт отдельно и её не переписывает.
+            if let Some(channel) = Param::channel_of(name) {
+                return Value::Number(self.eval_node(&NodeKey::Channel(id.clone(), channel)));
             }
             if let Some(own) = Param::parse(name) {
                 return Value::Number(self.eval_node(&NodeKey::Param(id.clone(), own)));
@@ -2603,7 +2652,7 @@ fn foreign_key(
 /// Параметры объекта — это те же переменные, только их читает сам объект:
 /// перекрывать их молча нельзя. Встроенные имена тоже заняты ядром.
 fn reserved_binding(name: &str) -> bool {
-    Param::parse(name).is_some()
+    Param::parse(name).is_some() || Param::channel_of(name).is_some()
         || matches!(
             name,
             "pi" | "e"
@@ -2833,6 +2882,7 @@ fn key_name(key: &NodeKey) -> String {
     match key {
         NodeKey::Global(name) => format!("global.{}", name),
         NodeKey::Param(id, param) => format!("{}.{}", id, param.as_str()),
+        NodeKey::Channel(id, param) => format!("{}.{}", id, param.channel_name()),
     }
 }
 
@@ -4213,6 +4263,65 @@ mod tests {
         let mut store = RuntimeStore::default();
         let result = store.call_json("not json");
         assert!(result.contains("\"ok\":false"));
+    }
+
+    #[test]
+    fn behaviour_channel_adds_to_the_authored_line() {
+        // Блок поведения пишет добавку, параметр складывает её со своим кодом.
+        // Раньше блок переопределял `x = …` целиком и стирал авторское `+ 3`.
+        let script = "x_behaviour = 4\ny_behaviour = 1\n\
+                      sizeX_behaviour = 0.5\nsizeY_behaviour = 2\n\
+                      opacity_behaviour = 0.25\nvisible_behaviour = 1\n\
+                      x = x_behaviour + 3\ny = y_behaviour\n\
+                      sizeX = sizeX_behaviour\nsizeY = 2 * sizeY_behaviour\n\
+                      opacity = opacity_behaviour\nvisible = visible_behaviour";
+        let mut rig = Rig::new(preset(vec![object("a", None, script)], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        let values = frame.objects.get("a").unwrap();
+        assert_eq!(values["x"], 7.0);
+        assert_eq!(values["y"], 1.0);
+        assert_eq!(values["sizeX"], 0.5);
+        assert_eq!(values["sizeY"], 4.0);
+        assert_eq!(values["opacity"], 0.25);
+        assert_eq!(values["visible"], 1.0);
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn behaviour_channel_is_neutral_without_a_block() {
+        // Блока нет, а строка на канал ссылается: добавки нет (0), множители — 1.
+        let script = "x = x_behaviour + 2\nsizeY = sizeY_behaviour * 3\nopacity = opacity_behaviour";
+        let mut rig = Rig::new(preset(vec![object("a", None, script)], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        let values = frame.objects.get("a").unwrap();
+        assert_eq!(values["x"], 2.0);
+        assert_eq!(values["sizeY"], 3.0);
+        assert_eq!(values["opacity"], 1.0);
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn behaviour_channel_sees_inherit_of_its_own_param() {
+        // Внутри канала `inherit` — наследство того же параметра: так работает
+        // галочка «сглаживать и наследство» (фильтр по сумме минус наследство).
+        let parent = object("p", None, "x = 10");
+        let child = object("c", Some("p"), "x_behaviour = inherit + 1\nx = inherit + x_behaviour");
+        let mut rig = Rig::new(preset(vec![parent, child], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert_eq!(frame.objects["c"]["x"], 21.0);
+        assert!(frame.diagnostics.is_empty(), "диагностика: {:?}", frame.diagnostics);
+    }
+
+    #[test]
+    fn misspelled_channel_is_an_error_not_a_new_variable() {
+        // Каналы — закрытый список: опечатка должна ругаться, а не молча жить.
+        let mut rig = Rig::new(preset(vec![object("a", None, "x_behavour = 1")], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert!(
+            frame.diagnostics.iter().any(|line| line.contains("неизвестный параметр")),
+            "диагностика: {:?}",
+            frame.diagnostics
+        );
     }
 
     /// Редактор сверяет поколение ядра со своим: без ответа он не отличит

@@ -218,6 +218,28 @@ function numericExpression(expression: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Канал поведения в строке: смена родителя правит только `inherit`.
+ *
+ * Строка вида `x = inherit + x_behaviour + 3 * delta` — авторская, поэтому при
+ * отвязке из неё убирается наследство, а при привязке добавляется. Сам канал и
+ * ручной код остаются на месте; `null` — строка канала не упоминает.
+ */
+function adjustChannelLine(expression: string, parameter: string, parentId: string | null): string | null {
+  const channel = `${parameter}_behaviour`;
+  if (!expression.includes(channel)) return null;
+  if (parentId === null) {
+    return expression
+      .replace(new RegExp(`\\binherit\\s*[+*]\\s*`), "")
+      .replace(new RegExp(`\\s*[+*]\\s*\\binherit\\b`), "")
+      .trim();
+  }
+  if (/\binherit\b/.test(expression)) return null;
+  const multiplicative = parameter === "sizeX" || parameter === "sizeY"
+    || parameter === "opacity" || parameter === "visible";
+  return expression.replace(channel, `${multiplicative ? "inherit *" : "inherit +"} ${channel}`);
+}
+
 export function setParent(object: RigObject, parentId: string | null): RigObject {
   // Changing one non-null parent for another only changes the parent namespace and offset.
   if (object.parentId !== null && parentId !== null) return { ...object, parentId };
@@ -225,6 +247,13 @@ export function setParent(object: RigObject, parentId: string | null): RigObject
   for (const [parameter, childExpression] of Object.entries(CHILD_DEFAULTS)) {
     const expression = scriptValue(script, parameter);
     if (!expression) continue;
+    // Строка с каналом поведения: наследство правится отдельно, авторский код
+    // и сам канал не трогаются.
+    const channelLine = adjustChannelLine(expression, parameter, parentId);
+    if (channelLine !== null) {
+      if (channelLine !== expression) script = setScriptValue(script, parameter, channelLine);
+      continue;
+    }
     if (parentId === null) {
       if (expression !== childExpression) continue;
       const rootValue = parameter === "visible" ? object.base.visible

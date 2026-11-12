@@ -266,11 +266,11 @@ function frameValues() {
 test("мерцание: волна пишется в opacity и читается обратно", () => {
   const lamp = makeLight("lamp", "Лампа", 400, 300, { radius: 120 });
   // Без глубины мерцания формулы нет: ровный свет не тратит кадр на волну.
-  expect(behaviourBlock(DEFAULT_BEHAVIOUR, lamp)).not.toContain("opacity =");
+  expect(behaviourBlock(DEFAULT_BEHAVIOUR, lamp)).not.toContain("opacity_behaviour =");
 
   const sine = { ...DEFAULT_BEHAVIOUR, flickerAmplitude: 0.4, flickerSpeed: 2 };
   const sineBlock = behaviourBlock(sine, lamp);
-  expect(sineBlock).toContain("opacity = 1 - 0.4 * (0.5 - 0.5 * sin(time *");
+  expect(sineBlock).toContain("opacity_behaviour = 1 - 0.4 * (0.5 - 0.5 * sin(time *");
   // Период — 1 / скорость: 2 Гц даёт 12.566 радиан в секунду.
   expect(sineBlock).toContain("12.566");
 
@@ -296,7 +296,7 @@ test("следование за мышью: доворот в градусах �
   const base = { ...DEFAULT_BEHAVIOUR, followMouseModule: "mouse", followMouseRotSmooth: 0 };
 
   // Ноль по обеим осям — доворота нет: поворот не пишется вовсе.
-  expect(behaviourBlock(base, head)).not.toContain("rotation =");
+  expect(behaviourBlock(base, head)).not.toContain("rotation_behaviour =");
 
   // Край области справа даёт +30°, снизу — −10°: X поворачивает, Y наклоняет.
   const turned = { ...base, followMouseRotX: 30, followMouseRotY: -10, followMouseStrength: 0 };
@@ -306,13 +306,14 @@ test("следование за мышью: доворот в градусах �
   expect(block).toContain("mouse.x");
   expect(block).toContain("mouse.y");
   // Позиция выключена силой 0 — формулы для x и y не появляются.
-  expect(block).not.toMatch(/^x = /m);
-  expect(block).not.toMatch(/^y = /m);
+  expect(block).not.toMatch(/^x_behaviour = /m);
+  expect(block).not.toMatch(/^y_behaviour = /m);
 
-  // Пределы сустава ограничивают доворот: limit стоит на отклонении от покоя.
+  // Пределы сустава ограничивают доворот: limit стоит на отклонении от покоя,
+  // а канал — уже только это отклонение (наследство складывает авторская строка).
   const limited = { ...turned, rotationalLimitLeft: 20, rotationalLimitRight: 40 };
   expect(behaviourBlock(limited, head)).toContain(
-    "rotation = 0 + limit(0 + mouse.x * 30 + mouse.y * -10 - (0), -20, 40)",
+    "rotation_behaviour = limit(mouse.x * 30 + mouse.y * -10, -20, 40)",
   );
   const withSmooth = { ...limited, followMouseRotSmooth: 150 };
   const smoothBlock = behaviourBlock(withSmooth, head);
@@ -327,7 +328,7 @@ test("следование за мышью: доворот в градусах �
   expect(behaviourBlock({ ...base, followMouseRotX: 30, followMouseInvert: true }, head)).toContain("(-mouse.x)");
   // Одна ось — по второй доворота нет (позиция при этом выключена силой 0).
   const onlyX = behaviourBlock({ ...base, followMouseStrength: 0, followMouseRotX: 30 }, head);
-  expect(onlyX).toContain("rotation = 0 + mouse.x * 30");
+  expect(onlyX).toContain("rotation_behaviour = mouse.x * 30");
   expect(onlyX).not.toContain("mouse.y");
 
   // Настройки переживают запись и чтение блока.

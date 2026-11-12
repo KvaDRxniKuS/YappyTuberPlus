@@ -500,6 +500,9 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
       </div>
       <p className="behaviour-note">
         Ползунки превращаются в формулы — они лежат блоком в начале скрипта на вкладке «Объект».
+        Блок — <b>дополнение</b>, а не переопределение: он пишет <b>{"x_behaviour"}</b>, а ваша
+        строка складывает его со своим кодом — <b>{"x = inherit + x_behaviour + 3 * delta"}</b>.
+        Поэтому правка поведения не стирает то, что написано руками.
         Любое число можно вписать руками: клик по значению справа.
         {targets.length > 1 && <>
           {" "}<b>Правка применяется ко всем выделенным</b>: значения показаны по «{object.name}»,
@@ -598,10 +601,11 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
       <section className={foldClass("reaction")}>
         <div className="section-title"><SectionToggle id="reaction" open={isOpen("reaction")} onToggle={toggleSection}><Waves size={13} /> Реакция</SectionToggle></div>
         <p className="behaviour-hint">
-          Фильтр стоит на итоговой цели, поэтому влияет на всё движение объекта: наследство
-          родителя, покачивание, подпрыгивание, доворот. Сглаживание — тормоз: именно оно гасит
-          силу пружины. Пружина — резкость: чем больше сила, тем резче тянет и качается. Угол
-          фильтруется так же целиком; предел при этом ограничивает только доворот, а не угол
+          Фильтр стоит на <b>добавке</b> поведения, а не на итоговом положении: покачивание,
+          подпрыгивание и доворот сглаживаются, а наследство родителя идёт как есть. Сглаживание —
+          тормоз: именно оно гасит силу пружины. Пружина — резкость: чем больше сила, тем резче
+          тянет и качается. Галочка «Сглаживать и наследство» возвращает прежнее ощущение — фильтр
+          охватывает и движение родителя. Предел сустава ограничивает только доворот, а не угол
           родителя.
         </p>
         <Row label="Сглаживание" hint="drag: 0 — без фильтра" unit="" value={behaviour.smooth}
@@ -612,6 +616,14 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
           min={0} max={1} step={0.01} onCommit={(rotationSmooth) => patch({ rotationSmooth })} />
         <Row label="Пружина поворота" unit="" value={behaviour.rotationSpring}
           min={0} max={1} step={0.01} onCommit={(rotationSpring) => patch({ rotationSpring })} />
+        <div className="behaviour-state">
+          <span>Сглаживать и наследство<small>фильтр охватывает движение родителя</small></span>
+          <Switch
+            checked={behaviour.smoothInherit}
+            onChange={(smoothInherit) => patch({ smoothInherit })}
+            title="Без галочки поведение — чистая добавка: объект не тормозит за родителем. С галочкой фильтр охватывает и его движение, как было раньше"
+          />
+        </div>
       </section>
 
       <section className={foldClass("size")}>

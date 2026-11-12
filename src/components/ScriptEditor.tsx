@@ -55,6 +55,10 @@ const highlight = HighlightStyle.define([
 
 const PARAMETERS = [
   "x", "y", "rotation", "sizeX", "sizeY", "skewX", "skewY", "opacity", "visible", "layer",
+  // Каналы поведения: блок вкладки «Поведение» пишет только их, а параметр
+  // складывает добавку с авторским кодом (см. `behaviourBlock`).
+  "x_behaviour", "y_behaviour", "rotation_behaviour", "sizeX_behaviour", "sizeY_behaviour",
+  "opacity_behaviour", "visible_behaviour",
   // Маска: 1 — режет по контуру, 0 — объект целиком (см. «Маска» в инспекторе).
   "mask",
   // Деформация: углы в процентах размера зоны (см. «Деформация» в инспекторе).

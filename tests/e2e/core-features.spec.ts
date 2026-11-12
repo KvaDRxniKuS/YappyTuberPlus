@@ -102,18 +102,23 @@ test("требование: у числа есть причина, и она н�
   expect(material.needs).toBe(22);
   expect(needsReason(material)).toContain("материал");
 
-  // Отражение из скрипта — уже 23: старое ядро вернуло бы «не задано».
+  // Отражение из скрипта — 23.
   const ior = needsReport(preset([{ kind: "sprite", script: "ior = 1.4" } as Partial<RigObject>]));
-  expect(ior.needs).toBe(VERSION.core);
-  expect(needsCore(preset([{ kind: "sprite", script: "ior = 1.4" } as Partial<RigObject>]))).toBe(23);
+  expect(ior.needs).toBe(23);
+  expect(needsReason(ior)).toContain("отражение");
+
+  // Поведение-добавка — уже 24: старое ядро не знает канала и вернуло бы ноль.
+  const channel = preset([{ kind: "sprite", script: "x = inherit + x_behaviour" } as Partial<RigObject>]);
+  expect(needsReport(channel).needs).toBe(VERSION.core);
+  expect(needsReason(needsReport(channel))).toContain("поведение");
 
   // Незнакомый вызов важнее подписей: он и есть причина текущего поколения.
   expect(needsReason(needsReport(preset([{ script: "x = mystery(1)" }])))).toContain("mystery()");
 });
 
 test("требование: файл уносит его с собой", () => {
-  // Самая новая механика — `ior` в формуле: именно она держит сцену на текущем ядре.
-  const scene = preset([{ kind: "sprite", script: "ior = 1.45" } as Partial<RigObject>]);
+  // Самая новая механика — канал поведения: именно он держит сцену на текущем ядре.
+  const scene = preset([{ kind: "sprite", script: "sizeX = inherit * sizeX_behaviour" } as Partial<RigObject>]);
   const stamped = stampPreset(scene);
   expect(stamped.built).toContain(VERSION.core.toString());
   expect(stamped.needs).toBe(VERSION.core);
