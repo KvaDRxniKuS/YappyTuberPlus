@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, Plus, Radar, Trash2 } from "lucide-react";
+import { ChevronDown, Radar } from "lucide-react";
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
 import { externalInputName, readExternalSource } from "../modules/external";
 import {
@@ -18,6 +18,11 @@ import { tableMinWidth, tableTemplate, type TableColumn } from "./tableLayout";
  * путь не пишется руками — поле выбирается из списка, а живая таблица показывает
  * приходящие значения ещё до того, как поле куда-то отнесено. Так видно, работает
  * ли телефон, и не приходится угадывать имена блендшейпов.
+ *
+ * Галочка слева от поля и есть «есть ли такой вход»: отмечено — строка появилась
+ * в отображении, снято — вход исчез. Отдельных кнопок «добавить» и «удалить» нет:
+ * два места для одного действия путают, а «добавить вход» без поля всё равно
+ * добавлял одну и ту же строку.
  */
 
 const MAPPING_COLUMNS: TableColumn[] = [
@@ -27,7 +32,6 @@ const MAPPING_COLUMNS: TableColumn[] = [
   { key: "min", width: 42 },
   { key: "max", width: 42 },
   { key: "duration", width: 96 },
-  { key: "action", width: 26 },
 ];
 
 const STATUS_LABEL: Record<ExternalStatus["state"], string> = {
@@ -98,17 +102,21 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
     const mapping = source.mapping.map((rule, position) => (position === index ? { ...rule, ...change } : rule));
     patch({ mapping }, label);
   };
-  const removeRule = (index: number) => {
-    patch({ mapping: source.mapping.filter((_, position) => position !== index) }, "Удаление входа трекера");
-  };
-  /** Добавление поля: вход получает имя по полю, всё остальное — из каталога. */
-  const addField = (field: TrackerField) => {
-    if (source.mapping.some((rule) => rule.path === field.path)) return;
+  /**
+   * Галочка у поля: отметить — добавить вход, снять — убрать его вместе со
+   * строкой отображения. Имя входа подбирается по полю и не повторяется.
+   */
+  const toggleField = (field: TrackerField) => {
+    const index = source.mapping.findIndex((rule) => rule.path === field.path);
+    if (index >= 0) {
+      patch({ mapping: source.mapping.filter((_, position) => position !== index) }, "Поле убрано из отображения");
+      return;
+    }
     let input = trackerInputName(field);
-    let index = 2;
+    let suffix = 2;
     while (source.mapping.some((rule) => rule.input === input)) {
-      input = `${trackerInputName(field)}_${index}`;
-      index += 1;
+      input = `${trackerInputName(field)}_${suffix}`;
+      suffix += 1;
     }
     patch({
       mapping: [...source.mapping, {
@@ -121,11 +129,6 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
         holdMs: 0,
       }],
     }, `Вход «${field.label}»`);
-  };
-  /** Строка без поля: выбирается из каталога, поэтому заведомо рабочая. */
-  const addRule = () => {
-    const field = TRACKER_FIELDS.find((item) => !source.mapping.some((rule) => rule.path === item.path));
-    if (field) addField(field);
   };
   const search = async () => {
     setSearching(true);
@@ -148,7 +151,14 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
       <div className="external-status">
         <span className={`external-dot ${props.status?.state ?? "idle"}`} />
         <b>{STATUS_LABEL[props.status?.state ?? "idle"]}</b>
-        {props.status?.state !== "unsupported" && <span className="muted">{props.status?.packets ?? 0} кадров</span>}
+        {/* Частота потока: по ней видно, 60 кадров идёт или 12 — и есть ли смысл
+            искать узкое место в сети или в самом приложении. */}
+        {props.status?.state !== "unsupported" && (
+          <span className="muted tracker-rate" title="Сколько кадров приходит в секунду (окно — одна секунда)">
+            {props.status?.rate ?? 0} кадров/с
+          </span>
+        )}
+        {props.status?.packets ? <span className="muted">всего {props.status.packets}</span> : null}
         {props.status?.message && <span className="external-status-message">{props.status.message}</span>}
       </div>
 
@@ -268,17 +278,21 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                     const mapped = source.mapping.some((rule) => rule.path === field.path);
                     return (
                       <div className={`tracker-live-row ${mapped ? "mapped" : ""}`} key={field.path}>
+                        <input
+                          type="checkbox"
+                          className="tracker-check"
+                          checked={mapped}
+                          title={mapped ? "Убрать вход из отображения" : `Добавить вход «${trackerInputName(field)}»`}
+                          onChange={() => toggleField(field)}
+                        />
                         <span className="tracker-live-label" title={field.path}>{field.label}</span>
+                        {/* Точки-выноска ведут глаз от названия к значению: в
+                            длинной строке иначе не понять, чьё это число. */}
+                        <span className="tracker-leader" />
                         <span className="tracker-bar">
                           <i style={{ width: `${Math.round(shareOf(field, value) * 100)}%` }} />
                         </span>
                         <span className="tracker-live-value">{formatValue(field, value)}</span>
-                        <button
-                          className="icon-button"
-                          title={mapped ? "Поле уже в отображении" : `Добавить вход «${trackerInputName(field)}»`}
-                          disabled={mapped}
-                          onClick={() => addField(field)}
-                        ><Plus size={12} /></button>
                       </div>
                     );
                   })}
@@ -303,14 +317,13 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
               <span>мин</span>
               <span>макс</span>
               <span>длительность</span>
-              <span />
             </div>
             {source.mapping.map((rule, index) => (
               <div className="external-mapping-row" key={`${rule.input}-${index}`} style={{ gridTemplateColumns: gridTemplate }}>
                 <input
                   value={rule.input}
                   spellCheck={false}
-                  placeholder="jawOpen"
+                  placeholder="jawopen"
                   title="Имя входа: в скрипте это <модуль>.<вход>"
                   onChange={(event) => patchRule(index, { input: externalInputName(event.target.value) }, "Имя входа трекера")}
                 />
@@ -361,24 +374,20 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                   title="Длительность значения, мс: столько вход помнит число, потом ноль"
                   onCommit={(next) => patchRule(index, { holdMs: next }, "Длительность значения")}
                 />
-                <button
-                  className="icon-button row-action"
-                  title="Удалить вход"
-                  onClick={() => removeRule(index)}
-                ><Trash2 size={12} /></button>
               </div>
             ))}
             {source.mapping.length === 0 && (
               <p className="muted">
-                Отображение пустое: модуль пока ничего не передаёт. Нажмите «+» в живых значениях —
-                строка появится здесь с готовым полем и именем входа.
+                Отображение пустое: модуль пока ничего не передаёт. Отметьте галочкой нужные поля
+                в живых значениях — строки появятся здесь с готовым путём и именем входа.
               </p>
             )}
           </div>
         </div>
-        <button className="button secondary external-add" onClick={addRule} disabled={source.mapping.length >= TRACKER_FIELDS.length}>
-          <Plus size={12} /> Добавить вход
-        </button>
+        <p className="module-hint">
+          Галочка у поля в живых значениях добавляет и убирает вход. Здесь правятся имя,
+          подпись, границы и длительность; убрать строку — снять галочку у её поля.
+        </p>
       </div>
     </div>
   );

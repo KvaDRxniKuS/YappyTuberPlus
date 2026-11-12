@@ -23,3 +23,21 @@ test("закрытие главного окна не ждёт самого се
   // Страховка на случай, если дочернее окно не ответило вовсе.
   expect(app).toContain("window.setTimeout(finish, 400);");
 });
+
+test("крестик завершает процесс, а не только окно", () => {
+  const app = readFileSync(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // destroy() снимает окно, но цикл событий может остаться живым (дочерние окна,
+  // зависшая страница оверлея) — процесс висел в диспетчере задач.
+  expect(app).toContain('invoke("app_exit")');
+  const rust = readFileSync(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  expect(rust).toContain("fn app_exit(app: tauri::AppHandle)");
+  expect(rust).toContain("app.exit(0);");
+  expect(rust).toContain("app_exit");
+  // Без разрешения core:window:allow-destroy вызов destroy() отклоняется, а
+  // ошибка глотается catch — окно оставалось на экране.
+  const capability = readFileSync(
+    join(process.cwd(), "src-tauri", "capabilities", "default.json"),
+    "utf8",
+  );
+  expect(capability).toContain("core:window:allow-destroy");
+});

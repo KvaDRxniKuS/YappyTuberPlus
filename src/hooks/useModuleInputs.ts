@@ -111,10 +111,16 @@ export function useModuleInputs(
 
   useEffect(() => {
     void refreshDevices();
-    const handler = () => void refreshDevices();
+    const handler = () => {
+      // Смена микрофона по умолчанию в системе: список обновляем и, если модуль
+      // живёт на «системном», переоткрываем захват — иначе звук остаётся со
+      // старого устройства до перезапуска приложения.
+      void engine().followDefault();
+      void refreshDevices();
+    };
     navigator.mediaDevices?.addEventListener?.("devicechange", handler);
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", handler);
-  }, [refreshDevices]);
+  }, [engine, refreshDevices]);
 
   const liveModules = useMemo(
     () => modules.filter((module) => module.enabled && module.source === "live" && moduleDefinition(module.type).audio),

@@ -79,3 +79,19 @@ test("микрофон из пресета переживает сохранен
   expect(module.config.gain).toBe(1.2);
   expect(module.config.processing).toBe(true);
 });
+
+test("системный микрофон переключается вслед за системой, а не остаётся прежним", () => {
+  const audio = readFileSync(join(process.cwd(), "src", "modules", "audio.ts"), "utf8");
+  // «По умолчанию» — пустой deviceId: только тогда getUserMedia берёт текущий.
+  expect(audio).toContain("function streamConstraints");
+  expect(audio).toContain('streamKey === "default" ? {} : { deviceId: { exact: streamKey } }');
+  // Переоткрытие захвата по событию смены устройств: поток сам за системой не ходит.
+  expect(audio).toContain("async followDefault()");
+  expect(audio).toContain("item.source.disconnect(item.analyser)");
+  expect(audio).toContain("source.connect(item.analyser)");
+  // Тот же микрофон (в системе добавилось устройство) — соединение не трогаем.
+  expect(audio).toContain("previousId === nextId");
+  const hook = readFileSync(join(process.cwd(), "src", "hooks", "useModuleInputs.ts"), "utf8");
+  expect(hook).toContain('"devicechange"');
+  expect(hook).toContain("engine().followDefault()");
+});

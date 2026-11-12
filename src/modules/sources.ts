@@ -41,6 +41,14 @@ export interface ExternalStatus {
   message: string | null;
   /** Сколько пакетов пришло с момента подключения: видно, что канал живой. */
   packets: number;
+  /**
+   * Сколько кадров приходит в секунду.
+   *
+   * Сумма за всё время о частоте не говорит: телефон может отдать 3000 кадров
+   * и замолчать. Частота считается окном в секунду, поэтому в карточке сразу
+   * видно, идёт поток 60 кадрами или 12 — и стоит ли искать узкое место.
+   */
+  rate?: number;
   /** Twitch: своё состояние, код входа и имя канала. */
   twitch?: TwitchInfo;
 }
@@ -102,6 +110,10 @@ interface Entry {
   textRetainMs: number;
   /** Отметки активности: когда и с каким весом сработали правила. */
   marks: Record<string, ExternalMark[]>;
+  /** Счётчик частоты: сколько кадров пришло с начала окна и когда оно началось. */
+  rate: number;
+  rateCount: number;
+  rateSince: number;
   /**
    * Последний кадр трекера плоско: `{ "arkit.jawOpen": 0.12 }`.
    *
@@ -188,7 +200,8 @@ export class ExternalSourceHost {
   }
 
   status(name: string): ExternalStatus {
-    return this.entries.get(name)?.status ?? emptyStatus();
+    const entry = this.entries.get(name);
+    return entry ? { ...entry.status, rate: entry.rate } : emptyStatus();
   }
 
   /** Вход в Twitch: кнопка в карточке модуля. */
@@ -220,7 +233,7 @@ export class ExternalSourceHost {
   /** Состояния всех источников: панель показывает их в карточке модуля. */
   statuses(): Record<string, ExternalStatus> {
     const result: Record<string, ExternalStatus> = {};
-    for (const [name, entry] of this.entries) result[name] = entry.status;
+    for (const [name, entry] of this.entries) result[name] = { ...entry.status, rate: entry.rate };
     return result;
   }
 
@@ -349,6 +362,7 @@ export class ExternalSourceHost {
       textRetainMs: Math.max(0, (source.text?.retainSeconds ?? TEXT_RETAIN_DEFAULT) * 1000),
       marks: {},
       preview: {},
+      rate: 0, rateCount: 0, rateSince: 0,
     };
     this.entries.set(name, entry);
     if (twitch) {
@@ -482,6 +496,10 @@ export class ExternalSourceHost {
         entry.marks = {};
         // Кадр трекера тоже обнуляется: залипшие «глаза» хуже пустоты.
         entry.preview = {};
+        // Поток встал — частота ноль, а не последнее измеренное число.
+        entry.rate = 0;
+        entry.rateCount = 0;
+        entry.rateSince = 0;
       }
       if (state === "error" && payload.message) this.record(entry, "error", payload.message);
       return;
@@ -537,6 +555,9 @@ export class ExternalSourceHost {
         return;
       }
     }
+    // Кадр разобрался — значит, поток живой. Считаем его до отображения:
+    // пустая таблица отображения не должна выглядеть как «данные не идут».
+    this.countPacket(entry);
     const mapping = entry.source.mapping;
     const mapped = applyMapping(parsed, mapping);
     // Счётчики: пакет подошёл по условию — значит, событие произошло.
@@ -615,6 +636,24 @@ export class ExternalSourceHost {
     };
   }
 
+  /**
+   * Счётчик частоты потока.
+   *
+   * Окно — одна секунда. Считаем не «пакеты в секунду вообще», а именно
+   * текущую скорость: окно закрывается по времени, а не по количеству, поэтому
+   * замолчавший телефон показывает падение до нуля на следующем кадре.
+   */
+  private countPacket(entry: Entry): void {
+    const now = Date.now();
+    if (entry.rateSince === 0) entry.rateSince = now;
+    entry.rateCount += 1;
+    const elapsed = now - entry.rateSince;
+    if (elapsed < 1000) return;
+    entry.rate = packetRate(entry.rateCount, elapsed);
+    entry.rateCount = 0;
+    entry.rateSince = now;
+  }
+
   private connect(entry: Entry): void {
     if (entry.closed) return;
     entry.status = { ...entry.status, state: "connecting", message: null };
@@ -671,6 +710,12 @@ export class ExternalSourceHost {
       this.connect(entry);
     }, delay);
   }
+}
+
+/** Кадров в секунду по числу кадров за прошедшее время. */
+export function packetRate(count: number, elapsedMs: number): number {
+  if (!Number.isFinite(count) || !Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+  return Math.round((count * 1000) / elapsedMs);
 }
 
 /** Список включённых внешних модулей в виде, который ждёт `sync`. */

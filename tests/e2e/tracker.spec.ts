@@ -8,6 +8,7 @@ import {
 } from "../../src/modules/tracker";
 import { GENERIC_TRANSPORTS, EXTERNAL_TRANSPORTS, readExternalSource } from "../../src/modules/external";
 import { applyMapping } from "../../src/modules/external";
+import { packetRate } from "../../src/modules/sources";
 import { moduleDefaults, moduleDefinition, normalizeDefinition, registerDefinitions } from "../../src/modules/registry";
 
 /**
@@ -235,4 +236,16 @@ test("настройки трекера переживают чтение пре
   expect(readExternalSource({ source: { transport: "нет-такого" } }).transport).toBe("ws");
   expect(isTrackerTransport("vtuberstudio")).toBe(true);
   expect(isTrackerTransport("ws")).toBe(false);
+});
+
+test("частота потока считается окном в секунду, а не суммой за всё время", () => {
+  // Ровный поток: 60 кадров за секунду — это 60 кадров/с.
+  expect(packetRate(60, 1000)).toBe(60);
+  // Окно могло закрыться раньше срока: 30 кадров за полсекунды — те же 60.
+  expect(packetRate(30, 500)).toBe(60);
+  expect(packetRate(12, 1000)).toBe(12);
+  // Мусор не превращается в бесконечность, а тишина — в деление на ноль.
+  expect(packetRate(0, 1000)).toBe(0);
+  expect(packetRate(10, 0)).toBe(0);
+  expect(packetRate(Number.NaN, 1000)).toBe(0);
 });

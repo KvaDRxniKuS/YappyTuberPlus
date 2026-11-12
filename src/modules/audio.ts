@@ -43,6 +43,12 @@ interface StreamEntry {
 
 interface Analyser {
   analyser: AnalyserNode;
+  /**
+   * Источник этого анализатора. Системный микрофон может смениться на лету, и
+   * тогда источник подменяется, а анализатор остаётся тем же — пересоздавать
+   * его значило бы терять сглаживание и моргать значениями.
+   */
+  source: MediaStreamAudioSourceNode;
   samples: Float32Array<ArrayBuffer>;
   /** Отсчёты АЧХ для визем: заполняются только если модулю нужны полосы. */
   frequency: Float32Array<ArrayBuffer> | null;
@@ -72,6 +78,25 @@ export function deviceChoice(
   const id = typeof stored === "string" ? stored : "";
   if (!id) return { value: "default", missing: false };
   return { value: id, missing: !devices.some((device) => device.id === id) };
+}
+
+/**
+ * Ограничения захвата для ключа потока.
+ *
+ * «Системный по умолчанию» — это **пустой** `deviceId`: браузер берёт текущий
+ * микрофон системы на момент открытия. Если вписать `deviceId: { exact:
+ * "default" }`, выбор зафиксируется на том устройстве, что было при запуске.
+ */
+function streamConstraints(streamKey: string, settings: ModuleConfig): MediaStreamConstraints {
+  const processing = settings.processing === true;
+  return {
+    audio: {
+      ...(streamKey === "default" ? {} : { deviceId: { exact: streamKey } }),
+      echoCancellation: processing,
+      noiseSuppression: processing,
+      autoGainControl: false,
+    },
+  };
 }
 
 /**
@@ -160,6 +185,7 @@ export class AudioInputEngine {
     }
     this.analysers.set(name, {
       analyser,
+      source: entry.source,
       samples: new Float32Array(analyser.fftSize),
       frequency: bands ? new Float32Array(analyser.frequencyBinCount) : null,
       lastSpeak: 0,
@@ -268,28 +294,16 @@ export class AudioInputEngine {
       existing.refs += 1;
       return existing;
     }
-    const processing = settings.processing === true;
-    const plain: MediaStreamConstraints = {
-      audio: { echoCancellation: processing, noiseSuppression: processing, autoGainControl: false },
-    };
-    const constraints: MediaStreamConstraints = {
-      audio: {
-        ...(streamKey === "default" ? {} : { deviceId: { exact: streamKey } }),
-        echoCancellation: processing,
-        noiseSuppression: processing,
-        autoGainControl: false,
-      },
-    };
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream = await navigator.mediaDevices.getUserMedia(streamConstraints(streamKey, settings));
     } catch (reason) {
       // Идентификатор устройства мог смениться между запусками (в WebView2 он
       // привязан к профилю и разрешению), а микрофон — исчезнуть из системы.
       // Системный микрофон лучше тишины: звук продолжает идти, а модуль честно
       // говорит, что открыт не тот вход, что записан в пресете.
       if (streamKey === "default") throw reason;
-      stream = await navigator.mediaDevices.getUserMedia(plain);
+      stream = await navigator.mediaDevices.getUserMedia(streamConstraints("default", settings));
       this.notice = "Микрофон из пресета недоступен — взят системный по умолчанию.";
     }
     const entry: StreamEntry = {
@@ -299,6 +313,61 @@ export class AudioInputEngine {
     };
     this.streams.set(streamKey, entry);
     return entry;
+  }
+
+  /**
+   * Системный микрофон сменился — переключаемся на новый.
+   *
+   * Открытый поток сам за системой не ходит: `getUserMedia` без `deviceId` взял
+   * устройство один раз при запуске, и до переоткрытия звук идёт со старого
+   * микрофона. Поэтому на `devicechange` берём поток заново и подменяем
+   * источник у анализаторов, живущих на «системном». Явно выбранный микрофон не
+   * трогаем: его выбрали сознательно.
+   *
+   * Если микрофон по умолчанию остался тем же (в системе просто добавилось
+   * устройство), новый поток сразу закрывается: переоткрытие дало бы щелчок на
+   * ровном месте.
+   */
+  async followDefault(): Promise<boolean> {
+    if (!this.context) return false;
+    const targets = [...this.analysers.values()].filter((item) => item.streamKey === "default");
+    if (targets.length === 0) return false;
+    const settings = targets[0].settings;
+    const previous = this.streams.get("default");
+    const previousId = previous?.stream.getAudioTracks()[0]?.getSettings().deviceId;
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(streamConstraints("default", settings));
+    } catch {
+      // Микрофон мог не открыться: старое соединение лучше тишины.
+      return false;
+    }
+    const nextId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+    if (previous && previousId && nextId && previousId === nextId) {
+      stream.getTracks().forEach((track) => track.stop());
+      return false;
+    }
+    const source = this.context.createMediaStreamSource(stream);
+    for (const item of targets) {
+      try {
+        item.source.disconnect(item.analyser);
+      } catch {
+        /* источник мог быть уже отключён */
+      }
+      source.connect(item.analyser);
+      item.source = source;
+    }
+    if (previous) {
+      try {
+        previous.source.disconnect();
+      } catch {
+        /* уже отключён */
+      }
+      previous.stream.getTracks().forEach((track) => track.stop());
+    }
+    this.streams.set("default", { stream, source, refs: targets.length });
+    this.notice = null;
+    return true;
   }
 
   private releaseStream(streamKey: string): void {

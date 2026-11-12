@@ -159,7 +159,17 @@ export default function App() {
          * дочернее окно зависло и не ответило вовсе.
          */
         const finish = () => {
-          void main.destroy().catch(() => {});
+          // Сначала команда выхода, потом уничтожение окна — и не наоборот:
+          // `destroy()` снимает вебвью вместе с её JavaScript, и отправлять
+          // команду после него уже некому. `app.exit(0)` завершает цикл событий
+          // целиком (дочерние окна и зависшая страница оверлея его не держат),
+          // поэтому в диспетчере задач ничего не остаётся. `destroy()` остаётся
+          // запасным путём: на старой оболочке команды нет, а окно снять надо.
+          void import("@tauri-apps/api/core")
+            .then(({ invoke }) => invoke("app_exit"))
+            .catch(() => {
+              void main.destroy().catch(() => {});
+            });
         };
         const stopListening = await main.onCloseRequested((event) => {
           event.preventDefault();

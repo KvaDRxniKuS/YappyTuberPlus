@@ -1851,7 +1851,12 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .tracker-live-search:focus { outline: none; border-color: #609c8c; }
 .tracker-live-group { display: flex; flex-direction: column; gap: 1px; }
 .tracker-live-title { color: #5d6872; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; padding-top: 3px; }
-.tracker-live-row { display: grid; grid-template-columns: minmax(88px, 1.2fr) 56px 44px 20px; gap: 5px; align-items: center; }
+/* Слева — галочка «есть ли вход», дальше подпись, выноска точками, полоска и число.
+   Пять колонок вместо четырёх: кнопка «+» справа убрана, её место заняла галочка. */
+.tracker-live-row { display: grid; grid-template-columns: 15px minmax(88px, 1.2fr) 1fr 52px 44px; gap: 5px; align-items: center; }
+.tracker-check { width: 13px; height: 13px; margin: 0; accent-color: #5ba894; cursor: pointer; }
+/* Выноска ведёт от названия к значению: в длинной строке иначе не видно, чьё это число. */
+.tracker-leader { align-self: center; height: 0; border-bottom: 1px dotted #2b333b; margin: 0 3px; }
 .tracker-live-label { color: #a7b1ba; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tracker-live-row.mapped .tracker-live-label { color: #cfd9e0; }
 .tracker-bar { height: 5px; border-radius: 3px; background: #1b2127; overflow: hidden; }
@@ -1860,7 +1865,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   color: #cfd9e0; font: 11px "Cascadia Code", ui-monospace, monospace; text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.tracker-live-row .icon-button { width: 20px; height: 20px; }
+.tracker-rate { font-variant-numeric: tabular-nums; }
+/* Числа отделены от названий тонкой линией: взгляд не съезжает на соседнюю
+   строку, а значение видно рядом со своим полем. */
+.external-mapping-head > span:nth-child(n+4) { padding-left: 6px; }
+.external-mapping-row > .mapping-number { border-left: 1px solid #1c2228; padding-left: 5px; }
 /* Поле в таблице отображения — список, а не ввод: оформление как у остальных. */
 .external-mapping-row select {
   min-width: 0; width: 100%; padding: 3px 4px; border: 1px solid #242c34; border-radius: 4px;

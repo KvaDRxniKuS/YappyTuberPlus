@@ -9,8 +9,14 @@ import { isTrackerTransport } from "../modules/tracker";
 
 /** Кадр значений: 30 раз в секунду хватает, а поток пакетов не превращается в поток перерисовок. */
 const TICK = 33;
-/** Живая таблица полей трекера: показ, а не значения входов. */
-const PREVIEW_TICK = 150;
+/**
+ * Живая таблица полей трекера: показ, а не значения входов.
+ *
+ * 80 мс — это 12 обновлений в секунду: числа заметно шевелятся, а панель не
+ * перерисовывается на каждый из 60 кадров. Сами значения входов идут своим
+ * тактом (33 мс), поэтому плавность модели от этого числа не зависит.
+ */
+const PREVIEW_TICK = 80;
 
 export interface ExternalInputsApi {
   /** Готовые значения по имени модуля: `{ bridge: { hr: 72 } }`. */
@@ -202,6 +208,7 @@ function sameStatuses(left: Record<string, ExternalStatus>, right: Record<string
   return names.every((name) => {
     const a = left[name];
     const b = right[name];
-    return !!b && a.state === b.state && a.message === b.message && a.packets === b.packets;
+    return !!b && a.state === b.state && a.message === b.message
+      && a.packets === b.packets && a.rate === b.rate;
   });
 }

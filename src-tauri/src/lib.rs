@@ -462,6 +462,16 @@ fn spawn_helper(script: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// Выход из приложения по крестику.
+///
+/// Одного `destroy()` мало: окно может закрыться, а цикл событий остаться живым
+/// (дочерние окна, зависшая страница оверлея). `exit(0)` завершает процесс
+/// целиком — в диспетчере задач ничего не остаётся.
+#[tauri::command]
+fn app_exit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// Запускает помощника и закрывает программу: обновление закончится без неё.
 #[tauri::command]
 fn update_restart(app: tauri::AppHandle, staged: String) -> Result<(), String> {
@@ -529,7 +539,8 @@ pub fn run() {
             sources::source_start,
             sources::source_stop,
             sources::source_stop_all,
-            trackers::tracker_discover
+            trackers::tracker_discover,
+            app_exit
         ])
         .run(tauri::generate_context!())
         .expect("error while running YappyTuberPlus");
