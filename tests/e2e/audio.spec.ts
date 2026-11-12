@@ -91,7 +91,14 @@ test("системный микрофон переключается вслед 
   expect(audio).toContain("source.connect(item.analyser)");
   // Тот же микрофон (в системе добавилось устройство) — соединение не трогаем.
   expect(audio).toContain("previousId === nextId");
+  // Дешёвая проверка без открытия захвата: имя устройства по умолчанию против
+  // имени открытого потока. Нужна на возвращение в окно — WebView2 не всегда
+  // объявляет смену устройства событием.
+  expect(audio).toContain("private async defaultChanged()");
+  expect(audio).toContain('device.deviceId === "default"');
+  expect(audio).toContain("pseudo.label !== track.label");
   const hook = readFileSync(join(process.cwd(), "src", "hooks", "useModuleInputs.ts"), "utf8");
   expect(hook).toContain('"devicechange"');
   expect(hook).toContain("engine().followDefault()");
+  expect(hook).toContain('window.addEventListener("focus", onFocus)');
 });

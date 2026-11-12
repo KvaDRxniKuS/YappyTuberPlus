@@ -119,7 +119,17 @@ export function useModuleInputs(
       void refreshDevices();
     };
     navigator.mediaDevices?.addEventListener?.("devicechange", handler);
-    return () => navigator.mediaDevices?.removeEventListener?.("devicechange", handler);
+    // Страховка: смену устройства по умолчанию WebView2 не всегда объявляет
+    // событием. Возвращение в окно после настроек Windows — надёжный момент
+    // проверить, тот ли микрофон открыт; без изменений вызов ничего не трогает.
+    const onFocus = () => {
+      void engine().followDefault();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", handler);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [engine, refreshDevices]);
 
   const liveModules = useMemo(

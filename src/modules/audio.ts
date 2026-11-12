@@ -332,6 +332,10 @@ export class AudioInputEngine {
     if (!this.context) return false;
     const targets = [...this.analysers.values()].filter((item) => item.streamKey === "default");
     if (targets.length === 0) return false;
+    // Сначала дешёвая проверка без открытия микрофона: имя устройства по
+    // умолчанию в списке против имени открытого потока. Она же делает вызов
+    // безопасным на каждое возвращение в окно.
+    if (!(await this.defaultChanged())) return false;
     const settings = targets[0].settings;
     const previous = this.streams.get("default");
     const previousId = previous?.stream.getAudioTracks()[0]?.getSettings().deviceId;
@@ -368,6 +372,28 @@ export class AudioInputEngine {
     this.streams.set("default", { stream, source, refs: targets.length });
     this.notice = null;
     return true;
+  }
+
+  /**
+   * Сменился ли системный микрофон — без открытия нового захвата.
+   *
+   * `enumerateDevices` отдаёт псевдоустройство `default` с именем текущего
+   * микрофона системы, а открытый поток знает имя своего устройства в
+   * `track.label`. Разные имена — пора переоткрывать. Проверка нужна, потому что
+   * событие `devicechange` в WebView2 приходит не на всякую смену устройства по
+   * умолчанию, а дёргать микрофон на каждое возвращение в окно нельзя.
+   */
+  private async defaultChanged(): Promise<boolean> {
+    const track = this.streams.get("default")?.stream.getAudioTracks()[0];
+    if (!track || !track.label) return false;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const pseudo = devices.find((device) => device.kind === "audioinput" && device.deviceId === "default");
+      if (!pseudo?.label) return false;
+      return pseudo.label !== track.label;
+    } catch {
+      return false;
+    }
   }
 
   private releaseStream(streamKey: string): void {
