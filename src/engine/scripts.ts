@@ -226,3 +226,158 @@ export function freeEventName(source: string, snippet: string): string {
     .replace(new RegExp(`\\bevent\\s+${name}\\b`, "g"), `event ${fresh}`)
     .replace(new RegExp(`\\bon\\s+${name}\\b`, "g"), `on ${fresh}`);
 }
+
+/**
+ * Подсказка под редактором: что прочитать в тексте, а не ошибка ядра.
+ *
+ * Сейчас такая одна — приоритет тернарного оператора. Ядро тут ни при чём и
+ * молчит правильно: `a + b ? c : d` разбирается как `(a + b) ? c : d`, это
+ * обычный приоритет, как в C. Но человек, написавший `inherit + flag ? …`,
+ * ждёт сложения с веткой, а получает `inherit` внутри условия — и теряет его
+ * молча. Поэтому ловим форму и объясняем, что произошло.
+ */
+export interface ScriptHint {
+  /** Строка (с единицы): по ней редактор ставит каретку. */
+  line: number;
+  /** Короткая строка под редактором. */
+  message: string;
+  /** Подробное объяснение для всплывающей подсказки. */
+  detail: string;
+}
+
+/**
+ * Скрывает строки и комментарии, сохраняя длину и переводы строк.
+ *
+ * Индексы остаются на месте, поэтому по очищенному тексту можно искать форму,
+ * а показывать — настоящую строку.
+ */
+function maskScript(source: string): string {
+  let out = "";
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1] ?? "";
+    if (char === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") {
+        out += " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      const quote = char;
+      out += " ";
+      index += 1;
+      while (index < source.length && source[index] !== quote && source[index] !== "\n") {
+        out += source[index] === "\\" ? " " : " ";
+        if (source[index] === "\\") {
+          out += " ";
+          index += 2;
+          continue;
+        }
+        index += 1;
+      }
+      if (index < source.length && source[index] === quote) {
+        out += " ";
+        index += 1;
+      }
+      continue;
+    }
+    out += char;
+    index += 1;
+  }
+  return out;
+}
+
+/** Операторы, которые означают «условие»: рядом с ними `+` — это уже намерение. */
+const CONDITION_MARKS = ["<", ">", "==", "!=", " and ", " or ", " not "];
+
+/**
+ * Действие перед `?`, если оно попало в условие случайно.
+ *
+ * Возвращает сам знак (`+` или `−`), чтобы подсказка называла то, что написано,
+ * а `null` — когда условие честное: сумма со сравнением (`a + b > 0.5`),
+ * скобки вокруг условия или знак числа.
+ */
+function looseOperator(fragment: string): string | null {
+  let depth = 0;
+  let found: string | null = null;
+  for (let index = 0; index < fragment.length; index += 1) {
+    const char = fragment[index];
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")") {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0 || (char !== "+" && char !== "-")) continue;
+    // Минус в начале и после оператора — знак числа, а не действие.
+    const before = fragment.slice(0, index).trimEnd().slice(-1);
+    if (!before || "([,=+-*/%^<>!?:".includes(before)) continue;
+    found = char;
+  }
+  if (!found) return null;
+  // В сравнении `a + b > 0 ? …` сумма честная: это условие, а не потерянное
+  // слагаемое. Такую строку не трогаем.
+  const padded = ` ${fragment} `;
+  const compared = CONDITION_MARKS.some((mark) => {
+    const word = /^[a-z]+$/.test(mark);
+    return word ? padded.includes(mark) : fragment.includes(mark);
+  });
+  return compared ? null : found;
+}
+
+/**
+ * Начало условия перед `?`: до скобки, запятой или начала присваивания.
+ *
+ * Скобки считаются: у `x = a + (flag ? 1 : 2)` условие — `flag`, и `+` в него
+ * не попадает, потому что стоит за открывающей скобкой.
+ */
+function conditionStart(line: string, question: number): number {
+  let depth = 0;
+  for (let index = question - 1; index >= 0; index -= 1) {
+    const char = line[index];
+    if (char === ")") {
+      depth += 1;
+      continue;
+    }
+    if (char === "(") {
+      if (depth === 0) return index + 1;
+      depth -= 1;
+      continue;
+    }
+    if (depth > 0) continue;
+    if ("=,;{}:?".includes(char)) return index + 1;
+  }
+  return 0;
+}
+
+/** Подсказки к тексту скрипта: сейчас — только приоритет `?:`. */
+export function scriptHints(source: string): ScriptHint[] {
+  const hints: ScriptHint[] = [];
+  const lines = maskScript(source).split("\n");
+  lines.forEach((line, index) => {
+    for (let at = line.indexOf("?"); at >= 0; at = line.indexOf("?", at + 1)) {
+      // Второй `?` сразу за первым — это `??`, которого в языке нет: не наше дело.
+      if (line[at + 1] === "?") continue;
+      const start = conditionStart(line, at);
+      const condition = line.slice(start, at);
+      const operator = looseOperator(condition);
+      if (!operator) continue;
+      const shown = condition.trim().replace(/\s+/g, " ");
+      const sign = operator === "-" ? "−" : operator;
+      hints.push({
+        line: index + 1,
+        message: `«${sign}» перед «?» входит в условие: ${shown} ? … : … читается как (${shown}) ? … : …`,
+        detail: "Тернарный оператор связывает слабее «+» и «−»: условием становится всё до «?», "
+          + "поэтому слагаемое перед ним в ветку не попадает. Если сумма нужна снаружи — "
+          + `оберните ветку в скобки: ${shown.split(/[+-]/)[0].trim()} + (условие ? да : нет). `
+          + "Если условие и было суммой — оставьте как есть, ошибки нет.",
+      });
+      break;
+    }
+  });
+  return hints;
+}

@@ -9,7 +9,7 @@ import { tags } from "@lezer/highlight";
 import type { ScriptIssueInfo } from "../types";
 import {
   describeIssues, eventNames, freeEventName, issueName, issueSpans, issueTarget, nameSpans,
-  scopeTitle, type ErrorSpan, type ScriptCheck, type ScriptScope,
+  scopeTitle, scriptHints, type ErrorSpan, type ScriptCheck, type ScriptHint, type ScriptScope,
 } from "../engine/scripts";
 import {
   FUNCTION_NAMES, INPUT_FIELDS, SIGNATURES, hintAt, signatureAt, signatureLine, signatureOf,
@@ -348,6 +348,9 @@ export function ScriptEditor({
   const checkData = useRef<ScriptScope>(checkScope ?? { globals: "", objects: [] });
   checkData.current = checkScope ?? { globals: "", objects: [] };
   const [issues, setIssues] = useState<ScriptIssueInfo[]>([]);
+  // Подсказки к тексту (приоритет `?:`): это не ошибка ядра, а объяснение
+  // молчаливого результата, поэтому они считаются прямо по тексту и сразу.
+  const [hints, setHints] = useState<ScriptHint[]>([]);
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
   // Высота шпаргалки: её тянут за верхний край и запоминают между сессиями.
@@ -604,6 +607,7 @@ export function ScriptEditor({
         EditorView.updateListener.of((update) => {
           if (update.docChanged || update.selectionSet) readHint(update.state);
           if (!update.docChanged) return;
+          setHints(scriptHints(update.state.doc.toString()));
           if (timer.current) clearTimeout(timer.current);
           timer.current = setTimeout(applyNow, 420);
           scheduleCheck(update.state.doc.toString());
@@ -643,6 +647,7 @@ export function ScriptEditor({
     });
     const editor = new EditorView({ state, parent: host.current });
     view.current = editor;
+    setHints(scriptHints(value));
     readHint(state);
     runCheck(value);
     return () => {
@@ -719,6 +724,18 @@ export function ScriptEditor({
     editor.focus();
   };
 
+  /** Переход к строке из подсказки: каретка туда же, чтобы сразу править. */
+  const gotoLine = (line: number) => {
+    const editor = view.current;
+    if (!editor) return;
+    const target = editor.state.doc.line(Math.min(Math.max(line, 1), editor.state.doc.lines));
+    editor.dispatch({
+      selection: { anchor: target.from },
+      effects: EditorView.scrollIntoView(target.from, { y: "center" }),
+    });
+    editor.focus();
+  };
+
   /** Тянуть за верхний край шпаргалки: предел считается от окна, а не по числу. */
   const startHelpResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -778,6 +795,23 @@ export function ScriptEditor({
               <ChevronRight size={11} /> {jumpTitle}:{jump.line}
             </button>
           )}
+        </div>
+      )}
+      {hints.length > 0 && (
+        <div className="script-hint-line" title={hints[0].detail}>
+          <span className="script-hint-icon">?</span>
+          <span className="script-hint-text">
+            {hints[0].message}
+            {hints.length > 1 && <b>{` · ещё ${hints.length - 1}`}</b>}
+          </span>
+          <button
+            type="button"
+            className="diagnostic-jump"
+            title={`Перейти к строке ${hints[0].line}`}
+            onClick={() => gotoLine(hints[0].line)}
+          >
+            <ChevronRight size={11} /> строка {hints[0].line}
+          </button>
         </div>
       )}
       {pinned.length > 0 && (
@@ -855,6 +889,7 @@ export function ScriptEditor({
               <span>текст всегда в кавычках: <b>{'text("привет")'}</b>; кириллица без кавычек — ошибка разбора</span>
               <span>своя переменная: <b>eye_target = tracker.face_found ? auto.blink : 1</b> — видна только этому объекту</span>
               <span><b>state.eye_target</b> — та же переменная в прошлом кадре: сглаживание и «было/стало»</span>
+              <span><b>?</b> связывает слабее «+»: <b>inherit + flag ? a : b</b> — это <b>(inherit + flag) ? a : b</b>; нужна ветка — скобки</span>
             </div>
             <div className="function-chips">
               {GROUPS.map((group) => (
