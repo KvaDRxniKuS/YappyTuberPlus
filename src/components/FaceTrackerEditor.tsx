@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Radar } from "lucide-react";
+import { ChevronDown, Crosshair, Radar } from "lucide-react";
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
 import { externalInputName, readExternalSource } from "../modules/external";
 import {
-  TRACKER_FIELDS, TRACKER_INFO, allTrackerFieldsMapped, anyTrackerFieldMapped, clearAllTrackerFields,
-  discoverTrackers, selectAllTrackerFields, trackerField, trackerInputName, trackerPorts, trackerRule,
-  uniqueTrackerInput,
+  TRACKER_FIELDS, TRACKER_INFO, allTrackerFieldsMapped, anyTrackerFieldMapped, calibrationOffsets,
+  calibratedValue, clearAllTrackerFields, discoverTrackers, selectAllTrackerFields, trackerField,
+  trackerInputName, trackerPorts, trackerRule, uniqueTrackerInput,
   type TrackerField, type TrackerGroup, type TrackerTransport,
 } from "../modules/tracker";
 import type { ExternalLogEntry, ExternalStatus } from "../modules/sources";
@@ -74,6 +74,15 @@ function formatValue(field: TrackerField, value: number | undefined): string {
   return degrees ? `${value.toFixed(1)}°` : value.toFixed(2);
 }
 
+/** «1 поле», «2 поля», «12 полей» — число полей эталона в подписи. */
+function fieldCount(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} поле`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} поля`;
+  return `${count} полей`;
+}
+
 /** Доля заполнения полоски: у углов диапазон шире, у блендшейпов 0…1. */
 function shareOf(field: TrackerField, value: number | undefined): number {
   if (value === undefined) return 0;
@@ -97,6 +106,8 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
   const [searchNote, setSearchNote] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const allRef = useRef<HTMLInputElement>(null);
+  // Что сказать про калибровку: «лицо не найдено» или «эталон снят».
+  const [calibrationNote, setCalibrationNote] = useState<string | null>(null);
 
   const patch = (change: Partial<ExternalSourceConfig>, label?: string) => {
     props.onChange({ ...source, ...change }, label);
@@ -141,6 +152,44 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
     }
     patch({ mapping: selectAllTrackerFields(source.mapping) }, "Все поля добавлены в отображение");
   };
+
+  /**
+   * Эталон позы телефона — «здесь и сейчас».
+   *
+   * Берётся текущий кадр: голова и глаза становятся нулём, мимика остаётся как
+   * есть. Пустой кадр или «лицо не найдено» эталон не пишут: иначе в пресет
+   * ушли бы нули, а персонаж «выпрямился» бы по случайности.
+   */
+  const calibrate = () => {
+    const frame = props.preview;
+    if (!frame || Object.keys(frame).length === 0) {
+      setCalibrationNote("кадров ещё нет: телефон не прислал ни одного кадра");
+      return;
+    }
+    if (frame.faceFound !== undefined && frame.faceFound < 0.5) {
+      setCalibrationNote("лицо не найдено: телефон не видит лицо, эталон не снят");
+      return;
+    }
+    const offsets = calibrationOffsets(frame);
+    if (Object.keys(offsets).length === 0) {
+      setCalibrationNote("в кадре нет головы и глаз: калибровать нечего");
+      return;
+    }
+    patch({ calibration: { at: Date.now(), offsets } }, "Калибровка трекера");
+    setCalibrationNote(`эталон снят: ${fieldCount(Object.keys(offsets).length)}`);
+  };
+
+  const resetCalibration = () => {
+    patch({ calibration: undefined }, "Калибровка трекера сброшена");
+    setCalibrationNote(null);
+  };
+
+  const calibration = source.calibration;
+  const offsets = calibration?.offsets ?? {};
+  /** Подпись под кнопками: когда снят эталон и что именно он вычитает. */
+  const calibrationState = calibration
+    ? `эталон ${new Date(calibration.at).toLocaleTimeString("ru-RU")} · ${fieldCount(Object.keys(calibration.offsets).length)}`
+    : "не задан: значения идут как есть";
 
   const search = async () => {
     setSearching(true);
@@ -248,6 +297,38 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
         </div>
       )}
 
+      {/* Положение телефона: телефон может лежать как угодно — персонаж должен
+          стоять ровно. Эталон снимается текущим кадром и живёт в пресете. */}
+      <div className="tracker-calibration">
+        <div className="tracker-calibration-head">
+          <span className="module-field-label">Положение телефона</span>
+          <span className="muted">{calibrationState}</span>
+        </div>
+        <div className="tracker-calibration-actions">
+          <button
+            className="button ghost"
+            onClick={calibrate}
+            title="Текущее положение телефона станет нулём: голова и глаза будут вычитаться из кадров"
+          >
+            <Crosshair size={12} /> Откалибровать
+          </button>
+          <button
+            className="button ghost"
+            onClick={resetCalibration}
+            disabled={!calibration}
+            title="Забыть эталон: значения пойдут так, как их присылает телефон"
+          >
+            Сбросить
+          </button>
+          {calibrationNote && <span className="external-check">{calibrationNote}</span>}
+        </div>
+        <p className="module-hint">
+          Держите голову прямо и смотрите в телефон, когда нажимаете «Откалибровать».
+          Эталон вычитается из головы и глаз; мимика приходит как есть и от положения
+          телефона не зависит.
+        </p>
+      </div>
+
       {props.logs && props.logs.length > 0 && (
         <div className="external-log">
           <button className={`external-log-toggle ${logOpen ? "open" : ""}`} onClick={() => setLogOpen(!logOpen)}>
@@ -294,6 +375,17 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                 {mappedTrackers.length} из {TRACKER_FIELDS.length}
               </span>
             </div>
+            {/* Две колонки чисел появляются только с эталоном: без него показывать
+                одно и то же дважды незачем. */}
+            {calibration && (
+              <div className="tracker-live-head">
+                <span />
+                <span>поле</span>
+                <span />
+                <span title="Что прислал телефон">телефон</span>
+                <span title="Что получил персонаж после вычитания эталона">персонаж</span>
+              </div>
+            )}
             {GROUPS.map((group) => {
               const fields = visible.filter((field) => field.group === group);
               if (fields.length === 0) return null;
@@ -302,9 +394,14 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                   <span className="tracker-live-title">{GROUP_LABEL[group]}</span>
                   {fields.map((field) => {
                     const value = props.preview?.[field.key];
+                    const offset = offsets[field.key];
+                    const shown = calibratedValue(value, offset);
                     const mapped = source.mapping.some((rule) => rule.path === field.path);
                     return (
-                      <div className={`tracker-live-row ${mapped ? "mapped" : ""}`} key={field.path}>
+                      <div
+                        className={`tracker-live-row ${mapped ? "mapped" : ""} ${calibration ? "calibrated" : ""}`}
+                        key={field.path}
+                      >
                         <input
                           type="checkbox"
                           className="tracker-check"
@@ -319,9 +416,16 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                           <span className="tracker-live-text">{field.label}</span>
                         </span>
                         <span className="tracker-bar">
-                          <i style={{ width: `${Math.round(shareOf(field, value) * 100)}%` }} />
+                          <i style={{ width: `${Math.round(shareOf(field, shown) * 100)}%` }} />
                         </span>
-                        <span className="tracker-live-value">{formatValue(field, value)}</span>
+                        {calibration && (
+                          <span className="tracker-live-raw" title="Что прислал телефон">
+                            {offset === undefined ? "" : formatValue(field, value)}
+                          </span>
+                        )}
+                        <span className="tracker-live-value" title={offset === undefined ? undefined : "Что получил персонаж"}>
+                          {formatValue(field, shown)}
+                        </span>
                       </div>
                     );
                   })}

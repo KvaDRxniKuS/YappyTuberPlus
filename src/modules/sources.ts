@@ -166,7 +166,10 @@ export class ExternalSourceHost {
     const seen = new Set<string>();
     for (const item of desired) {
       seen.add(item.name);
-      const key = JSON.stringify(item.source);
+      // Ключ соединения — всё, кроме эталона: калибровка меняет только числа,
+      // и перезапускать приём из-за неё незачем (кадр оборвался бы на полуслове).
+      const { calibration: _calibration, ...link } = item.source;
+      const key = JSON.stringify(link);
       const existing = this.entries.get(item.name);
       if (existing && existing.key === key) {
         existing.source = item.source;
@@ -225,6 +228,8 @@ export class ExternalSourceHost {
   previews(): Record<string, Record<string, number>> {
     const result: Record<string, Record<string, number>> = {};
     for (const [name, entry] of this.entries) {
+      // Как есть, без эталона: карточка показывает рядом «прислал телефон» и
+      // «получил персонаж», а эталон она читает из настроек модуля.
       if (isTrackerTransport(entry.source.transport)) result[name] = entry.preview;
     }
     return result;
@@ -559,7 +564,10 @@ export class ExternalSourceHost {
     // пустая таблица отображения не должна выглядеть как «данные не идут».
     this.countPacket(entry);
     const mapping = entry.source.mapping;
-    const mapped = applyMapping(parsed, mapping);
+    // Эталон позы телефона: вычитается здесь, до отображения, поэтому входы и
+    // формулы видят уже «ровную» нейтраль, а живая таблица — то, что прислал
+    // телефон, рядом с тем, что получил персонаж.
+    const mapped = applyMapping(parsed, mapping, entry.source.calibration?.offsets);
     // Счётчики: пакет подошёл по условию — значит, событие произошло.
     for (const rule of mapping) {
       if (!rule.count || !ruleMatches(rule, parsed)) continue;

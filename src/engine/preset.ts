@@ -4,6 +4,7 @@ import { selectionRoots } from "./selection";
 import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type MediaRepeat,
   type MediaSpec, type ModuleConfig,
+  type ExternalSourceConfig,
   type ModuleInstance,
   type LightSpec, type MouseButton, type ObjectKind, type OverlayConfig, type RigObject, type RigPreset,
   type ShapeSpec, type TextSpec,
@@ -543,6 +544,20 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     // ровно то, что случилось с настройками `manual` до этого.
     const unknown = libraryEmpty() || !hasModule(type);
     const rawConfig = item.config && typeof item.config === "object" ? { ...(item.config as ModuleConfig) } : {};
+    /**
+     * Настройки внешнего источника — объект, а не поле шаблона: `normalizeConfig`
+     * собирает только числа, строки и флаги, поэтому адрес, отображение и эталон
+     * трекера терялись при каждой загрузке пресета. Источник читает
+     * `readExternalSource` и сам приводит битые поля к безопасным, здесь важно
+     * лишь не выбросить его целиком.
+     */
+    const savedSource = item.config && typeof item.config === "object"
+      ? (item.config as ModuleConfig).source
+      : undefined;
+    const externalSource: ExternalSourceConfig | null = definition.kind === "external"
+      && savedSource && typeof savedSource === "object"
+      ? { ...definition.defaults.source, ...savedSource }
+      : null;
     const visemes = definition.kind === "viseme" || Array.isArray(rawConfig.visemes)
       ? normalizeVisemesConfig(item.config)
       : null;
@@ -585,6 +600,7 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
         // даже пустого `code`, и карточка показывала бы «undefined».
         ...moduleDefaults(definition),
         ...(unknown ? rawConfig : normalizeConfig(definition.fields, item.config)),
+        ...(externalSource ? { source: externalSource } : {}),
         ...(visemes ? { visemes } : {}),
         ...(states ? { states } : {}),
         ...(keys ? { keys } : {}),

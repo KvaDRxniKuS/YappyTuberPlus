@@ -1938,6 +1938,24 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   color: #eef4f7; font: 600 12.5px "Cascadia Code", ui-monospace, monospace; text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* С эталоном у строки пять колонок: телефон → персонаж. Полоска показывает
+   уже то, что получил персонаж, иначе она врала бы при сдвинутой нейтрали. */
+.tracker-live-row.calibrated { grid-template-columns: 15px minmax(0, 1fr) 52px 52px 46px; }
+.tracker-live-head {
+  display: grid; grid-template-columns: 15px minmax(0, 1fr) 52px 52px 46px; gap: 6px;
+  color: #7d8994; font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; padding: 2px 0 1px;
+}
+.tracker-live-head > span:nth-child(n+4) { text-align: right; }
+/* Сырое число телефона — приглушённое: главное в строке — что получил персонаж. */
+.tracker-live-raw {
+  color: #7d8994; font: 12px "Cascadia Code", ui-monospace, monospace; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Калибровка: кнопки и подпись эталона под полями телефона. */
+.tracker-calibration { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.tracker-calibration-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tracker-calibration-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tracker-rate { font-variant-numeric: tabular-nums; }
 /* Числа отделены от названий тонкой линией: взгляд не съезжает на соседнюю
    строку, а значение видно рядом со своим полем. */

@@ -457,6 +457,40 @@ export function flattenFrame(value: unknown, prefix = ""): Record<string, number
   return result;
 }
 
+/**
+ * Какие поля калибруются: голова и глаза.
+ *
+ * Мимика (52 блендшейпа ARKit) не калибруется никогда: её значения — и есть
+ * лицо. Служебные поля (`faceFound`, `hotkey`) — тоже нет: ноль не значит
+ * «смотрит вниз», а номер кнопки вообще не поза.
+ */
+export function calibratablePath(key: string): boolean {
+  const flat = key.replace(/^\$\./, "");
+  return /^(head|eyeLeft|eyeRight)\./.test(flat);
+}
+
+/**
+ * Эталон из текущего кадра: значения головы и глаз, снятые как «здесь и сейчас».
+ *
+ * Пусто — калибровать нечем (лицо не найдено или телефон ещё молчит): тогда
+ * эталон не пишется, а карточка говорит, почему.
+ */
+export function calibrationOffsets(frame: Record<string, number>): Record<string, number> {
+  const offsets: Record<string, number> = {};
+  for (const [key, value] of Object.entries(frame)) {
+    if (!calibratablePath(key) || !Number.isFinite(value)) continue;
+    offsets[key] = value;
+  }
+  return offsets;
+}
+
+/** Значение после калибровки: из кадра вычитается эталон. */
+export function calibratedValue(value: number | undefined, offset: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (offset === undefined || !Number.isFinite(value)) return value;
+  return value - offset;
+}
+
 /** Результат поиска: найденные адреса и что сказать, если их нет. */
 export interface TrackerDiscovery {
   hosts: string[];

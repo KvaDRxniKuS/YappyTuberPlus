@@ -765,6 +765,22 @@ export interface ExternalTextConfig {
   showAuthor?: boolean;
 }
 
+/**
+ * Эталон позы телефона: кадр, снятый кнопкой «Откалибровать».
+ *
+ * Трекеры считают повороты относительно самого телефона: переставил телефон —
+ * мимика та же, а «нейтраль» уехала, и персонаж смотрит вбок. Поэтому эталон
+ * хранится рядом с настройками трекера и вычитается из каждого кадра. Ключи —
+ * плоские пути кадра (`head.rx`, `eyeLeft.ry`), мимика ARKit не калибруется:
+ * её значения и есть лицо.
+ */
+export interface TrackerCalibration {
+  /** Когда сняли эталон, мс: карточка показывает время, чтобы не гадать. */
+  at: number;
+  /** Путь поля → значение эталона; из кадра вычитается `raw − offsets[путь]`. */
+  offsets: Record<string, number>;
+}
+
 /** Внешний источник в настройках экземпляра (`config.source`). */
 export interface ExternalSourceConfig {
   transport: ExternalSourceTransport;
@@ -792,6 +808,8 @@ export interface ExternalSourceConfig {
   port?: number;
   /** Трекер: порт, на который приходят кадры; у iFacialMocap он же 49983. */
   listenPort?: number;
+  /** Трекер: эталон позы телефона. Нет поля — кадр идёт как есть. */
+  calibration?: TrackerCalibration;
 }
 
 /** Идентификатор шаблона модуля: `loudness`, `autoblink`, `manual`, `viseme`… */

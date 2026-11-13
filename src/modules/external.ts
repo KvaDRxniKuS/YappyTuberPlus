@@ -1,6 +1,6 @@
-import type { ExternalSourceConfig, ExternalSourceRule, ExternalTextConfig, ModuleInstance } from "../types";
+import type { ExternalSourceConfig, ExternalSourceRule, ExternalTextConfig, ModuleInstance, TrackerCalibration } from "../types";
 import type { ModuleInputSpec } from "./registry";
-import { TRACKER_INFO, TRACKER_TRANSPORTS } from "./tracker";
+import { TRACKER_INFO, TRACKER_TRANSPORTS, calibratablePath } from "./tracker";
 
 /**
  * Внешний источник: значения приходят из сети и превращаются во входы модуля.
@@ -164,6 +164,31 @@ function readPort(value: unknown): number | undefined {
   return port >= 1 && port <= 65_535 ? port : undefined;
 }
 
+/**
+ * Эталон позы телефона из пресета.
+ *
+ * Читаются только калибруемые пути головы и глаз: мимика и служебные поля в
+ * эталон не попадают, даже если старый файл их туда записал. Пустой эталон —
+ * это «калибровки нет»: ноль вместо неё ничего не изменил бы, но карточка
+ * показывала бы кнопку «Сбросить» без причины.
+ */
+function readCalibration(value: unknown): TrackerCalibration | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const offsets: Record<string, number> = {};
+  const rawOffsets = raw.offsets && typeof raw.offsets === "object" ? raw.offsets as Record<string, unknown> : {};
+  for (const [key, item] of Object.entries(rawOffsets)) {
+    const flat = key.trim().replace(/^\$\.?/, "");
+    if (!flat || !calibratablePath(flat)) continue;
+    const parsed = typeof item === "number" ? item : Number(item);
+    if (!Number.isFinite(parsed)) continue;
+    offsets[flat] = parsed;
+  }
+  if (Object.keys(offsets).length === 0) return undefined;
+  const at = Number(raw.at);
+  return { at: Number.isFinite(at) && at > 0 ? at : 0, offsets };
+}
+
 /** Источник из настроек экземпляра: битые поля заменяются безопасными. */
 export function readExternalSource(config: Record<string, unknown> | undefined): ExternalSourceConfig {
   const raw = (config?.source ?? undefined) as Partial<ExternalSourceConfig> | undefined;
@@ -227,6 +252,8 @@ export function readExternalSource(config: Record<string, unknown> | undefined):
     channel: typeof source.channel === "string" && source.channel.trim()
       ? source.channel.trim().toLowerCase().replace(/^@/, "")
       : undefined,
+    // Эталон трекера: путь — плоский ключ кадра (`head.rx`), как в живой таблице.
+    calibration: readCalibration(source.calibration),
   };
 }
 
@@ -348,16 +375,41 @@ export function applyRule(rule: ExternalRule, raw: unknown): number | null {
 }
 
 /** Все входы из одного сообщения: `{ hr: 72, cheer: 100 }`. */
-export function applyMapping(payload: unknown, mapping: ExternalRule[]): Record<string, number> {
+/**
+ * Пакет → входы.
+ *
+ * `offsets` — эталон позы телефона: он вычитается из значения **до** границ
+ * правила. Порядок важен: телефон, у которого нейтраль на 20°, не должен
+ * упираться в предел −90…90 из-за собственного наклона.
+ */
+export function applyMapping(
+  payload: unknown,
+  mapping: ExternalRule[],
+  offsets?: Record<string, number>,
+): Record<string, number> {
   const values: Record<string, number> = {};
   for (const rule of mapping) {
     // Счётчик считает хост: тут значение из поля только мешало бы.
     if (rule.count) continue;
     if (!ruleMatches(rule, payload)) continue;
-    const value = applyRule(rule, readPath(payload, rule.path));
+    const value = applyRule(rule, calibrated(rule.path, readPath(payload, rule.path), offsets));
     if (value !== null) values[rule.input] = value;
   }
   return values;
+}
+
+/**
+ * Значение поля с вычтенным эталоном; строки и флаги не трогаются.
+ *
+ * Калибруется только поза (голова и глаза): мимика ARKit остаётся как есть,
+ * даже если эталон пришёл с испорченными путями.
+ */
+function calibrated(path: string, raw: unknown, offsets: Record<string, number> | undefined): unknown {
+  if (!offsets || typeof raw !== "number" || !Number.isFinite(raw)) return raw;
+  const key = path.trim().replace(/^\$\./, "");
+  if (!calibratablePath(key)) return raw;
+  const offset = offsets[key];
+  return offset === undefined ? raw : raw - offset;
 }
 
 /** Путь по умолчанию для новой строки отображения. */
