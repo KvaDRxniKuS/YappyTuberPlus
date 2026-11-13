@@ -66,6 +66,35 @@ test("сцена занимает центр целиком, поле sceneHeigh
   expect(app).not.toContain("splitter-horizontal");
 });
 
+test("предупреждения кадра — своя свёрнутая секция рядом со значениями", () => {
+  // Раньше диагностика висела под значениями кадра и не сворачивалась: пять
+  // сообщений от одной формулы отнимали у скрипта треть колонки навсегда.
+  const panel = read("src/components/RightPanel.tsx");
+  const css = read("src/styles.css");
+
+  // Своя секция со своим состоянием и заголовком: число видно и в свёрнутом виде.
+  expect(panel).toContain("warningsOpen");
+  expect(panel).toContain("Предупреждения</span>");
+  expect(panel).toContain("<small>{warningCount}</small>");
+  // Порядок: сначала предупреждения, потом значения — сообщения не внутри значений.
+  const warnings = panel.indexOf("warnings-panel");
+  const messages = panel.indexOf("className=\"runtime-diagnostics\"");
+  const values = panel.indexOf("<span>Значения кадра</span>");
+  expect(warnings).toBeGreaterThan(-1);
+  expect(messages).toBeGreaterThan(warnings);
+  expect(values).toBeGreaterThan(messages);
+
+  // Раскрывается сам на новое сообщение, а не на каждый кадр с той же ошибкой.
+  expect(panel).toContain("const warningKey =");
+  expect(panel).toContain("}, [warningKey]);");
+  // Нет сообщений — нет и пустой полосы.
+  expect(panel).toContain("{warningCount > 0 && (");
+
+  // Заголовок отличается от «Значений кадра», и секция ниже по высоте.
+  expect(css).toContain(".warnings-panel .runtime-heading {");
+  expect(css).toContain(".runtime-panel.open.warnings-panel { max-height: 32%; }");
+});
+
 test("плашки-переключатели не растягиваются на всю панель", () => {
   // Отдельная строка — плашка по размеру кнопок. `.dense` остаётся только там,
   // где она стоит рядом с подписью в `.behaviour-state` (направление доворота).

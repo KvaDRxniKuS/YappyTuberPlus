@@ -325,7 +325,14 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .runtime-heading small { margin-left: auto; color: #4f5963; font-family: monospace; font-size: 10px; }
 .runtime-chevron { flex: none; transition: transform .15s; }
 .runtime-panel.open .runtime-chevron { transform: rotate(90deg); }
-.runtime-diagnostics { flex: none; max-height: 140px; overflow: auto; padding: 0 10px; }
+/* Предупреждения кадра — своя секция: их бывает десяток, поэтому по умолчанию
+   они свёрнуты, а число в заголовке видно и без раскрытия. Цвет заголовка
+   отличает их от «Значений кадра»: это не данные, а то, что надо прочитать. */
+.warnings-panel .runtime-heading { color: #c6a670; }
+.warnings-panel .runtime-heading:hover { color: #f0d9ae; }
+.warnings-panel .runtime-heading small { color: #a08b62; font-weight: 600; }
+.runtime-panel.open.warnings-panel { max-height: 32%; }
+.runtime-diagnostics { flex: none; max-height: 140px; overflow: auto; padding: 0 10px 6px; }
 .runtime-values { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 10px 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; }
 .runtime-value { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-height: 20px; border-bottom: 1px solid #ffffff04; }
 .runtime-value span { color: #75818b; font-family: monospace; font-size: 10px; }

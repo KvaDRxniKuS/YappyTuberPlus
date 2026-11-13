@@ -117,6 +117,16 @@ export function RightPanel(props: RightPanelProps) {
   // а кадр открывается по клику и не висит пустой третью экрана.
   const [valuesOpen, setValuesOpen] = useState(false);
   /**
+   * Предупреждения — такая же свёрнутая секция, только своя.
+   *
+   * Раньше они висели под «Значениями кадра» без возможности свернуть: пять
+   * сообщений от одной формулы отнимали у скрипта треть колонки до конца
+   * сессии. Теперь это отдельный блок с числом в заголовке, и он раскрывается
+   * сам **только на новое сообщение** — та же ошибка из кадра в кадр его не
+   * дёргает, поэтому свернуть не мешает.
+   */
+  const [warningsOpen, setWarningsOpen] = useState(false);
+  /**
    * Переход «из входов в настройки модуля»: вкладка переключается, а карточка
    * раскрывается и подсвечивается. Номер перехода нужен, чтобы повторный клик
    * по тому же модулю тоже срабатывал.
@@ -178,6 +188,19 @@ export function RightPanel(props: RightPanelProps) {
     objects: props.objects.map((object) => ({ id: object.id, script: object.script })),
   };
   const dynamic = props.selected ? props.frame?.objects[props.selected.id] : null;
+  // Сообщения кадра и ошибка движка — один список: и то и другое человек читает
+  // как «что не так со сценой».
+  const diagnostics = props.frame?.diagnostics ?? [];
+  const warningCount = diagnostics.length + (props.engineError ? 1 : 0);
+  // Отпечаток набора: пока он тот же, блок не переоткрывается после сворачивания.
+  const warningKey = `${props.engineError ?? ""}\n${diagnostics.join("\n")}`;
+  useEffect(() => {
+    if (!warningKey.trim()) {
+      setWarningsOpen(false);
+      return;
+    }
+    setWarningsOpen(true);
+  }, [warningKey]);
 
   return (
     <aside className="right-panel panel-surface">
@@ -280,6 +303,53 @@ export function RightPanel(props: RightPanelProps) {
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}
         </div>
+        {/* Предупреждения — отдельная секция рядом со значениями кадра: она
+            появляется только когда есть о чём сказать, а число в заголовке
+            видно и в свёрнутом виде. */}
+        {warningCount > 0 && (
+          <div className={`runtime-panel warnings-panel ${warningsOpen ? "open" : ""}`}>
+            <button
+              className="runtime-heading"
+              onClick={() => setWarningsOpen(!warningsOpen)}
+              aria-expanded={warningsOpen}
+              title={warningsOpen ? "Свернуть предупреждения" : "Показать предупреждения"}
+            >
+              <ChevronRight className="runtime-chevron" size={13} />
+              <CircleAlert size={13} /><span>Предупреждения</span>
+              <small>{warningCount}</small>
+            </button>
+            {warningsOpen && (
+              <div className="runtime-diagnostics">
+                {props.engineError && <div className="diagnostic error"><CircleAlert size={14} /><span>{props.engineError}</span></div>}
+                {diagnostics.map((message, index) => {
+                  // Диагностика кадра — тоже ошибка в конкретной строке: переход
+                  // к ней экономит поиск объекта руками.
+                  const place = diagnosticPlace(message, scopes);
+                  const name = diagnosticName(message);
+                  return (
+                    <div className="diagnostic" key={`${index}-${message}`}>
+                      <CircleAlert size={13} />
+                      <span>{message}</span>
+                      {place && (
+                        <button
+                          type="button"
+                          className="diagnostic-jump"
+                          title={place.line
+                            ? `Показать ${scopeTitle(place.scope)}, строка ${place.line}`
+                            : `Открыть ${scopeTitle(place.scope)}`}
+                          onClick={() => openIssue(place.scope, place.line ?? 0, name ?? undefined)}
+                        >
+                          <ChevronRight size={11} />
+                          {scopeTitle(place.scope)}{place.line ? `:${place.line}` : ""}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
         <div className={`runtime-panel ${valuesOpen ? "open" : ""}`}>
           <button
             className="runtime-heading"
@@ -291,36 +361,6 @@ export function RightPanel(props: RightPanelProps) {
             <Gauge size={13} /><span>Значения кадра</span>
             {props.frame && <small>#{props.frame.seq}</small>}
           </button>
-          {(props.engineError || props.frame?.diagnostics.length) ? (
-            <div className="runtime-diagnostics">
-              {props.engineError && <div className="diagnostic error"><CircleAlert size={14} /><span>{props.engineError}</span></div>}
-              {props.frame?.diagnostics.map((message, index) => {
-                // Диагностика кадра — тоже ошибка в конкретной строке: переход
-                // к ней экономит поиск объекта руками.
-                const place = diagnosticPlace(message, scopes);
-                const name = diagnosticName(message);
-                return (
-                  <div className="diagnostic" key={`${index}-${message}`}>
-                    <CircleAlert size={13} />
-                    <span>{message}</span>
-                    {place && (
-                      <button
-                        type="button"
-                        className="diagnostic-jump"
-                        title={place.line
-                          ? `Показать ${scopeTitle(place.scope)}, строка ${place.line}`
-                          : `Открыть ${scopeTitle(place.scope)}`}
-                        onClick={() => openIssue(place.scope, place.line ?? 0, name ?? undefined)}
-                      >
-                        <ChevronRight size={11} />
-                        {scopeTitle(place.scope)}{place.line ? `:${place.line}` : ""}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
           {valuesOpen && (
             <div className="runtime-values">
               {dynamic ? Object.entries(dynamic).map(([name, value]) => (
