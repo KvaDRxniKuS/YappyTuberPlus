@@ -53,7 +53,28 @@ const SCRIPT_NAMES: ReadonlySet<string> = new Set([
   TEXT_PARAMETER,
 ]);
 
+/**
+ * Слова языка, которые не объявляют переменную: время, входы кадра, `state`.
+ *
+ * Отдельно от `SCRIPT_NAMES` они не потому, что «не параметры», а потому, что
+ * это не имена модели: `time = 5` в скрипте ничего не заводит. Список общий с
+ * подсказками редактора — иначе автодополнение предлагало бы одно, а проверка
+ * переименования считала другое.
+ */
+export const SCRIPT_WORDS: readonly string[] = [
+  "time", "dt", "signal", "parent", "inherit", "offset", "width", "height",
+  "canvasWidth", "canvasHeight", "state",
+];
+
 /** Занято ли имя языком (тогда слева это параметр, а не локальная переменная). */
 export function isScriptName(name: string): boolean {
   return SCRIPT_NAMES.has(name);
+}
+
+/**
+ * Имя, которое может быть своей переменной: латиница, цифры, `_` и не занято
+ * языком. Тем же правилом проверяется новое имя при переименовании.
+ */
+export function isVariableIdentifier(name: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !isScriptName(name) && !SCRIPT_WORDS.includes(name);
 }

@@ -51,6 +51,11 @@ interface RightPanelProps {
   /** Выделение целиком: поведение правится сразу у всех. */
   selectedObjects: RigObject[];
   onGlobalScript: (script: string) => void;
+  /**
+   * Глобальная переменная переименована: обновить скрипты объектов. Отчёт —
+   * сколько обновлено и кого пропустили (там своя переменная с тем же именем).
+   */
+  onRenameGlobal?: (from: string, to: string) => { objects: number; skipped: string[] };
   onModules: (modules: ModuleInstance[], label?: string) => void;
   onManual: (key: string, value: number) => void;
   /** Вставка готового блока события в скрипт. */
@@ -300,6 +305,7 @@ export function RightPanel(props: RightPanelProps) {
             onCheck={props.checkScript}
             reveal={reveal?.scope === editorKey ? reveal : undefined}
             onOpenIssue={openIssue}
+            onRenameGlobal={props.onRenameGlobal}
             onApply={tab === "globals" ? props.onGlobalScript : props.onObjectScript}
           /> : <div className="empty-state"><Braces size={24} /><p>Выберите объект для редактирования скрипта</p></div>}
         </div>

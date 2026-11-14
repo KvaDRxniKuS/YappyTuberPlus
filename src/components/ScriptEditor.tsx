@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from "
 import { ChevronRight } from "lucide-react";
 import { basicSetup } from "codemirror";
 import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView, keymap, showTooltip, type DecorationSet } from "@codemirror/view";
+import { Decoration, EditorView, keymap, showTooltip, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { autocompletion, snippet, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { tags } from "@lezer/highlight";
@@ -15,7 +15,8 @@ import {
   FUNCTION_NAMES, INPUT_FIELDS, SIGNATURES, hintAt, signatureAt, signatureLine, signatureOf,
 } from "../engine/signatures";
 import { useFavorites } from "../hooks/useFavorites";
-import { isScriptName, SCRIPT_PARAMETERS, TEXT_PARAMETER } from "../engine/scriptNames";
+import { isVariableIdentifier, SCRIPT_PARAMETERS, SCRIPT_WORDS, TEXT_PARAMETER } from "../engine/scriptNames";
+import { localNames, planRename, renameBehaviourChange, type RenameTyping } from "../engine/rename";
 
 const language = StreamLanguage.define({
   token(stream) {
@@ -57,32 +58,11 @@ const highlight = HighlightStyle.define([
 // Параметры и каналы — из общего списка: по нему же ядро отличает свою
 // переменную объекта от параметра (см. `engine/scriptNames.ts`).
 const PARAMETERS = SCRIPT_PARAMETERS;
-// Входы приходят из модулей и подставляются в автодополнение динамически.
-const INPUTS = ["time", "dt", "signal", "parent", "inherit", "offset", "width", "height", "canvasWidth", "canvasHeight", "state"];
-/**
- * Свои переменные объекта: имена слева, которых язык не знает.
- *
- * Ядро заводит переменную для любого такого имени (`eye_target = 1`), поэтому
- * подсказка берёт их прямо из текста — объявил, и имя уже под рукой. Тела
- * `on { … }` не считаются: там живут переменные события, а не объекта.
- */
-function localsOf(text: string): string[] {
-  const names: string[] = [];
-  let depth = 0;
-  for (const raw of text.split("\n")) {
-    const line = raw.replace(/\/\/.*$/, "");
-    if (depth === 0) {
-      const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)/.exec(line);
-      const name = match?.[1] ?? "";
-      if (name && !isScriptName(name) && !INPUTS.includes(name)) names.push(name);
-    }
-    for (const char of line) {
-      if (char === "{") depth += 1;
-      else if (char === "}") depth = Math.max(0, depth - 1);
-    }
-  }
-  return [...new Set(names)];
-}
+// Слова языка и свои переменные берутся из общих правил: по тем же признакам
+// работает и переименование, иначе подсказка предлагала бы одно, а замена
+// считала другое. Свои переменные ядро заводит для любого имени слева
+// (`eye_target = 1`), поэтому подсказка читает их прямо из текста.
+const INPUTS = SCRIPT_WORDS;
 
 // Порядок групп в списке функций под редактором.
 const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" | "media" | "text"; title: string }> = [
@@ -94,6 +74,15 @@ const GROUPS: Array<{ id: "math" | "vector" | "physics" | "random" | "compare" |
   { id: "media", title: "медиа" },
   { id: "text", title: "текст" },
 ];
+
+/** «1 объект», «2 объекта», «5 объектов» — отчёт о переименовании. */
+function objectsWord(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return "объект";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "объекта";
+  return "объектов";
+}
 
 /**
  * MIME перетаскиваемого блока. Свой тип нужен, чтобы редактор не путал блок из
@@ -326,12 +315,17 @@ interface ScriptEditorProps {
   /** Клик по ошибке в другом скрипте: переключить область и встать на строку. */
   onOpenIssue?: (scope: string, line: number, name?: string) => void;
   onCheck?: ScriptCheck;
+  /**
+   * Глобальную переменную переименовали в `globals.rig`: обновить скрипты
+   * объектов. Возвращает отчёт — сколько обновлено и кого пропустили.
+   */
+  onRenameGlobal?: (from: string, to: string) => { objects: number; skipped: string[] };
   onApply: (value: string) => void;
 }
 
 export function ScriptEditor({
   value, objectIds, globals, moduleInputs = [], moduleInputLabels = {}, events = [],
-  constants = [], checkScope, reveal, onOpenIssue, onCheck, onApply,
+  constants = [], checkScope, reveal, onOpenIssue, onCheck, onRenameGlobal, onApply,
 }: ScriptEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -351,6 +345,23 @@ export function ScriptEditor({
   // Подсказки к тексту (приоритет `?:`): это не ошибка ядра, а объяснение
   // молчаливого результата, поэтому они считаются прямо по тексту и сразу.
   const [hints, setHints] = useState<ScriptHint[]>([]);
+  /**
+   * Текущая правка имени переменной: от какого имени к какому и на какой строке.
+   *
+   * Живёт отдельно от текста, потому что имя набирается по буквам: «стёр старое
+   * и печатаю новое» — это десяток изменений, и каждое следующее продолжает то
+   * же переименование, а не начинает новое.
+   */
+  const renameRef = useRef<RenameTyping | null>(null);
+  /** Что осталось переименовать в скриптах объектов (глобальная переменная). */
+  const globalRename = useRef<{ from: string; to: string } | null>(null);
+  const renameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Наша собственная замена вхождений: её не надо принимать за правку автора. */
+  const ownRename = useRef(false);
+  const renameCallback = useRef(onRenameGlobal);
+  renameCallback.current = onRenameGlobal;
+  const [renameNote, setRenameNote] = useState<string | null>(null);
   // Шпаргалка и список функций свёрнуты: редактор важнее, подсказки — по клику.
   const [helpOpen, setHelpOpen] = useState(false);
   // Высота шпаргалки: её тянут за верхний край и запоминают между сессиями.
@@ -426,6 +437,102 @@ export function ScriptEditor({
     const scheduleCheck = (source: string) => {
       if (checkTimer.current) clearTimeout(checkTimer.current);
       checkTimer.current = setTimeout(() => runCheck(source), 320);
+    };
+
+    /**
+     * Скрипты объектов после переименования глобальной переменной.
+     *
+     * Откладывается на паузу в наборе: переписывать все объекты на каждую букву
+     * незачем, важен последний вариант имени. `notify = false` — вызов при уходе
+     * с вкладки, когда показывать строку уже некому.
+     */
+    const flushGlobalRename = (notify = true) => {
+      if (renameTimer.current) {
+        clearTimeout(renameTimer.current);
+        renameTimer.current = null;
+      }
+      const pending = globalRename.current;
+      const callback = renameCallback.current;
+      if (!pending || !callback) return;
+      if ((checkData.current.scope ?? "globals") !== "globals") return;
+      if (pending.from === pending.to || !isVariableIdentifier(pending.to)) return;
+      const report = callback(pending.from, pending.to);
+      // Объекты теперь держат новое имя: следующая буква продолжает с него.
+      globalRename.current = null;
+      if (!notify) return;
+      const parts = [report.objects > 0
+        ? `обновлено в ${report.objects} ${objectsWord(report.objects)}`
+        : "в скриптах объектов этого имени не было"];
+      if (report.skipped.length > 0) {
+        parts.push(`пропущено: ${report.skipped.join(", ")} — своя переменная`);
+      }
+      setRenameNote(parts.join(" · "));
+      if (noteTimer.current) clearTimeout(noteTimer.current);
+      noteTimer.current = setTimeout(() => setRenameNote(null), 6000);
+    };
+
+    /**
+     * Переименование переменной по правке её объявления.
+     *
+     * Переменная объявляется присваиванием (`eye_target = …`), поэтому «поменять
+     * имя» — это правка левой части. Замечаем её и заменяем остальные вхождения
+     * сами: иначе десяток формул остаётся со старым именем, и это ошибка ядра, а
+     * не подсказка.
+     *
+     * Что считается началом переименования: удаление или замена части уже
+     * написанного имени. Набор **нового** объявления с нуля (`newname = 1`) —
+     * это insertions, и трогать чужие совпадения нельзя: имя ещё не выбрано.
+     * Дальше набранные буквы продолжают то же переименование (`renameRef`).
+     *
+     * Замена уходит отдельной транзакцией в следующем кадре: dispatch внутри
+     * updateListener поднял бы его заново. Группа истории CodeMirror склеивает
+     * правку и замену (они идут подряд, в пределах 500 мс), поэтому Ctrl+Z
+     * возвращает и имя, и формулу.
+     */
+    const renameDeclaration = (update: ViewUpdate) => {
+      if (ownRename.current) return;
+      const before = update.startState.doc.toString();
+      const after = update.state.doc.toString();
+      let count = 0;
+      let edit: { fromA: number; toA: number; insert: string } | null = null;
+      update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+        count += 1;
+        if (count === 1) edit = { fromA, toA, insert: inserted.toString() };
+      });
+      // Несколько правок сразу (вставка, отмена) — не наше дело: имя тут не
+      // меняли, а переписывать половину скрипта по догадке нельзя.
+      if (count !== 1 || !edit) {
+        renameRef.current = null;
+        return;
+      }
+      const plan = planRename(before, after, edit, renameRef.current);
+      if (!plan) {
+        renameRef.current = null;
+        return;
+      }
+      // Последовательность продолжается даже тогда, когда менять нечего: имя
+      // ещё недописано, и следующая буква должна продолжить то же самое.
+      renameRef.current = plan.pending;
+      if (plan.changes.length === 0) return;
+      const changes = [...plan.changes];
+      // Ссылка из настроек поведения — снимок имени в строке блока, а не в коде:
+      // без этой замены источник видимости читал бы ноль.
+      const behaviour = renameBehaviourChange(after, plan.current, plan.next);
+      if (behaviour) changes.push(behaviour);
+      // Глобальная переменная видна всем объектам: их скрипты переписывает
+      // приложение, а не этот редактор (пауза — в конце набора).
+      if ((checkData.current.scope ?? "globals") === "globals") {
+        globalRename.current = { from: globalRename.current?.from ?? plan.current, to: plan.next };
+        if (renameTimer.current) clearTimeout(renameTimer.current);
+        renameTimer.current = setTimeout(flushGlobalRename, 420);
+      }
+      requestAnimationFrame(() => {
+        const editor = view.current;
+        if (!editor || editor.state.doc.toString() !== after) return;
+        ownRename.current = true;
+        editor.dispatch({ changes });
+        ownRename.current = false;
+      });
     };
 
     /** Объявленные события: из пропсов плюс уже написанные в этом тексте. */
@@ -533,7 +640,7 @@ export function ScriptEditor({
       const stateMember = /(?:^|[^\w.])state\.(\w*)$/.exec(prefix);
       if (stateMember) {
         const start = context.pos - stateMember[1].length;
-        const locals = localsOf(context.state.doc.toString());
+        const locals = localNames(context.state.doc.toString());
         return {
           from: start,
           validFor: /^\w*$/,
@@ -559,7 +666,7 @@ export function ScriptEditor({
         };
       }
       const localEvents = declaredEvents(context.state);
-      const locals = localsOf(context.state.doc.toString());
+      const locals = localNames(context.state.doc.toString());
       const options = [...new Set([
         ...ids, ...globalNames, ...PARAMETERS, TEXT_PARAMETER, ...INPUTS, ...inputNames,
         ...locals, ...localEvents, ...constantNames, ...FUNCTION_NAMES,
@@ -605,6 +712,9 @@ export function ScriptEditor({
         dropSnippet,
         Prec.highest(keymap.of([{ key: "Mod-s", run: () => { applyNow(); return true; } }])),
         EditorView.updateListener.of((update) => {
+          // Переименование — до остальной реакции на правку: подсказки и
+          // проверка должны увидеть уже переписанный текст.
+          if (update.docChanged) renameDeclaration(update);
           if (update.docChanged || update.selectionSet) readHint(update.state);
           if (!update.docChanged) return;
           setHints(scriptHints(update.state.doc.toString()));
@@ -653,6 +763,10 @@ export function ScriptEditor({
     return () => {
       if (timer.current) clearTimeout(timer.current);
       if (checkTimer.current) clearTimeout(checkTimer.current);
+      if (noteTimer.current) clearTimeout(noteTimer.current);
+      // Уходим со вкладки, не дождавшись паузы, — доделываем молча: иначе
+      // последняя буква имени осталась бы только в глобальном скрипте.
+      flushGlobalRename(false);
       editor.destroy();
       view.current = null;
     };
@@ -812,6 +926,14 @@ export function ScriptEditor({
           >
             <ChevronRight size={11} /> строка {hints[0].line}
           </button>
+        </div>
+      )}
+      {/* Отчёт о переименовании: имя могло уехать в чужие скрипты, и об этом
+          надо сказать — иначе правка выглядит как «ничего не произошло». */}
+      {renameNote && (
+        <div className="script-rename-note" title="Имя переменной обновлено везде, где оно встречается">
+          <span className="script-rename-icon">↔</span>
+          <span className="script-rename-text">{renameNote}</span>
         </div>
       )}
       {pinned.length > 0 && (

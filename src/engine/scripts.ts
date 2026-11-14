@@ -251,7 +251,7 @@ export interface ScriptHint {
  * Индексы остаются на месте, поэтому по очищенному тексту можно искать форму,
  * а показывать — настоящую строку.
  */
-function maskScript(source: string): string {
+export function maskScript(source: string): string {
   let out = "";
   let index = 0;
   while (index < source.length) {

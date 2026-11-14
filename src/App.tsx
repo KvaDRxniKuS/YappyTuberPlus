@@ -33,6 +33,7 @@ import {
   normalizeModules, normalizeOverlay, normalizePreset, parentNewObject, setParent, setScriptValue,
   uniqueId,
 } from "./engine/preset";
+import { renameGlobalInObjects } from "./engine/rename";
 import { inspectFile } from "./engine/importFile";
 import { parseMaskBlock, writeMaskBlock } from "./engine/maskScript";
 import {
@@ -1519,6 +1520,7 @@ export default function App() {
           pen={pen}
           onPen={startPen}
           onGlobalScript={(globals) => updateObjectScriptGlobals(globals)}
+          onRenameGlobal={renameGlobalVariable}
           onModules={updateModules}
           onManual={moduleInputs.setManual}
           onInsertSnippet={insertEventSnippet}
@@ -1686,7 +1688,32 @@ export default function App() {
   );
 
   function updateObjectScriptGlobals(globals: string) {
-    commit({ ...presetRef.current, globals });
+    // Функциональная форма: рядом может лежать вторая правка того же кадра
+    // (переименование переменной в объектах), и брать пресет из ссылки значило
+    // бы затереть её — ссылка обновляется только на следующем рендере.
+    commit((current) => ({ ...current, globals }));
+  }
+
+  /**
+   * Глобальную переменную переименовали в `globals.rig` — то же имя обновляем в
+   * скриптах всех объектов: глобальная переменная видна всем, и оставленное
+   * старое имя в чужой формуле стало бы «неизвестным именем» (то есть нулём).
+   *
+   * Объект со **своей** переменной того же имени пропускается: внутри него имя
+   * означает своё, и глобальное к нему отношения не имеет. Пропущенные
+   * возвращаются отчётом — редактор покажет их строкой под скриптом, чтобы
+   * молчаливого пропуска не было.
+   */
+  function renameGlobalVariable(from: string, to: string): { objects: number; skipped: string[] } {
+    const report = renameGlobalInObjects(presetRef.current.objects, from, to).report;
+    if (report.objects === 0) return report;
+    // Функциональная форма — по той же причине: правка глобального скрипта
+    // приходит своим коммитом и не должна затирать объекты (и наоборот).
+    commit(
+      (current) => ({ ...current, objects: renameGlobalInObjects(current.objects, from, to).objects }),
+      { label: "Переименование переменной" },
+    );
+    return report;
   }
 
   /**
