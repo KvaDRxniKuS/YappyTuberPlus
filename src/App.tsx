@@ -34,6 +34,7 @@ import {
   uniqueId,
 } from "./engine/preset";
 import { renameGlobalInObjects } from "./engine/rename";
+import { adoptTrackerProfile, stripTrackerProfile } from "./modules/trackerProfile";
 import { inspectFile } from "./engine/importFile";
 import { parseMaskBlock, writeMaskBlock } from "./engine/maskScript";
 import {
@@ -94,7 +95,9 @@ function loadPreset(): RigPreset {
     if (stored) {
       const normalized = normalizePreset(JSON.parse(stored));
       // Presets saved before the closed mouth existed are migrated in place.
-      if (normalized) return migrateDemoPreset(normalized);
+      // Адрес телефона, порты и эталон трекера из старого автосохранения
+      // переезжают в профиль приложения: в риге им не место.
+      if (normalized) return migrateDemoPreset(adoptTrackerProfile(normalized));
     }
   } catch { /* use demo */ }
   return createDemoPreset();
@@ -591,16 +594,19 @@ export default function App() {
    * спрашиваем: применить модули пресета, оставить текущие или отключить все.
    */
   const applyOpenedPreset = useCallback((next: RigPreset, path: string | null) => {
-    const incoming = next.modules;
+    // Чужой риг не приносит с собой адрес телефона: машинные настройки трекера
+    // в профиль не переезжают, а из открытого пресета просто уходят.
+    const opened = stripTrackerProfile(next);
+    const incoming = opened.modules;
     if (!sameModules(presetRef.current.modules, incoming)) {
-      setPending({ preset: next, path });
+      setPending({ preset: opened, path });
       return;
     }
-    commit(next, { label: "Открытие пресета" });
-    savedPresetRef.current = next;
+    commit(opened, { label: "Открытие пресета" });
+    savedPresetRef.current = opened;
     setPresetPath(path);
     setSavedAt(null);
-    setSelection(next.objects[0] ? [next.objects[0].id] : []);
+    setSelection(opened.objects[0] ? [opened.objects[0].id] : []);
   }, [commit]);
 
   const resolvePending = useCallback((choice: "apply" | "keep" | "disable") => {
@@ -681,7 +687,7 @@ export default function App() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      try { localStorage.setItem(PRESET_KEY, JSON.stringify(preset)); }
+      try { localStorage.setItem(PRESET_KEY, JSON.stringify(stripTrackerProfile(preset))); }
       catch { notify("Не удалось автосохранить: превышена квота браузера"); }
     }, 700);
     return () => window.clearTimeout(timer);

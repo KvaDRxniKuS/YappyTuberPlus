@@ -8,6 +8,7 @@ import { TwitchChannel, type TwitchInfo, type TwitchState } from "./twitch";
 import {
   discoverTrackers, flattenFrame, isTrackerTransport, parseTrackerFrame, trackerPorts, TRACKER_INFO,
 } from "./tracker";
+import { sourceWithProfile } from "./trackerProfile";
 
 /**
  * Хост внешних источников.
@@ -733,9 +734,14 @@ export function externalSourcesOf(modules: ModuleInstance[], enabled: (module: M
     .map((module) => ({ name: module.name, source: sourceConfig(module) }));
 }
 
-/** Конфиг из настроек экземпляра в виде, пригодном для сравнения и запуска. */
+/**
+ * Конфиг из настроек экземпляра в виде, пригодном для сравнения и запуска.
+ *
+ * У трекера адрес телефона, порты и эталон берутся из профиля приложения
+ * (`trackerProfile`): в риг они не пишутся, но приёмнику нужны именно они.
+ */
 export function sourceConfig(module: ModuleInstance): ExternalSourceConfig {
-  return readExternalSource(module.config as Record<string, unknown>);
+  return sourceWithProfile(readExternalSource(module.config as Record<string, unknown>));
 }
 
 /** Правила отображения модуля — короткий доступ для панелей. */

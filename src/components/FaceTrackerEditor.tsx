@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Crosshair, Radar } from "lucide-react";
 import type { ExternalSourceConfig, ExternalSourceRule, ModuleInstance } from "../types";
 import { externalInputName, readExternalSource } from "../modules/external";
+import { sourceWithProfile, writeTrackerProfile } from "../modules/trackerProfile";
 import {
   TRACKER_FIELDS, TRACKER_INFO, allTrackerFieldsMapped, anyTrackerFieldMapped, calibrationOffsets,
   calibratedValue, clearAllTrackerFields, discoverTrackers, selectAllTrackerFields, trackerField,
@@ -91,7 +92,8 @@ function shareOf(field: TrackerField, value: number | undefined): number {
 }
 
 export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
-  const source = readExternalSource(props.module.config as Record<string, unknown>);
+  // Адрес, порты и эталон приходят из профиля приложения: в риге их нет.
+  const source = sourceWithProfile(readExternalSource(props.module.config as Record<string, unknown>));
   const info = TRACKER_INFO[props.transport];
   const ports = trackerPorts(source, props.transport);
   const editor = moduleDefinition(props.module.type).editor;
@@ -109,8 +111,21 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
   // Что сказать про калибровку: «лицо не найдено» или «эталон снят».
   const [calibrationNote, setCalibrationNote] = useState<string | null>(null);
 
+  /**
+   * Правка карточки. Машинные настройки (адрес, порты, эталон) уходят в профиль
+   * приложения, остальное — в риг. Копия в пресете нужна только затем, чтобы
+   * приёмник перезапустился на новые значения: при записи файла её вырезает
+   * `stampPreset`.
+   */
   const patch = (change: Partial<ExternalSourceConfig>, label?: string) => {
-    props.onChange({ ...source, ...change }, label);
+    const next = { ...source, ...change };
+    writeTrackerProfile(props.transport, {
+      host: next.host,
+      port: next.port,
+      listenPort: next.listenPort,
+      calibration: next.calibration,
+    });
+    props.onChange(next, label);
   };
   const patchRule = (index: number, change: Partial<ExternalSourceRule>, label?: string) => {
     const mapping = source.mapping.map((rule, position) => (position === index ? { ...rule, ...change } : rule));
@@ -228,7 +243,7 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
       </p>
 
       <div className="module-fields">
-        <div className="module-field" title="Адрес телефона в вашей сети. Пусто — рукопожатие идёт широковещательно, а адрес запомнится из первого кадра.">
+        <div className="module-field" title="Адрес телефона в вашей сети. Пусто — рукопожатие идёт широковещательно, а адрес запомнится из первого кадра. Адрес хранится в профиле приложения и в файл рига не попадает.">
           <span className="module-field-label">Телефон</span>
           <div className="module-field-value">
             <input
@@ -280,6 +295,13 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
         </div>
       </div>
 
+      {/* Риг переносят на другую машину, а телефон остаётся в своей сети: адрес,
+          порты и эталон — настройки этой машины, не сцены. */}
+      <p className="module-hint">
+        Адрес телефона, порты и эталон позы хранятся в профиле приложения:
+        риг переносится на другой компьютер без них.
+      </p>
+
       {searchNote && <p className="external-check">{searchNote}</p>}
 
       {found.length > 0 && (
@@ -298,7 +320,8 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
       )}
 
       {/* Положение телефона: телефон может лежать как угодно — персонаж должен
-          стоять ровно. Эталон снимается текущим кадром и живёт в пресете. */}
+          стоять ровно. Эталон снимается текущим кадром и живёт в профиле
+          приложения: оно у стола своё, а риг переносят. */}
       <div className="tracker-calibration">
         <div className="tracker-calibration-head">
           <span className="module-field-label">Положение телефона</span>

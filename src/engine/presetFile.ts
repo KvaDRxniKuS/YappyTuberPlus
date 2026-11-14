@@ -4,6 +4,7 @@ import { materialSources } from "../render/material";
 import { IncompatiblePresetError, presetCompatibility, type CompatibilityReport } from "./presetCheck";
 import { withBuildStamp } from "../version";
 import { needsCore } from "./coreFeatures";
+import { stripTrackerProfile } from "../modules/trackerProfile";
 import {
   assetIdOf,
   assetInfo,
@@ -106,7 +107,10 @@ async function defaultDirectory(): Promise<string | null> {
  * старым — `needs` от него не зависит.
  */
 export function stampPreset(preset: RigPreset): RigPreset {
-  return { ...withBuildStamp(preset), needs: needsCore(preset) };
+  // Адрес телефона, порты трекера и эталон позы — настройки машины, а не рига:
+  // в записываемом файле их нет (см. `trackerProfile`).
+  const clean = stripTrackerProfile(preset);
+  return { ...withBuildStamp(clean), needs: needsCore(clean) };
 }
 
 /**

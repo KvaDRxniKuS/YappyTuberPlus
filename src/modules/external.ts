@@ -172,7 +172,13 @@ function readPort(value: unknown): number | undefined {
  * это «калибровки нет»: ноль вместо неё ничего не изменил бы, но карточка
  * показывала бы кнопку «Сбросить» без причины.
  */
-function readCalibration(value: unknown): TrackerCalibration | undefined {
+/**
+ * Эталон позы из настроек: только голова и глаза и только числа.
+ *
+ * Читается и из пресета, и из профиля приложения — правило одно, поэтому
+ * проверка живёт здесь.
+ */
+export function readCalibration(value: unknown): TrackerCalibration | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
   const offsets: Record<string, number> = {};

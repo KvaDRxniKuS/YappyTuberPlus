@@ -16,7 +16,7 @@
  * ```
  *
  * Для человека та же версия пишется подписями:
- * `1.1 · ядро 25 · файл 7 · мост 2 · модули 5 · оболочка 20`.
+ * `1.1 · ядро 25 · файл 7 · мост 2 · модули 5 · оболочка 21`.
  *
  * Правила, когда какое число растёт, и таблица поколений ядра — в
  * `docs/VERSIONS.md`. Здесь только данные и сверка: одна правда о номерах.
@@ -152,7 +152,7 @@ export const VERSION: ProjectVersion = {
   // Оболочка 20: правка имени переменной в объявлении переименовывает её во
   // всех местах — в своём скрипте, в `state.имя`, в настройках поведения и (для
   // глобальной) в скриптах всех объектов.
-  shell: 20,
+  shell: 21,
 };
 
 /** Номера поколений в порядке слотов: без релиза. */
@@ -165,7 +165,7 @@ export function versionString(version: ProjectVersion = VERSION): string {
   return [version.release[0], version.release[1], ...generationNumbers(version)].join(".");
 }
 
-/** Строка для человека: `1.1 · ядро 25 · файл 7 · мост 2 · модули 5 · оболочка 20`. */
+/** Строка для человека: `1.1 · ядро 25 · файл 7 · мост 2 · модули 5 · оболочка 21`. */
 export function versionLabel(version: ProjectVersion = VERSION): string {
   const slots = SLOT_ORDER.map((slot) => `${SLOT_INFO[slot].label} ${version[slot]}`);
   return [`${version.release[0]}.${version.release[1]}`, ...slots].join(" · ");
