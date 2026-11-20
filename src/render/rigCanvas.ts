@@ -7,6 +7,8 @@ import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
+import { drawMeshImage, meshQuad } from "./mesh";
+import { meshEnabled } from "../engine/mesh";
 import { paintLight } from "./light";
 import { DEFAULT_LIGHT, lightHeight } from "../types";
 import { forgetResources, reportResources } from "../engine/meter";
@@ -444,7 +446,12 @@ function drawShaded(
   const feather = object.mask?.feather ?? 0;
   // Деформированный объект выходит за свою рамку: объём нужен по всей картинке,
   // иначе край деформации обрежется по слою.
-  const quad = warpEnabled(object) ? warpQuad(object, frame?.objects[object.id]) : null;
+  // Деформированный объект выходит за свою рамку: объём нужен по всей
+  // картинке. У сетки границы считаются по треугольникам, у старого `warp` —
+  // по четырём углам.
+  const quad = meshEnabled(object)
+    ? meshQuad(object, frame?.objects[object.id])
+    : warpEnabled(object) ? warpQuad(object, frame?.objects[object.id]) : null;
   const box = contentBox(view, matrix, object, canvas.width, canvas.height, left, top, feather, quad);
   if (!box) return false;
 
@@ -540,9 +547,16 @@ function drawObjectContent(
       : object.height;
     const boxLeft = -object.pivot.x * width;
     const boxTop = -object.pivot.y * height;
-    if (picture && warpEnabled(object)) {
-      // Деформация считается в координатах картинки: переносим начало туда,
-      // где у медиа-объекта начинается его рамка.
+    if (picture && meshEnabled(object)) {
+      // Сетка считается в координатах картинки: переносим начало туда, где у
+      // медиа-объекта начинается его рамка.
+      ctx.save();
+      ctx.translate(boxLeft, boxTop);
+      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id]);
+      ctx.restore();
+    } else if (picture && warpEnabled(object)) {
+      // Деформация крайних точек: остаётся для объектов, которые ещё не
+      // перевели на сетку.
       ctx.save();
       ctx.translate(boxLeft, boxTop);
       drawWarpedImage(ctx, picture, object, width, height, frame?.objects[object.id]);
@@ -558,7 +572,12 @@ function drawObjectContent(
   }
   const image = assets.get(object.image);
   if (image?.complete && image.naturalWidth > 0) {
-    if (warpEnabled(object)) {
+    if (meshEnabled(object)) {
+      ctx.save();
+      ctx.translate(left, top);
+      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id]);
+      ctx.restore();
+    } else if (warpEnabled(object)) {
       ctx.save();
       ctx.translate(left, top);
       drawWarpedImage(ctx, image, object, object.width, object.height, frame?.objects[object.id]);
