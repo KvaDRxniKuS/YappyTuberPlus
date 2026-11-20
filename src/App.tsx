@@ -858,7 +858,7 @@ export default function App() {
    * Правка пресета поведения сразу у нескольких объектов: один шаг истории на
    * всех, чтобы Ctrl+Z возвращал всю пачку, а не по одному объекту.
    */
-  const updateScripts = useCallback((scripts: Record<string, string>) => {
+  const updateScripts = useCallback((scripts: Record<string, string>, label = "Поведение") => {
     const ids = Object.keys(scripts);
     if (!ids.length) return;
     commit((current) => ({
@@ -868,8 +868,13 @@ export default function App() {
           ? object
           : { ...object, script: scripts[object.id] }
       )),
-    }), { label: ids.length > 1 ? `Поведение · ${ids.length} объектов` : "Поведение", coalesce: "behaviour" });
+    }), { label: ids.length > 1 ? `${label} · ${ids.length} объектов` : label, coalesce: "behaviour" });
   }, [commit]);
+
+  /** Состояния объекта — тот же путь, что у поведения: один шаг истории. */
+  const updateStateScripts = useCallback((scripts: Record<string, string>) => {
+    updateScripts(scripts, "Состояния");
+  }, [updateScripts]);
 
   /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
   /**
@@ -1520,6 +1525,8 @@ export default function App() {
           }}
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
+          onStates={updateStateScripts}
+          onBase={(base) => updateSelectedBases(base, "state-record")}
           onText={updateTextObjects}
           onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}

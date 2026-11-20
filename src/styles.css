@@ -1984,3 +1984,92 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   background: #0f1215; color: #eef4f7; font: 12.5px "Cascadia Code", ui-monospace, monospace;
 }
 .external-mapping-row select:focus { outline: none; border-color: #609c8c; }
+
+/* ── Состояния: слои, таймлайн, позы ─────────────────────────────────── */
+.states-panel { padding: 10px 12px 18px; overflow-y: auto; height: 100%; }
+.states-empty, .states-hint { color: var(--faint); font-size: 12px; line-height: 1.5; margin: 8px 0; }
+.states-toolbar { display: flex; gap: 6px; margin-bottom: 8px; }
+.states-add, .states-reset {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2);
+  color: var(--text); font-size: 11px; cursor: pointer;
+}
+.states-add:hover, .states-reset:hover { border-color: var(--accent-dim); color: var(--accent); }
+.states-layers { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.states-layer {
+  display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 5px;
+  border: 1px solid transparent; cursor: pointer;
+}
+.states-layer:hover { background: var(--surface-2); }
+.states-layer.active { border-color: var(--accent-dim); background: var(--surface-2); }
+.states-name {
+  flex: 1 1 34%; min-width: 60px; height: 21px; padding: 0 5px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--text); font-size: 12px;
+}
+.states-param {
+  flex: 1 1 40%; min-width: 70px; height: 21px; padding: 0 5px; border: 1px solid var(--border-soft);
+  border-radius: 4px; background: var(--bg); color: var(--accent); font-family: "Cascadia Code", monospace; font-size: 11px;
+}
+.states-normalize {
+  height: 21px; border: 1px solid var(--border-soft); border-radius: 4px;
+  background: var(--bg); color: var(--muted); font-size: 11px;
+}
+.states-remove {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+  border: none; border-radius: 4px; background: transparent; color: var(--faint); cursor: pointer;
+}
+.states-remove:hover { color: var(--danger); background: var(--surface-3); }
+.states-range {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+  color: var(--faint); font-size: 11px;
+}
+.states-range input[type="number"], .states-range input:not([type]) { width: 58px; }
+.states-smooth { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--muted); }
+.states-track {
+  position: relative; height: 22px; margin: 4px 4px 10px;
+  border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(var(--surface-2), var(--surface-2)) padding-box;
+  cursor: crosshair;
+}
+.states-key {
+  position: absolute; top: 2px; width: 9px; height: 9px; margin-left: -5px; padding: 0;
+  border: 1px solid var(--accent-dim); border-radius: 50%; background: var(--surface);
+  transform: rotate(45deg); cursor: pointer;
+}
+.states-key.active { background: var(--accent); border-color: var(--accent); }
+.states-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.states-key-chip {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px 1px 6px;
+  border: 1px solid var(--border-soft); border-radius: 4px; background: var(--surface-2);
+  color: var(--muted); font-family: "Cascadia Code", monospace; font-size: 11px; cursor: pointer;
+}
+.states-key-chip.active { border-color: var(--accent-dim); color: var(--accent); }
+.states-key-chip button, .states-weight button {
+  border: none; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; line-height: 1;
+}
+.states-key-chip button:hover, .states-weight button:hover { color: var(--danger); }
+.states-preview { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; color: var(--faint); font-size: 11px; }
+.states-preview input { flex: 1; }
+.states-weights { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.states-weight {
+  display: flex; align-items: center; gap: 5px; padding: 3px 4px; border-radius: 5px; border: 1px solid transparent;
+  color: var(--faint); font-size: 11px;
+}
+.states-weight.active { border-color: var(--accent-dim); }
+.states-weight input {
+  flex: 1; height: 21px; padding: 0 5px; border: 1px solid var(--border-soft); border-radius: 4px;
+  background: var(--bg); color: var(--text); font-family: "Cascadia Code", monospace; font-size: 11px;
+}
+.states-key-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--faint); font-size: 11px; }
+.states-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 10px; }
+.states-field { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted); font-size: 11px; }
+.states-field input { width: 56px; height: 21px; padding: 0 4px; border: 1px solid var(--border-soft); border-radius: 4px; background: var(--bg); color: var(--text); font-family: "Cascadia Code", monospace; font-size: 11px; text-align: right; }
+.states-record { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.states-record button {
+  height: 24px; padding: 0 10px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface-2); color: var(--text); font-size: 11px; cursor: pointer;
+}
+.states-record button:first-child { border-color: var(--accent-dim); color: var(--accent); }
+.states-record button:hover { background: var(--surface-3); }
+.states-record small { flex: 1 1 100%; color: var(--faint); font-size: 10px; line-height: 1.4; }

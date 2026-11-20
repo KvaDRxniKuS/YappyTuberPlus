@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 import {
-  EMPTY_STATES, readStates, resetStatesFor, statesBlock, watchNames, writeStates,
+  EMPTY_STATES, addKey, addLayer, layerRange, makeLayer, manualInputOf, moveKey, patchLayer,
+  poseFromBase, readStates, removeKey, removeLayer, resetStatesFor, setPose, statesBlock,
+  watchNames, writeStates,
   type StateLayer, type States,
 } from "../../src/engine/states";
 import { engineStructure } from "../../src/engine/preset";
@@ -173,4 +175,85 @@ test("структура для ядра просит переменные об�
     modules: [],
   } as unknown as RigPreset));
   expect(built.objects[0].watch).toEqual(["eye_target"]);
+});
+
+test("новый слой: привязка к первому входу или свободные веса", () => {
+  expect(makeLayer(0, "manual.eye_x")).toMatchObject({ param: "manual.eye_x", normalize: "sum" });
+  expect(makeLayer(1, "manual.eye_x").poses[0].at).toBe(0);
+  expect(makeLayer(0, null).poses[0].weight).toBe("1");
+});
+
+test("клик по таймлайну: ключ добавляется, повторный клик не плодит двойника", () => {
+  const layer = bound({ poses: [{ at: -1, pose: { x: -20 } }] });
+  const once = addKey(layer, 1, { x: 20 });
+  expect(once.poses.map((pose) => pose.at)).toEqual([-1, 1]);
+  const twice = addKey(once, 1, { y: 5 });
+  expect(twice.poses).toHaveLength(2);
+  expect(twice.poses[1].pose).toEqual({ x: 20, y: 5 });
+});
+
+test("ключ переезжает и сортируется, одинаковые сливаются", () => {
+  const layer = bound({ poses: [{ at: -1, pose: { x: -1 } }, { at: 0, pose: { x: 0 } }] });
+  expect(moveKey(layer, 0, 2).poses.map((pose) => pose.at)).toEqual([0, 2]);
+  expect(moveKey(layer, 0, 0).poses).toHaveLength(1);
+});
+
+test("удаление ключа и слоя не трогает остальные", () => {
+  const two = addLayer(states(bound()), makeLayer(1, null));
+  expect(removeLayer(two, 0).layers).toHaveLength(1);
+  expect(removeLayer(two, 0).layers[0].param).toBeNull();
+  expect(removeKey(bound(), 0).poses).toHaveLength(1);
+});
+
+test("правка слоя меняет только выбранный", () => {
+  const two = addLayer(states(bound()), makeLayer(1, null));
+  const patched = patchLayer(two, 1, { name: "злость" });
+  expect(patched.layers[0].name).toBe("взгляд");
+  expect(patched.layers[1].name).toBe("злость");
+});
+
+test("отрезок таймлайна: свой, затем крайние ключи, затем 0…1", () => {
+  expect(layerRange(bound({ range: [-2, 2] }))).toEqual([-2, 2]);
+  expect(layerRange(bound({ range: null }))).toEqual([-1, 1]);
+  expect(layerRange(bound({ range: null, poses: [{ at: 5, pose: {} }] }))).toEqual([4, 6]);
+  expect(layerRange(bound({ range: null, poses: [] }), [0, 100])).toEqual([0, 100]);
+  expect(layerRange(bound({ range: null, poses: [] }))).toEqual([0, 1]);
+});
+
+test("предпросмотр двигает только manual-входы", () => {
+  expect(manualInputOf("manual.eye_x")).toBe("eye_x");
+  expect(manualInputOf("tracker.head_rx")).toBeNull();
+  expect(manualInputOf(null)).toBeNull();
+});
+
+test("запись позы: сдвиг складывается, размер — отношением", () => {
+  const pose = poseFromBase(
+    { x: 10, y: 20, rotation: 5, sizeX: 2, sizeY: 1, opacity: 1 },
+    { x: 16, y: 20, rotation: 5, sizeX: 1, sizeY: 1, opacity: 0.5 },
+  );
+  // Неизменённые поля в позу не попадают: ключ хранит только то, что двигали.
+  expect(pose).toEqual({ x: 6, sizeX: 0.5, opacity: 0.5 });
+});
+
+test("дельта позы не накапливает ошибку округления", () => {
+  const pose = poseFromBase({ x: 0 }, { x: 0.0000004, rotation: 12.34567 });
+  expect(pose.x).toBeUndefined();
+  expect(pose.rotation).toBe(12.346);
+});
+
+test("поза пишется в выбранный ключ, остальные не меняются", () => {
+  const layer = setPose(bound(), 1, { y: 4 });
+  expect(layer.poses[0].pose).toEqual({ x: -20 });
+  expect(layer.poses[1].pose).toEqual({ x: 20, y: 4 });
+});
+
+test("пустая поза не теряет слой: блок остаётся в скрипте", () => {
+  // Слой только что создан, ни одного поля не тронуто — каналов нет, но
+  // настройки обязаны пережить запись, иначе вкладка обнулилась бы.
+  const layer = bound({ poses: [{ at: -1, pose: {} }, { at: 1, pose: {} }] });
+  const written = writeStates("x = inherit\n", states(layer), object("x = inherit", "g"));
+  expect(written.script).toContain("// @states ");
+  expect(written.script).not.toContain("x_states");
+  expect(readStates(written.script).layers[0].poses).toHaveLength(2);
+  expect(written.script).toContain("x = inherit");
 });

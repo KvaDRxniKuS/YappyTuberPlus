@@ -362,7 +362,9 @@ export function statesBlock(states: States, object: RigObject): string {
       channels.push(`${field}_states = ${expressionText}`);
     }
   }
-  if (!channels.length) return "";
+  // Каналов может не быть: слой только что создан, поза ещё пустая. Блок всё
+  // равно пишется — иначе настройки исчезли бы с первым же пересозданием
+  // скрипта, а вкладка показала бы пустой список.
   return [
     START,
     `${STATES_META}${JSON.stringify({ layers })}`,
@@ -489,4 +491,141 @@ export function resetStatesFor(targets: RigObject[]): Record<string, string> {
     scripts[target.id] = writeStates(target.script, EMPTY_STATES, target).script;
   }
   return scripts;
+}
+
+/**
+ * Правки состояний — чистые функции над данными.
+ *
+ * Вкладка «Состояния» только показывает и вызывает: всё, что меняет структуру
+ * (слои, ключи, дельты), живёт здесь, поэтому проверяется без браузера.
+ */
+
+/** Новый слой: привязанный к параметру, если он задан. */
+export function makeLayer(index: number, param: string | null = null): StateLayer {
+  return {
+    name: param ? `слой ${index + 1}` : `веса ${index + 1}`,
+    param,
+    range: null,
+    smooth: false,
+    normalize: "sum",
+    poses: param ? [{ at: 0, pose: {} }] : [{ weight: "1", pose: {} }],
+  };
+}
+
+export function addLayer(states: States, layer: StateLayer): States {
+  return { layers: [...states.layers, layer] };
+}
+
+export function removeLayer(states: States, index: number): States {
+  return { layers: states.layers.filter((_, position) => position !== index) };
+}
+
+export function patchLayer(states: States, index: number, patch: Partial<StateLayer>): States {
+  return {
+    layers: states.layers.map((layer, position) => (
+      position === index ? { ...layer, ...patch } : layer
+    )),
+  };
+}
+
+/**
+ * Ключ в точке параметра. Поза кладётся на существующий ключ того же значения,
+ * иначе создаётся новый — клик по таймлайну не должен плодить двойников.
+ */
+export function addKey(layer: StateLayer, at: number, pose: Partial<Record<StateField, number>> = {}): StateLayer {
+  const existing = layer.poses.findIndex((item) => item.at === at);
+  if (existing >= 0) {
+    const poses = layer.poses.map((item, index) => (
+      index === existing ? { ...item, pose: { ...item.pose, ...pose } } : item
+    ));
+    return sortKeys({ ...layer, poses });
+  }
+  return sortKeys({ ...layer, poses: [...layer.poses, { at, pose: { ...pose } }] });
+}
+
+export function removeKey(layer: StateLayer, index: number): StateLayer {
+  return { ...layer, poses: layer.poses.filter((_, position) => position !== index) };
+}
+
+/** Ключ переехал: порядок восстанавливается, одинаковые значения сливаются. */
+export function moveKey(layer: StateLayer, index: number, at: number): StateLayer {
+  if (!Number.isFinite(at)) return layer;
+  const poses = layer.poses.map((pose, position) => (
+    position === index ? { ...pose, at } : pose
+  ));
+  return sortKeys({ ...layer, poses });
+}
+
+export function setPose(layer: StateLayer, index: number, pose: Partial<Record<StateField, number>>): StateLayer {
+  return {
+    ...layer,
+    poses: layer.poses.map((item, position) => (
+      position === index ? { ...item, pose: { ...item.pose, ...pose } } : item
+    )),
+  };
+}
+
+/** Один ключ по возрастанию значения; одинаковые схлопываются в последний. */
+function sortKeys(layer: StateLayer): StateLayer {
+  const sorted = [...layer.poses].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+  const unique: Pose[] = [];
+  for (const pose of sorted) {
+    const last = unique[unique.length - 1];
+    if (last && last.at === pose.at) unique[unique.length - 1] = pose;
+    else unique.push(pose);
+  }
+  return { ...layer, poses: unique };
+}
+
+/**
+ * Отрезок таймлайна: что выставлено, иначе крайние ключи, иначе 0…1.
+ * Паспорт входа живёт в `meta` у редактора, поэтому сюда он приходит готовым.
+ */
+export function layerRange(layer: StateLayer, fallback: [number, number] | null = null): [number, number] {
+  if (layer.range) return layer.range;
+  const keys = layer.poses.map((pose) => pose.at).filter((at): at is number => at !== undefined);
+  if (keys.length >= 2) return [Math.min(...keys), Math.max(...keys)];
+  if (keys.length === 1) return [keys[0] - 1, keys[0] + 1];
+  return fallback ?? [0, 1];
+}
+
+/** Имя входа модуля `manual.<имя>` — его можно двигать предпросмотром. */
+export function manualInputOf(param: string | null): string | null {
+  if (!param) return null;
+  const match = /^manual\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(param);
+  return match ? match[1] : null;
+}
+
+/**
+ * Дельта позы из разницы базовых поз.
+ *
+ * Запись позы опирается на единственное, что человек реально двигает руками, —
+ * базовую позу объекта (перетаскивание на сцене и инспектор). Поэтому запись
+ * берёт разницу «было → стало» и переводит её в дельты: позиция, поворот и
+ * наклон складываются, размер и прозрачность — отношения.
+ */
+export function poseFromBase(
+  before: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number },
+  after: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number },
+): Partial<Record<StateField, number>> {
+  const pose: Partial<Record<StateField, number>> = {};
+  const sum = (key: "x" | "y" | "rotation" | "skewX" | "skewY") => {
+    const delta = (after[key] ?? 0) - (before[key] ?? 0);
+    if (Math.abs(delta) > 1e-6) pose[key] = Math.round(delta * 1000) / 1000;
+  };
+  sum("x");
+  sum("y");
+  sum("rotation");
+  sum("skewX");
+  sum("skewY");
+  const ratio = (key: "sizeX" | "sizeY" | "opacity") => {
+    const from = before[key] ?? 1;
+    const to = after[key] ?? 1;
+    if (!from || Math.abs(to - from) < 1e-6) return;
+    pose[key] = Math.round((to / from) * 1000) / 1000;
+  };
+  ratio("sizeX");
+  ratio("sizeY");
+  ratio("opacity");
+  return pose;
 }

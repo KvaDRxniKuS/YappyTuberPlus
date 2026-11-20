@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Blocks, Braces, ChevronRight, CircleAlert, Crosshair, Gauge, Globe2, Shapes, SlidersHorizontal, Spline } from "lucide-react";
+import { Blocks, Braces, ChevronRight, CircleAlert, Crosshair, Gauge, Globe2, Layers, Shapes, SlidersHorizontal, Spline } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
 import { moduleConstants } from "../modules/presets";
 import { InputsPanel } from "./InputsPanel";
 import { BehaviourPanel } from "./BehaviourPanel";
+import { StatesPanel } from "./StatesPanel";
 import { ModulesPanel } from "./ModulesPanel";
 import { ShapePanel } from "./ShapePanel";
 import type { MonitorOption } from "../modules/pointer";
@@ -39,6 +40,10 @@ interface RightPanelProps {
   onObjectScript: (script: string) => void;
   /** Пресет поведения: пишет блоки формул в скрипты выделенных объектов. */
   onBehaviour: (scripts: Record<string, string>) => void;
+  /** Состояния: блок `# states` в скрипте объекта. */
+  onStates?: (scripts: Record<string, string>) => void;
+  /** Базовая поза выделения: нужна записи позы — она возвращает объект на место. */
+  onBase?: (patch: Partial<RigObject["base"]>) => void;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
   /** Привязка цветов объекта к каналам модулей: один шаг истории на всю пачку. */
@@ -97,7 +102,7 @@ interface RightPanelProps {
  * «Фигура» появляется только у объекта-фигуры и стоит второй: её контуры
  * правят почти так же часто, как поведение.
  */
-type Tab = "behaviour" | "parameters" | "inputs" | "modules" | "object" | "shape" | "globals";
+type Tab = "behaviour" | "states" | "parameters" | "inputs" | "modules" | "object" | "shape" | "globals";
 
 export function RightPanel(props: RightPanelProps) {
   const [tab, setTab] = useState<Tab>("behaviour");
@@ -115,7 +120,7 @@ export function RightPanel(props: RightPanelProps) {
   // Смена выделения не выбивает из «Входов», «Модулей», «Поведения» и
   // «Фигуры»: там как раз удобно переключать объекты подряд.
   useEffect(() => {
-    setTab((current) => (current === "behaviour" || current === "parameters"
+    setTab((current) => (current === "behaviour" || current === "states" || current === "parameters"
       || current === "inputs" || current === "modules" || current === "shape" ? current : "object"));
   }, [props.selected?.id]);
   // Значения кадра — свёрнутая секция: скрипт забирает всю высоту колонки,
@@ -214,6 +219,9 @@ export function RightPanel(props: RightPanelProps) {
         {/* Параметры — вторая вкладка: позиция, размер, слой и материал нужны
             не реже поведения, а сцена теперь занимает весь центр. */}
         <button className={tab === "parameters" ? "active" : ""} onClick={() => setTab("parameters")}><Crosshair size={14} /> Параметры</button>
+        {/* «Состояния» — сразу за параметрами: это тоже сборка рига, но
+            нужна реже, чем повседневная правка позы. */}
+        <button className={tab === "states" ? "active" : ""} onClick={() => setTab("states")}><Layers size={14} /> Состояния</button>
         {/* «Фигура» стоит сразу после «Поведения»: у фигуры это вторая по
             частоте правка, а вкладка есть только у неё. */}
         {isShape && (
@@ -235,6 +243,16 @@ export function RightPanel(props: RightPanelProps) {
           onText={props.onText}
           onColors={props.onColors}
           modules={props.modules}
+        />
+      ) : tab === "states" ? (
+        <StatesPanel
+          object={props.selected}
+          frame={props.frame}
+          inputs={props.inputs}
+          modules={props.modules}
+          onChange={props.onStates ?? props.onBehaviour}
+          onBase={props.onBase}
+          onManual={props.onManual}
         />
       ) : tab === "shape" ? (
         <ShapePanel
