@@ -613,11 +613,15 @@ export function StatesPanel(props: StatesPanelProps) {
                 const index = Number(key.getAttribute("data-key"));
                 setKeyIndex(index);
                 setAt(layer.poses[index]?.at ?? at);
-                // Шкала на время жеста замораживается: она считается по крайним
-                // ключам, а их же и тянем — иначе ключ «уезжал» бы из-под мыши.
-                drag.current = layer.poses.length > 1
-                  ? { kind: "key", index, scale: [range[0], range[1]] }
-                  : null;
+                // Крайние ключи (и единственный) не тянутся: они задают границы
+                // шкалы. Длину отрезка меняет **значение** ключа в поле «ключ»,
+                // а не перетаскивание — иначе поехала бы вся шкала.
+                const edge = layer.poses.length <= 1
+                  || index === 0
+                  || index === layer.poses.length - 1;
+                // Шкала на время жеста замораживается: если средний ключ утащат
+                // за край, границы пересчитаются прямо в жесте.
+                drag.current = edge ? null : { kind: "key", index, scale: [range[0], range[1]] };
                 return;
               }
               // За луч точка прилипает к ключам, за сам кружок — идёт плавно.
@@ -658,12 +662,14 @@ export function StatesPanel(props: StatesPanelProps) {
                 key={index}
                 data-key={index}
                 className={`states-key ${index === keyIndex ? "active" : ""} ${
-                  layer.poses.length <= 1 ? "edge" : ""
+                  layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1 ? "edge" : ""
                 }`}
                 style={{ left: `${share(item.at ?? range[0]) * 100}%` }}
                 title={layer.poses.length <= 1
-                  ? `Ключ ${item.at} · единственный ключ: отрезка ещё нет, тянуть нечего`
-                  : `Ключ ${item.at} · тяните, чтобы перенести: крайние задают шкалу`}
+                  ? `Ключ ${item.at} · единственный ключ: отрезка ещё нет, значение правится полем «ключ»`
+                  : index === 0 || index === layer.poses.length - 1
+                    ? `Ключ ${item.at} · крайний: он задаёт границу шкалы — правьте значение полем «ключ»`
+                    : `Ключ ${item.at} · тяните, чтобы перенести`}
                 onClick={(event) => {
                   event.stopPropagation();
                   setKeyIndex(index);
@@ -749,8 +755,14 @@ export function StatesPanel(props: StatesPanelProps) {
               <NumberField
                 value={pose.at ?? range[0]}
                 step={0.01}
+                title={layer.poses.length <= 1 || keyIndex === 0 || keyIndex === layer.poses.length - 1
+                  ? "Крайний ключ: его значение задаёт границу отрезка"
+                  : "Значение на шкале, где стоит ключ"}
                 onCommit={(value) => applyLayer(moveKey(layer, keyIndex, value))}
               />
+              {(layer.poses.length <= 1 || keyIndex === 0 || keyIndex === layer.poses.length - 1) && (
+                <small className="states-key-edge-note">задаёт границу отрезка</small>
+              )}
             </div>
           )}
           <div className="states-fields">

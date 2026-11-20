@@ -2045,8 +2045,10 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .states-key.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 3px rgba(130, 213, 193, 0.16); }
 .states-key:active { cursor: grabbing; }
 /* Крайние ключи держат отрезок — тянуть их нельзя, и курсор об этом говорит. */
+/* Крайние ключи держат границы шкалы: тянуть их нельзя, значение — можно. */
 .states-key.edge { cursor: not-allowed; border-style: dashed; }
 .states-key.edge:hover { border-color: var(--faint); }
+.states-key.edge.active { border-color: var(--accent); }
 /* Точка таймлайна: луч вверх через ключи и кружок внизу. */
 .states-head { position: absolute; top: 0; bottom: 0; width: 0; z-index: 3; pointer-events: none; }
 .states-head-line {
@@ -2103,6 +2105,8 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   background: var(--bg); color: var(--text); font-family: "Cascadia Code", monospace; font-size: 11px;
 }
 .states-key-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--faint); font-size: 11px; }
+/* Подсказка у поля «ключ»: крайний ключ двигает границу отрезка, а не себя. */
+.states-key-edge-note { color: var(--accent-dim); font-size: 10px; }
 .states-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 10px; }
 .states-field { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted); font-size: 11px; }
 .states-field input { width: 56px; height: 21px; padding: 0 4px; border: 1px solid var(--border-soft); border-radius: 4px; background: var(--bg); color: var(--text); font-family: "Cascadia Code", monospace; font-size: 11px; text-align: right; }

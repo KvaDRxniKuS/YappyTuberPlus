@@ -11,8 +11,8 @@
   "version": "1.1.26.7.2.5.21",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-20T16:04:17.067Z",
-  "commit": "d5a0d0d",
+  "builtAt": "2026-11-20T16:10:24.355Z",
+  "commit": "75b8c16",
   "schema": 1,
   "files": [
     {
@@ -86,14 +86,14 @@
       "sha256": "373b2160c4b009dee959325df78990c57ed6f716927892627eeed3375760aa25"
     },
     {
-      "path": "assets/studio-DYGG7WyX.js",
-      "size": 877523,
-      "sha256": "2eb2f68b806b2fd1b0788189dbe93dc74968b5d47ad08aaca970fd2398d47df0"
+      "path": "assets/studio-B-lsgsDc.js",
+      "size": 878122,
+      "sha256": "d189fc098e68837860e9bba72dcf55492d1c0217f8d491d5b07f4441015a0d61"
     },
     {
-      "path": "assets/studio-JLyjxRo9.css",
-      "size": 87984,
-      "sha256": "40edfeb2d7773032baa5eeb81fe82cad0bef5fba8a42af9834cde5a2706debb1"
+      "path": "assets/studio-VSJUK_3c.css",
+      "size": 88096,
+      "sha256": "059ed4a587d925f65fdac53941cd0377f329188dcfe8b3999ff8f739dc372eeb"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "bfaba34164c5e47d6bbb8b48683c7f2331e1ca95b160d4f2329a5bdc763cbdd0"
+      "sha256": "d57d67aaf52368cd150572bb0d2504831122aa82c6c616a22a9e48e8af0d7e5d"
     },
     {
       "path": "modules/ambient.json",
