@@ -137,18 +137,20 @@ test("требование: у числа есть причина, и она н�
 });
 
 test("требование: файл уносит его с собой", () => {
-  // Самая новая механика — своя переменная объекта: она держит сцену на текущем ядре.
+  // Самая новая механика **скрипта** — своя переменная объекта: она держит
+  // сцену на 25. `vars` в кадре (ядро 26) — контракт редактора, а не формул:
+  // такой скрипт посчитается и на 25, поэтому требование сцены не растёт.
   const scene = preset([{
     kind: "sprite",
     script: "eye_target = 1\nsizeX = inherit * sizeX_behaviour\nx = eye_target",
   } as Partial<RigObject>]);
   const stamped = stampPreset(scene);
   expect(stamped.built).toContain(VERSION.core.toString());
-  expect(stamped.needs).toBe(VERSION.core);
+  expect(stamped.needs).toBe(25);
 
   // Требование переживает чтение файла, чтобы более старое ядро его увидело.
   const read = normalizePreset(stamped)!;
-  expect(read.needs).toBe(VERSION.core);
+  expect(read.needs).toBe(25);
   // В памяти сцены требования нет: оно считается при записи.
   expect(scene.needs).toBeUndefined();
 });

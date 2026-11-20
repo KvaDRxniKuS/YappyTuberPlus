@@ -18,6 +18,7 @@ import { normalizeWarp } from "../render/warp";
 import { PRESET_FORMAT, PRESET_FORMATS_READABLE } from "../version";
 import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
 import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
+import { readStates, watchNames } from "./states";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { sanitizeStateName, uniqueStateName } from "../modules/manual";
@@ -653,6 +654,9 @@ export function engineStructure(preset: RigPreset): string {
     constants: moduleConstants(preset.modules),
     objects: preset.objects.map(({ id, kind, parentId, script, width, height, media }) => ({
       id, kind, parentId, script, width, height,
+      // Переменные, которые читает редактор, а не скрипт: их просит список
+      // `watch`, и ядро отдаёт значения в `vars` кадра.
+      watch: watchNames(readStates(script)),
       // Ядру нужны только стартовые значения: с чего начать и как громко.
       media: media ? { autoplay: media.autoplay, speed: media.speed, volume: media.volume } : null,
     })),

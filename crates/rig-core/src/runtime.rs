@@ -1060,6 +1060,7 @@ impl Rig {
                 .chain(self.diagnostics.iter())
                 .cloned()
                 .collect(),
+            vars: BTreeMap::new(),
         };
         for name in global_names {
             let key = NodeKey::Global(name.clone());
@@ -1077,6 +1078,25 @@ impl Rig {
                 );
             }
             frame.objects.insert(id, values);
+        }
+        // Локальные переменные по запросу `watch`: их читает редактор, чтобы
+        // посчитать точки деформера и показать переменные в панели входов.
+        // Отдаём только существующие имена — опечатка в списке не должна
+        // выглядеть как честный ноль.
+        for object in &self.preset.objects {
+            if object.watch.is_empty() {
+                continue;
+            }
+            let mut values = BTreeMap::new();
+            for name in &object.watch {
+                let key = NodeKey::Local(object.id.clone(), name.clone());
+                if let Some(value) = self.cache.get(&key) {
+                    values.insert(name.clone(), *value);
+                }
+            }
+            if !values.is_empty() {
+                frame.vars.insert(object.id.clone(), values);
+            }
         }
         let mut draw_order: Vec<(f64, usize, String)> = self
             .preset
@@ -3385,6 +3405,7 @@ mod tests {
             width: 100.0,
             height: 100.0,
             media: None,
+            watch: Vec::new(),
         }
     }
 
@@ -4458,6 +4479,29 @@ mod tests {
         // Прошлый кадр 1.0, текущий 1.0 → 1.0.
         assert_eq!(third.objects["o"]["x"], 1.0);
         assert!(third.diagnostics.is_empty(), "диагностика: {:?}", third.diagnostics);
+    }
+
+    #[test]
+    fn watch_returns_local_variables_in_frame() {
+        // Рендерер переменных скрипта не видит: деформер, привязанный к
+        // локальной переменной, иначе получил бы ноль. Объект просит имена
+        // списком `watch`, ядро отдаёт значения этого кадра.
+        let mut owner = object("o", None, "eye_target = mouse.x * 2\ny = eye_target");
+        owner.watch = vec!["eye_target".into()];
+        let mut rig = Rig::new(preset(vec![owner], "")).unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[("mouse.x", 1.0)]);
+        assert_eq!(frame.vars["o"]["eye_target"], 2.0);
+    }
+
+    #[test]
+    fn watch_skips_names_that_do_not_exist() {
+        // Опечатка в списке не должна выглядеть как честный ноль: имени нет —
+        // записи в кадре тоже нет.
+        let mut owner = object("o", None, "x = 1");
+        owner.watch = vec!["eye_target".into()];
+        let mut rig = Rig::new(preset(vec![owner], "")).unwrap();
+        let frame = tick(&mut rig, 0.0);
+        assert!(frame.vars.is_empty());
     }
 
     #[test]

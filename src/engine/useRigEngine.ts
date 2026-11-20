@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { InputMark, InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
+import { readStates, watchNames } from "./states";
 import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import type { ScriptScope } from "./scripts";
@@ -148,6 +149,8 @@ export function useRigEngine(
         ...object,
         image: null,
         media: object.media ? { ...object.media, src: null } : undefined,
+        // Переменные, нужные слоям состояний: ядро отдаёт их в `vars` кадра.
+        watch: watchNames(readStates(object.script)),
       })),
       // Состояния enum приходят в ядро числами: в скрипте `manual.value == walk`
       // читается по имени, а не по номеру.

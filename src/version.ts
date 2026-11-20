@@ -123,7 +123,10 @@ export interface ProjectVersion {
  */
 export const VERSION: ProjectVersion = {
   release: [1, 1],
-  core: 25,
+  // Ядро 26: в кадре появились `vars` — значения локальных переменных по
+  // списку `watch` объекта. Их читает редактор (точки деформера, панель
+  // входов), сама формула их не требует.
+  core: 26,
   format: PRESET_FORMAT,
   bridge: 2,
   modules: MODULE_FORMAT,

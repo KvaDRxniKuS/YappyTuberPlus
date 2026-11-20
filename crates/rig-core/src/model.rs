@@ -175,6 +175,13 @@ pub struct RigObject {
     /// Стартовые настройки медиа: приходят из редактора вместе с объектом.
     #[serde(default)]
     pub media: Option<MediaDefaults>,
+    /// Локальные переменные, значения которых просит редактор: `vars` в кадре.
+    ///
+    /// Рендерер переменных скрипта не видит: деформер, привязанный к локальной
+    /// переменной объекта, иначе получил бы ноль. Ядро отдаёт только то, что
+    /// попросили, — кадр не разрастается до всех промежуточных величин.
+    #[serde(default)]
+    pub watch: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -546,6 +553,11 @@ pub struct Frame {
     pub texts: BTreeMap<String, String>,
     pub order: Vec<String>,
     pub diagnostics: Vec<String>,
+    /// Значения локальных переменных по списку `watch`: id объекта → имя → число.
+    ///
+    /// Отдаются только существующие имена; у объекта без `watch` записи нет.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub vars: BTreeMap<String, BTreeMap<String, f64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
