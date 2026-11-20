@@ -576,8 +576,8 @@ export function Scene(props: SceneProps) {
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
           <button
             className={props.ghostPref ? "active" : ""}
-            title={`Скрытые призраками: ${props.ghostPref ? "вкл" : "выкл"}`
-              + `${props.ghosts ? "" : " (видно в паузе и стопе)"} · Alt+клик по призраку — показать или скрыть`}
+            title={`Отображать скрытые слои в паузе и стопе: ${props.ghostPref ? "вкл" : "выкл"}`
+              + (props.ghosts ? " · Alt+клик по призраку возвращает объект в кадр" : "")}
             onClick={props.onToggleGhosts}
           >
             <Ghost size={15} />

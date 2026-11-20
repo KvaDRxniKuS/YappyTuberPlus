@@ -3,7 +3,7 @@ import {
   EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, layerRange, makeLayer,
   manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, resetStatesFor, reversePoses, scaleKeys, setPose, statesBlock, uniqueLayerName,
-  watchNames, writeStates,
+  weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, writeStates,
   type StateLayer, type States,
 } from "../../src/engine/states";
 import { paramGroups } from "../../src/engine/paramNames";
@@ -25,7 +25,7 @@ function object(script: string, parentId: string | null = null): RigObject {
 
 function bound(partial: Partial<StateLayer> = {}): StateLayer {
   return {
-    name: "взгляд", param: "manual.eye_x", range: [-1, 1], smooth: false, normalize: "sum",
+    name: "взгляд", param: "manual.eye_x", range: [-1, 1], smooth: 0, normalize: "sum",
     poses: [
       { at: -1, pose: { x: -20 } },
       { at: 1, pose: { x: 20 } },
@@ -64,14 +64,16 @@ test("четыре ключа дают три участка и разные с�
     + " + 10 * (t0_1 * (1 - t0_2)) + 30 * t0_2");
 });
 
-test("плавный ход добавляет smoothstep в каждый участок", () => {
-  const block = statesBlock(states(bound({ smooth: true })), object(""));
-  expect(block).toContain("t0_0 = smoothstep(0, 1, limit((manual.eye_x - (-1)) / 2, 0, 1))");
+test("сглаживание входа ставит smooth вокруг параметра до расчёта весов", () => {
+  const block = statesBlock(states(bound({ smooth: 120 })), object(""));
+  expect(block).toContain("t0_0 = limit((smooth(manual.eye_x, 120) - (-1)) / 2, 0, 1)");
+  // Без сглаживания параметр идёт напрямую.
+  expect(statesBlock(states(bound({ smooth: 0 })), object(""))).toContain("limit((manual.eye_x - (-1)) / 2, 0, 1)");
 });
 
 test("свободный слой объявляет веса выражениями", () => {
   const layer: StateLayer = {
-    name: "грусть", param: null, range: null, smooth: false, normalize: "sum",
+    name: "грусть", param: null, range: null, smooth: 0, normalize: "sum",
     poses: [{ weight: "smooth(mood, 240)", pose: { y: 6 } }],
   };
   const block = statesBlock(states(layer), object(""));
@@ -120,12 +122,12 @@ test("сброс нескольких объектов возвращает ск
 });
 
 test("круг «запись → чтение» сохраняет ключи, отрезок и режим", () => {
-  const layer = bound({ smooth: true, normalize: "average", range: [-2, 2] });
+  const layer = bound({ smooth: 200, normalize: "average", range: [-2, 2] });
   const written = writeStates("", states(layer), object(""));
   const parsed = readStates(written.script);
   expect(parsed.layers).toHaveLength(1);
   expect(parsed.layers[0]).toMatchObject({
-    name: "взгляд", param: "manual.eye_x", range: [-2, 2], smooth: true, normalize: "average",
+    name: "взгляд", param: "manual.eye_x", range: [-2, 2], smooth: 200, normalize: "average",
   });
   expect(parsed.layers[0].poses.map((pose) => pose.at)).toEqual([-1, 1]);
   expect(parsed.layers[0].poses[0].pose).toEqual({ x: -20 });
@@ -400,4 +402,69 @@ test("вставка ставит копии после указанного с�
   expect(pasted.layers.map((layer) => layer.name)).toEqual(["a", "x", "b", "c"]);
   expect(insertLayers(source, [], 99).layers.map((layer) => layer.name)).toEqual(["a", "b", "c"]);
   expect(removeLayers(source, [0, 2]).layers.map((layer) => layer.name)).toEqual(["b"]);
+});
+
+/* ── предпросмотр: веса и поза в точке таймлайна ────────────────────── */
+
+test("веса в точке: на ключе — сама поза, между ключами — доля", () => {
+  const layer = bound({ range: [-1, 1] });
+  expect(weightsAt(layer, -1)).toEqual([1, 0]);
+  expect(weightsAt(layer, 0)).toEqual([0.5, 0.5]);
+  expect(weightsAt(layer, 1)).toEqual([0, 1]);
+  // За крайними ключами значение держится, а не экстраполируется.
+  expect(weightsAt(layer, -5)).toEqual([1, 0]);
+  expect(weightsAt(layer, 5)).toEqual([0, 1]);
+});
+
+test("веса в точке повторяют формулу участков у четырёх ключей", () => {
+  const layer = bound({
+    poses: [
+      { at: 0, pose: {} }, { at: 1, pose: {} }, { at: 2, pose: {} }, { at: 3, pose: {} },
+    ],
+  });
+  // Базис: [1 − t₀, t₀(1 − t₁), t₁(1 − t₂), t₂]; посередине второго участка
+  // t₀ = 1, t₁ = 0.5, t₂ = 0 — вес делят второй и третий ключи.
+  const weights = weightsAt(layer, 1.5);
+  expect(weights[0]).toBeCloseTo(0, 9);
+  expect(weights[1]).toBeCloseTo(0.5, 9);
+  expect(weights[2]).toBeCloseTo(0.5, 9);
+  expect(weights[3]).toBeCloseTo(0, 9);
+  expect(weights.reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 9);
+});
+
+test("поза слоя в точке: смещения складываются, размер — множитель", () => {
+  const layer = bound({
+    poses: [{ at: -1, pose: { x: -20, sizeX: 2 } }, { at: 1, pose: { x: 20, sizeX: 1 } }],
+  });
+  // Середина: смещения взаимно гасятся (в дельту не попадают), размер — 1.5.
+  expect(poseAt(layer, 0)).toEqual({ sizeX: 1.5 });
+  expect(poseAt(layer, -1)).toEqual({ x: -20, sizeX: 2 });
+  // Пустая дельта: на ключе нет позы — объект не двигается.
+  expect(poseAt(bound({ poses: [{ at: 0, pose: {} }] }), 0)).toEqual({});
+});
+
+test("предпросмотр накладывает дельту на базу теми же правилами, что каналы", () => {
+  const base = { x: 10, y: 0, rotation: 0, skewX: 0, skewY: 0, sizeX: 100, sizeY: 100, opacity: 1 };
+  const posed = applyPoseToBase(base, { x: 5, rotation: -10, sizeX: 0.5, opacity: 0.5 }) as typeof base;
+  expect(posed.x).toBe(15);
+  expect(posed.rotation).toBe(-10);
+  expect(posed.sizeX).toBe(50);
+  expect(posed.opacity).toBe(0.5);
+  expect(posed.y).toBe(0);
+});
+
+test("своя запись предпросмотра не считается правкой человека", () => {
+  const base = { x: 10, y: 0, rotation: 0, skewX: 0, skewY: 0, sizeX: 100, sizeY: 100, opacity: 1 };
+  expect(sameBase(base, { ...base, x: 10.0000001 })).toBe(true);
+  expect(sameBase(base, { ...base, x: 10.5 })).toBe(false);
+  expect(sameBase(null, base)).toBe(false);
+});
+
+test("старый формат сглаживания читается как включённое сглаживание", () => {
+  const legacy = statesBlock({ layers: [{ ...bound(), smooth: 120 }] }, object(""));
+  expect(legacy).toContain("smooth(manual.eye_x, 120)");
+  const parsed = readStates(`// ── состояния: вкладка «Состояния» ──
+// @states {"layers":[{"name":"взгляд","param":"manual.eye_x","smooth":true,"normalize":"sum","poses":[{"at":0,"pose":{}}]}]}
+// ── конец состояний ──`);
+  expect(parsed.layers[0].smooth).toBe(SMOOTH_DEFAULT);
 });

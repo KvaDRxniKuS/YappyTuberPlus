@@ -2025,19 +2025,30 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 }
 .states-range input[type="number"], .states-range input:not([type]) { width: 58px; }
 .states-smooth { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--muted); }
+/* Таймлайн — линия, а не поле: ключи стоят на ней, точка ездит по ней. */
 .states-track {
-  position: relative; height: 22px; margin: 4px 4px 10px;
-  border-left: 1px solid var(--border); border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border-soft);
-  background: linear-gradient(var(--surface-2), var(--surface-2)) padding-box;
-  cursor: crosshair;
+  position: relative; height: 30px; margin: 2px 10px 12px; cursor: crosshair;
+  touch-action: none;
+}
+.states-track-line {
+  position: absolute; left: 0; right: 0; top: 8px; height: 2px;
+  background: var(--border); border-radius: 1px;
 }
 .states-key {
-  position: absolute; top: 2px; width: 9px; height: 9px; margin-left: -5px; padding: 0;
+  position: absolute; top: 4px; width: 10px; height: 10px; margin-left: -5px; padding: 0;
   border: 1px solid var(--accent-dim); border-radius: 50%; background: var(--surface);
-  transform: rotate(45deg); cursor: pointer;
+  cursor: grab; z-index: 2;
 }
-.states-key.active { background: var(--accent); border-color: var(--accent); }
+.states-key:hover { border-color: var(--accent); }
+.states-key.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 3px rgba(130, 213, 193, 0.16); }
+.states-key:active { cursor: grabbing; }
+/* Точка таймлайна: линия вверх через ключи и кружок под линией. */
+.states-head { position: absolute; top: 0; bottom: 0; width: 0; z-index: 3; pointer-events: none; }
+.states-head-line { position: absolute; top: 0; bottom: 8px; left: -1px; width: 2px; background: var(--accent); opacity: 0.75; }
+.states-head-dot {
+  position: absolute; bottom: 0; left: -5px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--bg);
+}
 .states-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .states-key-chip {
   display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px 1px 6px;
@@ -2049,8 +2060,24 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border: none; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; line-height: 1;
 }
 .states-key-chip button:hover, .states-weight button:hover { color: var(--danger); }
-.states-preview { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; color: var(--faint); font-size: 11px; }
-.states-preview input { flex: 1; }
+.states-at { color: var(--faint); font-size: 11px; align-self: center; margin-right: 2px; }
+.states-key-add {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+  padding: 0; border: 1px dashed var(--border); border-radius: 4px; background: transparent;
+  color: var(--muted); cursor: pointer;
+}
+.states-key-add:hover { border-color: var(--accent-dim); color: var(--accent); }
+/* Сглаживание входа: галочка и время в миллисекундах. */
+.states-smoothing {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 6px;
+  color: var(--faint); font-size: 11px;
+}
+.states-smoothing label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.states-smoothing input:not([type="checkbox"]) { width: 56px; }
+.states-unit { color: var(--faint); }
+/* Ручной вход: ползунок двигает вход, точка таймлайна едет за ним. */
+.states-manual { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; color: var(--faint); font-size: 11px; }
+.states-manual input { flex: 1; }
 .states-weights { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .states-weight {
   display: flex; align-items: center; gap: 5px; padding: 3px 4px; border-radius: 5px; border: 1px solid transparent;
@@ -2175,3 +2202,14 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 /* Интерфейс — не текст: выделять его мышью незачем (поля и скрипт — можно). */
 .app-shell { user-select: none; }
 .app-shell input, .app-shell textarea, .app-shell .cm-editor, .app-shell .cm-editor * { user-select: text; }
+
+/* Имя слоя: клик по названию — переименование, остальное место строки — выбор. */
+.states-name-text {
+  flex: 1 1 34%; min-width: 60px; padding: 2px 5px; border: 1px solid transparent;
+  border-radius: 4px; color: var(--text); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text;
+}
+.states-name-text:hover { border-color: var(--border-soft); background: var(--bg); }
+
+/* Пустое место в строке слоя: клик по нему — выделение, не переименование. */
+.states-blank { flex: 1 1 0; min-width: 6px; align-self: stretch; }

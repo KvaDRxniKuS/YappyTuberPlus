@@ -44,6 +44,8 @@ interface RightPanelProps {
   onStates?: (scripts: Record<string, string>) => void;
   /** Базовая поза выделения: нужна записи позы — она возвращает объект на место. */
   onBase?: (patch: Partial<RigObject["base"]>) => void;
+  /** Предпросмотр состояния: двигает базу без шага истории. */
+  onPreviewBase?: (patch: Partial<RigObject["base"]>) => void;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
   /** Привязка цветов объекта к каналам модулей: один шаг истории на всю пачку. */
@@ -216,12 +218,12 @@ export function RightPanel(props: RightPanelProps) {
     <aside className="right-panel panel-surface">
       <div className="right-tabs">
         <button className={tab === "behaviour" ? "active" : ""} onClick={() => setTab("behaviour")}><Spline size={14} /> Поведение</button>
-        {/* Параметры — вторая вкладка: позиция, размер, слой и материал нужны
-            не реже поведения, а сцена теперь занимает весь центр. */}
-        <button className={tab === "parameters" ? "active" : ""} onClick={() => setTab("parameters")}><Crosshair size={14} /> Параметры</button>
-        {/* «Состояния» — сразу за параметрами: это тоже сборка рига, но
-            нужна реже, чем повседневная правка позы. */}
+        {/* «Состояния» — сразу за поведением: это тоже сборка рига из формул,
+            и они правятся вместе. */}
         <button className={tab === "states" ? "active" : ""} onClick={() => setTab("states")}><Layers size={14} /> Состояния</button>
+        {/* Параметры — третья: позиция, размер, слой и материал нужны не реже,
+            а сцена теперь занимает весь центр. */}
+        <button className={tab === "parameters" ? "active" : ""} onClick={() => setTab("parameters")}><Crosshair size={14} /> Параметры</button>
         {/* «Фигура» стоит сразу после «Поведения»: у фигуры это вторая по
             частоте правка, а вкладка есть только у неё. */}
         {isShape && (
@@ -253,6 +255,7 @@ export function RightPanel(props: RightPanelProps) {
           globals={props.globals}
           onChange={props.onStates ?? props.onBehaviour}
           onBase={props.onBase}
+          onPreviewBase={props.onPreviewBase ?? props.onBase}
           onManual={props.onManual}
         />
       ) : tab === "shape" ? (

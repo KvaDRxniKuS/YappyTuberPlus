@@ -10,10 +10,17 @@ import type { ParamGroup, ParamItem } from "../engine/paramNames";
  * рисуем сами: он сгруппирован, ищет и по имени, и по подписи, и всегда
  * показывает всё, пока поле пустое.
  *
+ * Клавиши:
+ * - стрелки — ходят по списку, поле не трогают;
+ * - `Tab` — подставляет подсказку в поле и уходит к следующей: список остаётся
+ *   открытым, повторное нажатие берёт следующий вариант (перебирать удобно,
+ *   не отпуская клавиатуру). Фокус при этом никуда не уезжает;
+ * - `Enter` — берёт подсказку и закрывает список;
+ * - `Esc` — отмена, возвращается записанное значение.
+ *
  * Значение правится черновиком: в скрипт уходит только готовое имя — иначе
  * каждая буква переписывала бы блок состояний недописанным выражением.
  */
-
 
 interface ParamPickerProps {
   value: string;
@@ -27,28 +34,38 @@ interface ParamPickerProps {
 }
 
 export function ParamPicker(props: ParamPickerProps) {
+  // Черновик живёт и в состоянии (перерисовка), и в ref (обработчики читают
+  // актуальное значение, не дожидаясь перерисовки).
   const [draft, setDraft] = useState(props.value);
+  const draftRef = useRef(props.value);
   const [open, setOpen] = useState(false);
-  /** Что введено для поиска; `null` — поиск пуст, показываем всё. */
-  const [query, setQuery] = useState<string | null>(null);
+  /** Что набрано для поиска: подсказки фильтруются по нему, а не по черновику. */
+  const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
-  const box = useRef<HTMLDivElement>(null);
+  /** Значение уже отдано родителю: `blur` не должен отправлять старое. */
+  const committed = useRef(false);
   const input = useRef<HTMLInputElement>(null);
+
+  const write = (value: string) => {
+    draftRef.current = value;
+    setDraft(value);
+  };
 
   // Вне правки поле показывает то, что записано в блоке.
   useEffect(() => {
-    if (!open) setDraft(props.value);
+    if (open) return;
+    write(props.value);
   }, [props.value, open]);
 
   useEffect(() => {
     if (!props.autoFocus) return;
     setOpen(true);
-    setQuery(null);
+    setQuery("");
     input.current?.focus();
   }, [props.autoFocus]);
 
   const groups = useMemo(() => {
-    const needle = (query ?? "").trim().toLowerCase();
+    const needle = query.trim().toLowerCase();
     const matches = (item: ParamItem) => !needle
       || item.name.toLowerCase().includes(needle)
       || (item.note ?? "").toLowerCase().includes(needle);
@@ -59,67 +76,85 @@ export function ParamPicker(props: ParamPickerProps) {
   const flat = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const total = props.groups.reduce((sum, group) => sum + group.items.length, 0);
 
-  useEffect(() => { setHighlight(0); }, [query]);
-
   const commit = (value: string) => {
+    committed.current = true;
     if (value !== props.value) props.onChange(value);
-  };
-  const pick = (name: string) => {
-    setDraft(name);
-    setOpen(false);
-    setQuery(null);
-    commit(name);
   };
   const close = () => {
     setOpen(false);
-    setQuery(null);
-    setDraft(props.value);
+    setQuery("");
+  };
+  /** Взять подсказку: `stay` — оставить список открытым (Tab). */
+  const take = (item: ParamItem, stay: boolean) => {
+    write(item.name);
+    if (stay) return;
+    commit(item.name);
+    close();
   };
 
   return (
-    <div className={`pick ${props.className ?? ""}`} ref={box}>
+    <div className={`pick ${props.className ?? ""}`}>
       <input
         ref={input}
         className="pick-input"
         value={draft}
         placeholder={props.placeholder}
         title={props.title}
+        spellCheck={false}
         onChange={(event) => {
-          setDraft(event.target.value);
+          write(event.target.value);
           setQuery(event.target.value);
+          setHighlight(0);
           setOpen(true);
         }}
         onFocus={() => {
+          setQuery("");
+          setHighlight(0);
           setOpen(true);
-          setQuery(null);
         }}
         onBlur={() => {
-          // Клик по варианту гасит фокус раньше, чем сработает выбор.
+          // Клик по варианту гасит фокус раньше, чем сработает выбор: отдаём
+          // значение только если его ещё не отдали.
           window.setTimeout(() => {
-            if (!box.current?.contains(document.activeElement)) {
-              commit(draft.trim());
-              close();
-            }
+            if (!committed.current) commit(draftRef.current.trim());
+            committed.current = false;
+            close();
           }, 0);
         }}
         onKeyDown={(event) => {
-          if (event.key === "ArrowDown") {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             setOpen(true);
-            setHighlight((value) => Math.min(flat.length - 1, value + 1));
-          } else if (event.key === "ArrowUp") {
+            setHighlight((value) => {
+              const next = event.key === "ArrowDown" ? value + 1 : value - 1;
+              return Math.max(0, Math.min(Math.max(0, flat.length - 1), next));
+            });
+          } else if (event.key === "Tab") {
+            // Tab — тот же перебор, что стрелками, но с подстановкой в поле.
             event.preventDefault();
-            setHighlight((value) => Math.max(0, value - 1));
+            if (!open) {
+              setQuery(draftRef.current);
+              setHighlight(0);
+              setOpen(true);
+              return;
+            }
+            const item = flat[highlight];
+            if (!item) return;
+            take(item, true);
+            setHighlight((value) => Math.min(flat.length - 1, value + 1));
           } else if (event.key === "Enter") {
             event.preventDefault();
-            if (open && flat[highlight]) pick(flat[highlight].name);
+            const item = open ? flat[highlight] : undefined;
+            if (item) take(item, false);
             else {
-              commit(draft.trim());
+              commit(draftRef.current.trim());
               close();
             }
             input.current?.blur();
           } else if (event.key === "Escape") {
             event.preventDefault();
+            committed.current = true;
+            write(props.value);
             close();
             input.current?.blur();
           }
@@ -142,7 +177,7 @@ export function ParamPicker(props: ParamPickerProps) {
                     // Не даём полю потерять фокус до выбора.
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setHighlight(index)}
-                    onClick={() => pick(item.name)}
+                    onClick={() => take(item, false)}
                   >
                     <span>{item.name}</span>
                     {item.note && <small>{item.note}</small>}

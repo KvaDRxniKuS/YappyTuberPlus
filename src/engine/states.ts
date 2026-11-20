@@ -73,8 +73,15 @@ export interface StateLayer {
   param: string | null;
   /** Отрезок таймлайна; `null` — брать из паспорта входа. */
   range: [number, number] | null;
-  /** `smoothstep` внутри участка вместо прямой. */
-  smooth: boolean;
+  /**
+   * Сглаживание входа, мс: значение параметра проходит через `smooth(...)`
+   * перед расчётом весов. `0` — выключено.
+   *
+   * Это именно сглаживание **входа**, а не формы участка: у трекера дрожание
+   * снимается временем, а не изменением кривой между ключами. Старый формат
+   * знал только `true`/`false` — `true` читается как `SMOOTH_DEFAULT`.
+   */
+  smooth: number;
   /** `sum` — наложение, `average` — нормированная смесь. */
   normalize: "sum" | "average";
   poses: Pose[];
@@ -127,6 +134,17 @@ function readPoints(raw: unknown): Record<string, PosePoint> | undefined {
     result[key] = [x, y];
   }
   return Object.keys(result).length ? result : undefined;
+}
+
+/** Сглаживание входа: мс, `true` из старого формата, иначе выключено. */
+export const SMOOTH_DEFAULT = 120;
+export const SMOOTH_LIMIT = 2000;
+
+function readSmooth(raw: unknown): number {
+  if (raw === true) return SMOOTH_DEFAULT;
+  const value = finite(raw);
+  if (value === null || value <= 0) return 0;
+  return Math.min(SMOOTH_LIMIT, Math.round(value));
 }
 
 function readPose(raw: unknown): Pose | null {
@@ -187,7 +205,7 @@ function readLayer(raw: unknown): StateLayer | null {
     name,
     param,
     range,
-    smooth: source.smooth === true,
+    smooth: readSmooth(source.smooth),
     normalize: source.normalize === "average" ? "average" : "sum",
     poses,
   };
@@ -273,8 +291,11 @@ function weightLines(layer: StateLayer, index: number): {
   for (let segment = 0; segment < keys.length - 1; segment += 1) {
     const from = keys[segment];
     const span = keys[segment + 1] - from;
-    const raw = `limit((${layer.param} - ${signed(from)}) / ${num(span)}, 0, 1)`;
-    temps.push(`t${index}_${segment} = ${layer.smooth ? `smoothstep(0, 1, ${raw})` : raw}`);
+    // Сглаживание входа — вокруг параметра, поэтому `smooth` стоит до деления:
+    // иначе дрожание трекера попадало бы в участок уже после ограничения.
+    const source = layer.smooth > 0 ? `smooth(${layer.param}, ${num(layer.smooth)})` : layer.param;
+    const raw = `limit((${source} - ${signed(from)}) / ${num(span)}, 0, 1)`;
+    temps.push(`t${index}_${segment} = ${raw}`);
   }
   const weights: string[] = [];
   weights.push(`(1 - t${index}_0)`);
@@ -506,7 +527,7 @@ export function makeLayer(index: number, param: string | null = null): StateLaye
     name: param ? `слой ${index + 1}` : `веса ${index + 1}`,
     param,
     range: null,
-    smooth: false,
+    smooth: 0,
     normalize: "sum",
     poses: param ? [{ at: 0, pose: {} }] : [{ weight: "1", pose: {} }],
   };
@@ -813,4 +834,110 @@ export function scaleKeys(layer: StateLayer, from: [number, number], to: [number
     }
   ));
   return sortKeys({ ...layer, range: to, poses });
+}
+
+/**
+ * Веса слоя по значению параметра — тот же базис, что генерирует `weightLines`,
+ * но числом.
+ *
+ * Нужен предпросмотру: вкладка показывает позу «между ключами», не дожидаясь
+ * ядра. Дублирование формулы намеренное: генератор пишет текст для ядра, а
+ * здесь считается картинка в редакторе, и разъехаться они не могут незаметно —
+ * у обоих один и тот же набор ключей и одно правило участков.
+ */
+export function weightsAt(layer: StateLayer, value: number): number[] {
+  if (!layer.param) return [];
+  const keys = layer.poses.map((pose) => pose.at ?? 0);
+  if (keys.length === 0) return [];
+  if (keys.length === 1) return [1];
+  const temps: number[] = [];
+  for (let segment = 0; segment < keys.length - 1; segment += 1) {
+    const from = keys[segment];
+    const span = keys[segment + 1] - from;
+    temps.push(span === 0 ? 0 : Math.min(1, Math.max(0, (value - from) / span)));
+  }
+  const weights: number[] = [1 - temps[0]];
+  for (let poseIndex = 1; poseIndex < keys.length - 1; poseIndex += 1) {
+    weights.push(temps[poseIndex - 1] * (1 - temps[poseIndex]));
+  }
+  weights.push(temps[temps.length - 1]);
+  return weights;
+}
+
+/**
+ * Дельта выбранного слоя в точке таймлайна: то, что слой делает с объектом.
+ *
+ * Правила те же, что у каналов: смещения складываются, размер и прозрачность —
+ * множители, видимость только гасит. Прочие слои не учитываются: вкладка
+ * показывает состояние **этого** слоя — иначе правку одного слоя нельзя было бы
+ * проверить, не глядя на остальные.
+ */
+export function poseAt(layer: StateLayer, value: number): Partial<Record<StateField, number>> {
+  const weights = weightsAt(layer, value);
+  const delta: Partial<Record<StateField, number>> = {};
+  if (!weights.length) return delta;
+  for (const field of STATE_FIELDS) {
+    if (field === "visible") {
+      let factor = 1;
+      layer.poses.forEach((pose, index) => {
+        const item = pose.pose.visible;
+        if (item === undefined || item === 1) return;
+        factor *= 1 - weights[index] * (1 - item);
+      });
+      if (Math.abs(factor - 1) > 1e-9) delta.visible = Math.round(factor * 1000) / 1000;
+      continue;
+    }
+    let total = 0;
+    let used = false;
+    layer.poses.forEach((pose, index) => {
+      const raw = pose.pose[field];
+      if (raw === undefined) return;
+      used = true;
+      total += (MULTIPLICATIVE.has(field) ? raw - 1 : raw) * weights[index];
+    });
+    if (!used) continue;
+    const result = MULTIPLICATIVE.has(field) ? 1 + total : total;
+    if (Math.abs(result - (MULTIPLICATIVE.has(field) ? 1 : 0)) < 1e-9) continue;
+    delta[field] = Math.round(result * 1000) / 1000;
+  }
+  return delta;
+}
+
+/** Дельта выбранной позы: у свободного слоя предпросмотр идёт по ней. */
+export function poseOfPose(pose: Pose): Partial<Record<StateField, number>> {
+  return { ...pose.pose };
+}
+
+/**
+ * Базовая поза с наложенной дельтой — то, что видно на сцене в предпросмотре.
+ *
+ * Складываются смещения и повороты, умножаются размер и прозрачность: ровно те
+ * же правила, что у каналов `*_states` в скрипте.
+ */
+export function applyPoseToBase(
+  base: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number },
+  delta: Partial<Record<StateField, number>>,
+): { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number } {
+  const next = { ...base };
+  for (const field of ["x", "y", "rotation", "skewX", "skewY"] as const) {
+    const value = delta[field];
+    if (value === undefined) continue;
+    next[field] = Math.round(((next[field] ?? 0) + value) * 1000) / 1000;
+  }
+  for (const field of ["sizeX", "sizeY", "opacity"] as const) {
+    const value = delta[field];
+    if (value === undefined) continue;
+    next[field] = Math.round(((next[field] ?? 1) * value) * 1000) / 1000;
+  }
+  return next;
+}
+
+/** Совпадают ли позы: предпросмотр не должен путать свою запись с правкой человека. */
+export function sameBase(
+  left: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number } | null,
+  right: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number } | null,
+): boolean {
+  if (!left || !right) return left === right;
+  const fields = ["x", "y", "rotation", "skewX", "skewY", "sizeX", "sizeY", "opacity"] as const;
+  return fields.every((field) => Math.abs((left[field] ?? 0) - (right[field] ?? 0)) < 1e-6);
 }

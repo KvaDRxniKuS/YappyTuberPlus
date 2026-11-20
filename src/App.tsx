@@ -281,10 +281,15 @@ export default function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey;
-      const key = event.key.toLowerCase();
-      const browserCommand = event.key === "F5"
-        || (mod && ["r", "f", "p", "+", "-", "=", "0"].includes(key));
-      if (browserCommand) event.preventDefault();
+      // Смотрим на `code`, а не на `key`: в русской раскладке `Ctrl+R` даёт
+      // `key === "к"`, и перезагрузка проходила мимо запрета.
+      const reload = event.code === "F5" || (mod && event.code === "KeyR");
+      const print = mod && event.code === "KeyP";
+      const zoom = mod && [
+        "Equal", "Minus", "Digit0", "NumpadAdd", "NumpadSubtract", "Numpad0",
+      ].includes(event.code);
+      // Поиск `Ctrl+F` оставлен браузеру: он безвреден и иногда удобен.
+      if (reload || print || zoom) event.preventDefault();
     };
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey) event.preventDefault();
@@ -975,7 +980,12 @@ export default function App() {
     }));
   }, [setPreset]);
 
-  const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base") => {
+  /**
+   * Базовая поза выделения. `record: false` — предпросмотр состояния: он двигает
+   * объект на сцене, но шагом истории не становится, иначе перетаскивание
+   * ползунка таймлайна забивало бы отмену.
+   */
+  const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base", record = true) => {
     const current = presetRef.current;
     const ids = new Set(selectionRef.current);
     let objects = current.objects.map((object) => (ids.has(object.id)
@@ -987,7 +997,7 @@ export default function App() {
       const nextBase = { ...object.base, ...patch };
       objects = propagateBase(objects, object.id, object.base, nextBase, ids);
     }
-    commit({ ...current, objects }, { label: "Правка выделения", coalesce });
+    commit({ ...current, objects }, { label: "Правка выделения", coalesce, record });
   }, [commit]);
 
   /** Относительный сдвиг всей выборки. */
@@ -1610,6 +1620,7 @@ export default function App() {
           onBehaviour={updateScripts}
           onStates={updateStateScripts}
           onBase={(base) => updateSelectedBases(base, "state-record")}
+          onPreviewBase={(base) => updateSelectedBases(base, "state-preview", false)}
           onText={updateTextObjects}
           onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}

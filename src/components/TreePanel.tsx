@@ -7,6 +7,7 @@ import type { RigObject } from "../types";
 import { isDescendant, scriptValue } from "../engine/preset";
 import { rangeIds, selectionRoots, treeRows } from "../engine/selection";
 import { useAssetUrl } from "../hooks/useAssets";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 
 /**
  * Миниатюра строки дерева.
@@ -65,6 +66,8 @@ const OBJECT_MIME = "text/yappy-object";
 export function TreePanel(props: TreePanelProps) {
   const { objects, selectedIds, primaryId } = props;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  /** Своё меню строки: ПКМ в дереве не должна открывать меню браузера. */
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [drop, setDrop] = useState<DropTarget>(null);
   // Те же значения в ref: `drop` переключается на каждом движении мыши, а
@@ -194,6 +197,14 @@ export function TreePanel(props: TreePanelProps) {
                 props.onSelect(object.id);
               }}
               onDoubleClick={() => props.onRequestRename(object.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                // ПКМ по невыделенной строке сначала выбирает её: иначе
+                // «удалить» унесло бы чужое выделение.
+                if (!selectedSet.has(object.id)) props.onSelect(object.id);
+                setMenu({ x: event.clientX, y: event.clientY, id: object.id });
+              }}
             >
               <button
                 className={`tree-expander ${hasChildren ? "" : "empty"}`}
@@ -267,8 +278,30 @@ export function TreePanel(props: TreePanelProps) {
         </div>
       </div>
       <div className="tree-hint"><Import size={12} /> PNG или WebP · до 256 объектов</div>
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={rowMenu(menu.id)} />
+      )}
     </aside>
   );
+
+  /** Пункты меню строки дерева. */
+  function rowMenu(id: string): ContextMenuItem[] {
+    const target = objects.find((item) => item.id === id);
+    if (!target) return [];
+    return [
+      { label: "Переименовать", hint: "F2", onSelect: () => props.onRequestRename(id) },
+      { label: "Дублировать", hint: "Ctrl+D", onSelect: () => { props.onSelect(id); props.onDuplicate(); } },
+      { label: "", rule: true },
+      {
+        label: target.enabled === false ? "Показать" : "Скрыть",
+        hint: "без правки формул",
+        onSelect: () => props.onToggleVisibility(id),
+      },
+      { label: "", rule: true },
+      { label: "Удалить", hint: target.name, danger: true, onSelect: () => { props.onSelect(id); props.onDelete(); } },
+    ];
+  }
 }
 
 /** Поле переименования прямо в строке дерева: Enter/blur — применить, Esc — отменить. */
