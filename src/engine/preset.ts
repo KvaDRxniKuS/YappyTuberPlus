@@ -15,6 +15,7 @@ import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
 import { normalizeEnvironment, normalizeMaterial } from "../render/material";
 import { normalizeWarp } from "../render/warp";
+import { normalizeMesh } from "./mesh";
 import { PRESET_FORMAT, PRESET_FORMATS_READABLE } from "../version";
 import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
 import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
@@ -369,7 +370,11 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // несколько спрайтов, поэтому ссылка живёт на объекте, а не в фигуре.
         mask: normalizeMask(object.mask),
         // Деформация крайних точек: без поля объект рисуется как обычно.
+        // Новый формат — сетка (`mesh`); старый `warp` остаётся в пресете как
+        // есть и мигрирует при первом обращении (`meshOf`), поэтому открытие
+        // файла ничего в нём не меняет.
         warp: normalizeWarp(object.warp),
+        mesh: kind === "sprite" || kind === "media" ? normalizeMesh(object.mesh) : undefined,
       };
     }).map((object) => normalizeMaskBlock(object)),
     globals: preset.globals || "",
