@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Blocks, Braces, ChevronRight, CircleAlert, Crosshair, Gauge, Globe2, Layers, Shapes, SlidersHorizontal, Spline } from "lucide-react";
-import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
+import type { InputValues, MeshSpec, ModuleInstance, RigFrame, RigObject } from "../types";
 import type { StatePreview } from "../engine/states";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
@@ -47,6 +47,8 @@ interface RightPanelProps {
   onStatesQuiet?: (scripts: Record<string, string>) => void;
   /** Базовая поза выделения: нужна записи позы — она возвращает объект на место. */
   onBase?: (patch: Partial<RigObject["base"]>, objectId: string) => void;
+  /** Сетка объекта после записи точек в ключ — возврат базы без шага истории. */
+  onMesh?: (mesh: MeshSpec, objectId: string) => void;
   /** Предпросмотр состояния: двигает базу без шага истории. */
   /** Предпросмотр состояний — только отрисовка; `null` снимает его. */
   onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
@@ -262,6 +264,7 @@ export function RightPanel(props: RightPanelProps) {
           onChange={props.onStates ?? props.onBehaviour}
           onNormalize={props.onStatesQuiet}
           onBase={props.onBase}
+          onMesh={props.onMesh}
           onPreviewState={props.onPreviewState}
           dragging={props.dragging}
           onManual={props.onManual}

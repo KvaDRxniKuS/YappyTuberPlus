@@ -70,9 +70,26 @@ import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout, type EnvironmentSpec,
-  type MeshSpec, type ModuleInstance, type RigObject, type RigPreset, type Vec2, type WarpSpec,
+  type GridSpec, type MeshSpec, type ModuleInstance, type RigObject, type RigPreset, type Vec2,
+  type WarpSpec,
 } from "./types";
+import { readStates, remapStatesPoints, writeStates } from "./engine/states";
 import type { StatePreview } from "./engine/states";
+import { meshOf } from "./engine/mesh";
+
+/**
+ * Смещения ключей на новую густоту сетки.
+ *
+ * Густота — авторская настройка, а ключи уже могут гнуть узлы: индексы у новой
+ * сетки другие, поэтому точки раскладываются билинейно и блок переписывается.
+ * Скрипт без точек не трогаем — лишней записи в истории не будет.
+ */
+function remapObjectPoints(object: RigObject, from: GridSpec, to: GridSpec): RigObject {
+  const states = readStates(object.script);
+  if (!states.layers.some((layer) => layer.poses.some((pose) => pose.points))) return object;
+  const script = writeStates(object.script, remapStatesPoints(states, from, to), object).script;
+  return script === object.script ? object : { ...object, script };
+}
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
 const LAYOUT_KEY = "yappytuberplus.layout.v1";
@@ -1009,11 +1026,36 @@ export default function App() {
   const meshObject = useCallback((id: string, mesh: MeshSpec) => {
     setPreset((current) => ({
       ...current,
-      objects: current.objects.map((object) => (
-        object.id === id ? { ...object, mesh, warp: undefined } : object
-      )),
+      objects: current.objects.map((object) => {
+        if (object.id !== id) return object;
+        // Густота изменилась — точки ключей переезжают на новые индексы узлов:
+        // иначе состояние гнуло бы не те места картинки.
+        const before = meshOf(object)?.deform;
+        const moved = before && (before.cols !== mesh.deform.cols || before.rows !== mesh.deform.rows)
+          ? remapObjectPoints(object, before, mesh.deform)
+          : object;
+        return { ...moved, mesh, warp: undefined };
+      }),
     }));
   }, [setPreset]);
+
+  /**
+   * Вернуть сетку объекта после записи точек в ключ.
+   *
+   * Вкладка состояний снимает поправку с базы и уносит её в ключ, а базу
+   * возвращает сюда. Шага истории нет: жест записан его началом.
+   */
+  const restoreMesh = useCallback((mesh: MeshSpec, objectId: string) => {
+    commit(
+      {
+        ...presetRef.current,
+        objects: presetRef.current.objects.map((object) => (
+          object.id === objectId ? { ...object, mesh, warp: undefined } : object
+        )),
+      },
+      { label: "Запись позы", coalesce: "state-record", record: false },
+    );
+  }, [commit]);
 
   /**
    * Базовая поза выделения. `record: false` — предпросмотр состояния: он двигает
@@ -1674,6 +1716,7 @@ export default function App() {
           onStates={updateStateScripts}
           onStatesQuiet={normalizeStateScripts}
           onBase={(base, id) => restoreBase(base, id)}
+          onMesh={(mesh, id) => restoreMesh(mesh, id)}
           onPreviewState={(preview, id) => previewState(preview, id)}
           dragging={dragging}
           onText={updateTextObjects}

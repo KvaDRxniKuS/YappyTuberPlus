@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, RotateCcw, Trash2, Undo2 } from "lucide-react";
-import type { BasePose, InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
+import type { BasePose, GridSpec, InputValues, MeshSpec, ModuleInstance, RigFrame, RigObject, Vec2 } from "../types";
 import { NumberField } from "./NumberField";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ParamPicker } from "./ParamPicker";
 import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
+import { meshOf } from "../engine/mesh";
 import {
-  addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
-  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, replacePose, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
-  removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, shiftPose, withLiveMirrors, writeStates,
+  addKey, addLayer, addPoints, cloneLayers, fromPosePoints, insertLayers, invertByInput, keyAt, keyUnderPoint,
+  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, noPoints, patchLayer, pointsFromGrids, poseAt, poseFromBase,
+  posePoints, readStates, removeKey, removeLayer, replacePose,
+  removeLayers, resetStatesFor, reversePoses, sameBase, samePoints, scaleKeys, setPose, shiftPose, toPosePoints,
+  withLiveMirrors, writeStates,
   liveName,
   SMOOTH_DEFAULT, SMOOTH_LIMIT,
   STATE_FIELDS, type Pose, type StateField, type StateLayer, type StatePreview, type States,
@@ -84,6 +87,13 @@ interface StatesPanelProps {
   dragging?: boolean;
   /** Предпросмотр входа `manual.*` — двигает то же значение, что и ползунок входов. */
   onManual?: (key: string, value: number) => void;
+  /**
+   * Вернуть сетку объекта после записи точек в ключ.
+   *
+   * Как и у поз: двигали базу, а форму держит ключ. Возврат идёт без шага
+   * истории — жест уже записан его началом.
+   */
+  onMesh?: (mesh: MeshSpec, objectId: string) => void;
 }
 
 export function StatesPanel(props: StatesPanelProps) {
@@ -130,6 +140,17 @@ export function StatesPanel(props: StatesPanelProps) {
   previewApi.current = props.onPreviewState;
   const restoreApi = useRef(props.onBase);
   restoreApi.current = props.onBase;
+  const restoreMeshApi = useRef(props.onMesh);
+  restoreMeshApi.current = props.onMesh;
+  /**
+   * Сетка объекта при открытии вкладки и та, что показана сейчас.
+   *
+   * Как и с позой: руками человек двигает **базу**, а форму держит ключ.
+   * Поэтому разница «база сейчас − база при открытии» уходит в ключ, а база
+   * возвращается на место.
+   */
+  const authorMesh = useRef<GridSpec | null>(null);
+  const lastMesh = useRef<GridSpec | null>(null);
   /** Перетаскивание: ключ или точка таймлайна. */
   const drag = useRef<
     | { kind: "key"; index: number; scale: [number, number] }
@@ -181,6 +202,9 @@ export function StatesPanel(props: StatesPanelProps) {
     if (authorBase || !object) return;
     setAuthorBase({ ...object.base });
     lastBase.current = { ...object.base };
+    const mesh = meshOf(object);
+    authorMesh.current = mesh ? { ...mesh.deform, points: [...mesh.deform.points] } : null;
+    lastMesh.current = authorMesh.current;
     sent.current = null;
   }, [object, authorBase]);
   /** Смена слоя: точка таймлайна встаёт на его первый ключ. */
@@ -327,6 +351,22 @@ export function StatesPanel(props: StatesPanelProps) {
   };
 
   /**
+   * Точки деформера в точке таймлайна: что слой делает с нарезкой.
+   *
+   * Считаются той же линейной смесью, что и поля позы, но живут отдельной
+   * картой: ядро про артмеш не знает, поэтому рендереру их отдаёт вкладка.
+   */
+  const previewPoints = (): Record<string, Vec2> => {
+    if (!layer) return {};
+    if (layer.param) return posePoints(layer, at ?? range[0]);
+    const chosen = layer.poses[keyIndex];
+    return fromPosePoints(chosen?.points) ?? {};
+  };
+
+  /** Точки текущего ключа — для счётчика и кнопки сброса формы. */
+  const meshPoints = layer ? fromPosePoints(layer.poses[keyIndex]?.points) : undefined;
+
+  /**
    * Живой вклад этого же слоя — ровно то, что предпросмотр перекрывает.
    *
    * Сцена вычитает его из кадра и прибавляет позу, поэтому `inherit`, поведение,
@@ -384,12 +424,16 @@ export function StatesPanel(props: StatesPanelProps) {
     if (props.dragging) return;
     const pose = previewPose();
     const live = previewLive();
-    const stamp = JSON.stringify({ pose, live });
+    const points = previewPoints();
+    const stamp = JSON.stringify({ pose, live, points });
     if (sent.current === stamp) return;
     sent.current = stamp;
     // Id передаём явно: предпросмотр — про объект вкладки, а не про последний
     // в выделении. Иначе при мультивыделении поза уезжала чужому объекту.
-    props.onPreviewState({ id: object.id, pose, live }, object.id);
+    props.onPreviewState(
+      { id: object.id, pose, live, points: noPoints(points) ? undefined : points },
+      object.id,
+    );
   });
 
   /** Вышли из вкладки — предпросмотр снят, объект сразу на своём месте. */
@@ -435,6 +479,56 @@ export function StatesPanel(props: StatesPanelProps) {
     }
     if (!pose) return;
     apply(patchLayer(states, layerIndex, setPose(layer, keyIndex, shiftPose(pose.pose, shift))), layerIndex, keyIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  /**
+   * Запись точек деформера — тем же правилом, что и позы.
+   *
+   * Человек тянет узлы сетки на сцене, то есть двигает базу. Вкладка замечает
+   * разницу с базой при открытии и уносит её в ключ под точкой таймлайна, а базу
+   * возвращает: формой двигает состояние, а не сама сетка. Пока идёт жест,
+   * записи нет — иначе одна и та же поправка прибавлялась бы каждый кадр.
+   */
+  useEffect(() => {
+    if (!object || !layer) return;
+    const mesh = meshOf(object);
+    const author = authorMesh.current;
+    if (!mesh || !author) return;
+    // Первый кадр вкладки и предпросмотр сетку не меняют — писать нечего.
+    const previous = lastMesh.current;
+    lastMesh.current = { ...mesh.deform, points: [...mesh.deform.points] };
+    if (!previous || props.dragging) return;
+    const delta = pointsFromGrids(author, mesh.deform);
+    if (samePoints(delta, pointsFromGrids(author, previous))) return;
+    // База возвращается на место — дальше двигает ключ.
+    restoreMeshApi.current?.({ ...mesh, deform: author }, object.id);
+    lastMesh.current = { ...author, points: [...author.points] };
+    if (noPoints(delta)) return;
+    const point = round3(at ?? range[0]);
+    const index = layer.param
+      ? layer.poses.findIndex((item) => Math.abs((item.at ?? 0) - point) < 1e-6)
+      : keyIndex;
+    // Прибавка к тому, что ключ уже показывает: иначе форма прыгнет назад.
+    const shown = layer.param
+      ? (index >= 0 ? fromPosePoints(layer.poses[index].points) : posePoints(layer, point))
+      : fromPosePoints(layer.poses[keyIndex]?.points);
+    const points = toPosePoints(addPoints(shown ?? {}, delta));
+    if (layer.param && index < 0) {
+      const next = addKey(layer, point, {});
+      const created = next.poses.findIndex((item) => Math.abs((item.at ?? 0) - point) < 1e-6);
+      const withPoints = {
+        ...next,
+        poses: next.poses.map((item, at2) => (at2 === created ? { ...item, points } : item)),
+      };
+      apply(patchLayer(states, layerIndex, withPoints), layerIndex, created);
+      return;
+    }
+    const nextLayer = {
+      ...layer,
+      poses: layer.poses.map((item, at2) => (at2 === index ? { ...item, points } : item)),
+    };
+    apply(patchLayer(states, layerIndex, nextLayer), layerIndex, index);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
@@ -1029,10 +1123,28 @@ export function StatesPanel(props: StatesPanelProps) {
             >
               <Undo2 size={12} /> Сбросить позу
             </button>
+            <button
+              onClick={() => {
+                if (!layer) return;
+                // Ключ перестаёт двигать сетку: видна авторская форма.
+                const next = {
+                  ...layer,
+                  poses: layer.poses.map((item, index) => (
+                    index === keyIndex ? { ...item, points: undefined } : item
+                  )),
+                };
+                apply(patchLayer(states, layerIndex, next), layerIndex, keyIndex);
+              }}
+              disabled={!meshPoints}
+              title="Убрать точки деформера из ключа: сетка вернётся к авторской форме"
+            >
+              <Undo2 size={12} /> Сбросить сетку
+            </button>
             <small>
               {bound
-                ? "двиньте объект на сцене — поза запишется в ключ под точкой таймлайна"
-                : "двиньте объект на сцене — поза запишется в выбранную позу"}
+                ? "двиньте объект или узлы сетки на сцене — попадёт в ключ под точкой таймлайна"
+                : "двиньте объект или узлы сетки на сцене — попадёт в выбранную позу"}
+              {meshPoints ? ` · узлов в ключе: ${Object.keys(meshPoints).length}` : ""}
             </small>
           </div>
         </>

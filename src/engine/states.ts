@@ -1,4 +1,5 @@
-import type { RigObject } from "../types";
+import { regularGrid, resizeGrid } from "./mesh";
+import type { GridSpec, RigObject, Vec2 } from "../types";
 
 /**
  * Состояния объекта — блок в скрипте, как «Поведение».
@@ -47,6 +48,14 @@ export interface StatePreview {
   id: string;
   pose: Partial<Record<StateField, number>>;
   live: Partial<Record<StateField, number>>;
+  /**
+   * Смещения узлов деформера: индекс узла → дельта в долях зоны.
+   *
+   * Позы двигают объект, точки двигают саму нарезку. Считает их вкладка: ядро
+   * про артмеш ничего не знает, поэтому кадр их не приносит — рендереру они
+   * приходят отсюда, вместе с позой предпросмотра.
+   */
+  points?: Record<string, Vec2>;
 }
 
 /**
@@ -1084,4 +1093,154 @@ export function sameBase(
   if (!left || !right) return left === right;
   const fields = ["x", "y", "rotation", "skewX", "skewY", "sizeX", "sizeY", "opacity"] as const;
   return fields.every((field) => Math.abs((left[field] ?? 0) - (right[field] ?? 0)) < 1e-6);
+}
+
+
+/* ── Точки деформера в позах ─────────────────────────────────────────────
+ *
+ * Ключ может двигать не только объект, но и узлы сетки: индекс узла → дельта в
+ * долях зоны. Считаются они так же, как поля позы — суммой по весам, — но живут
+ * отдельной картой, потому что индексы узлов у разных сеток разные.
+ */
+
+/** Смещения точек позы по весам слоя: то же сложение, что у полей позы. */
+export function posePoints(layer: StateLayer, value: number): Record<string, Vec2> {
+  const weights = weightsAt(layer, value);
+  const result: Record<string, Vec2> = {};
+  if (!weights.length) return result;
+  layer.poses.forEach((pose, index) => {
+    const weight = weights[index] ?? 0;
+    if (!pose.points || weight <= 0) return;
+    for (const [key, offset] of Object.entries(pose.points)) {
+      const previous = result[key] ?? { x: 0, y: 0 };
+      result[key] = {
+        x: Math.round((previous.x + offset[0] * weight) * 10000) / 10000,
+        y: Math.round((previous.y + offset[1] * weight) * 10000) / 10000,
+      };
+    }
+  });
+  return result;
+}
+
+/** Пустая карта точек: у почти всех ключей её нет, и это нормально. */
+export function noPoints(points?: Record<string, Vec2> | null): boolean {
+  return !points || !Object.keys(points).length;
+}
+
+/** Разница двух сеток по узлам: «что человек сдвинул» в долях зоны. */
+export function pointsFromGrids(from: GridSpec, to: GridSpec): Record<string, Vec2> {
+  const result: Record<string, Vec2> = {};
+  if (from.cols !== to.cols || from.rows !== to.rows) return result;
+  to.points.forEach((point, index) => {
+    const start = from.points[index];
+    if (!start) return;
+    const dx = Math.round((point.x - start.x) * 10000) / 10000;
+    const dy = Math.round((point.y - start.y) * 10000) / 10000;
+    if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return;
+    result[String(index)] = { x: dx, y: dy };
+  });
+  return result;
+}
+
+/** Прибавка одних точек к другим: правка на сцене складывается с позой ключа. */
+export function addPoints(
+  base: Record<string, Vec2> | undefined,
+  delta: Record<string, Vec2> | undefined,
+): Record<string, Vec2> {
+  const result: Record<string, Vec2> = {};
+  for (const source of [base, delta]) {
+    for (const [key, offset] of Object.entries(source ?? {})) {
+      const previous = result[key] ?? { x: 0, y: 0 };
+      result[key] = {
+        x: Math.round((previous.x + offset.x) * 10000) / 10000,
+        y: Math.round((previous.y + offset.y) * 10000) / 10000,
+      };
+    }
+  }
+  return result;
+}
+
+/** Очистить у точек нулевые смещения: ключ без движения — это пустая карта. */
+export function tidyPoints(points: Record<string, Vec2> | undefined): Record<string, Vec2> | undefined {
+  if (!points) return undefined;
+  const result: Record<string, Vec2> = {};
+  for (const [key, offset] of Object.entries(points)) {
+    // Округление здесь же: 0.1 + 0.2 иначе навсегда остаётся 0.30000000000000004
+    // и в ключе, и в скрипте.
+    const x = Math.round(offset.x * 10000) / 10000;
+    const y = Math.round(offset.y * 10000) / 10000;
+    if (Math.abs(x) < 1e-4 && Math.abs(y) < 1e-4) continue;
+    result[key] = { x, y };
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+/** Карта точек для записи в ключ: в JSON это пары чисел, а не объекты. */
+export function toPosePoints(points: Record<string, Vec2> | undefined): Record<string, PosePoint> | undefined {
+  const tidy = tidyPoints(points);
+  if (!tidy) return undefined;
+  return Object.fromEntries(Object.entries(tidy).map(([key, offset]) => [key, [offset.x, offset.y] as PosePoint]));
+}
+
+/** Карта точек из ключа: пары чисел → удобные объекты. */
+export function fromPosePoints(points: Record<string, PosePoint> | undefined): Record<string, Vec2> | undefined {
+  if (!points) return undefined;
+  return Object.fromEntries(Object.entries(points).map(([key, offset]) => [key, { x: offset[0], y: offset[1] }]));
+}
+
+/**
+ * Перенос смещений ключа на другую густоту сетки.
+ *
+ * Меняется густота деформера — индексы узлов другие, и точки, записанные на
+ * старой сетке, попали бы не туда. Смещения раскладываются билинейно, как и сама
+ * форма (`resizeGrid`): ключ продолжает гнуть то же место картинки.
+ */
+export function remapKeyPoints(
+  points: Record<string, PosePoint> | undefined,
+  from: GridSpec,
+  to: GridSpec,
+): Record<string, PosePoint> | undefined {
+  const deltas = fromPosePoints(points);
+  if (!deltas) return undefined;
+  if (from.cols === to.cols && from.rows === to.rows) return points;
+  // Сетка, в которой узлы стоят в самих дельтах: так билинейная выборка
+  // `resizeGrid` раскладывает смещения, а не положения.
+  const flat = regularGrid(from.cols, from.rows);
+  const spread = resizeGrid(
+    {
+      cols: from.cols,
+      rows: from.rows,
+      points: flat.points.map((_, index) => deltas[String(index)] ?? { x: 0, y: 0 }),
+    },
+    to.cols,
+    to.rows,
+  );
+  const next: Record<string, Vec2> = {};
+  spread.points.forEach((point, index) => {
+    next[String(index)] = point;
+  });
+  return toPosePoints(next);
+}
+
+/** Все ключи блока на новой густоте: точки не теряются при смене сетки. */
+export function remapStatesPoints(states: States, from: GridSpec, to: GridSpec): States {
+  return {
+    layers: states.layers.map((layer) => ({
+      ...layer,
+      poses: layer.poses.map((pose) => ({ ...pose, points: remapKeyPoints(pose.points, from, to) })),
+    })),
+  };
+}
+
+/** Совпадают ли две карты точек: по ним решается, писать ли ключ. */
+export function samePoints(a?: Record<string, Vec2> | null, b?: Record<string, Vec2> | null): boolean {
+  const left = tidyPoints(a ?? undefined) ?? {};
+  const right = tidyPoints(b ?? undefined) ?? {};
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    const first = left[key] ?? { x: 0, y: 0 };
+    const second = right[key] ?? { x: 0, y: 0 };
+    if (Math.abs(first.x - second.x) > 1e-4 || Math.abs(first.y - second.y) > 1e-4) return false;
+  }
+  return true;
 }

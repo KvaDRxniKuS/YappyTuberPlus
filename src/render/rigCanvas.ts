@@ -214,6 +214,13 @@ export interface DrawRigOptions {
   media?: MediaAssets;
   /** Видео-маски: маской бывает и фильм, тогда видно его текущий кадр. */
   maskMedia?: MaskMedia;
+  /**
+   * Смещения узлов деформера по объектам: индекс узла → дельта в долях зоны.
+   *
+   * Приходят из вкладки «Состояния»: ядро про артмеш ничего не знает, поэтому
+   * точки двигает редактор — ровно как позы предпросмотра.
+   */
+  meshPoints?: Map<string, Record<string, Vec2>>;
   /** Текстовый канал модулей: подстановки в шаблоне текстового объекта. */
   texts?: TextChannel;
   /**
@@ -552,7 +559,7 @@ function drawObjectContent(
       // медиа-объекта начинается его рамка.
       ctx.save();
       ctx.translate(boxLeft, boxTop);
-      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id]);
+      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id], options.meshPoints?.get(object.id));
       ctx.restore();
     } else if (picture && warpEnabled(object)) {
       // Деформация крайних точек: остаётся для объектов, которые ещё не
@@ -575,7 +582,7 @@ function drawObjectContent(
     if (meshEnabled(object)) {
       ctx.save();
       ctx.translate(left, top);
-      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id]);
+      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id));
       ctx.restore();
     } else if (warpEnabled(object)) {
       ctx.save();

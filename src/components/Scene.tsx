@@ -352,11 +352,15 @@ export function Scene(props: SceneProps) {
     // Цвета из модулей подставляются в копию пресета: свет, фигуры, текст и
     // материал уже читают цвет из объекта, поэтому менять их код не нужно.
     const shown = colors ? applyColors(previewed, colors) : previewed;
+    // Точки деформера из предпросмотра состояний: рендереру они приходят из
+    // вкладки, а не из кадра — ядро про артмеш не знает.
+    const meshPoints = previewPoints(current.preview);
     drawRig(ctx, shown, frame, assets.current, {
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
       lighting: lighting.current,
       environment: preset.environment,
+      meshPoints,
     });
     // Объём от карт нормалей считается внутри drawRig: каждый объект получает
     // свой объём в своём слое, поэтому верхние слои его перекрывают.
@@ -1408,6 +1412,12 @@ const PEN_LINE_COLOR = "#e4bd7c";
 /** Цвет спецрежима «Границы текстуры»: зона и её углы. */
 const WARP_COLOR = "#e0834a";
 const WARP_CORNER_COLOR = "#f0c36b";
+
+/** Точки деформера из предпросмотра: одна карта на объект вкладки. */
+function previewPoints(preview: StatePreview | null | undefined): Map<string, Record<string, Vec2>> | undefined {
+  if (!preview?.points || !Object.keys(preview.points).length) return undefined;
+  return new Map([[preview.id, preview.points]]);
+}
 
 /** Жест, который начался со снимка истории: его и надо закрыть на отпускании. */
 function isDragInteraction(current: Interaction | null): boolean {
