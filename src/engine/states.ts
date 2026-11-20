@@ -671,6 +671,31 @@ export function manualInputOf(param: string | null): string | null {
  * берёт разницу «было → стало» и переводит её в дельты: позиция, поворот и
  * наклон складываются, размер и прозрачность — отношения.
  */
+/**
+ * Поза после движения руками: поправка **прибавляется** к текущей позе.
+ *
+ * Жест считает дельту от базы объекта, а поза — уже смещение на экране. Если
+ * записать дельту вместо «было + подвинули», объект прыгнет назад к базе и будет
+ * «сопротивляться» удержанию. Смещения складываются, множители перемножаются.
+ */
+export function shiftPose(
+  pose: Partial<Record<StateField, number>>,
+  delta: Partial<Record<StateField, number>>,
+): Partial<Record<StateField, number>> {
+  const next: Partial<Record<StateField, number>> = { ...pose };
+  for (const field of ["x", "y", "rotation", "skewX", "skewY"] as const) {
+    const value = delta[field];
+    if (value === undefined) continue;
+    next[field] = Math.round(((next[field] ?? 0) + value) * 1000) / 1000;
+  }
+  for (const field of ["sizeX", "sizeY", "opacity"] as const) {
+    const value = delta[field];
+    if (value === undefined) continue;
+    next[field] = Math.round(((next[field] ?? 1) * value) * 1000) / 1000;
+  }
+  return next;
+}
+
 export function poseFromBase(
   before: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number },
   after: { x?: number; y?: number; rotation?: number; skewX?: number; skewY?: number; sizeX?: number; sizeY?: number; opacity?: number },

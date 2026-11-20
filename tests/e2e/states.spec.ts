@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import {
   EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
-  removeLayers, replacePose, resetStatesFor, reversePoses, scaleKeys, setPose, statesBlock, uniqueLayerName,
+  removeLayers, replacePose, resetStatesFor, reversePoses, scaleKeys, setPose, shiftPose, statesBlock, uniqueLayerName,
   weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, writeStates,
   type StateLayer, type States,
 } from "../../src/engine/states";
@@ -448,6 +448,24 @@ test("поза слоя в точке: смещения складываются
   expect(poseAt(layer, -1)).toEqual({ x: -20, sizeX: 2 });
   // Пустая дельта: на ключе нет позы — объект не двигается.
   expect(poseAt(bound({ poses: [{ at: 0, pose: {} }] }), 0)).toEqual({});
+});
+
+test("путь жеста прибавляется к показанной позе, а не заменяет её", () => {
+  // Что показывает ключ под точкой...
+  const shown = poseAt(bound({ poses: [{ at: -1, pose: { x: -20, sizeX: 2 } }, { at: 3, pose: {} }] }), -1);
+  expect(shown).toEqual({ x: -20, sizeX: 2 });
+  // ...плюс то, что человек протащил мышью: смещения складываются, множители
+  // перемножаются. Иначе объект прыгал бы назад к базе на каждом шаге.
+  expect(shiftPose(shown, { x: 30, rotation: 5, sizeX: 1.5, opacity: 0.8 }))
+    .toEqual({ x: 10, sizeX: 3, opacity: 0.8, rotation: 5 });
+  // Исходная поза не портится: её читают и другие места панели.
+  expect(shown).toEqual({ x: -20, sizeX: 2 });
+  // Второй жест считается от новой позы: повторное смещение не удваивается.
+  expect(shiftPose(shiftPose({ x: 5 }, { x: 10 }), { x: -5 })).toEqual({ x: 10 });
+  // Мышь даёт длинную дробь — в ключ уходит тысячное округление.
+  expect(shiftPose({}, { x: 1 / 3 })).toEqual({ x: 0.333 });
+  // Нейтральная база множителей — единица, а не ноль.
+  expect(shiftPose({}, { sizeX: 1.2 })).toEqual({ sizeX: 1.2 });
 });
 
 test("предпросмотр накладывает дельту на базу теми же правилами, что каналы", () => {

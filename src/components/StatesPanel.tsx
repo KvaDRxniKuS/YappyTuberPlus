@@ -9,7 +9,7 @@ import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import {
   addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, replacePose, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
-  removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, writeStates,
+  removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, shiftPose, writeStates,
   SMOOTH_DEFAULT, SMOOTH_LIMIT,
   STATE_FIELDS, type Pose, type StateField, type StateLayer, type StatePreview, type States,
 } from "../engine/states";
@@ -72,6 +72,8 @@ interface StatesPanelProps {
    * объект на место: ни истории, ни «отменить», ни двойной позы.
    */
   onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
+  /** Идёт перетаскивание на сцене: запись позы ждёт конца жеста. */
+  dragging?: boolean;
   /** Предпросмотр входа `manual.*` — двигает то же значение, что и ползунок входов. */
   onManual?: (key: string, value: number) => void;
 }
@@ -338,33 +340,42 @@ export function StatesPanel(props: StatesPanelProps) {
   }, []);
 
   /**
-   * Запись позы без кнопки: человек подвинул объект — дельта от авторской позы
-   * уходит в ключ под точкой таймлайна. Ключа там нет — он появляется: позу
-   * ставят именно в той точке шкалы, где она нужна.
+   * Запись позы без кнопки: человек подвинул объект — поправка уходит в ключ под
+   * точкой таймлайна. Ключа там нет — он появляется: позу ставят именно в той
+   * точке шкалы, где она нужна.
+   *
+   * Пока идёт перетаскивание, записи нет: жест считает смещение от начала
+   * движения, поэтому писать его каждый кадр значило бы накапливать одно и то же
+   * и дёргать объект. Поза прибавляется **один раз**, когда жест закончился.
    */
   useEffect(() => {
     if (!object || !layer || !authorBase) return;
+    // Жест ещё идёт — база пусть двигается, поза подождёт.
+    if (props.dragging) return;
     const previous = lastBase.current;
     lastBase.current = { ...object.base };
     // Первый кадр вкладки и предпросмотр базу не меняют — писать нечего.
     if (!previous || sameBase(previous, object.base)) return;
     if (drag.current?.kind === "head") return;
-    const delta = poseFromBase(authorBase, object.base);
+    const shift = poseFromBase(authorBase, object.base);
     // База возвращается на место: объектом двигает поза, а не база. Возврат
     // идёт без шага истории — жест уже записан началом перетаскивания.
     restoreApi.current?.(authorBase, object.id);
     lastBase.current = { ...authorBase };
-    if (!Object.keys(delta).length) return;
+    if (!Object.keys(shift).length) return;
     if (layer.param) {
       const point = at ?? range[0];
       const existing = layer.poses.findIndex((item) => Math.abs((item.at ?? 0) - point) < 1e-6);
+      // Прибавка к тому, что уже показывает ключ (или интерполяция в этой точке):
+      // иначе объект прыгнул бы назад к базе.
+      const delta = shiftPose(poseAt(layer, round3(point)), shift);
       const next = existing >= 0 ? setPose(layer, existing, delta) : addKey(layer, round3(point), delta);
       const index = next.poses.findIndex((item) => Math.abs((item.at ?? 0) - round3(point)) < 1e-6);
       apply(patchLayer(states, layerIndex, next), layerIndex, index);
       return;
     }
     if (!pose) return;
-    apply(patchLayer(states, layerIndex, setPose(layer, keyIndex, delta)), layerIndex, keyIndex);
+    apply(patchLayer(states, layerIndex, setPose(layer, keyIndex, shiftPose(pose.pose, shift))), layerIndex, keyIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 

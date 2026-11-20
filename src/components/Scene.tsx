@@ -102,6 +102,11 @@ interface SceneProps {
   onSelectMany: (ids: string[], mode: "replace" | "add") => void;
   onDragStart: () => void;
   /**
+   * Жест закончился. Вкладке «Состояния» нужно знать конец: пока объект тянут,
+   * поза не пишется (иначе дельта от начала жеста копилась бы каждый кадр).
+   */
+  onDragEnd?: () => void;
+  /**
    * Предпросмотр состояний: поправка к кадру объекта, пресет не меняет.
    *
    * Перекрывается только вклад слоя вкладки — `inherit`, поведение, другие слои
@@ -969,6 +974,7 @@ export function Scene(props: SceneProps) {
             // Отложенная правка могла ещё не примениться: применяем до того,
             // как закрыть тягу, иначе последнее положение курсора потеряется.
             flushLive();
+            if (current?.type === "drag") propsRef.current.onDragEnd?.();
             if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             if (current?.type === "marquee") {
               current.points.push(screenPoint(event));
@@ -987,6 +993,7 @@ export function Scene(props: SceneProps) {
             const current = interaction.current;
             interaction.current = null;
             marqueeRef.current = null;
+            if (current?.type === "drag") propsRef.current.onDragEnd?.();
             if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             markDirty();
           }}

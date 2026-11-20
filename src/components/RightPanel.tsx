@@ -48,6 +48,8 @@ interface RightPanelProps {
   /** Предпросмотр состояния: двигает базу без шага истории. */
   /** Предпросмотр состояний — только отрисовка; `null` снимает его. */
   onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
+  /** Идёт перетаскивание на сцене: запись позы ждёт конца жеста. */
+  dragging?: boolean;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
   /** Привязка цветов объекта к каналам модулей: один шаг истории на всю пачку. */
@@ -258,6 +260,7 @@ export function RightPanel(props: RightPanelProps) {
           onChange={props.onStates ?? props.onBehaviour}
           onBase={props.onBase}
           onPreviewState={props.onPreviewState}
+          dragging={props.dragging}
           onManual={props.onManual}
         />
       ) : tab === "shape" ? (

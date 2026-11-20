@@ -405,6 +405,13 @@ export default function App() {
   const history = useRef(new History());
   /** Предпросмотр состояний: только для отрисовки, в пресет не попадает. */
   const [statePreview, setStatePreview] = useState<StatePreview | null>(null);
+  /**
+   * Идёт перетаскивание на сцене.
+   *
+   * Вкладке «Состояния» это нужно, чтобы записать позу один раз — в конце жеста:
+   * дельта жеста считается от его начала, и запись на каждом кадре копила бы её.
+   */
+  const [dragging, setDragging] = useState(false);
   const selectionRef = useRef(selection);
   const fileInput = useRef<HTMLInputElement>(null);
   const [filesOpen, setFilesOpen] = useState(false);
@@ -1593,7 +1600,8 @@ export default function App() {
               else selectOnly(id);
             }}
             onSelectMany={selectMany}
-            onDragStart={() => pushUndo("Перемещение")}
+            onDragStart={() => { setDragging(true); pushUndo("Перемещение"); }}
+            onDragEnd={() => setDragging(false)}
             onDragObjects={(ids, initial: Record<string, BasePose>, delta) => {
               const moving = new Set(subtreeIds(presetRef.current.objects, ids));
               setPreset((current) => ({
@@ -1642,6 +1650,7 @@ export default function App() {
           onStates={updateStateScripts}
           onBase={(base, id) => restoreBase(base, id)}
           onPreviewState={(preview, id) => previewState(preview, id)}
+          dragging={dragging}
           onText={updateTextObjects}
           onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}
