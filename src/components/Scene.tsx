@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
-  BoxSelect, CircleDot, Crosshair, Focus, Frame, Grid3X3, Hand, LassoSelect,
+  BoxSelect, CircleDot, Crosshair, Focus, Frame, Ghost, Grid3X3, Hand, LassoSelect,
   LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
@@ -49,6 +49,18 @@ interface SceneProps {
   showGrid: boolean;
   /** Пауза или стоп: скрытое по входам рисуется полупрозрачным призраком. */
   ghosts: boolean;
+  /**
+   * Настройка «скрытые призраками» — привычка редактора, а не свойство сцены.
+   *
+   * Рисуются призраки всё равно только в паузе и стопе (`ghosts`), но галка
+   * помнит выбор человека: включил один раз — и в следующей паузе картинка
+   * показывает скрытое, а не притворяется кадром.
+   */
+  ghostPref: boolean;
+  /** Переключить призраков. */
+  onToggleGhosts: () => void;
+  /** Снять/вернуть видимость с призрака: тот же путь, что у глаза в дереве. */
+  onToggleGhost?: (id: string) => void;
   bounds: GuideMode;
   pivots: GuideMode;
   /** Текст из модулей: подстановки `{twitch.chat.message}` в текстовых объектах. */
@@ -563,6 +575,14 @@ export function Scene(props: SceneProps) {
           <span className="tool-separator" />
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
           <button
+            className={props.ghostPref ? "active" : ""}
+            title={`Скрытые призраками: ${props.ghostPref ? "вкл" : "выкл"}`
+              + `${props.ghosts ? "" : " (видно в паузе и стопе)"} · Alt+клик по призраку — показать или скрыть`}
+            onClick={props.onToggleGhosts}
+          >
+            <Ghost size={15} />
+          </button>
+          <button
             className={props.bounds !== "off" ? "active" : ""}
             title={`Границы спрайтов и групп: ${GUIDE_LABEL[props.bounds]}`}
             onClick={props.onCycleBounds}
@@ -726,6 +746,16 @@ export function Scene(props: SceneProps) {
               return;
             }
             const hit = hitTest(point);
+            // Alt+клик по призраку возвращает объект в кадр или прячет его
+            // снова. Скрипт не переписывается: гасится только `enabled` —
+            // ровно как глаз в дереве.
+            if (hit && event.altKey && current.onToggleGhost) {
+              const values = current.frameRef.current?.objects[hit.id] || staticValues(hit);
+              if (values.visible === 0 && scriptHidden(hit, values)) {
+                current.onToggleGhost(hit.id);
+                return;
+              }
+            }
             if (!hit) {
               if (!event.shiftKey && !event.ctrlKey && !event.metaKey) current.onSelect(null, "replace");
               return;

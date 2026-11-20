@@ -79,6 +79,8 @@ const LAYOUT_KEY = "yappytuberplus.layout.v1";
  * В самом пресете лежат только ссылки, поэтому путь к папке надо помнить.
  */
 const PRESET_PATH_KEY = "yappytuberplus.preset.path.v1";
+/** Призраки скрытых объектов: привычка редактора, поэтому в профиле, а не в пресете. */
+const GHOSTS_KEY = "yappytuberplus.ghosts.v1";
 
 /** Как записывать изменение в историю: метка для подсказки и ключ склейки быстрых правок. */
 interface CommitOptions { record?: boolean; label?: string; coalesce?: string }
@@ -229,6 +231,16 @@ export default function App() {
     if (next) setTool("pen");
   }, []);
   const [showGrid, setShowGrid] = useState(true);
+  /**
+   * Скрытые объекты показывать призраками. Живёт в профиле приложения: это
+   * привычка редактора, а не свойство сцены, — в пресет не пишется.
+   */
+  const [ghosts, setGhosts] = useState(() => {
+    try { return localStorage.getItem(GHOSTS_KEY) !== "off"; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(GHOSTS_KEY, ghosts ? "on" : "off"); } catch { /* профиль недоступен */ }
+  }, [ghosts]);
   const [overlayOpen, setOverlayOpen] = useState(false);
   /** Пресет, ждущий решения по модулям при открытии. */
   const [pending, setPending] = useState<{ preset: RigPreset; path: string | null } | null>(null);
@@ -1451,7 +1463,17 @@ export default function App() {
             primaryId={primaryId}
             tool={tool}
             showGrid={showGrid}
-            ghosts={paused || stopped}
+            ghosts={(paused || stopped) && ghosts}
+            ghostPref={ghosts}
+            onToggleGhosts={() => setGhosts((value) => !value)}
+            onToggleGhost={(id) => {
+              const object = presetRef.current.objects.find((item) => item.id === id);
+              if (!object) return;
+              updateObject(
+                { ...object, enabled: object.enabled === false },
+                { label: (object.enabled === false ? "Показать" : "Скрыть") + ` «${object.name}»` },
+              );
+            }}
             bounds={layout.showBounds}
             pivots={layout.showPivots}
             texts={engineTexts}
