@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
-  BoxSelect, CircleDot, Crosshair, Focus, Frame, Ghost, Grid3X3, Hand, LassoSelect,
-  LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, ZoomIn, ZoomOut,
+  BoxSelect, Brush, CircleDot, Crosshair, FlipHorizontal, Focus, Frame, Ghost, Grid3X3, Hand,
+  LassoSelect, LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, Waves, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type {
   BasePose, GridSpec, GuideMode, MeshSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2, WarpCorner,
@@ -39,9 +39,9 @@ import {
   zoneGeometry, zoneOutline, zonePoint,
 } from "../render/mesh";
 import {
-  BRUSH_DEFAULT, MIRROR_DEFAULT, brushGrid, brushWeights, defaultMesh, flipArtEdge, meshEnabled, meshOf,
-  mirrorAcross, moveArtPoint, moveNode, moveNodeMirrored, removeArtPoint, removeArtTriangle, splitArtEdge,
-  splitArtTriangle,
+  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, artFromGrid, brushGrid, brushWeights, defaultMesh, flipArtEdge,
+  meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode, moveNodeMirrored, removeArtPoint,
+  removeArtTriangle, smoothGrid, splitArtEdge, splitArtTriangle, symmetrizeGrid,
 } from "../engine/mesh";
 
 export type SceneTool =
@@ -714,6 +714,34 @@ export function Scene(props: SceneProps) {
     propsRef.current.onSelectMany(hits, current.additive ? "add" : "replace");
   };
 
+  /*
+   * Настройки сетки живут здесь, а не в параметрах объекта: кисть, симметрия и
+   * автосетка — это инструменты, которыми работают на сцене, и держать их
+   * галками в инспекторе значит искать ручку не там, где ею машут.
+   */
+  const meshTarget = props.preset.objects.find((item) => item.id === props.primaryId);
+  const meshEditing = meshTarget && meshTarget.kind !== "group" && meshTarget.kind !== "text"
+    ? editMesh(meshTarget)
+    : null;
+  const brush = meshEditing?.brush ?? BRUSH_DEFAULT;
+  const mirror = meshEditing?.mirror ?? MIRROR_DEFAULT;
+  /** Настройка инструмента: в историю не пишется, это не правка формы. */
+  const quietMeshTool = (patch: Partial<MeshSpec>) => {
+    const current = propsRef.current;
+    const object = current.preset.objects.find((item) => item.id === current.primaryId);
+    if (!object) return;
+    current.onMesh(object.id, { ...editMesh(object), ...patch });
+  };
+  /** Действие над формой: один шаг истории, как у жеста. */
+  const actMeshTool = (patch: Partial<MeshSpec>) => {
+    const current = propsRef.current;
+    const object = current.preset.objects.find((item) => item.id === current.primaryId);
+    if (!object) return;
+    current.onDragStart();
+    current.onMesh(object.id, { ...editMesh(object), enabled: true, ...patch });
+    current.onDragEnd?.();
+  };
+
   return (
     <section className="scene-panel panel-surface">
       <div className="scene-toolbar">
@@ -774,6 +802,110 @@ export function Scene(props: SceneProps) {
           <button title="Вписать сцену" onClick={fit}><Focus size={15} /></button>
         </div>
       </div>
+      {meshEditing && (props.tool === "warp" || props.tool === "deform") && (
+        <div className="scene-tool-options">
+          {props.tool === "warp" ? (
+            <>
+              <button
+                className={brush.on ? "active" : ""}
+                title="Кисть: тянет пятно узлов, а не один узел"
+                onClick={() => quietMeshTool({ enabled: true, brush: { ...brush, on: !brush.on } })}
+              >
+                <Brush size={13} /> Кисть
+              </button>
+              {brush.on && (
+                <>
+                  <label className="tool-range" title="Радиус кисти — в долях меньшей стороны зоны">
+                    <span>радиус</span>
+                    <input
+                      type="range" min={2} max={100} step={1}
+                      value={Math.round(brush.radius * 100)}
+                      onChange={(event) => quietMeshTool({ brush: { ...brush, radius: Number(event.target.value) / 100 } })}
+                    />
+                    <b>{Math.round(brush.radius * 100)}%</b>
+                  </label>
+                  <label className="tool-range" title="Жёсткость: какая часть радиуса тянется целиком, дальше вес гаснет">
+                    <span>жёстк.</span>
+                    <input
+                      type="range" min={0} max={100} step={5}
+                      value={Math.round(brush.hardness * 100)}
+                      onChange={(event) => quietMeshTool({ brush: { ...brush, hardness: Number(event.target.value) / 100 } })}
+                    />
+                    <b>{Math.round(brush.hardness * 100)}%</b>
+                  </label>
+                </>
+              )}
+              <span className="tool-separator" />
+              <button
+                className={mirror.on ? "active" : ""}
+                title="Симметрия: пара узлов двигается зеркально относительно оси"
+                onClick={() => quietMeshTool({ enabled: true, mirror: { ...mirror, on: !mirror.on } })}
+              >
+                <FlipHorizontal size={13} /> Симметрия
+              </button>
+              {mirror.on && (
+                <>
+                  <button
+                    className={Math.abs(mirror.angle - 90) < 1e-6 ? "active" : ""}
+                    title="Вертикальная ось через центр зоны"
+                    onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 90 } })}
+                  >верт.</button>
+                  <button
+                    className={Math.abs(mirror.angle) < 1e-6 ? "active" : ""}
+                    title="Горизонтальная ось через центр зоны"
+                    onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 0 } })}
+                  >гор.</button>
+                  <label className="tool-range" title="Угол оси в градусах">
+                    <span>угол</span>
+                    <input
+                      type="range" min={-90} max={90} step={5}
+                      value={Math.round(mirror.angle)}
+                      onChange={(event) => quietMeshTool({ mirror: { ...mirror, angle: Number(event.target.value) } })}
+                    />
+                    <b>{Math.round(mirror.angle)}°</b>
+                  </label>
+                  <button
+                    title="Свести пары узлов к середине: каждая половина проходит полпути"
+                    onClick={() => actMeshTool({ deform: symmetrizeGrid(meshEditing.deform, mirror) })}
+                  >Симметризовать</button>
+                </>
+              )}
+              <span className="tool-separator" />
+              <button
+                title="Сглаживание: внутренние узлы тянутся к середине соседей, крайние стоят"
+                onClick={() => actMeshTool({ deform: smoothGrid(meshEditing.deform) })}
+              >
+                <Waves size={13} /> Сгладить
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="tool-label">Автосетка</span>
+              <select
+                className="tool-select"
+                value={meshEditing.art.auto ? String(meshEditing.art.auto.cols) : "manual"}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "manual") {
+                    // Ручная нарезка — это та, которую собрали руками: точки
+                    // остаются, пометка автосетки снимается.
+                    actMeshTool({ art: { ...meshEditing.art, auto: null } });
+                    return;
+                  }
+                  const step = Number(value);
+                  if (Number.isFinite(step)) actMeshTool({ art: artFromGrid(step, step) });
+                }}
+              >
+                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
+                <option value="manual">ручная</option>
+              </select>
+              <span className="tool-label">
+                {meshEditing.art.points.length} точек · {meshEditing.art.triangles.length / 3} треугольников
+              </span>
+            </>
+          )}
+        </div>
+      )}
       <div
         className={`scene-viewport tool-${props.tool}`}
         ref={viewport}
@@ -1382,8 +1514,8 @@ const TOOL_HINT: Record<SceneTool, string> = {
   lasso: "Обведите объекты; Shift — добавить к выборке",
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
-  warp: "Сетка: тяните узлы (Shift — по осям), кисть тянет пятно; стороны зоны и поворот (Shift — шаг 15°)",
-  deform: "Нарезка: тяните точки; двойной клик по ребру — разрезать; Alt — перевернуть диагональ или разбить треугольник; Ctrl — удалить треугольник; Shift — удалить точку",
+  warp: "Сетка: узлы (Shift — по осям), кисть, симметрия и сглаживание — во второй строке панели; зона и поворот",
+  deform: "Нарезка: автосетка во второй строке панели; двойной клик по ребру — разрезать; Alt — перевернуть диагональ или разбить треугольник; Ctrl — удалить треугольник; Shift — удалить точку",
   pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
 

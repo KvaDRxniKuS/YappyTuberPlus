@@ -428,14 +428,7 @@ function drawWithWebgl(
   gl.clear(gl.COLOR_BUFFER_BIT);
   if (!uploadTexture(state, image, width, height)) return false;
 
-  // Пиксели объекта → пиксели холста сетки → координаты WebGL (−1…1).
-  const sx = 2 / boxWidth;
-  const sy = -2 / boxHeight;
-  const matrix = new Float32Array([
-    transform.a * sx, -transform.b * sy, 0,
-    transform.c * sx, -transform.d * sy, 0,
-    (transform.e - left) * sx - 1, -(transform.f - top) * sy - 1, 1,
-  ]);
+  const matrix = meshMatrix(transform, { left, top, width: boxWidth, height: boxHeight });
   const positions = new Float32Array(geometry.targets.length * 2);
   const uvs = new Float32Array(geometry.targets.length * 2);
   geometry.targets.forEach((point, index) => {
@@ -472,6 +465,30 @@ function drawWithWebgl(
   ctx.drawImage(canvas, left, top);
   ctx.restore();
   return true;
+}
+
+/**
+ * Матрица «пиксели объекта → координаты WebGL» для холста сетки.
+ *
+ * Верх кадра должен попасть **наверх** холста: у WebGL ось Y смотрит вверх,
+ * поэтому верхняя граница прямоугольника — это `+1`, а не `−1`. Знак здесь один
+ * на весь рендер, и перепутать его значит перевернуть картинку целиком.
+ *
+ * У текстурных координат та же договорённость, что и в Canvas 2D: `v = 0` — верх
+ * картинки, поэтому UV вершин остаются как есть.
+ */
+export function meshMatrix(
+  transform: { a: number; b: number; c: number; d: number; e: number; f: number },
+  box: { left: number; top: number; width: number; height: number },
+): Float32Array {
+  const sx = 2 / Math.max(1, box.width);
+  const sy = 2 / Math.max(1, box.height);
+  // Колонки по три: mat3 в GLSL заполняется по столбцам.
+  return new Float32Array([
+    transform.a * sx, -transform.b * sy, 0,
+    transform.c * sx, -transform.d * sy, 0,
+    (transform.e - box.left) * sx - 1, 1 - (transform.f - box.top) * sy, 1,
+  ]);
 }
 
 /** Размер холста в пикселях: у канвы это буфер, а не CSS-размер. */

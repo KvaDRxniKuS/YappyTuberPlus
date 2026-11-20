@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, PenTool,
   ClipboardPaste, Copy, Lightbulb, RotateCcw, Shapes, Trash2, Type, Waves, X,
@@ -19,9 +19,53 @@ import {
 } from "../engine/meshClipboard";
 import { groupBounds } from "../render/bounds";
 import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT } from "../render/warp";
+
+/**
+ * Сворачиваемый блок параметров.
+ *
+ * Заголовок — кнопка: щелчок прячет содержимое, состояние помнится в профиле
+ * приложения по `id`. Без этого панель с сеткой и нарезкой — простыня на три
+ * экрана: свернул ненужное и работаешь с тем, что открыто.
+ */
+function Fold({ title, note, className, id, children }: {
+  title: string;
+  note?: ReactNode;
+  className?: string;
+  id?: string;
+  children: ReactNode;
+}) {
+  const key = `yappytuberplus.fold.${id ?? title}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(key) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try {
+      localStorage.setItem(key, next ? "1" : "0");
+    } catch {
+      // Профиль может быть недоступен — тогда блок просто не запомнится.
+    }
+  };
+  return (
+    <div className={className}>
+      <button className="section-title fold-title" type="button" aria-expanded={open} onClick={toggle}>
+        <span>
+          <ChevronRight className={open ? "fold-chevron open" : "fold-chevron"} size={12} />
+          {title}
+        </span>
+        {note !== undefined && <small>{note}</small>}
+      </button>
+      {open && <div className="fold-body">{children}</div>}
+    </div>
+  );
+}
 import {
-  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, artFromGrid, clampGrid, defaultMesh, gridCorners, meshOf,
-  normalizeMirror, regularGrid, resetArt, resetGrid, resizeGrid, shiftNode, smoothGrid, symmetrizeGrid,
+  clampGrid, defaultMesh, gridCorners, meshOf, regularGrid, resetArt, resetGrid, resizeGrid, shiftNode,
 } from "../engine/mesh";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
@@ -230,8 +274,7 @@ export function Inspector(props: InspectorProps) {
       </div>
 
       <div className="inspector-scroll">
-        <div className="property-section">
-          <div className="section-title"><span>Базовая поза</span><small>PIXELS</small></div>
+        <Fold className="property-section" id="Базовая поза" title="Базовая поза" note="PIXELS">
           <div className="property-grid">
             <NumberField label="Позиция X" value={object.base.x} step={1} onCommit={(x) => updateBase({ x })} />
             <NumberField label="Позиция Y" value={object.base.y} step={1} onCommit={(y) => updateBase({ y })} />
@@ -255,11 +298,10 @@ export function Inspector(props: InspectorProps) {
             <span>Непрозрачность <b>{Math.round(object.base.opacity * 100)}%</b></span>
             <input type="range" min="0" max="1" step="0.01" value={object.base.opacity} onChange={(event) => updateBase({ opacity: Number(event.target.value) })} />
           </label>
-        </div>
+        </Fold>
 
         {object.kind === "sprite" && (
-          <div className="property-section compact-section">
-            <div className="section-title"><span>Картинка</span><small>PNG / WEBP</small></div>
+          <Fold className="property-section compact-section" id="Картинка" title="Картинка" note="PNG / WEBP">
             <div className="image-actions">
               <button
                 className="button secondary"
@@ -288,7 +330,7 @@ export function Inspector(props: InspectorProps) {
               }}
             />
             {imageError && <p className="inline-error">{imageError}</p>}
-          </div>
+          </Fold>
         )}
 
         {object.kind === "media" && (
@@ -339,11 +381,7 @@ export function Inspector(props: InspectorProps) {
           <MaskSection object={object} mask={object.mask} objects={objects} onChange={onChange} />
         )}
 
-        <div className="property-section compact-section">
-          <div className="section-title">
-            <span>Пивот</span>
-            <small>{object.kind === "group" ? "ТОЧКА ВРАЩЕНИЯ" : "UV"}</small>
-          </div>
+        <Fold className="property-section compact-section" id="Пивот" title="Пивот" note={<>{object.kind === "group" ? "ТОЧКА ВРАЩЕНИЯ" : "UV"}</>}>
           <div className="property-grid two-columns">
             <NumberField label="Pivot X" value={shownPivot.x} step={0.01} onCommit={(x) => commitPivot({ ...shownPivot, x })} />
             <NumberField label="Pivot Y" value={shownPivot.y} step={0.01} onCommit={(y) => commitPivot({ ...shownPivot, y })} />
@@ -356,7 +394,7 @@ export function Inspector(props: InspectorProps) {
               делает инструмент <b>Пивот (P)</b> кликом по группе.
             </p>
           )}
-        </div>
+        </Fold>
 
         <div className="runtime-readout">
           <div><span>Родитель</span><b>{parent?.name || "Корень сцены"}</b></div>
@@ -392,8 +430,7 @@ function MediaSection({ object, media, onChange }: {
   };
   return (
     <>
-      <div className="property-section compact-section">
-        <div className="section-title"><span>Файл</span><small>{media.type === "video" ? "ВИДЕО" : media.type === "audio" ? "ЗВУК" : "КАРТИНКА"}</small></div>
+      <Fold className="property-section compact-section" id="Файл" title="Файл" note={<>{media.type === "video" ? "ВИДЕО" : media.type === "audio" ? "ЗВУК" : "КАРТИНКА"}</>}>
         <p className="behaviour-hint media-file" title={media.fileName || "файл не выбран"}>
           {media.fileName || "Файл не выбран: добавьте картинку, видео или звук"}
         </p>
@@ -432,10 +469,9 @@ function MediaSection({ object, media, onChange }: {
             <span>Без звука</span>
           </label>
         )}
-      </div>
+      </Fold>
 
-      <div className="property-section compact-section">
-        <div className="section-title"><span>Воспроизведение</span><small>ОСНОВА</small></div>
+      <Fold className="property-section compact-section" id="Воспроизведение" title="Воспроизведение" note="ОСНОВА">
         <label className="range-property">
           <span>Громкость <b>{Math.round(media.volume * 100)}%</b></span>
           <input
@@ -464,7 +500,7 @@ function MediaSection({ object, media, onChange }: {
           указывается первым аргументом: <b>play("дождь")</b>. Параметры <b>play</b>,
           <b> speed</b> и <b>volume</b> — обычные формулы.
         </p>
-      </div>
+      </Fold>
     </>
   );
 }
@@ -505,10 +541,7 @@ function MeshSection({ object, onChange }: {
     return Math.round(((point?.[axis] ?? 0) * 100) * 10) / 10;
   };
   const setGrid = (cols: number, rows: number) => update({ deform: resizeGrid(mesh.deform, clampGrid(cols), clampGrid(rows)) });
-  const setArt = (cols: number, rows: number) => update({ art: artFromGrid(cols, rows) });
   const isQuad = mesh.deform.cols === 2 && mesh.deform.rows === 2;
-  const brush = mesh.brush ?? BRUSH_DEFAULT;
-  const mirror = mesh.mirror ?? MIRROR_DEFAULT;
   // Вставка чужой сетки: если густота или нарезка другие, спрашиваем режим —
   // молча портить форму нельзя (§10.6 плана).
   const [pasted, setPasted] = useState<MeshSpec | null>(null);
@@ -530,11 +563,7 @@ function MeshSection({ object, onChange }: {
   };
 
   return (
-    <div className="property-section compact-section">
-      <div className="section-title">
-        <span>Деформация</span>
-        <small>{mesh.enabled ? `СЕТКА ${mesh.deform.cols}×${mesh.deform.rows}` : "ВЫКЛ"}</small>
-      </div>
+    <Fold className="property-section compact-section" id="Деформация" title="Деформация" note={<>{mesh.enabled ? `СЕТКА ${mesh.deform.cols}×${mesh.deform.rows}` : "ВЫКЛ"}</>}>
       <label className="check-line">
         <input type="checkbox" checked={mesh.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
         <span>Гнуть картинку сеткой</span>
@@ -552,152 +581,56 @@ function MeshSection({ object, onChange }: {
 
       {mesh.enabled && (
         <>
-          <div className="section-title"><span>Сетка</span><small>УЗЛОВ {mesh.deform.points.length}</small></div>
-          <div className="property-grid two-columns">
-            <label className="text-property">
-              <span>Густота</span>
-              <select
-                value={GRID_STEPS.includes(mesh.deform.cols as typeof GRID_STEPS[number]) ? mesh.deform.cols : "custom"}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isFinite(value)) setGrid(value, value);
-                }}
+          <Fold title="Размер сетки" note={`УЗЛОВ ${mesh.deform.points.length}`}>
+            <div className="property-grid two-columns">
+              <NumberField
+                label="Столбцов"
+                value={mesh.deform.cols}
+                step={1}
+                onCommit={(cols) => setGrid(cols, mesh.deform.rows)}
+              />
+              <NumberField
+                label="Строк"
+                value={mesh.deform.rows}
+                step={1}
+                onCommit={(rows) => setGrid(mesh.deform.cols, rows)}
+              />
+            </div>
+            <p className="behaviour-hint">
+              Столбцы и строки — число узлов, 2…32. Смена размера форму не сбрасывает:
+              узлы новой сетки считаются из старой. Узлы двигаются в сцене
+              инструментом «Сетка» (T) — там же кисть и симметрия.
+            </p>
+            <div className="image-actions">
+              <button className="button secondary" onClick={() => update({ deform: resetGrid(mesh.deform) })}>
+                <RotateCcw size={14} /> Сбросить форму
+              </button>
+            </div>
+          </Fold>
+
+          <Fold title="Сетка между объектами" note="БУФЕР">
+            <div className="image-actions">
+              <button className="button secondary" onClick={copyMesh} title="Скопировать форму сетки этого объекта">
+                <Copy size={14} /> Копировать сетку
+              </button>
+              <button
+                className="button secondary"
+                onClick={pasteMeshNow}
+                disabled={!heldMesh()}
+                title="Вставить форму сетки другого объекта; нарезка останется своя"
               >
-                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
-                <option value="custom">своя</option>
-              </select>
-            </label>
-            <NumberField
-              label="Столбцов"
-              value={mesh.deform.cols}
-              step={1}
-              onCommit={(cols) => setGrid(cols, mesh.deform.rows)}
-            />
-            <NumberField
-              label="Строк"
-              value={mesh.deform.rows}
-              step={1}
-              onCommit={(rows) => setGrid(mesh.deform.cols, rows)}
-            />
-          </div>
-          <p className="behaviour-hint">
-            Густота — число узлов, 2…32. Смена густоты форму не сбрасывает: узлы новой
-            сетки считаются из старой. Узлы двигаются в сцене инструментом «Сетка» (T).
-          </p>
-          <div className="image-actions">
-            <button className="button secondary" onClick={() => update({ deform: resetGrid(mesh.deform) })}>
-              <RotateCcw size={14} /> Сбросить форму
-            </button>
-            <button
-              className="button secondary"
-              title="Каждый внутренний узел тянется к середине соседей: крайние стоят на месте"
-              onClick={() => update({ deform: smoothGrid(mesh.deform) })}
-            >
-              <Waves size={14} /> Сгладить
-            </button>
-          </div>
-
-          <div className="section-title"><span>Сетка между объектами</span><small>БУФЕР</small></div>
-          <div className="image-actions">
-            <button className="button secondary" onClick={copyMesh} title="Скопировать форму сетки этого объекта">
-              <Copy size={14} /> Копировать сетку
-            </button>
-            <button
-              className="button secondary"
-              onClick={pasteMeshNow}
-              disabled={!heldMesh()}
-              title="Вставить форму сетки другого объекта; нарезка останется своя"
-            >
-              <ClipboardPaste size={14} /> Вставить сетку
-            </button>
-          </div>
-          <p className="behaviour-hint">
-            Переносится форма: густота, узлы и ось симметрии. Нарезка и зона остаются
-            своими — они принадлежат картинке. Если густота другая, редактор спросит,
-            что делать.
-          </p>
-
-          <div className="section-title"><span>Кисть</span><small>СВОБОДНО В ПЛОСКОСТИ</small></div>
-          <label className="check-line">
-            <input
-              type="checkbox"
-              checked={brush.on}
-              onChange={(event) => update({ brush: { ...brush, on: event.target.checked } })}
-            />
-            <span>Тянуть пятно, а не узел</span>
-          </label>
-          {brush.on && (
-            <>
-              <div className="property-grid two-columns">
-                <NumberField
-                  label="Радиус"
-                  value={Math.round(brush.radius * 100)}
-                  step={1}
-                  suffix="%"
-                  onCommit={(value) => update({ brush: { ...brush, radius: Math.min(2, Math.max(0.02, fromPercent(value))) } })}
-                />
-                <NumberField
-                  label="Жёсткость"
-                  value={Math.round(brush.hardness * 100)}
-                  step={5}
-                  suffix="%"
-                  onCommit={(value) => update({ brush: { ...brush, hardness: Math.min(1, Math.max(0, value / 100)) } })}
-                />
-              </div>
-              <p className="behaviour-hint">
-                Радиус — доля меньшей стороны зоны. Жёсткость — какая часть радиуса
-                тянется целиком; дальше вес плавно гаснет до нуля на краю.
-              </p>
-            </>
-          )}
-
-          <div className="section-title"><span>Симметрия</span><small>{`${Math.round(mirror.angle)}°`}</small></div>
-          <label className="check-line">
-            <input
-              type="checkbox"
-              checked={mirror.on}
-              onChange={(event) => update({ mirror: { ...mirror, on: event.target.checked } })}
-            />
-            <span>Двигать узлы парой</span>
-          </label>
-          {mirror.on && (
-            <>
-              <div className="property-grid two-columns">
-                <NumberField label="Ось X" value={percent(mirror.x)} step={1} suffix="%" onCommit={(value) => update({ mirror: { ...mirror, x: fromPercent(value) } })} />
-                <NumberField label="Ось Y" value={percent(mirror.y)} step={1} suffix="%" onCommit={(value) => update({ mirror: { ...mirror, y: fromPercent(value) } })} />
-                <NumberField
-                  label="Угол оси"
-                  value={Math.round(mirror.angle)}
-                  step={15}
-                  suffix="°"
-                  onCommit={(angle) => update({ mirror: normalizeMirror({ ...mirror, angle }) })}
-                />
-              </div>
-              <div className="image-actions">
-                <button className="button secondary" onClick={() => update({ mirror: { ...mirror, on: true, angle: 90 } })}>
-                  Вертикальная
-                </button>
-                <button className="button secondary" onClick={() => update({ mirror: { ...mirror, on: true, angle: 0 } })}>
-                  Горизонтальная
-                </button>
-                <button
-                  className="button secondary"
-                  title="Пары узлов встают зеркально: каждая половина проходит полпути"
-                  onClick={() => update({ deform: symmetrizeGrid(mesh.deform, mirror) })}
-                >
-                  Симметризовать
-                </button>
-              </div>
-              <p className="behaviour-hint">
-                Ось — точка в долях зоны и угол: 0° — горизонтальная, 90° — вертикальная.
-                Ось хранится в сетке объекта и переезжает вместе с ней.
-              </p>
-            </>
-          )}
+                <ClipboardPaste size={14} /> Вставить сетку
+              </button>
+            </div>
+            <p className="behaviour-hint">
+              Переносится форма: размер сетки, узлы и ось симметрии. Нарезка и зона
+              остаются своими — они принадлежат картинке. Если размер другой, редактор
+              спросит, что делать.
+            </p>
+          </Fold>
 
           {isQuad && (
-            <>
-              <div className="section-title"><span>Углы</span><small>% ЗОНЫ</small></div>
+            <Fold title="Углы" note="% ЗОНЫ">
               <div className="property-grid two-columns">
                 {WARP_CORNERS.map((corner, position) => (
                   <div key={corner} className="warp-corner">
@@ -723,50 +656,37 @@ function MeshSection({ object, onChange }: {
                 Углы можно анимировать: параметры `warpTLx`, `warpTLy`, `warpTRx`… двигают
                 те же четыре узла, что и здесь.
               </p>
-            </>
+            </Fold>
           )}
 
-          <div className="section-title"><span>Зона деформации</span><small>% КАРТИНКИ</small></div>
-          <div className="property-grid two-columns">
-            <NumberField label="Зона X" value={percent(mesh.frame.x)} step={1} suffix="%" onCommit={(value) => setFrame({ x: fromPercent(value) })} />
-            <NumberField label="Зона Y" value={percent(mesh.frame.y)} step={1} suffix="%" onCommit={(value) => setFrame({ y: fromPercent(value) })} />
-            <NumberField label="Ширина" value={percent(mesh.frame.width)} step={1} suffix="%" onCommit={(value) => setFrame({ width: Math.max(0.01, fromPercent(value)) })} />
-            <NumberField label="Высота" value={percent(mesh.frame.height)} step={1} suffix="%" onCommit={(value) => setFrame({ height: Math.max(0.01, fromPercent(value)) })} />
-            <NumberField label="Поворот" value={Math.round(mesh.frame.rotation * 10) / 10} step={1} suffix="°" onCommit={(rotation) => setFrame({ rotation })} />
-          </div>
-          <p className="behaviour-hint">
-            Зона — часть картинки, которую гнём: остальное остаётся ровным.
-            Границы удобнее править в сцене: инструмент «Границы текстуры» (T).
-          </p>
+          <Fold title="Зона деформации" note="% КАРТИНКИ">
+            <div className="property-grid two-columns">
+              <NumberField label="Зона X" value={percent(mesh.frame.x)} step={1} suffix="%" onCommit={(value) => setFrame({ x: fromPercent(value) })} />
+              <NumberField label="Зона Y" value={percent(mesh.frame.y)} step={1} suffix="%" onCommit={(value) => setFrame({ y: fromPercent(value) })} />
+              <NumberField label="Ширина" value={percent(mesh.frame.width)} step={1} suffix="%" onCommit={(value) => setFrame({ width: Math.max(0.01, fromPercent(value)) })} />
+              <NumberField label="Высота" value={percent(mesh.frame.height)} step={1} suffix="%" onCommit={(value) => setFrame({ height: Math.max(0.01, fromPercent(value)) })} />
+              <NumberField label="Поворот" value={Math.round(mesh.frame.rotation * 10) / 10} step={1} suffix="°" onCommit={(rotation) => setFrame({ rotation })} />
+            </div>
+            <p className="behaviour-hint">
+              Зона — часть картинки, которую гнём: остальное остаётся ровным.
+              Границы удобнее править в сцене: инструмент «Сетка» (T).
+            </p>
+          </Fold>
 
-          <div className="section-title">
-            <span>Нарезка</span>
-            <small>{mesh.art.points.length} ТОЧЕК · {mesh.art.triangles.length / 3} ТРЕУГОЛЬНИКОВ</small>
-          </div>
-          <div className="property-grid two-columns">
-            <label className="text-property">
-              <span>Автосетка</span>
-              <select
-                value={mesh.art.auto ? String(mesh.art.auto.cols) : "manual"}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isFinite(value)) setArt(value, value);
-                }}
-              >
-                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
-                <option value="manual">ручная</option>
-              </select>
-            </label>
-          </div>
-          <p className="behaviour-hint">
-            Нарезка задаёт, из каких треугольников состоит картинка: её правит инструмент
-            «Нарезка» (R). Автосетка пересобирает её регулярно, ручная правка остаётся.
-          </p>
-          <div className="image-actions">
-            <button className="button secondary" onClick={() => update({ art: resetArt(mesh.art), deform: regularGrid(mesh.deform.cols, mesh.deform.rows) })}>
-              <RotateCcw size={14} /> Сбросить нарезку
-            </button>
-          </div>
+          <Fold
+            title="Нарезка"
+            note={`${mesh.art.points.length} ТОЧЕК · ${mesh.art.triangles.length / 3} ТРЕУГОЛЬНИКОВ`}
+          >
+            <p className="behaviour-hint">
+              Нарезка задаёт, из каких треугольников состоит картинка. Её правит инструмент
+              «Нарезка» (R), а автосетка включается там же — в панели сцены.
+            </p>
+            <div className="image-actions">
+              <button className="button secondary" onClick={() => update({ art: resetArt(mesh.art), deform: regularGrid(mesh.deform.cols, mesh.deform.rows) })}>
+                <RotateCcw size={14} /> Сбросить нарезку
+              </button>
+            </div>
+          </Fold>
         </>
       )}
 
@@ -807,7 +727,7 @@ function MeshSection({ object, onChange }: {
           </div>
         </div>
       )}
-    </div>
+    </Fold>
   );
 }
 
@@ -819,8 +739,7 @@ function TextSection({ object, text, onChange }: {
 }) {
   const update = (patch: Partial<TextSpec>) => onChange({ ...object, text: { ...text, ...patch } });
   return (
-    <div className="property-section compact-section">
-      <div className="section-title"><span>Текст</span><small>{"{МОДУЛЬ}.MESSAGE / .USER"}</small></div>
+    <Fold className="property-section compact-section" id="Текст" title="Текст" note={<>{"{МОДУЛЬ}.MESSAGE / .USER"}</>}>
       <label className="text-property">
         <span>Шаблон</span>
         <textarea
@@ -876,7 +795,7 @@ function TextSection({ object, text, onChange }: {
         <b>{"{twitch.chat.message}"}</b>, <b>{"{twitch.chat.user}"}</b>; чтобы скобки были видны
         буквально, оберните ссылку в одинарные кавычки — <b>{"'{twitch.chat.user}'"}</b>.
       </p>
-    </div>
+    </Fold>
   );
 }
 
@@ -895,8 +814,7 @@ function MultiInspector(props: InspectorProps) {
       </div>
 
       <div className="inspector-scroll">
-        <div className="property-section">
-          <div className="section-title"><span>Выделение</span><small>ОСНОВНОЙ — ПОСЛЕДНИЙ</small></div>
+        <Fold className="property-section" id="Выделение" title="Выделение" note="ОСНОВНОЙ — ПОСЛЕДНИЙ">
           <div className="multi-list">
             {selection.map((item) => (
               <button
@@ -914,19 +832,17 @@ function MultiInspector(props: InspectorProps) {
               </button>
             ))}
           </div>
-        </div>
+        </Fold>
 
-        <div className="property-section">
-          <div className="section-title"><span>Смещение</span><small>ОТНОСИТЕЛЬНО</small></div>
+        <Fold className="property-section" id="Смещение" title="Смещение" note="ОТНОСИТЕЛЬНО">
           <div className="property-grid two-columns">
             <DeltaField label="Сдвиг X" onApply={(x) => onOffset({ x })} />
             <DeltaField label="Сдвиг Y" onApply={(y) => onOffset({ y })} />
           </div>
           <p className="hint">Введите значение и нажмите Enter — сдвинутся все выделенные.</p>
-        </div>
+        </Fold>
 
-        <div className="property-section">
-          <div className="section-title"><span>Общие свойства</span><small>ДЛЯ ВСЕХ</small></div>
+        <Fold className="property-section" id="Общие свойства" title="Общие свойства" note="ДЛЯ ВСЕХ">
           <div className="property-grid">
             <NumberField label="Слой" value={primary.base.layer} step={1} onCommit={onLayer} />
             <NumberField label="Масштаб X" value={primary.base.sizeX} step={0.05} onCommit={(sizeX) => onBases({ sizeX })} />
@@ -944,7 +860,7 @@ function MultiInspector(props: InspectorProps) {
             <button onClick={() => onVisible(1)}><Eye size={14} /> Показать все</button>
             <button onClick={() => onVisible(0)}><EyeOff size={14} /> Скрыть все</button>
           </div>
-        </div>
+        </Fold>
 
         <div className="runtime-readout">
           <div><span>Выделено</span><b>{selection.length}</b></div>

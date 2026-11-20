@@ -141,6 +141,27 @@ input, select { color: var(--text); }
 .scene-tools button:hover { color: var(--text); background: #ffffff08; }
 .scene-tools button.active { color: var(--accent); background: #82d5c112; }
 .tool-separator { width: 1px; height: 16px; margin: 0 4px; background: var(--border); }
+/* Вторая строка панели сцены: настройки инструментов сетки и нарезки. */
+.scene-tool-options {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  min-height: 31px; padding: 3px 11px; border-bottom: 1px solid var(--border-soft);
+  color: #8b959f; font-size: 10.5px;
+}
+.scene-tool-options button {
+  height: 23px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px;
+  border-radius: 5px; color: #8b959f; font-size: 11px; background: #23272d; border: 1px solid var(--border);
+}
+.scene-tool-options button:hover { color: var(--text); background: #2a3037; }
+.scene-tool-options button.active { color: var(--accent); border-color: #82d5c144; background: #82d5c112; }
+.scene-tool-options .tool-label { color: #6b7681; }
+.scene-tool-options .tool-select {
+  height: 23px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border);
+  background: #23272d; color: #b6c0c9; font-size: 11px;
+}
+/* Ползунок инструмента: подпись, дорожка и значение — в одну строку. */
+.scene-tool-options .tool-range { display: inline-flex; align-items: center; gap: 5px; }
+.scene-tool-options .tool-range input { width: 74px; }
+.scene-tool-options .tool-range b { min-width: 30px; color: #aeb6bf; font-weight: 500; }
 .scene-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #14171b; }
 .scene-viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 /* Подпись размера холста: и текст, и поле правки — слева сверху у артборда. */
@@ -190,6 +211,12 @@ input, select { color: var(--text); }
 .section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .section-title > span { color: #aeb6bf; font-size: 11px; font-weight: 650; }
 .section-title small { color: #59636d; font-size: 9.5px; letter-spacing: .8px; }
+/* Заголовок-кнопка: заголовки параметров сворачиваются, поэтому он нажимается. */
+.section-title.fold-title { width: 100%; padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.section-title.fold-title > span { display: flex; align-items: center; gap: 5px; }
+.section-title.fold-title:hover > span { color: var(--text); }
+.fold-chevron { color: #59636d; transition: transform .12s ease; flex: 0 0 auto; }
+.fold-chevron.open { transform: rotate(90deg); }
 .property-grid { display: grid; grid-template-columns: repeat(3, minmax(94px, 1fr)); gap: 7px 9px; }
 .property-grid.two-columns { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
 /* «Слой» держится третьей колонки: в базовой позе так масштаб стоит ровно под
