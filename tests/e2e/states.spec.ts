@@ -3,7 +3,7 @@ import {
   EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, replacePose, resetStatesFor, reversePoses, scaleKeys, setPose, shiftPose, statesBlock, uniqueLayerName,
-  weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, writeStates,
+  weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, withLiveMirrors, writeStates,
   type StateLayer, type States,
 } from "../../src/engine/states";
 import { paramGroups } from "../../src/engine/paramNames";
@@ -161,11 +161,13 @@ test("в блок не попадает многострочное выраже�
 });
 
 test("в watch попадают только локальные имена, не входы модулей", () => {
+  // Плюс зеркала живого вклада: `states_x` — это локальная переменная блока,
+  // по ней редактор узнаёт вклад слоя в том кадре, который нарисовала сцена.
   expect(watchNames({ layers: [
     bound({ param: "manual.eye_x" }),
     bound({ param: "eye_target" }),
     bound({ param: "state.mood" }),
-  ] })).toEqual(["eye_target"]);
+  ] })).toEqual(["eye_target", "states_x"]);
 });
 
 test("структура для ядра просит переменные объекта в watch", () => {
@@ -178,7 +180,31 @@ test("структура для ядра просит переменные об�
     globals: "",
     modules: [],
   } as unknown as RigPreset));
-  expect(built.objects[0].watch).toEqual(["eye_target"]);
+  expect(built.objects[0].watch).toEqual(["eye_target", "states_x"]);
+});
+
+test("блок зеркалит каналы в локальные переменные", () => {
+  // Каналы `<поле>_states` в `vars` ядра не попадают: смотреть на живой вклад
+  // редактору нужно через локальные переменные — их кадр и отдаёт.
+  const block = statesBlock(states(bound()), object(""));
+  expect(block).toContain("x_states = (-20) * (1 - t0_0) + 20 * t0_0");
+  expect(block).toContain("states_x = x_states");
+  // Зеркало идёт после канала и до конца блока: значение уже посчитано.
+  expect(block.indexOf("states_x = x_states")).toBeGreaterThan(block.indexOf("x_states ="));
+  expect(block.indexOf("states_x = x_states")).toBeLessThan(block.indexOf("// ── конец состояний ──"));
+});
+
+test("зеркала дописываются в блок старой версии, готовый блок не трогается", () => {
+  const fresh = writeStates("x = inherit\n", states(bound()), object("x = inherit")).script;
+  expect(withLiveMirrors(fresh)).toBe(fresh);
+  // Блок, записанный до зеркал: строки дописываются на месте, остальное цело.
+  const old = fresh.replace(/^states_x = x_states\n/m, "");
+  expect(old).not.toContain("states_x = x_states");
+  const patched = withLiveMirrors(old);
+  expect(patched).toContain("states_x = x_states");
+  expect(patched.replace("states_x = x_states\n", "")).toBe(old);
+  // Скрипт без блока не переписывается.
+  expect(withLiveMirrors("x = inherit\n")).toBe("x = inherit\n");
 });
 
 test("новый слой: привязка к первому входу или свободные веса", () => {

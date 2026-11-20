@@ -948,7 +948,7 @@ export default function App() {
    * Правка пресета поведения сразу у нескольких объектов: один шаг истории на
    * всех, чтобы Ctrl+Z возвращал всю пачку, а не по одному объекту.
    */
-  const updateScripts = useCallback((scripts: Record<string, string>, label = "Поведение") => {
+  const updateScripts = useCallback((scripts: Record<string, string>, label = "Поведение", record = true) => {
     const ids = Object.keys(scripts);
     if (!ids.length) return;
     commit((current) => ({
@@ -958,12 +958,22 @@ export default function App() {
           ? object
           : { ...object, script: scripts[object.id] }
       )),
-    }), { label: ids.length > 1 ? `${label} · ${ids.length} объектов` : label, coalesce: "behaviour" });
+    }), { label: ids.length > 1 ? `${label} · ${ids.length} объектов` : label, coalesce: "behaviour", record });
   }, [commit]);
 
   /** Состояния объекта — тот же путь, что у поведения: один шаг истории. */
   const updateStateScripts = useCallback((scripts: Record<string, string>) => {
     updateScripts(scripts, "Состояния");
+  }, [updateScripts]);
+
+  /**
+   * Служебные строки блока состояний (зеркала живого вклада) — молча.
+   *
+   * Это сгенерированный текст, а не правка автора: отменять его в истории
+   * нечего, а лишний шаг «Состояния» на каждое открытие вкладки мешал бы.
+   */
+  const normalizeStateScripts = useCallback((scripts: Record<string, string>) => {
+    updateScripts(scripts, "Состояния", false);
   }, [updateScripts]);
 
   /** Абсолютные значения базовой позы для всей выборки (инспектор при мультивыделении). */
@@ -1648,6 +1658,7 @@ export default function App() {
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
           onStates={updateStateScripts}
+          onStatesQuiet={normalizeStateScripts}
           onBase={(base, id) => restoreBase(base, id)}
           onPreviewState={(preview, id) => previewState(preview, id)}
           dragging={dragging}

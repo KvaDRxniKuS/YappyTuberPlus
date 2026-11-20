@@ -43,6 +43,8 @@ interface RightPanelProps {
   onBehaviour: (scripts: Record<string, string>) => void;
   /** Состояния: блок `# states` в скрипте объекта. */
   onStates?: (scripts: Record<string, string>) => void;
+  /** Дописать в блок служебные строки — без шага истории. */
+  onStatesQuiet?: (scripts: Record<string, string>) => void;
   /** Базовая поза выделения: нужна записи позы — она возвращает объект на место. */
   onBase?: (patch: Partial<RigObject["base"]>, objectId: string) => void;
   /** Предпросмотр состояния: двигает базу без шага истории. */
@@ -258,6 +260,7 @@ export function RightPanel(props: RightPanelProps) {
           modules={props.modules}
           globals={props.globals}
           onChange={props.onStates ?? props.onBehaviour}
+          onNormalize={props.onStatesQuiet}
           onBase={props.onBase}
           onPreviewState={props.onPreviewState}
           dragging={props.dragging}

@@ -260,10 +260,18 @@ export function isStatesDefault(states: States): boolean {
  */
 export function watchNames(states: States): string[] {
   const names = new Set<string>();
+  const fields = new Set<StateField>();
   for (const layer of states.layers) {
     const param = layer.param ?? "";
     if (param && LOCAL.test(param)) names.add(param);
+    for (const pose of layer.poses) {
+      for (const field of Object.keys(pose.pose) as StateField[]) fields.add(field);
+    }
   }
+  // Живой вклад слоя в том кадре, который рисует сцена: блок зеркалит каналы
+  // `<поле>_states` в переменные `states_<поле>`, и ядро отдаёт их в `vars`.
+  // Без этого редактор считал бы вклад заново по входам — а кадр на тик старше.
+  for (const field of fields) names.add(liveName(field));
   return [...names].sort();
 }
 
@@ -379,6 +387,7 @@ export function statesBlock(states: States, object: RigObject): string {
     parts.push({ layer, weights });
   });
   const channels: string[] = [];
+  const mirrors: string[] = [];
   for (const field of STATE_FIELDS) {
     const expressionText = channelExpression(field, parts);
     if (!expressionText) continue;
@@ -389,6 +398,10 @@ export function statesBlock(states: States, object: RigObject): string {
     } else {
       channels.push(`${field}_states = ${expressionText}`);
     }
+    // Зеркало канала в локальную переменную: кадр отдаёт локальные переменные
+    // по списку `watch`, и редактор берёт живой вклад слоя из того же кадра,
+    // что нарисовала сцена (`previewLive`). Каналы в `vars` не попадают.
+    mirrors.push(`${liveName(field)} = ${channelName(field)}`);
   }
   // Каналов может не быть: слой только что создан, поза ещё пустая. Блок всё
   // равно пишется — иначе настройки исчезли бы с первым же пересозданием
@@ -398,8 +411,36 @@ export function statesBlock(states: States, object: RigObject): string {
     `${STATES_META}${JSON.stringify({ layers })}`,
     ...body,
     ...channels,
+    ...mirrors,
     END,
   ].join("\n");
+}
+
+/**
+ * Дописать зеркала живого вклада в готовый блок.
+ *
+ * Блоки, записанные до появления зеркал, живого вклада не отдают: `vars` пуст, и
+ * предпросмотр считал бы его по входам — а кадр на тик старше входа, из-за чего
+ * объект дёргался на месте, пока двигается мышь или трекер. Дописываем строки на
+ * месте (остальной блок не трогаем) и пишем без шага истории: это
+ * сгенерированный текст, а не правка автора.
+ */
+export function withLiveMirrors(script: string): string {
+  const range = blockRange(script);
+  if (!range) return script;
+  const block = script.slice(range.start, range.end);
+  const fields = new Set<StateField>();
+  for (const layer of readStates(script).layers) {
+    for (const pose of layer.poses) {
+      for (const field of Object.keys(pose.pose) as StateField[]) fields.add(field);
+    }
+  }
+  const missing = [...fields].filter((field) => !new RegExp(`^\\s*${liveName(field)}\\s*=`, "m").test(block));
+  if (!missing.length) return script;
+  const at = script.lastIndexOf(END, range.end);
+  if (at < 0) return script;
+  const lines = missing.map((field) => `${liveName(field)} = ${channelName(field)}`).join("\n");
+  return `${script.slice(0, at)}${lines}\n${script.slice(at)}`;
 }
 
 /** Границы блока в скрипте или `null`, если блока нет. */
@@ -418,6 +459,11 @@ function blockRange(script: string): { start: number; end: number } | null {
 
 function channelName(field: StateField): string {
   return `${field}_states`;
+}
+
+/** Имя локальной переменной с живым вкладом слоя: `<поле>` → `states_<поле>`. */
+export function liveName(field: StateField): string {
+  return `states_${field}`;
 }
 
 /** Как канал встаёт в авторскую строку. */

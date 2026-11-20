@@ -9,7 +9,8 @@ import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import {
   addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, replacePose, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
-  removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, shiftPose, writeStates,
+  removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, shiftPose, withLiveMirrors, writeStates,
+  liveName,
   SMOOTH_DEFAULT, SMOOTH_LIMIT,
   STATE_FIELDS, type Pose, type StateField, type StateLayer, type StatePreview, type States,
 } from "../engine/states";
@@ -65,6 +66,13 @@ interface StatesPanelProps {
   onChange: (scripts: Record<string, string>) => void;
   /** Вернуть авторскую позу после записи: объектом двигает состояние, а не база. */
   onBase?: (base: Partial<BasePose>, objectId: string) => void;
+  /**
+   * Дописать в блок сгенерированные строки — без шага истории.
+   *
+   * Это не правка автора, а служебный текст: зеркала живого вклада дописываются
+   * в блоки, записанные старой версией, один раз и молча.
+   */
+  onNormalize?: (scripts: Record<string, string>) => void;
   /**
    * Предпросмотр — только отрисовка: `null` снимает его.
    *
@@ -152,6 +160,20 @@ export function StatesPanel(props: StatesPanelProps) {
     lastBase.current = base;
     sent.current = null;
   }, [objectId, object]);
+  /**
+   * Блок старой версии: дописываем в него зеркала живого вклада.
+   *
+   * Без них `vars` пуст, и предпросмотр считал бы вклад по входам — то есть
+   * дёргался бы. Пишем молча: это сгенерированный текст, а не правка автора.
+   */
+  useEffect(() => {
+    if (!object) return;
+    const next = withLiveMirrors(object.script);
+    if (next === object.script) return;
+    props.onNormalize?.({ [object.id]: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objectId]);
+
   // Первый показ: авторская база — текущая.
   useEffect(() => {
     if (authorBase || !object) return;
@@ -311,6 +333,22 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   const previewLive = (): Partial<Record<StateField, number>> => {
     if (!layer?.param) return {};
+    // Вклад слоя берём из **того же кадра**, что нарисовала сцена: блок зеркалит
+    // каналы в переменные `states_<поле>`, и ядро отдаёт их в `vars`.
+    //
+    // Считать вклад заново по входам нельзя. Кадр приходит на тик позже входа, а
+    // со `smooth` — заметно позже, поэтому «поза − вклад» гуляла вместе с мышью:
+    // объект стоял на месте и мелко дёргался, будто пытался сдвинуться.
+    const vars = object ? props.frame?.vars?.[object.id] : undefined;
+    if (vars) {
+      const live: Partial<Record<StateField, number>> = {};
+      for (const field of STATE_FIELDS) {
+        const value = vars[liveName(field)];
+        if (typeof value === "number" && Number.isFinite(value)) live[field] = value;
+      }
+      if (Object.keys(live).length) return live;
+    }
+    // Ядро старое или кадр ещё не пришёл — считаем по входам, как раньше.
     const value = liveValue(layer.param);
     return value === undefined ? {} : poseAt(layer, value);
   };
