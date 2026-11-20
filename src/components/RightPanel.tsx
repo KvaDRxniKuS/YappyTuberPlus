@@ -45,7 +45,8 @@ interface RightPanelProps {
   /** Базовая поза выделения: нужна записи позы — она возвращает объект на место. */
   onBase?: (patch: Partial<RigObject["base"]>) => void;
   /** Предпросмотр состояния: двигает базу без шага истории. */
-  onPreviewBase?: (patch: Partial<RigObject["base"]>) => void;
+  /** Предпросмотр состояний — только отрисовка; `null` снимает его. */
+  onPreviewBase?: (patch: Partial<RigObject["base"]> | null) => void;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
   /** Привязка цветов объекта к каналам модулей: один шаг истории на всю пачку. */
@@ -255,7 +256,7 @@ export function RightPanel(props: RightPanelProps) {
           globals={props.globals}
           onChange={props.onStates ?? props.onBehaviour}
           onBase={props.onBase}
-          onPreviewBase={props.onPreviewBase ?? props.onBase}
+          onPreviewBase={props.onPreviewBase ?? (props.onBase ? (patch) => props.onBase?.(patch ?? {}) : undefined)}
           onManual={props.onManual}
         />
       ) : tab === "shape" ? (

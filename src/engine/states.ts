@@ -71,8 +71,6 @@ export interface StateLayer {
   name: string;
   /** Параметр привязки; `null` — свободные веса. */
   param: string | null;
-  /** Отрезок таймлайна; `null` — брать из паспорта входа. */
-  range: [number, number] | null;
   /**
    * Сглаживание входа, мс: значение параметра проходит через `smooth(...)`
    * перед расчётом весов. `0` — выключено.
@@ -174,12 +172,8 @@ function readLayer(raw: unknown): StateLayer | null {
   const name = text(source.name).slice(0, 60) || "слой";
   const paramRaw = text(source.param);
   const param = paramRaw && PARAM.test(paramRaw) ? paramRaw : null;
-  let range: [number, number] | null = null;
-  if (Array.isArray(source.range)) {
-    const low = finite(source.range[0]);
-    const high = finite(source.range[1]);
-    if (low !== null && high !== null && high > low) range = [low, high];
-  }
+  // `range` из старых файлов не читается: отрезок теперь неявный — его
+  // задают крайние ключи, поэтому отдельного поля в формате нет.
   const poses: Pose[] = [];
   if (Array.isArray(source.poses)) {
     for (const item of source.poses) {
@@ -204,7 +198,6 @@ function readLayer(raw: unknown): StateLayer | null {
   return {
     name,
     param,
-    range,
     smooth: readSmooth(source.smooth),
     normalize: source.normalize === "average" ? "average" : "sum",
     poses,
@@ -526,7 +519,6 @@ export function makeLayer(index: number, param: string | null = null): StateLaye
   return {
     name: param ? `слой ${index + 1}` : `веса ${index + 1}`,
     param,
-    range: null,
     smooth: 0,
     normalize: "sum",
     poses: param ? [{ at: 0, pose: {} }] : [{ weight: "1", pose: {} }],
@@ -599,16 +591,20 @@ function sortKeys(layer: StateLayer): StateLayer {
 }
 
 /**
- * Отрезок таймлайна: что выставлено, иначе крайние ключи, иначе 0…1.
- * Паспорт входа живёт в `meta` у редактора, поэтому сюда он приходит готовым.
+ * Шкала таймлайна — **неявная**: отдельного поля «отрезок» нет.
+ *
+ * Два и больше ключей сами становятся границами: шкала идёт от первого ключа
+ * до последнего, поэтому перетаскивание крайнего меняет и размер таймлайна.
+ * Пока ключ один, отрезка технически нет — шкалой служит паспорт входа
+ * (`fallback`), чтобы точку было куда двигать и второй ключ было где поставить.
  */
 export function layerRange(layer: StateLayer, fallback: [number, number] | null = null): [number, number] {
-  if (layer.range) return layer.range;
   const keys = layer.poses.map((pose) => pose.at).filter((at): at is number => at !== undefined);
   if (keys.length >= 2) return [Math.min(...keys), Math.max(...keys)];
-  if (keys.length === 1) return [keys[0] - 1, keys[0] + 1];
+  if (keys.length === 1) return fallback ?? [keys[0] - 1, keys[0] + 1];
   return fallback ?? [0, 1];
 }
+
 
 /** Имя входа модуля `manual.<имя>` — его можно двигать предпросмотром. */
 export function manualInputOf(param: string | null): string | null {
@@ -744,7 +740,9 @@ export function mirrorLayer(
  * (`at → от + до − at`), позы остаются при своих ключах.
  */
 export function invertByInput(layer: StateLayer, fallback: [number, number] | null = null): StateLayer {
-  const [from, to] = layerRange(layer, fallback);
+  // Зеркалим по паспорту входа (ось параметра), если он известен: по крайним
+  // ключам это был бы просто разворот таймлайна.
+  const [from, to] = fallback ?? layerRange(layer);
   const sum = from + to;
   const poses = layer.poses.map((pose) => (
     pose.at === undefined ? pose : { ...pose, at: Math.round((sum - pose.at) * 1000) / 1000 }
@@ -794,7 +792,6 @@ export function cloneLayers(layers: readonly StateLayer[], taken: readonly strin
     return {
       ...layer,
       name,
-      range: layer.range ? [layer.range[0], layer.range[1]] : null,
       poses: layer.poses.map((pose) => ({
         ...pose,
         pose: { ...pose.pose },
@@ -833,7 +830,7 @@ export function scaleKeys(layer: StateLayer, from: [number, number], to: [number
       at: Math.round((to[0] + (pose.at - from[0]) * scale) * 1000) / 1000,
     }
   ));
-  return sortKeys({ ...layer, range: to, poses });
+  return sortKeys({ ...layer, poses });
 }
 
 /**

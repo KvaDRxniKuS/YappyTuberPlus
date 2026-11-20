@@ -2019,11 +2019,13 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border: none; border-radius: 4px; background: transparent; color: var(--faint); cursor: pointer;
 }
 .states-remove:hover { color: var(--danger); background: var(--surface-3); }
-.states-range {
-  display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
-  color: var(--faint); font-size: 11px;
+/* Шкала неявная: её границы подписаны под линией, отдельного поля нет. */
+.states-scale {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; margin: -6px 10px 8px; color: var(--faint); font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
-.states-range input[type="number"], .states-range input:not([type]) { width: 58px; }
+.states-scale span:nth-child(2) { opacity: 0.7; }
 .states-smooth { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--muted); }
 /* Таймлайн — линия, а не поле: ключи стоят на ней, точка ездит по ней. */
 .states-track {
@@ -2059,12 +2061,9 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   pointer-events: auto; cursor: grab;
 }
 .states-head-dot:hover { transform: scale(1.2); }
-/* Значение точки — своё поле с постоянной шириной: ключи рядом не едут. */
-.states-point {
-  display: flex; align-items: center; gap: 6px; margin: 0 0 2px;
-  color: var(--faint); font-size: 11px;
-}
-.states-point-value { width: 64px; flex: 0 0 64px; font-variant-numeric: tabular-nums; }
+/* Значение точки — то же поле, что и остальные: подпись слева, число справа. */
+.states-point { margin: 0 0 8px; }
+.states-point input { font-variant-numeric: tabular-nums; }
 .states-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .states-key-chip {
   display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px 1px 6px;

@@ -14,10 +14,11 @@ import {
   transformPoint, type Affine,
 } from "../render/rigCanvas";
 import { MediaAssets, MaskMedia } from "../render/media";
+import { previewObjects } from "../engine/structure";
 import { onAssetsChanged } from "../engine/assets";
 import type { TextChannel } from "../render/text";
 import {
-  boxFromCorners, boxFromPoints, boxIntersects, polygonIntersectsBox, selectionRoots,
+  boxFromCorners, boxFromPoints, boxIntersects, pointInPolygon, polygonIntersectsBox, selectionRoots,
   type Box, type Point,
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
@@ -99,6 +100,8 @@ interface SceneProps {
   onSelect: (id: string | null, mode: SelectMode) => void;
   onSelectMany: (ids: string[], mode: "replace" | "add") => void;
   onDragStart: () => void;
+  /** Предпросмотр состояний: рисуется вместо базы объекта, пресет не меняет. */
+  preview?: { id: string; base: Partial<BasePose> } | null;
   onDragObjects: (ids: string[], initial: Record<string, BasePose>, delta: { x: number; y: number }) => void;
   /**
    * Пивот ставится кликом в его новую точку: `base` — она же в мировых
@@ -120,6 +123,8 @@ type Interaction =
       /** Кого выбрать, если это окажется клик без перетаскивания. */
       pending: string | null;
       moved: boolean;
+      /** Ось, выбранная Shift: фиксируется один раз за жест, иначе дрожит. */
+      axis?: "x" | "y" | null;
     }
   | { type: "pan"; startX: number; startY: number; camera: Camera }
   | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
@@ -257,6 +262,11 @@ export function Scene(props: SceneProps) {
 
     const { zoom, x, y } = camera.current;
     const preset = current.preset;
+    // Предпросмотр состояний живёт только здесь: копия объектов с подменённой
+    // базой. В пресете база не меняется, поэтому сцена и вкладка не спорят.
+    const previewed = current.preview
+      ? { ...preset, objects: previewObjects(preset.objects, current.preview) }
+      : preset;
     const frame = current.frameRef.current;
     const colors = current.colors;
     ctx.save();
@@ -274,7 +284,7 @@ export function Scene(props: SceneProps) {
     resetCollector(lighting.current);
     // Цвета из модулей подставляются в копию пресета: свет, фигуры, текст и
     // материал уже читают цвет из объекта, поэтому менять их код не нужно.
-    const shown = colors ? applyColors(preset, colors) : preset;
+    const shown = colors ? applyColors(previewed, colors) : previewed;
     drawRig(ctx, shown, frame, assets.current, {
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
@@ -296,13 +306,13 @@ export function Scene(props: SceneProps) {
       });
       sceneSampler.commit();
     }
-    drawGuides(ctx, preset, frame, zoom, current.bounds, current.pivots, current.selectedIds);
-    drawSelection(ctx, preset, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
-    if (current.tool === "warp") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "frame");
-    if (current.tool === "deform") drawWarpOverlay(ctx, preset, frame, zoom, current.primaryId, "corners");
-    drawShapeOutlines(ctx, preset, frame, zoom, current.selectedIds);
-    if (current.pen) drawPen(ctx, preset, frame, current.pen, zoom, true);
-    if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, preset, zoom);
+    drawGuides(ctx, previewed, frame, zoom, current.bounds, current.pivots, current.selectedIds);
+    drawSelection(ctx, previewed, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
+    if (current.tool === "warp") drawWarpOverlay(ctx, previewed, frame, zoom, current.primaryId, "frame");
+    if (current.tool === "deform") drawWarpOverlay(ctx, previewed, frame, zoom, current.primaryId, "corners");
+    drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
+    if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
+    if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, previewed, zoom);
 
     ctx.strokeStyle = "#454d57";
     ctx.lineWidth = 1 / zoom;
@@ -419,7 +429,7 @@ export function Scene(props: SceneProps) {
 
   useEffect(() => {
     markDirty();
-  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen]);
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -474,10 +484,31 @@ export function Scene(props: SceneProps) {
     };
   };
 
+  /**
+   * Выделенная группа, внутри чьей рамки оказалась точка.
+   *
+   * Группа не рисуется, поэтому по пикселям её не поймать: рамка считается по
+   * детям (`groupBounds`). Нужна ровно для перетаскивания — клик по пустому
+   * месту внутри группы выделение не меняет.
+   */
+  const groupAt = (point: { x: number; y: number }): string | null => {
+    const current = propsRef.current;
+    const grabbed = new Set(current.selectedIds);
+    for (const object of current.preset.objects) {
+      if (object.kind !== "group" || !grabbed.has(object.id)) continue;
+      const box = groupBounds(current.preset, object.id);
+      if (box && box.length >= 3 && pointInPolygon(point, box)) return object.id;
+    }
+    return null;
+  };
+
   const hitTest = (point: { x: number; y: number }, accept?: (object: RigObject) => boolean): RigObject | null => {
     const current = propsRef.current;
     const frame = current.frameRef.current;
-    const ordered = orderedObjects(current.preset, frame);
+    const shown = current.preview
+      ? { ...current.preset, objects: previewObjects(current.preset.objects, current.preview) }
+      : current.preset;
+    const ordered = orderedObjects(shown, frame);
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
       const object = ordered[index];
       if (accept && !accept(object)) continue;
@@ -757,6 +788,25 @@ export function Scene(props: SceneProps) {
               }
             }
             if (!hit) {
+              // Группа своих пикселей не имеет: её ловит общий хитбокс, иначе
+              // пустоту внутри группы нельзя было бы схватить и перетащить.
+              const group = groupAt(point);
+              if (group && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+                const initialBox = Object.fromEntries(
+                  current.preset.objects.map((object) => [object.id, { ...object.base }]),
+                );
+                current.onDragStart();
+                interaction.current = {
+                  type: "drag",
+                  ids: selectionRoots(current.preset.objects, current.selectedIds),
+                  start: point,
+                  initial: initialBox,
+                  // Клик по пустоте внутри группы не меняет выделение.
+                  pending: null,
+                  moved: false,
+                };
+                return;
+              }
               if (!event.shiftKey && !event.ctrlKey && !event.metaKey) current.onSelect(null, "replace");
               return;
             }
@@ -868,8 +918,19 @@ export function Scene(props: SceneProps) {
             if (Math.hypot(point.x - current.start.x, point.y - current.start.y) > 2) current.moved = true;
             let delta = { x: point.x - current.start.x, y: point.y - current.start.y };
             if (event.shiftKey) {
-              if (Math.abs(delta.x) >= Math.abs(delta.y)) delta = { x: delta.x, y: 0 };
-              else delta = { x: 0, y: delta.y };
+              // Ось выбирается один раз — по первому движению за порогом. Раньше
+              // она пересчитывалась каждый кадр, и у диагонали объект дёргался
+              // между осями.
+              if (!current.axis && Math.hypot(delta.x, delta.y) > 3) {
+                current.axis = Math.abs(delta.x) >= Math.abs(delta.y) ? "x" : "y";
+              }
+              delta = current.axis === "y"
+                ? { x: 0, y: delta.y }
+                : current.axis === "x"
+                  ? { x: delta.x, y: 0 }
+                  : { x: 0, y: 0 };
+            } else {
+              current.axis = null;
             }
             const { ids, initial } = current;
             queueLive(() => propsRef.current.onDragObjects(ids, initial, delta));

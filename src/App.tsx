@@ -402,6 +402,8 @@ export default function App() {
 
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
+  /** Предпросмотр состояний: только для отрисовки, в пресет не попадает. */
+  const [statePreview, setStatePreview] = useState<{ id: string; base: Partial<BasePose> } | null>(null);
   const selectionRef = useRef(selection);
   const fileInput = useRef<HTMLInputElement>(null);
   const [filesOpen, setFilesOpen] = useState(false);
@@ -553,6 +555,8 @@ export default function App() {
 
   const overlayConfig = preset.overlay || normalizeOverlay(undefined);
   const primaryId = selection.at(-1) ?? null;
+  // Предпросмотр принадлежит тому объекту, который был открыт во вкладке.
+  useEffect(() => { setStatePreview(null); }, [primaryId]);
   const selected = preset.objects.find((object) => object.id === primaryId) || null;
   // Порядок важен: последний элемент — основной объект, его и показывает инспектор.
   const selectedObjects = selection
@@ -993,18 +997,31 @@ export default function App() {
   }, [commit]);
 
   /**
-   * Предпросмотр состояния: двигает **только** объект вкладки.
+   * Предпросмотр состояния — только отрисовка.
    *
-   * Выделение тут ни при чём — иначе с двумя выделенными объектами
-   * предпросмотр одного тащил бы оба. Шаг истории не пишется.
+   * База объекта не меняется: сцена рисует копию пресета с подменённой базой.
+   * Поэтому уход из вкладки сам возвращает объект на место, а отменять нечего —
+   * истории у предпросмотра нет.
    */
-  const previewBase = useCallback((patch: Partial<BasePose>) => {
+  const previewBase = useCallback((base: Partial<BasePose> | null) => {
     // Основной объект — последний в выделении: его и показывает вкладка.
+    const id = selectionRef.current.at(-1);
+    setStatePreview(id && base ? { id, base } : null);
+  }, []);
+
+  /**
+   * Вернуть авторскую базу после записи позы.
+   *
+   * Запись берёт дельту из движения руками; база возвращается на место, иначе
+   * поза наложилась бы поверх уже сдвинутой базы. Шага истории нет: жест уже
+   * записан началом перетаскивания.
+   */
+  const restoreBase = useCallback((base: Partial<BasePose>) => {
     const id = selectionRef.current.at(-1);
     if (!id) return;
     const current = presetRef.current;
-    const objects = withBases(current.objects, [id], (base) => ({ ...base, ...patch }));
-    commit({ ...current, objects }, { label: "Предпросмотр состояния", coalesce: "state-preview", record: false });
+    const objects = withBases(current.objects, [id], (before) => ({ ...before, ...base }));
+    commit({ ...current, objects }, { label: "Запись позы", coalesce: "state-record", record: false });
   }, [commit]);
 
   /** Относительный сдвиг всей выборки. */
@@ -1536,6 +1553,7 @@ export default function App() {
             primaryId={primaryId}
             tool={tool}
             showGrid={showGrid}
+            preview={statePreview}
             ghosts={(paused || stopped) && ghosts}
             ghostPref={ghosts}
             onToggleGhosts={() => setGhosts((value) => !value)}
@@ -1621,7 +1639,7 @@ export default function App() {
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
           onStates={updateStateScripts}
-          onBase={(base) => updateSelectedBases(base, "state-record")}
+          onBase={(base) => restoreBase(base)}
           onPreviewBase={(base) => previewBase(base)}
           onText={updateTextObjects}
           onColors={updateColorObjects}

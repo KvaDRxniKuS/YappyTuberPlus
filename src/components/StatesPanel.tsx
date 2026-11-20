@@ -63,10 +63,15 @@ interface StatesPanelProps {
   /** Имена глобальных переменных: их тоже можно привязать к слою. */
   globals?: string[];
   onChange: (scripts: Record<string, string>) => void;
-  /** Вернуть базовую позу после записи: объект остаётся там, где его поставили. */
+  /** Вернуть авторскую позу после записи: объектом двигает состояние, а не база. */
   onBase?: (base: Partial<BasePose>) => void;
-  /** Предпросмотр: двигает базу без шага истории. */
-  onPreviewBase?: (base: Partial<BasePose>) => void;
+  /**
+   * Предпросмотр — только отрисовка: `null` снимает его.
+   *
+   * База объекта при этом не меняется, поэтому выход из вкладки сам возвращает
+   * объект на место: ни истории, ни «отменить», ни двойной позы.
+   */
+  onPreviewBase?: (base: Partial<BasePose> | null) => void;
   /** Предпросмотр входа `manual.*` — двигает то же значение, что и ползунок входов. */
   onManual?: (key: string, value: number) => void;
 }
@@ -93,19 +98,23 @@ export function StatesPanel(props: StatesPanelProps) {
   const [mirrorFor, setMirrorFor] = useState<number[] | null>(null);
   const [axis, setAxis] = useState({ x: 0, y: 0, angle: 90 });
 
-  /** Авторская поза объекта: база без наложенного предпросмотра. */
+  /** Авторская поза объекта: база, снятая при открытии вкладки. */
   const [authorBase, setAuthorBase] = useState<BasePose | null>(null);
-  /** Что мы сами записали в базу прошлым предпросмотром. */
-  const applied = useRef<BasePose | null>(null);
-  /**
-   * Предпросмотр, который уже отправлен, но ещё не вернулся в `object.base`.
-   *
-   * Без этой отметки собственный предпросмотр выглядел бы как правка человека:
-   * запись позы срабатывала бы на каждый шаг точки и плодила ключи.
-   */
-  const pending = useRef<BasePose | null>(null);
+  /** База в прошлом кадре: по её изменению видно движение руками. */
+  const lastBase = useRef<BasePose | null>(null);
+  /** Что уже отправлено в предпросмотр: без этого эффект крутился бы вечно. */
+  const sent = useRef<BasePose | null>(null);
+  /** Колбэки в ref: уборка при закрытии вкладки видит актуальные. */
+  const previewApi = useRef(props.onPreviewBase);
+  previewApi.current = props.onPreviewBase;
+  const restoreApi = useRef(props.onBase);
+  restoreApi.current = props.onBase;
   /** Перетаскивание: ключ или точка таймлайна. */
-  const drag = useRef<{ kind: "key"; index: number } | { kind: "head"; free: boolean } | null>(null);
+  const drag = useRef<
+    | { kind: "key"; index: number; scale: [number, number] }
+    | { kind: "head"; free: boolean }
+    | null
+  >(null);
 
   const layer: StateLayer | null = states.layers[layerIndex] ?? null;
   const range = layer ? layerRange(layer, metaRange(props, layer.param)) : [0, 1];
@@ -117,21 +126,21 @@ export function StatesPanel(props: StatesPanelProps) {
     objectRef.current = objectId;
     const base = object ? { ...object.base } : null;
     setAuthorBase(base);
-    applied.current = base;
+    lastBase.current = base;
+    sent.current = null;
   }, [objectId, object]);
   // Первый показ: авторская база — текущая.
   useEffect(() => {
     if (authorBase || !object) return;
     setAuthorBase({ ...object.base });
-    applied.current = { ...object.base };
+    lastBase.current = { ...object.base };
+    sent.current = null;
   }, [object, authorBase]);
   /** Смена слоя: точка таймлайна встаёт на его первый ключ. */
   useEffect(() => {
     const target = states.layers[layerIndex] ?? null;
-    // Предпросмотр нового слоя начинается с чистого листа: иначе база,
-    // оставленная прошлым слоем, выглядела бы как движение руками.
-    applied.current = null;
-    pending.current = null;
+    // Предпросмотр нового слоя начинается с чистого листа.
+    sent.current = null;
     // Значение точки не переезжает со слоя на слой: у каждого слоя своя шкала.
     setAt(target?.param
       ? (target.poses[0]?.at ?? layerRange(target, metaRange(props, target.param))[0])
@@ -242,20 +251,14 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   useEffect(() => {
     if (!object || !layer || !authorBase || !props.onPreviewBase) return;
-    // База не наша — её двинул человек; перебивать нечего, запись идёт ниже.
-    const ours = !applied.current
-      || sameBase(object.base, applied.current)
-      || (!!pending.current && sameBase(object.base, pending.current));
-    if (!ours) return;
     const next = applyPoseToBase(authorBase, previewDelta()) as BasePose;
-    if (sameBase(next, object.base)) {
-      applied.current = next;
-      pending.current = null;
-      return;
-    }
-    pending.current = next;
+    if (sent.current && sameBase(sent.current, next)) return;
+    sent.current = next;
     props.onPreviewBase(next);
   });
+
+  /** Вышли из вкладки — предпросмотр снят, объект сразу на своём месте. */
+  useEffect(() => () => { previewApi.current?.(null); }, []);
 
   /**
    * Запись позы без кнопки: человек подвинул объект — дельта от авторской позы
@@ -264,24 +267,16 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   useEffect(() => {
     if (!object || !layer || !authorBase) return;
-    // Пока тянут точку, база меняется предпросмотром — писать нечего.
+    const previous = lastBase.current;
+    lastBase.current = { ...object.base };
+    // Первый кадр вкладки и предпросмотр базу не меняют — писать нечего.
+    if (!previous || sameBase(previous, object.base)) return;
     if (drag.current?.kind === "head") return;
-    // Дождались собственного предпросмотра — это не правка человека.
-    if (pending.current) {
-      if (sameBase(object.base, pending.current)) {
-        applied.current = pending.current;
-        pending.current = null;
-        return;
-      }
-      // База ещё прежняя — запись просто не дошла. Ждём, а не считаем это
-      // движением: иначе каждый шаг точки ставил бы ключ.
-      if (applied.current && sameBase(object.base, applied.current)) return;
-      pending.current = null;
-    }
-    if (!applied.current) return;
-    if (sameBase(object.base, applied.current)) return;
     const delta = poseFromBase(authorBase, object.base);
-    applied.current = { ...object.base };
+    // База возвращается на место: объектом двигает поза, а не база. Возврат
+    // идёт без шага истории — жест уже записан началом перетаскивания.
+    restoreApi.current?.(authorBase);
+    lastBase.current = { ...authorBase };
     if (!Object.keys(delta).length) return;
     if (layer.param) {
       const point = at ?? range[0];
@@ -571,21 +566,6 @@ export function StatesPanel(props: StatesPanelProps) {
 
       {layer && bound && (
         <>
-          <div className="states-range">
-            <span>отрезок</span>
-            <NumberField
-              value={range[0]}
-              step={0.1}
-              onCommit={(value) => applyLayer({ ...layer, range: [value, Math.max(value + 1e-6, range[1])] })}
-            />
-            <span>…</span>
-            <NumberField
-              value={range[1]}
-              step={0.1}
-              onCommit={(value) => applyLayer({ ...layer, range: [Math.min(range[0], value - 1e-6), value] })}
-            />
-          </div>
-
           <div className="states-smoothing" title="Сглаживание входа: значение параметра проходит через smooth() до расчёта весов — дрожание трекера не дёргает позу">
             <label>
               <input
@@ -607,18 +587,16 @@ export function StatesPanel(props: StatesPanelProps) {
             )}
           </div>
 
-          {/* Значение точки — отдельное поле: цифры разной длины не должны
-              сдвигать ключи, которые стоят рядом. */}
-          <div className="states-point">
-            <span>точка</span>
+          {/* Значение точки — такое же поле, как остальные: одна подпись,
+              одно число, постоянная ширина. */}
+          <div className="states-field states-point">
+            <span>точка на шкале</span>
             <NumberField
-              className="states-point-value"
               value={at ?? range[0]}
               step={Math.max(1e-6, span / 100)}
               title="Значение на шкале, где стоит точка таймлайна"
               onCommit={(value) => moveHead(Math.min(range[1], Math.max(range[0], value)), true)}
             />
-            <span className="states-unit">на шкале</span>
           </div>
 
           {/* Линия таймлайна: ключи на ней, точка — предпросмотр. */}
@@ -635,9 +613,11 @@ export function StatesPanel(props: StatesPanelProps) {
                 const index = Number(key.getAttribute("data-key"));
                 setKeyIndex(index);
                 setAt(layer.poses[index]?.at ?? at);
-                // Крайние ключи держат отрезок: тронешь — поплывёт вся шкала.
-                const edge = layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1;
-                drag.current = edge ? null : { kind: "key", index };
+                // Шкала на время жеста замораживается: она считается по крайним
+                // ключам, а их же и тянем — иначе ключ «уезжал» бы из-под мыши.
+                drag.current = layer.poses.length > 1
+                  ? { kind: "key", index, scale: [range[0], range[1]] }
+                  : null;
                 return;
               }
               // За луч точка прилипает к ключам, за сам кружок — идёт плавно.
@@ -654,10 +634,12 @@ export function StatesPanel(props: StatesPanelProps) {
                 moveHead(valueAt(shareX), drag.current.free);
                 return;
               }
-              // Ключ тянется по шагу 5% отрезка: ровные значения без возни с полем.
-              const step = span * SNAP;
-              const raw = range[0] + shareX * span;
-              const value = round3(Math.round((raw - range[0]) / step) * step + range[0]);
+              // Ключ тянется по шагу 5% шкалы: ровные значения без возни с полем.
+              const [from, to] = drag.current.scale;
+              const scaleSpan = Math.max(1e-9, to - from);
+              const step = scaleSpan * SNAP;
+              const raw = from + shareX * scaleSpan;
+              const value = round3(Math.round((raw - from) / step) * step + from);
               const index = drag.current.index;
               const next = moveKey(layer, index, value);
               const moved = next.poses.findIndex((item) => item.at === value);
@@ -676,12 +658,12 @@ export function StatesPanel(props: StatesPanelProps) {
                 key={index}
                 data-key={index}
                 className={`states-key ${index === keyIndex ? "active" : ""} ${
-                  layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1 ? "edge" : ""
+                  layer.poses.length <= 1 ? "edge" : ""
                 }`}
                 style={{ left: `${share(item.at ?? range[0]) * 100}%` }}
-                title={layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1
-                  ? `Ключ ${item.at} · крайний ключ держит отрезок, поэтому не двигается`
-                  : `Ключ ${item.at} · тяните, чтобы перенести`}
+                title={layer.poses.length <= 1
+                  ? `Ключ ${item.at} · единственный ключ: отрезка ещё нет, тянуть нечего`
+                  : `Ключ ${item.at} · тяните, чтобы перенести: крайние задают шкалу`}
                 onClick={(event) => {
                   event.stopPropagation();
                   setKeyIndex(index);
@@ -693,6 +675,13 @@ export function StatesPanel(props: StatesPanelProps) {
               <div className="states-head-line" data-head="beam" title="Тяните за луч — точка прилипает к ключам" />
               <div className="states-head-dot" data-head="dot" title="Тяните за точку — плавный ход без привязки" />
             </div>
+          </div>
+
+          {/* Шкала неявная: её границы — крайние ключи, начало и конец линии. */}
+          <div className="states-scale">
+            <span>{fmt(range[0])}</span>
+            <span>{layer.poses.length >= 2 ? "крайние ключи" : "паспорт входа"}</span>
+            <span>{fmt(range[1])}</span>
           </div>
 
           <div className="states-keys">

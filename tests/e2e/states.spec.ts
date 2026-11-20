@@ -25,7 +25,7 @@ function object(script: string, parentId: string | null = null): RigObject {
 
 function bound(partial: Partial<StateLayer> = {}): StateLayer {
   return {
-    name: "взгляд", param: "manual.eye_x", range: [-1, 1], smooth: 0, normalize: "sum",
+    name: "взгляд", param: "manual.eye_x", smooth: 0, normalize: "sum",
     poses: [
       { at: -1, pose: { x: -20 } },
       { at: 1, pose: { x: 20 } },
@@ -73,7 +73,7 @@ test("сглаживание входа ставит smooth вокруг пар�
 
 test("свободный слой объявляет веса выражениями", () => {
   const layer: StateLayer = {
-    name: "грусть", param: null, range: null, smooth: 0, normalize: "sum",
+    name: "грусть", param: null, smooth: 0, normalize: "sum",
     poses: [{ weight: "smooth(mood, 240)", pose: { y: 6 } }],
   };
   const block = statesBlock(states(layer), object(""));
@@ -122,12 +122,12 @@ test("сброс нескольких объектов возвращает ск
 });
 
 test("круг «запись → чтение» сохраняет ключи, отрезок и режим", () => {
-  const layer = bound({ smooth: 200, normalize: "average", range: [-2, 2] });
+  const layer = bound({ smooth: 200, normalize: "average" });
   const written = writeStates("", states(layer), object(""));
   const parsed = readStates(written.script);
   expect(parsed.layers).toHaveLength(1);
   expect(parsed.layers[0]).toMatchObject({
-    name: "взгляд", param: "manual.eye_x", range: [-2, 2], smooth: 200, normalize: "average",
+    name: "взгляд", param: "manual.eye_x", smooth: 200, normalize: "average",
   });
   expect(parsed.layers[0].poses.map((pose) => pose.at)).toEqual([-1, 1]);
   expect(parsed.layers[0].poses[0].pose).toEqual({ x: -20 });
@@ -216,12 +216,20 @@ test("правка слоя меняет только выбранный", () =>
   expect(patched.layers[1].name).toBe("злость");
 });
 
-test("отрезок таймлайна: свой, затем крайние ключи, затем 0…1", () => {
-  expect(layerRange(bound({ range: [-2, 2] }))).toEqual([-2, 2]);
-  expect(layerRange(bound({ range: null }))).toEqual([-1, 1]);
-  expect(layerRange(bound({ range: null, poses: [{ at: 5, pose: {} }] }))).toEqual([4, 6]);
-  expect(layerRange(bound({ range: null, poses: [] }), [0, 100])).toEqual([0, 100]);
-  expect(layerRange(bound({ range: null, poses: [] }))).toEqual([0, 1]);
+test("шкала неявная: её задают крайние ключи, у одинокого — паспорт входа", () => {
+  // Два ключа — это и есть границы отрезка: отдельного поля «отрезок» нет.
+  expect(layerRange(bound())).toEqual([-1, 1]);
+  expect(layerRange(bound({ poses: [{ at: 3, pose: {} }, { at: 9, pose: {} }] }))).toEqual([3, 9]);
+  // Один ключ: отрезка ещё нет, шкалой служит паспорт входа.
+  expect(layerRange(bound({ poses: [{ at: 5, pose: {} }] }), [-1, 1])).toEqual([-1, 1]);
+  expect(layerRange(bound({ poses: [{ at: 5, pose: {} }] }))).toEqual([4, 6]);
+  expect(layerRange(bound({ poses: [] }), [0, 100])).toEqual([0, 100]);
+  expect(layerRange(bound({ poses: [] }))).toEqual([0, 1]);
+});
+
+test("в формате слоя нет поля «отрезок»", () => {
+  const written = writeStates("x = 0", states(bound()), object(""));
+  expect(written.script).not.toContain("\"range\"");
 });
 
 test("предпросмотр двигает только manual-входы", () => {
@@ -309,26 +317,26 @@ test("переменные кадра, которых нет у модулей, 
 /* ── инверсия, разворот, зеркало ─────────────────────────────────────── */
 
 test("инверсия по входу зеркалит значения ключей, позы остаются при них", () => {
-  const layer = invertByInput(bound({ range: [-1, 1], poses: [{ at: -1, pose: { x: -20 } }, { at: 1, pose: { x: 20 } }] }));
+  const layer = invertByInput(bound({ poses: [{ at: -1, pose: { x: -20 } }, { at: 1, pose: { x: 20 } }] }));
   expect(layer.poses.map((pose) => pose.at)).toEqual([-1, 1]);
   expect(layer.poses.map((pose) => pose.pose.x)).toEqual([20, -20]);
 });
 
 test("на несимметричных ключах инверсия по входу и разворот расходятся", () => {
-  const source = bound({ range: [-10, 10], poses: [{ at: -10, pose: { x: 1 } }, { at: 4, pose: { x: 2 } }] });
-  // По входу: ключи уезжают в симметричные точки, позы едут с ключами.
-  expect(invertByInput(source).poses.map((pose) => [pose.at, pose.pose.x])).toEqual([[-4, 2], [10, 1]]);
+  const source = bound({ poses: [{ at: -10, pose: { x: 1 } }, { at: 4, pose: { x: 2 } }] });
+  // По входу: ключи уезжают в симметричные точки паспорта (ось 0), позы едут с ключами.
+  expect(invertByInput(source, [-10, 10]).poses.map((pose) => [pose.at, pose.pose.x])).toEqual([[-4, 2], [10, 1]]);
   // По таймлайну: ключи на месте, позы меняются местами.
   expect(reversePoses(source).poses.map((pose) => [pose.at, pose.pose.x])).toEqual([[-10, 2], [4, 1]]);
 });
 
 test("инверсия по входу дважды возвращает исходные ключи", () => {
-  const source = bound({ range: [0, 10], poses: [{ at: 2, pose: { x: 1 } }, { at: 8, pose: { x: 2 } }] });
-  expect(invertByInput(invertByInput(source)).poses).toEqual(source.poses);
+  const source = bound({ poses: [{ at: 2, pose: { x: 1 } }, { at: 8, pose: { x: 2 } }] });
+  expect(invertByInput(invertByInput(source, [0, 10]), [0, 10]).poses).toEqual(source.poses);
 });
 
 test("разворот по таймлайну не трогает значения ключей у свободного слоя", () => {
-  const free = bound({ param: null, range: null, poses: [{ weight: "1", pose: { x: 1 } }, { weight: "2", pose: { x: 2 } }] });
+  const free = bound({ param: null, poses: [{ weight: "1", pose: { x: 1 } }, { weight: "2", pose: { x: 2 } }] });
   expect(reversePoses(free).poses.map((pose) => pose.weight)).toEqual(["2", "1"]);
 });
 
@@ -371,11 +379,10 @@ test("зеркало отражает точки деформера в доля�
 
 test("масштабирование ключей под новый диапазон переносит пропорционально", () => {
   const layer = scaleKeys(
-    bound({ range: [-1, 1], poses: [{ at: -1, pose: { x: -20 } }, { at: 0, pose: {} }, { at: 1, pose: { x: 20 } }] }),
+    bound({ poses: [{ at: -1, pose: { x: -20 } }, { at: 0, pose: {} }, { at: 1, pose: { x: 20 } }] }),
     [-1, 1],
     [0, 1],
   );
-  expect(layer.range).toEqual([0, 1]);
   expect(layer.poses.map((pose) => pose.at)).toEqual([0, 0.5, 1]);
 });
 
@@ -407,7 +414,7 @@ test("вставка ставит копии после указанного с�
 /* ── предпросмотр: веса и поза в точке таймлайна ────────────────────── */
 
 test("веса в точке: на ключе — сама поза, между ключами — доля", () => {
-  const layer = bound({ range: [-1, 1] });
+  const layer = bound({ });
   expect(weightsAt(layer, -1)).toEqual([1, 0]);
   expect(weightsAt(layer, 0)).toEqual([0.5, 0.5]);
   expect(weightsAt(layer, 1)).toEqual([0, 1]);

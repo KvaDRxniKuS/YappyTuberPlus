@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { orderedObjects } from "../../src/render/rigCanvas";
-import { propagateBase, withBases } from "../../src/engine/structure";
+import { previewObjects, propagateBase, withBases } from "../../src/engine/structure";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { BasePose, RigFrame, RigObject } from "../../src/types";
 
@@ -120,4 +120,23 @@ test("общий ребёнок двух выделенных родителей
   ];
   const moved = withBases(objects, ["a", "b"], (pose) => ({ ...pose, x: pose.x + 10 }));
   expect(moved.find((item) => item.id === "child")!.base.x).toBe(20);
+});
+
+test("предпросмотр состояний меняет только отрисовку, а не пресет", () => {
+  const objects = [
+    object("group", null, base(100, 100)),
+    object("child", "group", base(140, 100)),
+    object("other", null, base(400, 400)),
+  ];
+  const shown = previewObjects(objects, { id: "group", base: { x: 160, y: 100 } });
+  const at = (list: RigObject[], id: string) => list.find((item) => item.id === id)!;
+  expect(at(shown, "group").base.x).toBe(160);
+  // Потомок едет за базой родителя — как при перетаскивании.
+  expect(at(shown, "child").base.x).toBe(200);
+  // Пресет не тронут: предпросмотр живёт только в отрисовке.
+  expect(at(objects, "group").base.x).toBe(100);
+  expect(at(objects, "child").base.x).toBe(140);
+  expect(at(shown, "other").base.x).toBe(400);
+  // Снятый предпросмотр возвращает те же объекты.
+  expect(previewObjects(objects, null)).toBe(objects);
 });

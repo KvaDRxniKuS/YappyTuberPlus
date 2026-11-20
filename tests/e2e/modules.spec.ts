@@ -9,6 +9,7 @@ import {
   uniqueModuleName, validateModules,
 } from "../../src/modules/values";
 import { normalizeModules } from "../../src/engine/preset";
+import { paramGroups } from "../../src/engine/paramNames";
 import { createDemoPreset, createEmptyPreset } from "../../src/data/demoPreset";
 import { DEFAULT_MODULES, type ModuleInstance, type RigPreset } from "../../src/types";
 
@@ -226,4 +227,23 @@ test("переименование входа переносит галку вы
   expect(renameDisabledInput(before, "jawopen", "jawopen")).toBeNull();
   // Исходный модуль не правится: правка уходит в пресет целиком.
   expect(before.disabledInputs).toEqual(["jawopen", "headrx"]);
+});
+
+test("вход value ручного источника не предлагается в состояниях", () => {
+  const modules = [module("manual", "manual"), module("mic", "loudness")];
+  const groups = paramGroups({ modules });
+  const names = groups.flatMap((group) => group.items.map((item) => item.name));
+  // Ползунок ручного источника — не сигнал: слой к нему не привязывается.
+  expect(names).not.toContain("manual.value");
+  // У других модулей вход `value` остаётся: он приходит извне.
+  expect(names).toContain("mic.speak");
+  expect(names).not.toContain("manual.value");
+});
+
+test("вход value прячется и в «значениях кадра»", () => {
+  const modules = [module("manual", "manual")];
+  const groups = paramGroups({ modules, values: { "manual.value": 0.5, "signal.time": 1 } });
+  const names = groups.flatMap((group) => group.items.map((item) => item.name));
+  expect(names).toContain("signal.time");
+  expect(names).not.toContain("manual.value");
 });

@@ -400,3 +400,22 @@ export function withBases(
   }
   return next;
 }
+
+/**
+ * Пресет с наложенным предпросмотром состояний.
+ *
+ * Предпросмотр — это **отрисовка**, а не правка: база в настоящем пресете не
+ * меняется, поэтому уход из вкладки сам возвращает объект на место — без
+ * истории, без «отменить» и без двойного применения позы.
+ */
+export function previewObjects(
+  objects: RigObject[],
+  preview: { id: string; base: Partial<BasePose> } | null,
+): RigObject[] {
+  if (!preview) return objects;
+  const target = objects.find((object) => object.id === preview.id);
+  if (!target) return objects;
+  const next = { ...target.base, ...preview.base } as BasePose;
+  // Потомки едут за базой родителя — так же, как при перетаскивании на сцене.
+  return withBases(objects, [preview.id], () => next);
+}
