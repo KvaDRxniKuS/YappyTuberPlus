@@ -19,7 +19,7 @@ import { onAssetsChanged } from "../engine/assets";
 import type { TextChannel } from "../render/text";
 import {
   boxFromCorners, boxFromPoints, boxIntersects, pointInPolygon, polygonIntersectsBox, selectionRoots,
-  type Box, type Point,
+  subtreeIds, type Box, type Point,
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
@@ -495,13 +495,50 @@ export function Scene(props: SceneProps) {
    */
   const groupAt = (point: { x: number; y: number }): string | null => {
     const current = propsRef.current;
-    const grabbed = new Set(current.selectedIds);
-    for (const object of current.preset.objects) {
-      if (object.kind !== "group" || !grabbed.has(object.id)) continue;
-      const box = groupBounds(current.preset, object.id);
-      if (box && box.length >= 3 && pointInPolygon(point, box)) return object.id;
+    const shown = current.preview
+      ? { ...current.preset, objects: previewObjects(current.preset.objects, current.preview) }
+      : current.preset;
+    const order = orderedObjects(shown, current.frameRef.current);
+    const position = new Map(order.map((object, index) => [object.id, index]));
+    // Верх группы — самый верхний её потомок: он и есть её «пиксель».
+    const top = (id: string) => Math.max(-1, ...subtreeIds(shown.objects, [id]).map((child) => position.get(child) ?? -1));
+    let best: string | null = null;
+    let bestTop = -1;
+    for (const object of shown.objects) {
+      if (object.kind !== "group" || object.enabled === false) continue;
+      const box = groupBounds(shown, object.id);
+      if (!box || box.length < 3 || !pointInPolygon(point, box)) continue;
+      const height = top(object.id);
+      if (height > bestTop) { best = object.id; bestTop = height; }
     }
-    return null;
+    return best;
+  };
+
+  /**
+   * Кто отвечает за нажатие: группа-контейнер или спрайт.
+   *
+   * Группа ловит мышь своим габаритом, поэтому объект, который лежит **за ней**,
+   * внутри габарита больше не тянется — его выбирают кликом вне группы или в
+   * дереве. Свои дети и то, что рисуется выше группы, остаются важнее: это её
+   * картинка и то, что лежит перед ней.
+   */
+  const containerAt = (point: { x: number; y: number }, hit: RigObject | null): string | null => {
+    const group = groupAt(point);
+    if (!group) return null;
+    const current = propsRef.current;
+    if (hit) {
+      // Спрайт — потомок группы: это её пиксель, он и отвечает.
+      if (subtreeIds(current.preset.objects, [group]).includes(hit.id)) return null;
+      const shown = current.preview
+        ? { ...current.preset, objects: previewObjects(current.preset.objects, current.preview) }
+        : current.preset;
+      const order = orderedObjects(shown, current.frameRef.current);
+      const position = new Map(order.map((object, index) => [object.id, index]));
+      const top = Math.max(-1, ...subtreeIds(shown.objects, [group]).map((child) => position.get(child) ?? -1));
+      // Спрайт рисуется выше группы — он и впереди.
+      if ((position.get(hit.id) ?? -1) > top) return null;
+    }
+    return group;
   };
 
   const hitTest = (point: { x: number; y: number }, accept?: (object: RigObject) => boolean): RigObject | null => {
@@ -789,37 +826,28 @@ export function Scene(props: SceneProps) {
                 return;
               }
             }
-            if (!hit) {
-              // Группа своих пикселей не имеет: её ловит общий хитбокс, иначе
-              // пустоту внутри группы нельзя было бы схватить и перетащить.
-              const group = groupAt(point);
-              if (group && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-                const initialBox = Object.fromEntries(
-                  current.preset.objects.map((object) => [object.id, { ...object.base }]),
-                );
-                current.onDragStart();
-                interaction.current = {
-                  type: "drag",
-                  ids: selectionRoots(current.preset.objects, current.selectedIds),
-                  start: point,
-                  initial: initialBox,
-                  // Клик по пустоте внутри группы не меняет выделение.
-                  pending: null,
-                  moved: false,
-                };
-                return;
-              }
+            // Группа своих пикселей не имеет, но её габарит — такой же хитбокс:
+            // пустое место внутри группы хватает саму группу, а не объект за ней.
+            const container = containerAt(point, hit);
+            const targetObject = container
+              ? current.preset.objects.find((object) => object.id === container) ?? hit
+              : hit;
+            if (!targetObject) {
               if (!event.shiftKey && !event.ctrlKey && !event.metaKey) current.onSelect(null, "replace");
               return;
             }
-            if (event.ctrlKey || event.metaKey) { current.onSelect(hit.id, "toggle"); return; }
-            if (event.shiftKey) { current.onSelect(hit.id, "add"); return; }
+            if (event.ctrlKey || event.metaKey) { current.onSelect(targetObject.id, "toggle"); return; }
+            if (event.shiftKey) { current.onSelect(targetObject.id, "add"); return; }
             // Выделение в структуре важнее того, кто оказался сверху: если точка
             // попала в выделенный объект (или его потомка), тащим выборку, а
             // верхний объект выбирается только кликом без перетаскивания.
             const inSelection = (object: RigObject) => isSelectedTree(current.preset, object.id, current.selectedIds);
-            const inside = inSelection(hit);
-            const under = inside ? hit : hitTest(point, inSelection);
+            const inside = inSelection(targetObject);
+            // Нажатие внутрь выделения (в том числе в габарит выделенной
+            // группы) тянет всю выборку. Группа-контейнер, которая не в
+            // выделении, тянется сама и никому не уступает: иначе её пустой
+            // габарит хватал бы объект за ней.
+            const under = inside ? targetObject : (container ? null : hitTest(point, inSelection));
             const initial = Object.fromEntries(current.preset.objects.map((object) => [object.id, { ...object.base }]));
             if (under) {
               current.onDragStart();
@@ -828,14 +856,16 @@ export function Scene(props: SceneProps) {
                 ids: selectionRoots(current.preset.objects, current.selectedIds),
                 start: point,
                 initial,
-                pending: inside ? null : hit.id,
+                pending: inside ? null : targetObject.id,
                 moved: false,
               };
               return;
             }
-            current.onSelect(hit.id, "replace");
+            // Клик по пустому месту габарита группы меняет выбор на саму группу,
+            // и она же тянется — «объект за ней» больше не перехватывает жест.
+            current.onSelect(targetObject.id, "replace");
             current.onDragStart();
-            interaction.current = { type: "drag", ids: [hit.id], start: point, initial, pending: null, moved: false };
+            interaction.current = { type: "drag", ids: [targetObject.id], start: point, initial, pending: null, moved: false };
           }}
           onPointerMove={(event) => {
             const current = interaction.current;

@@ -426,16 +426,23 @@ export function previewFrame(
   if (!frame || !preview) return frame;
   const target = objects.find((object) => object.id === preview.id);
   if (!target) return frame;
-  const live: ObjectFrame = frame.objects?.[preview.id] ?? NEUTRAL_PARAMS;
-  const overwritten: ObjectFrame = {
-    ...live,
-    x: 0, y: 0, rotation: 0, skewX: 0, skewY: 0,
-    sizeX: 1, sizeY: 1, opacity: 1,
-    // Видимость — тоже из позы: она уже лежит в базе предпросмотра.
-    visible: target.enabled === false ? 0 : target.base.visible,
-  };
-  return { ...frame, objects: { ...frame.objects, [preview.id]: overwritten } };
+  // Всё поддерево: база предпросмотра уезжает и детям, поэтому их собственный
+  // кадровый вклад тоже обнуляется — иначе группа «суммировала» бы позу с
+  // анимацией детей.
+  const overwritten = { ...(frame.objects ?? {}) };
+  for (const object of subtreeBlock(objects, target.id)) {
+    const live: ObjectFrame = frame.objects?.[object.id] ?? NEUTRAL_PARAMS;
+    overwritten[object.id] = {
+      ...live,
+      x: 0, y: 0, rotation: 0, skewX: 0, skewY: 0,
+      sizeX: 1, sizeY: 1, opacity: 1,
+      // Видимость — тоже из позы: она уже лежит в базе предпросмотра.
+      visible: object.enabled === false ? 0 : object.base.visible,
+    };
+  }
+  return { ...frame, objects: overwritten };
 }
+
 
 export function previewObjects(
   objects: RigObject[],

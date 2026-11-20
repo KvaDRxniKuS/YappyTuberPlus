@@ -2216,6 +2216,17 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   display: flex; align-items: center; gap: 6px; margin: 10px 0 12px;
   color: var(--muted); font-size: 11px; cursor: pointer;
 }
+/* Диалог нового ключа: пояснение, одно поле и ошибка занятой позиции. */
+.states-dialog-note {
+  margin: 0 0 8px; color: var(--muted); font-size: 11px; line-height: 1.45;
+}
+.states-dialog-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 8px;
+  align-items: center; margin-bottom: 8px; color: var(--muted); font-size: 11px;
+}
+.states-dialog-error {
+  display: block; margin-bottom: 8px; color: var(--danger); font-size: 11px;
+}
 
 /* Интерфейс — не текст: выделять его мышью незачем (поля и скрипт — можно). */
 .app-shell { user-select: none; }
@@ -2223,9 +2234,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 
 /* Имя слоя: клик по названию — переименование, остальное место строки — выбор. */
 .states-name-text {
-  flex: 1 1 34%; min-width: 60px; padding: 2px 5px; border: 1px solid transparent;
+  /* Имя по своей длине, а не во всю строку: остальное место — обычный клик по
+     слою (выделение), а не вход в переименование. */
+  flex: 0 1 auto; min-width: 40px; max-width: 46%; padding: 2px 5px; border: 1px solid transparent;
   border-radius: 4px; color: var(--text); font-size: 12px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default;
 }
 .states-name-text:hover { border-color: var(--border-soft); background: var(--bg); }
 

@@ -1003,9 +1003,9 @@ export default function App() {
    * Поэтому уход из вкладки сам возвращает объект на место, а отменять нечего —
    * истории у предпросмотра нет.
    */
-  const previewBase = useCallback((base: Partial<BasePose> | null) => {
-    // Основной объект — последний в выделении: его и показывает вкладка.
-    const id = selectionRef.current.at(-1);
+  const previewBase = useCallback((base: Partial<BasePose> | null, objectId?: string) => {
+    // Объект вкладки приходит явно: последний в выделении — не всегда он.
+    const id = objectId || selectionRef.current.at(-1);
     setStatePreview(id && base ? { id, base } : null);
   }, []);
 
@@ -1016,8 +1016,8 @@ export default function App() {
    * поза наложилась бы поверх уже сдвинутой базы. Шага истории нет: жест уже
    * записан началом перетаскивания.
    */
-  const restoreBase = useCallback((base: Partial<BasePose>) => {
-    const id = selectionRef.current.at(-1);
+  const restoreBase = useCallback((base: Partial<BasePose>, objectId?: string) => {
+    const id = objectId || selectionRef.current.at(-1);
     if (!id) return;
     const current = presetRef.current;
     const objects = withBases(current.objects, [id], (before) => ({ ...before, ...base }));
@@ -1639,8 +1639,8 @@ export default function App() {
           selectedObjects={selectedObjects}
           onBehaviour={updateScripts}
           onStates={updateStateScripts}
-          onBase={(base) => restoreBase(base)}
-          onPreviewBase={(base) => previewBase(base)}
+          onBase={(base, id) => restoreBase(base, id)}
+          onPreviewBase={(base, id) => previewBase(base, id)}
           onText={updateTextObjects}
           onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}

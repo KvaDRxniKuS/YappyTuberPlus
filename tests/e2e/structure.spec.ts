@@ -167,3 +167,28 @@ test("предпросмотр состояния переписывает зн�
   expect(previewFrame(frame, objects, null)).toBe(frame);
   expect(previewFrame(null, objects, { id: "eye" })).toBeNull();
 });
+
+test("предпросмотр группы переписывает и кадр её детей", () => {
+  const objects = [
+    object("head", null, base(100, 100)),
+    object("eye", "head", base(140, 100)),
+    object("other", null, base(400, 400)),
+  ];
+  const frame: RigFrame = {
+    seq: 1, time: 0, dt: 0.016, globals: {}, order: [], diagnostics: [],
+    objects: {
+      head: { ...NEUTRAL_PARAMS, x: 30 },
+      eye: { ...NEUTRAL_PARAMS, x: 12, rotation: 8 },
+      other: { ...NEUTRAL_PARAMS, x: 5 },
+    },
+  };
+  const shown = previewFrame(frame, objects, { id: "head" })!;
+  // База предпросмотра уезжает и детям, значит их кадровый вклад тоже обнулён.
+  expect(shown.objects.head.x).toBe(0);
+  expect(shown.objects.eye.x).toBe(0);
+  expect(shown.objects.eye.rotation).toBe(0);
+  // Чужое поддерево живёт своим кадром.
+  expect(shown.objects.other.x).toBe(5);
+  // Медиа и материал остаются кадровыми: подменяется положение, а не игра.
+  expect(shown.objects.head.mask).toBe(1);
+});

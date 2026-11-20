@@ -8,7 +8,7 @@ import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import {
   addKey, addLayer, applyPoseToBase, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
-  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
+  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, replacePose, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, writeStates,
   SMOOTH_DEFAULT, SMOOTH_LIMIT,
   STATE_FIELDS, type Pose, type StateField, type StateLayer, type States,
@@ -64,14 +64,14 @@ interface StatesPanelProps {
   globals?: string[];
   onChange: (scripts: Record<string, string>) => void;
   /** Вернуть авторскую позу после записи: объектом двигает состояние, а не база. */
-  onBase?: (base: Partial<BasePose>) => void;
+  onBase?: (base: Partial<BasePose>, objectId: string) => void;
   /**
    * Предпросмотр — только отрисовка: `null` снимает его.
    *
    * База объекта при этом не меняется, поэтому выход из вкладки сам возвращает
    * объект на место: ни истории, ни «отменить», ни двойной позы.
    */
-  onPreviewBase?: (base: Partial<BasePose> | null) => void;
+  onPreviewBase?: (base: Partial<BasePose> | null, objectId: string) => void;
   /** Предпросмотр входа `manual.*` — двигает то же значение, что и ползунок входов. */
   onManual?: (key: string, value: number) => void;
 }
@@ -88,8 +88,6 @@ export function StatesPanel(props: StatesPanelProps) {
   const [pickedKey, setPickedKey] = useState(0);
   /** Черновик имени слоя: в скрипт уходит по Enter или уходу фокуса. */
   const [nameDraft, setNameDraft] = useState("");
-  /** Поле «ключ»: кнопка «+» ставит в него фокус, когда ключ уже есть. */
-  const keyField = useRef<HTMLInputElement | null>(null);
   /** Точка таймлайна. `null` — слой без привязки: там поза выбирается ключом. */
   const [at, setAt] = useState<number | null>(null);
   /** Какая строка редактирует имя: клик по названию, а не по всей строке. */
@@ -101,6 +99,8 @@ export function StatesPanel(props: StatesPanelProps) {
   /** Замена параметра: диалог с поиском и картой «было → стало». */
   const [replaceFor, setReplaceFor] = useState<number[] | null>(null);
   const [replaceMap, setReplaceMap] = useState<Record<string, string>>({});
+  /** Диалог нового ключа: «+» на занятой позиции спрашивает, куда ставить. */
+  const [newKey, setNewKey] = useState<{ value: number; error: string } | null>(null);
   /** Пересчитать ключи под диапазон нового входа (по умолчанию — нет). */
   const [replaceScale, setReplaceScale] = useState(false);
   /** Зеркало: точка оси в сцене и угол. */
@@ -301,11 +301,16 @@ export function StatesPanel(props: StatesPanelProps) {
     const next = applyPoseToBase(authorBase, previewDelta()) as BasePose;
     if (sent.current && sameBase(sent.current, next)) return;
     sent.current = next;
-    props.onPreviewBase(next);
+    // Id передаём явно: предпросмотр — про объект вкладки, а не про последний
+    // в выделении. Иначе при мультивыделении поза уезжала чужому объекту.
+    props.onPreviewBase(next, object.id);
   });
 
   /** Вышли из вкладки — предпросмотр снят, объект сразу на своём месте. */
-  useEffect(() => () => { previewApi.current?.(null); }, []);
+  useEffect(() => {
+    const api = previewApi;
+    return () => { api.current?.(null, ""); };
+  }, []);
 
   /**
    * Запись позы без кнопки: человек подвинул объект — дельта от авторской позы
@@ -322,7 +327,7 @@ export function StatesPanel(props: StatesPanelProps) {
     const delta = poseFromBase(authorBase, object.base);
     // База возвращается на место: объектом двигает поза, а не база. Возврат
     // идёт без шага истории — жест уже записан началом перетаскивания.
-    restoreApi.current?.(authorBase);
+    restoreApi.current?.(authorBase, object.id);
     lastBase.current = { ...authorBase };
     if (!Object.keys(delta).length) return;
     if (layer.param) {
@@ -416,32 +421,75 @@ export function StatesPanel(props: StatesPanelProps) {
     setAt(snapped);
   };
 
+  /**
+   * Значение ключа из поля: двигает сам ключ.
+   *
+   * Позиция занята другим ключом — правка игнорируется: два ключа на одном
+   * значении молча слились бы. Точка встаёт на ключ, поэтому и поле «точка»,
+   * и поле «ключ» показывают одно и то же значение.
+   */
+  const editKey = (index: number, value: number) => {
+    if (!layer) return;
+    const point = round3(value);
+    const busy = keyAt(layer, point);
+    if (busy >= 0 && busy !== index) return;
+    const moved = moveKey(layer, index, point);
+    applyLayer(moved);
+    setAt(point);
+  };
+
+  /** Ключ в этой точке уже есть? */
+  const keyAtPoint = () => (layer ? keyAt(layer, round3(at ?? range[0])) : -1);
+
+  /** Свободное место рядом с точкой: середина до соседа или шаг в 10 % шкалы. */
+  const freeSpot = (point: number) => {
+    const step = Math.max(1e-6, span * 0.1);
+    if (!layer) return round3(point + step);
+    const values = layer.poses.map((item) => item.at ?? 0);
+    const right = values.filter((value) => value > point).sort((a, b) => a - b)[0];
+    const left = values.filter((value) => value < point).sort((a, b) => b - a)[0];
+    const middle = (a: number, b: number) => round3((a + b) / 2);
+    const candidates = [
+      right !== undefined && Math.abs(right - point) > step / 2 ? middle(point, right) : undefined,
+      left !== undefined && Math.abs(point - left) > step / 2 ? middle(left, point) : undefined,
+      round3(point + step),
+      round3(point - step),
+    ];
+    return candidates.find((value) => value !== undefined && keyAt(layer, value) < 0) ?? round3(point + step);
+  };
+
   const pointOf = (event: { clientX: number }, element: HTMLElement) => {
     const box = element.getBoundingClientRect();
     return Math.min(1, Math.max(0, (event.clientX - box.left) / Math.max(1, box.width)));
   };
 
-  /**
-   * «+»: ключ в точке таймлайна.
-   *
-   * Ключ тут уже стоит — второй не появляется: точка встаёт на него, а фокус
-   * уходит в поле значения, чтобы сразу поправить сам ключ.
-   */
-  const addKeyAtHead = () => {
-    if (!layer?.param) return;
-    const point = round3(at ?? range[0]);
-    const existing = keyAt(layer, point);
-    if (existing >= 0) {
-      const value = layer.poses[existing].at ?? point;
-      setAt(value);
-      keyField.current?.focus();
-      keyField.current?.select();
-      return;
-    }
+  /** Поставить ключ в свободное значение и встать на него точкой. */
+  const createKey = (value: number) => {
+    if (!layer?.param) return false;
+    const point = round3(value);
+    if (keyAt(layer, point) >= 0) return false;
     const next = addKey(layer, point);
     const index = next.poses.findIndex((item) => item.at === point);
     apply(patchLayer(states, layerIndex, next), layerIndex, index);
     setAt(point);
+    return true;
+  };
+
+  /**
+   * «+»: ключ в точке таймлайна.
+   *
+   * Позиция свободна — ключ появляется сразу. Позиция занята — второй ключ туда
+   * не лезет: открывается диалог, где указывают **другое** значение нового
+   * ключа. Значение существующего ключа здесь не правится.
+   */
+  const addKeyAtHead = () => {
+    if (!layer?.param) return;
+    const point = round3(at ?? range[0]);
+    if (keyAt(layer, point) < 0) {
+      createKey(point);
+      return;
+    }
+    setNewKey({ value: freeSpot(point), error: "" });
   };
 
   /** Пункты меню строки: копирование, правки формы и привязки, удаление. */
@@ -451,6 +499,7 @@ export function StatesPanel(props: StatesPanelProps) {
     return [
       { label: "Копировать", hint: "Ctrl+C", disabled: !targets.length, onSelect: () => copy(targets) },
       { label: "Вставить", hint: "Ctrl+V", disabled: !readClipboard().length, onSelect: () => paste() },
+      { label: "Переименовать", hint: "двойной клик", disabled: targets.length !== 1, onSelect: () => startRename(index) },
       { label: "", rule: true },
       {
         label: "Инвертировать по входу",
@@ -579,12 +628,16 @@ export function StatesPanel(props: StatesPanelProps) {
               ) : (
                 <span
                   className="states-name-text"
-                  title="Клик — переименовать"
+                  title="Двойной клик — переименовать"
                   onClick={(event) => {
-                    // Ctrl и Shift — выделение, а не переименование.
-                    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
                     event.stopPropagation();
-                    pickRow(index, { ctrlKey: false, metaKey: false, shiftKey: false });
+                    pickRow(index, event);
+                  }}
+                  onDoubleClick={(event) => {
+                    // Имя правится намеренно, двойным кликом: обычный клик
+                    // только выделяет слой, иначе выделить его без правки имени
+                    // было невозможно.
+                    event.stopPropagation();
                     startRename(index);
                   }}
                 >
@@ -654,8 +707,21 @@ export function StatesPanel(props: StatesPanelProps) {
             <NumberField
               value={at ?? range[0]}
               step={Math.max(1e-6, span / 100)}
-              title="Значение на шкале, где стоит точка таймлайна"
-              onCommit={(value) => moveHead(Math.min(range[1], Math.max(range[0], value)), true)}
+              title={keyAtPoint() >= 0
+                ? "Точка стоит на ключе: значение правит этот ключ"
+                : "Значение на шкале, где стоит точка таймлайна"}
+              onCommit={(value) => {
+                const clamped = Math.min(range[1], Math.max(range[0], value));
+                // Точка на ключе — введённое значение и есть значение ключа:
+                // иначе поле «точка» выглядело бы как поле «ключ», но ничего
+                // не меняло в позах.
+                const index = keyAtPoint();
+                if (index >= 0) {
+                  editKey(index, clamped);
+                  return;
+                }
+                moveHead(clamped, true);
+              }}
             />
           </div>
 
@@ -813,21 +879,12 @@ export function StatesPanel(props: StatesPanelProps) {
             <div className="states-key-head">
               <span>ключ</span>
               <NumberField
-                inputRef={keyField}
                 value={pose.at ?? range[0]}
                 step={0.01}
                 title={layer.poses.length <= 1 || keyIndex === 0 || keyIndex === layer.poses.length - 1
                   ? "Крайний ключ: его значение задаёт границу отрезка"
                   : "Значение на шкале, где стоит ключ"}
-                onCommit={(value) => {
-                  const point = round3(value);
-                  // На этой позиции уже стоит другой ключ: второй не появляется,
-                  // правка просто игнорируется.
-                  const busy = keyAt(layer, point);
-                  if (busy >= 0 && busy !== keyIndex) return;
-                  applyLayer(moveKey(layer, keyIndex, point));
-                  setAt(point);
-                }}
+                onCommit={(value) => editKey(keyIndex, value)}
               />
               {(layer.poses.length <= 1 || keyIndex === 0 || keyIndex === layer.poses.length - 1) && (
                 <small className="states-key-edge-note">задаёт границу отрезка</small>
@@ -842,12 +899,24 @@ export function StatesPanel(props: StatesPanelProps) {
                   value={pose?.pose[field] ?? FIELD_NEUTRAL[field] ?? 0}
                   step={field === "sizeX" || field === "sizeY" || field === "opacity" || field === "visible" ? 0.01 : 0.5}
                   onCommit={(value) => {
-                    if (!pose) return;
                     const neutral = FIELD_NEUTRAL[field] ?? 0;
-                    const next = { ...pose.pose };
+                    const next = { ...(pose?.pose ?? {}) };
+                    // Нейтральное значение убирает поле из позы, а не пишет его
+                    // числом: иначе «вернул 0» осталось бы в ключе навсегда.
                     if (Math.abs(value - neutral) < 1e-6) delete next[field];
                     else next[field] = value;
-                    applyLayer(setPose(layer, keyIndex, next));
+                    // Ключа под точкой нет — он появляется: правка позы и есть
+                    // повод его завести. Раньше значение молча пропадало.
+                    const point = round3(at ?? range[0]);
+                    if (bound && keyAt(layer, point) < 0) {
+                      const created = addKey(layer, point, next);
+                      const index = created.poses.findIndex((item) => item.at === point);
+                      apply(patchLayer(states, layerIndex, created), layerIndex, index);
+                      setAt(point);
+                      return;
+                    }
+                    if (!pose) return;
+                    applyLayer(replacePose(layer, keyIndex, next));
                   }}
                 />
               </div>
@@ -859,7 +928,7 @@ export function StatesPanel(props: StatesPanelProps) {
               onClick={() => {
                 if (!pose) return;
                 // Сброс позы: ключ перестаёт двигать объект — видно базу.
-                applyLayer(setPose(layer, keyIndex, {}));
+                applyLayer(replacePose(layer, keyIndex, {}));
               }}
               title="Убрать позу ключа: объект встанет в базовое положение"
             >
@@ -895,6 +964,49 @@ export function StatesPanel(props: StatesPanelProps) {
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={layerMenu(menu.index)} />
+      )}
+
+      {newKey && (
+        <div className="states-dialog-back" onClick={() => setNewKey(null)}>
+          <div className="states-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="states-dialog-head">
+              Новый ключ
+              <small>{layer?.name}</small>
+            </div>
+            <p className="states-dialog-note">
+              На позиции {fmt(round3(at ?? range[0]))} уже стоит ключ — здесь его значение не меняется.
+              Укажите, где встать новому.
+            </p>
+            <div className="states-dialog-field">
+              <span>позиция ключа</span>
+              <NumberField
+                value={newKey.value}
+                step={Math.max(1e-6, round3(span / 100))}
+                autoFocus
+                title="Значение на шкале, где встанет новый ключ"
+                onCommit={(value) => setNewKey((current) => (current ? { ...current, value: round3(value), error: "" } : current))}
+              />
+            </div>
+            {newKey.error && <small className="states-dialog-error">{newKey.error}</small>}
+            <div className="states-dialog-foot">
+              <button
+                className="primary"
+                onClick={() => {
+                  if (!layer) return;
+                  if (keyAt(layer, newKey.value) >= 0) {
+                    setNewKey((current) => (current ? { ...current, error: "здесь уже есть ключ — выберите другое значение" } : current));
+                    return;
+                  }
+                  createKey(newKey.value);
+                  setNewKey(null);
+                }}
+              >
+                Создать
+              </button>
+              <button onClick={() => setNewKey(null)}>Отмена</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {replaceFor && (

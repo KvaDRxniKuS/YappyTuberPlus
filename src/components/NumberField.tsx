@@ -15,6 +15,8 @@ interface NumberFieldProps {
   disabled?: boolean;
   /** Ссылка на поле: нужно там, где фокус ставит не клик, а команда. */
   inputRef?: RefObject<HTMLInputElement | null>;
+  /** Забрать фокус при появлении: так открывается диалог с одним полем. */
+  autoFocus?: boolean;
 }
 
 /**
@@ -33,9 +35,12 @@ export function NumberField(props: NumberFieldProps) {
   const focused = useRef(false);
 
   // Пока в поле печатают, внешние изменения не должны перебивать ввод.
+  // Без списка зависимостей: если правка не принялась (значение в модели не
+  // изменилось), поле обязано вернуться к настоящему числу — иначе оно годами
+  // показывает то, чего нет.
   useEffect(() => {
     if (!focused.current) setDraft(format(value));
-  }, [value]);
+  });
 
   const commit = () => {
     const parsed = parse(draft, integer);
@@ -60,6 +65,7 @@ export function NumberField(props: NumberFieldProps) {
   return (
     <input
       ref={props.inputRef}
+      autoFocus={props.autoFocus}
       className={props.className ?? "module-field-number"}
       type="number"
       inputMode={integer ? "numeric" : "decimal"}

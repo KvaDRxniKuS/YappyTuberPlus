@@ -589,6 +589,22 @@ export function keyUnderPoint(layer: StateLayer, point: number): number {
   return best;
 }
 
+/**
+ * Поза ключа заменяется целиком.
+ *
+ * Нужна редактору полей: снятое поле (значение вернули к нейтральному) должно
+ * из позы исчезнуть, а не остаться в ней старым числом. Дельту движения объекта
+ * накладывает `setPose` — это слияние, а не замена.
+ */
+export function replacePose(layer: StateLayer, index: number, pose: Partial<Record<StateField, number>>): StateLayer {
+  return {
+    ...layer,
+    poses: layer.poses.map((item, position) => (
+      position === index ? { ...item, pose: { ...pose } } : item
+    )),
+  };
+}
+
 export function setPose(layer: StateLayer, index: number, pose: Partial<Record<StateField, number>>): StateLayer {
   return {
     ...layer,

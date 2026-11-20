@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import {
   EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
-  removeLayers, resetStatesFor, reversePoses, scaleKeys, setPose, statesBlock, uniqueLayerName,
+  removeLayers, replacePose, resetStatesFor, reversePoses, scaleKeys, setPose, statesBlock, uniqueLayerName,
   weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, writeStates,
   type StateLayer, type States,
 } from "../../src/engine/states";
@@ -508,4 +508,15 @@ test("ключ на занятой позиции не появляется вт
   expect(keyAt(close, 0.1 + 0.2)).toBe(0);
   // Ключей нет — попадания тоже нет.
   expect(keyAt({ ...layer, poses: [] }, 0)).toBe(-1);
+});
+
+test("поза ключа заменяется целиком: снятое поле исчезает", () => {
+  const layer = bound({ poses: [{ at: -1, pose: { x: 4, y: 7 } }, { at: 1, pose: {} }] });
+  // returned to neutral → поле убирается, а не остаётся старым числом
+  const cleared = replacePose(layer, 0, { x: 4 });
+  expect(cleared.poses[0].pose).toEqual({ x: 4 });
+  // полный сброс позы: ключ больше не двигает объект
+  expect(replacePose(layer, 0, {}).poses[0].pose).toEqual({});
+  // чужие ключи не трогаются
+  expect(cleared.poses[1].pose).toEqual({});
 });
