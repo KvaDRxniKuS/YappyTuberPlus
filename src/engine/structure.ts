@@ -1,4 +1,5 @@
-import type { BasePose, RigObject } from "../types";
+import type { BasePose, ObjectFrame, RigFrame, RigObject } from "../types";
+import { NEUTRAL_PARAMS } from "./frame";
 import { setParent } from "./preset";
 import { selectionRoots } from "./selection";
 
@@ -408,6 +409,34 @@ export function withBases(
  * меняется, поэтому уход из вкладки сам возвращает объект на место — без
  * истории, без «отменить» и без двойного применения позы.
  */
+/**
+ * Кадр предпросмотра состояний.
+ *
+ * База объекта уже несёт значение предпросмотра, поэтому поза из кадра по
+ * этому объекту обнуляется: иначе значение складывалось бы с текущим — при
+ * живой симуляции объект уезжал бы на сумму позы и анимации. Медиа и материал
+ * при этом остаются кадровыми: предпросмотр переписывает положение, а не
+ * воспроизведение.
+ */
+export function previewFrame(
+  frame: RigFrame | null,
+  objects: RigObject[],
+  preview: { id: string } | null | undefined,
+): RigFrame | null {
+  if (!frame || !preview) return frame;
+  const target = objects.find((object) => object.id === preview.id);
+  if (!target) return frame;
+  const live: ObjectFrame = frame.objects?.[preview.id] ?? NEUTRAL_PARAMS;
+  const overwritten: ObjectFrame = {
+    ...live,
+    x: 0, y: 0, rotation: 0, skewX: 0, skewY: 0,
+    sizeX: 1, sizeY: 1, opacity: 1,
+    // Видимость — тоже из позы: она уже лежит в базе предпросмотра.
+    visible: target.enabled === false ? 0 : target.base.visible,
+  };
+  return { ...frame, objects: { ...frame.objects, [preview.id]: overwritten } };
+}
+
 export function previewObjects(
   objects: RigObject[],
   preview: { id: string; base: Partial<BasePose> } | null,

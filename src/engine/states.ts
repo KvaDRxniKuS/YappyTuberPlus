@@ -569,6 +569,26 @@ export function moveKey(layer: StateLayer, index: number, at: number): StateLaye
   return sortKeys({ ...layer, poses });
 }
 
+/** Ключ уже стоит на этом значении? Индекс или −1: второй не появляется. */
+export function keyAt(layer: StateLayer, value: number, tolerance = 1e-6): number {
+  return layer.poses.findIndex((item) => Math.abs((item.at ?? 0) - value) < tolerance);
+}
+
+/**
+ * Ключ под точкой шкалы — ближайший. Выбор ключа не хранится отдельно: его
+ * задаёт точка таймлайна, поэтому правка поля не может «переставить» выбор на
+ * первый ключ.
+ */
+export function keyUnderPoint(layer: StateLayer, point: number): number {
+  let best = 0;
+  let gap = Infinity;
+  layer.poses.forEach((item, index) => {
+    const distance = Math.abs((item.at ?? 0) - point);
+    if (distance < gap) { gap = distance; best = index; }
+  });
+  return best;
+}
+
 export function setPose(layer: StateLayer, index: number, pose: Partial<Record<StateField, number>>): StateLayer {
   return {
     ...layer,

@@ -48,20 +48,12 @@ export function paramGroups(sources: ParamSources): ParamGroup[] {
     list.filter((item): item is ParamItem => item !== null)
   );
 
-  // Вход `value` ручного источника — положение ползунка, а не сигнал: как
-  // параметр слоя он бесполезен (предпросмотр двигает его же руками) и
-  // повторял ошибку с ключами при движении. В состоянии его не предлагаем.
-  const skipManual = new Set(
-    sources.modules
-      // Только по загруженному шаблону: непрочитанный модуль не должен
-      // случайно потерять вход `value`.
-      .filter((instance) => hasModule(instance.type) && moduleDefinition(instance.type).kind === "manual")
-      .map((instance) => `${instance.name}.value`),
-  );
+  // Вход `value` ручного источника — такой же вход, как остальные: к нему
+  // привязывают слой, и ползунок в окне состояний двигает то же значение.
+  // Дубля не будет: `take` помнит уже взятые имена, поэтому в «значениях
+  // кадра» он второй раз не появится.
   const inputs = items(sources.modules.flatMap((instance) => (
-    moduleInputs(instance)
-      .filter((input) => !skipManual.has(input.key))
-      .map((input) => take(input.key, input.spec.label))
+    moduleInputs(instance).map((input) => take(input.key, input.spec.label))
   )));
   const globals = items([
     ...Object.keys(sources.frameGlobals ?? {}).map((name) => take(name)),
@@ -69,9 +61,7 @@ export function paramGroups(sources: ParamSources): ParamGroup[] {
   ]);
   const local = items(localNames(sources.script ?? "").map((name) => take(name)));
   // Всё, что ядро уже знает, но модули не объявили: `signal.*`, каналы часов.
-  const rest = items(Object.keys(sources.values ?? {})
-    .filter((name) => !skipManual.has(name))
-    .map((name) => take(name)));
+  const rest = items(Object.keys(sources.values ?? {}).map((name) => take(name)));
 
   return [
     { title: "входы", items: inputs },

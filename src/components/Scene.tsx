@@ -14,7 +14,7 @@ import {
   transformPoint, type Affine,
 } from "../render/rigCanvas";
 import { MediaAssets, MaskMedia } from "../render/media";
-import { previewObjects } from "../engine/structure";
+import { previewFrame, previewObjects } from "../engine/structure";
 import { onAssetsChanged } from "../engine/assets";
 import type { TextChannel } from "../render/text";
 import {
@@ -267,7 +267,9 @@ export function Scene(props: SceneProps) {
     const previewed = current.preview
       ? { ...preset, objects: previewObjects(preset.objects, current.preview) }
       : preset;
-    const frame = current.frameRef.current;
+    // Поза предпросмотра переписывает значения объекта, а не складывается с
+    // текущими: по предпросмотренному объекту кадр движка обнуляется.
+    const frame = previewFrame(current.frameRef.current, preset.objects, current.preview);
     const colors = current.colors;
     ctx.save();
     ctx.translate(x, y);

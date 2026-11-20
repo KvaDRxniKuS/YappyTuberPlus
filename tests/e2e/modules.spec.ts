@@ -229,21 +229,24 @@ test("переименование входа переносит галку вы
   expect(before.disabledInputs).toEqual(["jawopen", "headrx"]);
 });
 
-test("вход value ручного источника не предлагается в состояниях", () => {
+test("вход value ручного источника предлагается в состояниях", () => {
   const modules = [module("manual", "manual"), module("mic", "loudness")];
   const groups = paramGroups({ modules });
   const names = groups.flatMap((group) => group.items.map((item) => item.name));
-  // Ползунок ручного источника — не сигнал: слой к нему не привязывается.
-  expect(names).not.toContain("manual.value");
-  // У других модулей вход `value` остаётся: он приходит извне.
+  // Ручной источник — такой же вход, как остальные: слой к нему привязывается.
+  expect(names).toContain("manual.value");
   expect(names).toContain("mic.speak");
-  expect(names).not.toContain("manual.value");
 });
 
-test("вход value прячется и в «значениях кадра»", () => {
+test("вход value ручного источника не дублируется в «значениях кадра»", () => {
   const modules = [module("manual", "manual")];
   const groups = paramGroups({ modules, values: { "manual.value": 0.5, "signal.time": 1 } });
   const names = groups.flatMap((group) => group.items.map((item) => item.name));
   expect(names).toContain("signal.time");
-  expect(names).not.toContain("manual.value");
+  // Один вход — одно имя: он уже взят в «входах».
+  expect(names.filter((name) => name === "manual.value")).toHaveLength(1);
+  const inputs = groups.find((group) => group.title === "входы");
+  expect(inputs?.items.map((item) => item.name)).toContain("manual.value");
+  const rest = groups.find((group) => group.title === "значения кадра");
+  expect(rest?.items.map((item) => item.name) ?? []).not.toContain("manual.value");
 });

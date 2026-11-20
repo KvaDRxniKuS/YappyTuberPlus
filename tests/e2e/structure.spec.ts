@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { orderedObjects } from "../../src/render/rigCanvas";
-import { previewObjects, propagateBase, withBases } from "../../src/engine/structure";
+import { previewFrame, previewObjects, propagateBase, withBases } from "../../src/engine/structure";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { BasePose, RigFrame, RigObject } from "../../src/types";
+import { NEUTRAL_PARAMS } from "../../src/engine/frame";
 
 const base = (x: number, y: number): BasePose => ({
   x, y, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0, opacity: 1, visible: 1, layer: 0,
@@ -139,4 +140,30 @@ test("предпросмотр состояний меняет только от
   expect(at(shown, "other").base.x).toBe(400);
   // Снятый предпросмотр возвращает те же объекты.
   expect(previewObjects(objects, null)).toBe(objects);
+});
+
+test("предпросмотр состояния переписывает значения кадра, а не складывает", () => {
+  const objects = [object("eye", null, base(100, 100)), object("mouth", null, base(300, 300))];
+  const frame: RigFrame = {
+    seq: 4, time: 1, dt: 0.016, globals: {}, order: ["eye", "mouth"], diagnostics: [],
+    objects: {
+      // Живая симуляция уже сдвинула глаз: 40 px и 15° от позы скрипта.
+      eye: { ...NEUTRAL_PARAMS, x: 40, y: 10, rotation: 15, sizeX: 2, opacity: 0.5 },
+      mouth: { ...NEUTRAL_PARAMS, x: 7 },
+    },
+  };
+  const shown = previewFrame(frame, objects, { id: "eye" })!;
+  // Поза предпросмотра уже в базе: кадровый вклад по объекту обнулён.
+  expect(shown.objects.eye.x).toBe(0);
+  expect(shown.objects.eye.y).toBe(0);
+  expect(shown.objects.eye.rotation).toBe(0);
+  expect(shown.objects.eye.sizeX).toBe(1);
+  expect(shown.objects.eye.opacity).toBe(1);
+  // Соседние объекты живут своим кадром.
+  expect(shown.objects.mouth.x).toBe(7);
+  // Исходный кадр не правится: движок продолжает считать как считал.
+  expect(frame.objects.eye.x).toBe(40);
+  // Без предпросмотра кадр идёт как есть.
+  expect(previewFrame(frame, objects, null)).toBe(frame);
+  expect(previewFrame(null, objects, { id: "eye" })).toBeNull();
 });

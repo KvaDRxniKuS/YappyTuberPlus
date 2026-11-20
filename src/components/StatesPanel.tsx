@@ -7,8 +7,8 @@ import { ParamPicker } from "./ParamPicker";
 import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import {
-  addKey, addLayer, applyPoseToBase, cloneLayers, insertLayers, invertByInput, layerRange, makeLayer,
-  manualInputOf, mirrorLayer, moveKey, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
+  addKey, addLayer, applyPoseToBase, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
+  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, writeStates,
   SMOOTH_DEFAULT, SMOOTH_LIMIT,
   STATE_FIELDS, type Pose, type StateField, type StateLayer, type States,
@@ -80,7 +80,16 @@ export function StatesPanel(props: StatesPanelProps) {
   const object = props.object;
   const states = useMemo(() => (object ? readStates(object.script) : { layers: [] }), [object]);
   const [layerIndex, setLayerIndex] = useState(0);
-  const [keyIndex, setKeyIndex] = useState(0);
+  /**
+   * Выбранный ключ свободного слоя. У привязанного слоя выбор не хранится:
+   * ключ — это тот, что стоит под точкой таймлайна, поэтому правка поля,
+   * уход фокуса или перерисовка его не сбрасывают.
+   */
+  const [pickedKey, setPickedKey] = useState(0);
+  /** Черновик имени слоя: в скрипт уходит по Enter или уходу фокуса. */
+  const [nameDraft, setNameDraft] = useState("");
+  /** Поле «ключ»: кнопка «+» ставит в него фокус, когда ключ уже есть. */
+  const keyField = useRef<HTMLInputElement | null>(null);
   /** Точка таймлайна. `null` — слой без привязки: там поза выбирается ключом. */
   const [at, setAt] = useState<number | null>(null);
   /** Какая строка редактирует имя: клик по названию, а не по всей строке. */
@@ -118,6 +127,18 @@ export function StatesPanel(props: StatesPanelProps) {
 
   const layer: StateLayer | null = states.layers[layerIndex] ?? null;
   const range = layer ? layerRange(layer, metaRange(props, layer.param)) : [0, 1];
+  /**
+   * Ключ под точкой таймлайна: ближайший в пределах попадания, иначе — первый
+   * из тех, что ближе. Так поле «ключ» и поля позы всегда говорят об одном и
+   * том же ключе, и правка ничего не «переключает».
+   */
+  const keyIndex = useMemo(() => {
+    const poses = layer?.poses ?? [];
+    if (!poses.length) return 0;
+    if (!layer?.param) return Math.min(Math.max(0, pickedKey), poses.length - 1);
+    return keyUnderPoint(layer, at ?? range[0]);
+  }, [layer, pickedKey, at, range[0]]);
+
   /** Смена объекта: авторская поза и предпросмотр начинаются заново. */
   const objectId = object?.id ?? "";
   const objectRef = useRef(objectId);
@@ -145,7 +166,6 @@ export function StatesPanel(props: StatesPanelProps) {
     setAt(target?.param
       ? (target.poses[0]?.at ?? layerRange(target, metaRange(props, target.param))[0])
       : null);
-    setKeyIndex(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layerIndex, objectId]);
   /** Привязку поменяли: у свободного слоя шкалы нет, у привязанного точка нужна. */
@@ -166,8 +186,11 @@ export function StatesPanel(props: StatesPanelProps) {
     const written = writeStates(object.script, next, object).script;
     if (written !== object.script) props.onChange({ [object.id]: written });
     setLayerIndex(Math.min(index, Math.max(0, next.layers.length - 1)));
+    // Выбор ключа не переставляем: у привязанного слоя он вычисляется из точки,
+    // у свободного хранится отдельно. Иначе любая правка поля откатывала выбор
+    // на первый ключ.
     const poses = next.layers[Math.min(index, next.layers.length - 1)]?.poses.length ?? 0;
-    setKeyIndex(Math.min(key, Math.max(0, poses - 1)));
+    setPickedKey(Math.min(key, Math.max(0, poses - 1)));
   };
 
   const applyLayer = (next: StateLayer) => apply(patchLayer(states, layerIndex, next));
@@ -188,7 +211,6 @@ export function StatesPanel(props: StatesPanelProps) {
   /** Выбор строки: обычный клик, Ctrl — добавить, Shift — диапазон. */
   const pickRow = (index: number, event: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
     setLayerIndex(index);
-    setKeyIndex(0);
     setPicked((current) => {
       if (event.shiftKey) {
         const from = Math.min(layerIndex, index);
@@ -214,6 +236,31 @@ export function StatesPanel(props: StatesPanelProps) {
     const start = states.layers.length;
     apply(insertLayers(states, copies), start + copies.length - 1, 0);
     setPicked(copies.map((_, step) => start + step));
+  };
+
+  /**
+   * Переименование слоя.
+   *
+   * Имя правится в черновике: в скрипт оно уходит один раз — по Enter или
+   * уходу фокуса. Раньше каждая буква переписывала блок состояний, и поле
+   * теряло и текст, и фокус.
+   */
+  const startRename = (index: number) => {
+    const target = states.layers[index];
+    if (!target) return;
+    setNameDraft(target.name);
+    setEditName(index);
+  };
+
+  const commitRename = () => {
+    const index = editName;
+    if (index === null) return;
+    setEditName(null);
+    const target = states.layers[index];
+    if (!target) return;
+    const name = nameDraft.trim();
+    if (!name || name === target.name) return;
+    apply(patchLayer(states, index, { ...target, name }), index);
   };
 
   /** Привязка слоя к параметру и обратно: позы получают `at` или `weight`. */
@@ -367,7 +414,6 @@ export function StatesPanel(props: StatesPanelProps) {
     const index = keyNear(value);
     const snapped = !exact && index >= 0 ? (layer.poses[index].at as number) : round3(value);
     setAt(snapped);
-    if (index >= 0) setKeyIndex(index);
   };
 
   const pointOf = (event: { clientX: number }, element: HTMLElement) => {
@@ -375,18 +421,27 @@ export function StatesPanel(props: StatesPanelProps) {
     return Math.min(1, Math.max(0, (event.clientX - box.left) / Math.max(1, box.width)));
   };
 
-  /** Слой под курсором: у привязанного шкала, у свободного её нет. */
+  /**
+   * «+»: ключ в точке таймлайна.
+   *
+   * Ключ тут уже стоит — второй не появляется: точка встаёт на него, а фокус
+   * уходит в поле значения, чтобы сразу поправить сам ключ.
+   */
   const addKeyAtHead = () => {
     if (!layer?.param) return;
     const point = round3(at ?? range[0]);
-    const existing = layer.poses.findIndex((item) => Math.abs((item.at ?? 0) - point) < 1e-6);
+    const existing = keyAt(layer, point);
     if (existing >= 0) {
-      setKeyIndex(existing);
+      const value = layer.poses[existing].at ?? point;
+      setAt(value);
+      keyField.current?.focus();
+      keyField.current?.select();
       return;
     }
     const next = addKey(layer, point);
     const index = next.poses.findIndex((item) => item.at === point);
     apply(patchLayer(states, layerIndex, next), layerIndex, index);
+    setAt(point);
   };
 
   /** Пункты меню строки: копирование, правки формы и привязки, удаление. */
@@ -466,7 +521,7 @@ export function StatesPanel(props: StatesPanelProps) {
             if (!states.layers.length) return;
             props.onChange(resetStatesFor([object]));
             setLayerIndex(0);
-            setKeyIndex(0);
+            setPickedKey(0);
             setAt(null);
           }}
           title="Убрать блок состояний из скрипта"
@@ -505,11 +560,16 @@ export function StatesPanel(props: StatesPanelProps) {
                 <input
                   className="states-name"
                   autoFocus
-                  value={item.name}
-                  onChange={(event) => apply(patchLayer(states, index, { name: event.target.value }), index)}
-                  onBlur={() => setEditName(null)}
+                  value={nameDraft}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onBlur={() => commitRename()}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === "Escape") {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitRename();
+                    }
+                    if (event.key === "Escape") {
                       event.preventDefault();
                       setEditName(null);
                     }
@@ -525,7 +585,7 @@ export function StatesPanel(props: StatesPanelProps) {
                     if (event.ctrlKey || event.metaKey || event.shiftKey) return;
                     event.stopPropagation();
                     pickRow(index, { ctrlKey: false, metaKey: false, shiftKey: false });
-                    setEditName(index);
+                    startRename(index);
                   }}
                 >
                   {item.name}
@@ -573,7 +633,7 @@ export function StatesPanel(props: StatesPanelProps) {
                 checked={layer.smooth > 0}
                 onChange={(event) => applyLayer({ ...layer, smooth: event.target.checked ? SMOOTH_DEFAULT : 0 })}
               />
-              сглаживание
+              сглаживание ввода
             </label>
             {layer.smooth > 0 && (
               <>
@@ -611,7 +671,7 @@ export function StatesPanel(props: StatesPanelProps) {
               const key = target.closest("[data-key]");
               if (key) {
                 const index = Number(key.getAttribute("data-key"));
-                setKeyIndex(index);
+                setPickedKey(index);
                 setAt(layer.poses[index]?.at ?? at);
                 // Крайние ключи (и единственный) не тянутся: они задают границы
                 // шкалы. Длину отрезка меняет **значение** ключа в поле «ключ»,
@@ -672,8 +732,8 @@ export function StatesPanel(props: StatesPanelProps) {
                     : `Ключ ${item.at} · тяните, чтобы перенести`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  setKeyIndex(index);
                   setAt(item.at ?? at);
+                  setPickedKey(index);
                 }}
               />
             ))}
@@ -695,7 +755,7 @@ export function StatesPanel(props: StatesPanelProps) {
               <span
                 key={index}
                 className={`states-key-chip ${index === keyIndex ? "active" : ""}`}
-                onClick={() => { setKeyIndex(index); setAt(item.at ?? at); }}
+                onClick={() => { setAt(item.at ?? at); setPickedKey(index); }}
               >
                 {fmt(item.at ?? 0)}
                 <button
@@ -719,7 +779,7 @@ export function StatesPanel(props: StatesPanelProps) {
       {layer && !bound && (
         <div className="states-weights">
           {layer.poses.map((item, index) => (
-            <div key={index} className={`states-weight ${index === keyIndex ? "active" : ""}`} onClick={() => setKeyIndex(index)}>
+            <div key={index} className={`states-weight ${index === keyIndex ? "active" : ""}`} onClick={() => setPickedKey(index)}>
               <span>вес</span>
               <input
                 value={item.weight ?? ""}
@@ -753,12 +813,21 @@ export function StatesPanel(props: StatesPanelProps) {
             <div className="states-key-head">
               <span>ключ</span>
               <NumberField
+                inputRef={keyField}
                 value={pose.at ?? range[0]}
                 step={0.01}
                 title={layer.poses.length <= 1 || keyIndex === 0 || keyIndex === layer.poses.length - 1
                   ? "Крайний ключ: его значение задаёт границу отрезка"
                   : "Значение на шкале, где стоит ключ"}
-                onCommit={(value) => applyLayer(moveKey(layer, keyIndex, value))}
+                onCommit={(value) => {
+                  const point = round3(value);
+                  // На этой позиции уже стоит другой ключ: второй не появляется,
+                  // правка просто игнорируется.
+                  const busy = keyAt(layer, point);
+                  if (busy >= 0 && busy !== keyIndex) return;
+                  applyLayer(moveKey(layer, keyIndex, point));
+                  setAt(point);
+                }}
               />
               {(layer.poses.length <= 1 || keyIndex === 0 || keyIndex === layer.poses.length - 1) && (
                 <small className="states-key-edge-note">задаёт границу отрезка</small>

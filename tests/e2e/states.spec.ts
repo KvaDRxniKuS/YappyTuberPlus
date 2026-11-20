@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import {
-  EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, layerRange, makeLayer,
-  manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
+  EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
+  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, resetStatesFor, reversePoses, scaleKeys, setPose, statesBlock, uniqueLayerName,
   weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, writeStates,
   type StateLayer, type States,
@@ -474,4 +474,38 @@ test("старый формат сглаживания читается как �
 // @states {"layers":[{"name":"взгляд","param":"manual.eye_x","smooth":true,"normalize":"sum","poses":[{"at":0,"pose":{}}]}]}
 // ── конец состояний ──`);
   expect(parsed.layers[0].smooth).toBe(SMOOTH_DEFAULT);
+});
+
+test("ключ под точкой шкалы — ближайший, и правка его не переставляет", () => {
+  const layer = bound({
+    poses: [
+      { at: -1, pose: { x: -20 } },
+      { at: 0, pose: { x: 0 } },
+      { at: 1, pose: { x: 20 } },
+    ],
+  });
+  expect(keyUnderPoint(layer, -0.9)).toBe(0);
+  expect(keyUnderPoint(layer, 0.1)).toBe(1);
+  expect(keyUnderPoint(layer, 0.9)).toBe(2);
+  // Точка между ключами: поле правит ближайший, а не первый.
+  expect(keyUnderPoint(layer, 0.61)).toBe(2);
+  // Порядок после переноса ключа восстанавливается — и «под точкой» остаётся
+  // тот же ключ, а не первый в списке.
+  const moved = moveKey(layer, 2, -0.5);
+  // Ключи идут по возрастанию: −1, −0.5, 0 — перенесённый встал в середину.
+  expect(moved.poses.map((item) => item.at)).toEqual([-1, -0.5, 0]);
+  expect(keyUnderPoint(moved, -0.5)).toBe(1);
+  expect(moved.poses[1].pose.x).toBe(20);
+});
+
+test("ключ на занятой позиции не появляется второй раз", () => {
+  const layer = bound();
+  expect(keyAt(layer, -1)).toBe(0);
+  expect(keyAt(layer, 1)).toBe(1);
+  expect(keyAt(layer, 0.5)).toBe(-1);
+  // Значения с плавающей точкой сравниваются с допуском: 0.1 + 0.2 — это 0.3.
+  const close = bound({ poses: [{ at: 0.3, pose: {} }, { at: 1, pose: {} }] });
+  expect(keyAt(close, 0.1 + 0.2)).toBe(0);
+  // Ключей нет — попадания тоже нет.
+  expect(keyAt({ ...layer, poses: [] }, 0)).toBe(-1);
 });

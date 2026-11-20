@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 interface NumberFieldProps {
   value: number;
@@ -13,6 +13,8 @@ interface NumberFieldProps {
   /** Разрешить дробные значения (по умолчанию да, но с запятой тоже). */
   integer?: boolean;
   disabled?: boolean;
+  /** Ссылка на поле: нужно там, где фокус ставит не клик, а команда. */
+  inputRef?: RefObject<HTMLInputElement | null>;
 }
 
 /**
@@ -57,6 +59,7 @@ export function NumberField(props: NumberFieldProps) {
 
   return (
     <input
+      ref={props.inputRef}
       className={props.className ?? "module-field-number"}
       type="number"
       inputMode={integer ? "numeric" : "decimal"}
