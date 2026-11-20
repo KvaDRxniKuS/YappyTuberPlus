@@ -15,7 +15,11 @@ import {
 } from "../render/shape";
 import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
-import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT, defaultWarp } from "../render/warp";
+import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT } from "../render/warp";
+import {
+  GRID_STEPS, artFromGrid, clampGrid, defaultMesh, gridCorners, meshOf, regularGrid, resetArt, resetGrid,
+  resizeGrid, shiftNode,
+} from "../engine/mesh";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
 import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
@@ -325,7 +329,7 @@ export function Inspector(props: InspectorProps) {
         )}
 
         {(object.kind === "sprite" || object.kind === "media") && (
-          <WarpSection object={object} warp={object.warp} onChange={onChange} />
+          <MeshSection object={object} onChange={onChange} />
         )}
 
         {object.kind !== "group" && object.kind !== "shape" && (
@@ -463,83 +467,167 @@ function MediaSection({ object, media, onChange }: {
 }
 
 /**
- * Деформация крайних точек.
+ * Деформация сеткой.
  *
  * Зона — прямоугольник внутри картинки: его можно повернуть и сузить, чтобы
- * гнуть не всю картинку, а нужный кусок. Углы задаются процентами размера
- * зоны, поэтому при смене размера объекта перспектива остаётся такой же.
+ * гнуть не всю картинку, а нужный кусок. Внутри зоны картинка режется артмешем
+ * и ложится на сетку деформера. Густота сетки — число узлов 2…32: 2×2 это
+ * прежние четыре угла, 32×32 — та же картинка, но гнётся плавно.
+ *
+ * Смена густоты форму не сбрасывает: узлы новой сетки берутся билинейно из
+ * старой. Поэтому «стало мало» лечится одним полем.
  */
-function WarpSection({ object, warp, onChange }: {
+function MeshSection({ object, onChange }: {
   object: RigObject;
-  warp: WarpSpec | undefined;
   onChange: (object: RigObject) => void;
 }) {
-  const spec = warp ?? defaultWarp();
-  const update = (patch: Partial<WarpSpec>) => onChange({ ...object, warp: { ...spec, ...patch } });
-  const setFrame = (patch: Partial<WarpFrame>) => update({ frame: { ...spec.frame, ...patch } });
-  const setCorner = (corner: WarpCorner, patch: Partial<Vec2>) => update({
-    corners: { ...spec.corners, [corner]: { ...spec.corners[corner], ...patch } },
-  });
+  const mesh = meshOf(object) ?? defaultMesh();
+  // Правка пишет новый формат и убирает старый: иначе в пресете остались бы
+  // два источника формы, и рендер выбирал бы один из них молча.
+  const update = (patch: Partial<typeof mesh>) => onChange({ ...object, mesh: { ...mesh, ...patch }, warp: undefined });
+  const setFrame = (patch: Partial<WarpFrame>) => update({ frame: { ...mesh.frame, ...patch } });
   // Доли картинки показываем процентами: так числа читаются без калькулятора.
   const percent = (value: number) => Math.round(value * 1000) / 10;
   const fromPercent = (value: number) => Math.round((value / 100) * 10000) / 10000;
-  const reset = () => onChange({ ...object, warp: { ...defaultWarp(), enabled: spec.enabled } });
+  const corners = gridCorners(mesh.deform);
+  const setCorner = (position: number, patch: Partial<Vec2>) => {
+    const index = corners[position];
+    const point = mesh.deform.points[index];
+    if (!point) return;
+    const next = shiftNode(mesh.deform, index, (patch.x ?? 0) / 100 - point.x, (patch.y ?? 0) / 100 - point.y);
+    update({ deform: next });
+  };
+  const cornerValue = (position: number, axis: "x" | "y") => {
+    const point = mesh.deform.points[corners[position]];
+    return Math.round(((point?.[axis] ?? 0) * 100) * 10) / 10;
+  };
+  const setGrid = (cols: number, rows: number) => update({ deform: resizeGrid(mesh.deform, clampGrid(cols), clampGrid(rows)) });
+  const setArt = (cols: number, rows: number) => update({ art: artFromGrid(cols, rows) });
+  const isQuad = mesh.deform.cols === 2 && mesh.deform.rows === 2;
 
   return (
     <div className="property-section compact-section">
       <div className="section-title">
         <span>Деформация</span>
-        <small>{spec.enabled ? "ПЕРСПЕКТИВА" : "ВЫКЛ"}</small>
+        <small>{mesh.enabled ? `СЕТКА ${mesh.deform.cols}×${mesh.deform.rows}` : "ВЫКЛ"}</small>
       </div>
       <label className="check-line">
-        <input type="checkbox" checked={spec.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
-        <span>Гнуть крайние точки</span>
+        <input type="checkbox" checked={mesh.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
+        <span>Гнуть картинку сеткой</span>
       </label>
 
-      {spec.enabled && (
+      {mesh.enabled && (
         <>
+          <div className="section-title"><span>Сетка</span><small>УЗЛОВ {mesh.deform.points.length}</small></div>
+          <div className="property-grid two-columns">
+            <label className="text-property">
+              <span>Густота</span>
+              <select
+                value={GRID_STEPS.includes(mesh.deform.cols as typeof GRID_STEPS[number]) ? mesh.deform.cols : "custom"}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) setGrid(value, value);
+                }}
+              >
+                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
+                <option value="custom">своя</option>
+              </select>
+            </label>
+            <NumberField
+              label="Столбцов"
+              value={mesh.deform.cols}
+              step={1}
+              onCommit={(cols) => setGrid(cols, mesh.deform.rows)}
+            />
+            <NumberField
+              label="Строк"
+              value={mesh.deform.rows}
+              step={1}
+              onCommit={(rows) => setGrid(mesh.deform.cols, rows)}
+            />
+          </div>
+          <p className="behaviour-hint">
+            Густота — число узлов, 2…32. Смена густоты форму не сбрасывает: узлы новой
+            сетки считаются из старой. Узлы двигаются в сцене инструментом «Сетка» (T).
+          </p>
+          <div className="image-actions">
+            <button className="button secondary" onClick={() => update({ deform: resetGrid(mesh.deform) })}>
+              <RotateCcw size={14} /> Сбросить форму
+            </button>
+          </div>
+
+          {isQuad && (
+            <>
+              <div className="section-title"><span>Углы</span><small>% ЗОНЫ</small></div>
+              <div className="property-grid two-columns">
+                {WARP_CORNERS.map((corner, position) => (
+                  <div key={corner} className="warp-corner">
+                    <span className="warp-corner-label">{WARP_CORNER_LABEL[corner]}</span>
+                    <NumberField
+                      label={`${corner.toUpperCase()} X`}
+                      value={cornerValue(position, "x")}
+                      step={1}
+                      suffix="%"
+                      onCommit={(value) => setCorner(position, { x: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, value)) })}
+                    />
+                    <NumberField
+                      label={`${corner.toUpperCase()} Y`}
+                      value={cornerValue(position, "y")}
+                      step={1}
+                      suffix="%"
+                      onCommit={(value) => setCorner(position, { y: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, value)) })}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="behaviour-hint">
+                Углы можно анимировать: параметры `warpTLx`, `warpTLy`, `warpTRx`… двигают
+                те же четыре узла, что и здесь.
+              </p>
+            </>
+          )}
+
           <div className="section-title"><span>Зона деформации</span><small>% КАРТИНКИ</small></div>
           <div className="property-grid two-columns">
-            <NumberField label="Зона X" value={percent(spec.frame.x)} step={1} suffix="%" onCommit={(value) => setFrame({ x: fromPercent(value) })} />
-            <NumberField label="Зона Y" value={percent(spec.frame.y)} step={1} suffix="%" onCommit={(value) => setFrame({ y: fromPercent(value) })} />
-            <NumberField label="Ширина" value={percent(spec.frame.width)} step={1} suffix="%" onCommit={(value) => setFrame({ width: Math.max(0.01, fromPercent(value)) })} />
-            <NumberField label="Высота" value={percent(spec.frame.height)} step={1} suffix="%" onCommit={(value) => setFrame({ height: Math.max(0.01, fromPercent(value)) })} />
-            <NumberField label="Поворот" value={Math.round(spec.frame.rotation * 10) / 10} step={1} suffix="°" onCommit={(rotation) => setFrame({ rotation })} />
+            <NumberField label="Зона X" value={percent(mesh.frame.x)} step={1} suffix="%" onCommit={(value) => setFrame({ x: fromPercent(value) })} />
+            <NumberField label="Зона Y" value={percent(mesh.frame.y)} step={1} suffix="%" onCommit={(value) => setFrame({ y: fromPercent(value) })} />
+            <NumberField label="Ширина" value={percent(mesh.frame.width)} step={1} suffix="%" onCommit={(value) => setFrame({ width: Math.max(0.01, fromPercent(value)) })} />
+            <NumberField label="Высота" value={percent(mesh.frame.height)} step={1} suffix="%" onCommit={(value) => setFrame({ height: Math.max(0.01, fromPercent(value)) })} />
+            <NumberField label="Поворот" value={Math.round(mesh.frame.rotation * 10) / 10} step={1} suffix="°" onCommit={(rotation) => setFrame({ rotation })} />
           </div>
           <p className="behaviour-hint">
             Зона — часть картинки, которую гнём: остальное остаётся ровным.
             Границы удобнее править в сцене: инструмент «Границы текстуры» (T).
           </p>
 
-          <div className="section-title"><span>Углы</span><small>% ЗОНЫ</small></div>
-          <div className="property-grid two-columns">
-            {WARP_CORNERS.map((corner) => (
-              <div key={corner} className="warp-corner">
-                <span className="warp-corner-label">{WARP_CORNER_LABEL[corner]}</span>
-                <NumberField
-                  label={`${corner.toUpperCase()} X`}
-                  value={Math.round(spec.corners[corner].x * 10) / 10}
-                  step={1}
-                  suffix="%"
-                  onCommit={(x) => setCorner(corner, { x: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, x)) })}
-                />
-                <NumberField
-                  label={`${corner.toUpperCase()} Y`}
-                  value={Math.round(spec.corners[corner].y * 10) / 10}
-                  step={1}
-                  suffix="%"
-                  onCommit={(y) => setCorner(corner, { y: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, y)) })}
-                />
-              </div>
-            ))}
+          <div className="section-title">
+            <span>Нарезка</span>
+            <small>{mesh.art.points.length} ТОЧЕК · {mesh.art.triangles.length / 3} ТРЕУГОЛЬНИКОВ</small>
           </div>
-          <div className="image-actions">
-            <button className="button secondary" onClick={reset}><RotateCcw size={14} /> Сбросить углы</button>
+          <div className="property-grid two-columns">
+            <label className="text-property">
+              <span>Автосетка</span>
+              <select
+                value={mesh.art.auto ? String(mesh.art.auto.cols) : "manual"}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) setArt(value, value);
+                }}
+              >
+                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
+                <option value="manual">ручная</option>
+              </select>
+            </label>
           </div>
           <p className="behaviour-hint">
-            Углы можно анимировать: параметры `warpTLx`, `warpTLy`, `warpTRx`…
-            читаются в скрипте объекта так же, как `x` или `rotation`.
+            Нарезка задаёт, из каких треугольников состоит картинка: её правит инструмент
+            «Нарезка» (R). Автосетка пересобирает её регулярно, ручная правка остаётся.
           </p>
+          <div className="image-actions">
+            <button className="button secondary" onClick={() => update({ art: resetArt(mesh.art), deform: regularGrid(mesh.deform.cols, mesh.deform.rows) })}>
+              <RotateCcw size={14} /> Сбросить нарезку
+            </button>
+          </div>
         </>
       )}
     </div>
