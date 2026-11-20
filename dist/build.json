@@ -11,8 +11,8 @@
   "version": "1.1.26.7.2.5.21",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-20T17:19:49.875Z",
-  "commit": "313f920",
+  "builtAt": "2026-11-20T17:33:45.611Z",
+  "commit": "b33cd74",
   "schema": 1,
   "files": [
     {
@@ -91,9 +91,9 @@
       "sha256": "ac6acf7c3803e12ccd467756ad1514262276b500d021dc012c789994ae94661d"
     },
     {
-      "path": "assets/studio-bvKyP8_Z.js",
-      "size": 881632,
-      "sha256": "a6b11f5188ea6a39ef786b7783907f05badc9f1009e0fb1d27d87ef4d9153e45"
+      "path": "assets/studio-CnGbTjqh.js",
+      "size": 881644,
+      "sha256": "3b638c081bbda49abcdfe636383ab8233a0e5cac0d7342158015fa7e0088cb09"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "81eda7a816fc3631806b06374888b75749ba9f1d1f2701e6b9d65d72f6def1e0"
+      "sha256": "46b3e517c9db8db737d1527e939fbb2346b5cb02662687158bf029c71cdf2aa9"
     },
     {
       "path": "modules/ambient.json",
