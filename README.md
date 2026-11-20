@@ -1101,6 +1101,7 @@ YappyTuberPlus/
 │   ├── PLAN-COLOR.md         # план: модуль цвета и «свет из экрана» (ambient)
 │   ├── PLAN-MATERIALS.md     # план: материал поверхности — что решили и почему
 │   ├── PLAN-0.2.md … PLAN-0.5.md  # планы прежних этапов: что решено и почему
+│   ├── PLAN-RIG.md            # план: состояния, сетка объекта и артмеш (обсуждается)
 │   ├── reference/            # исходная ревизия ТЗ без изменений
 │   └── branding/             # исходник иконки
 └── vite.config.ts, tsconfig.json, playwright.config.ts, package.json
