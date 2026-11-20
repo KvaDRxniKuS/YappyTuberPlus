@@ -710,3 +710,79 @@ export function defaultAxis(): { x: number; y: number; angle: number } {
 export function legacyWarp(): WarpSpec {
   return defaultWarp();
 }
+
+/* ── Правки сетки и нарезки: то, что делает сцена ─────────────────────────
+ *
+ * Всё это — чистые функции над `MeshSpec`: редактор сцены только считает
+ * смещение и вызывает нужную. Поэтому каждое действие проверяется тестом, а не
+ * мышью: «разрезать ребро» — это `splitArtEdge`, а не сорок строк в обработчике
+ * указателя.
+ */
+
+/** Деформация с включённой галочкой: первая правка включает её сама. */
+export function withMesh(mesh: MeshSpec, patch: Partial<MeshSpec> = {}): MeshSpec {
+  return { ...mesh, ...patch, enabled: true };
+}
+
+/** Сдвиг узла сетки в долях зоны. */
+export function moveNode(mesh: MeshSpec, index: number, du: number, dv: number): MeshSpec {
+  return withMesh(mesh, { deform: shiftNode(mesh.deform, index, du, dv) });
+}
+
+/** Сдвиг точки нарезки: сама нарезка правится, сетка не трогается. */
+export function moveArtPoint(mesh: MeshSpec, index: number, du: number, dv: number): MeshSpec {
+  if (index < 0 || index >= mesh.art.points.length) return mesh;
+  const points = mesh.art.points.map((point, position) => (position === index
+    ? { x: round(point.x + du), y: round(point.y + dv) }
+    : point));
+  return withMesh(mesh, { art: { ...mesh.art, points, auto: null } });
+}
+
+/** Разрезать ребро нарезки: между двумя точками появляется третья. */
+export function splitArtEdge(mesh: MeshSpec, a: number, b: number): MeshSpec | null {
+  const art = splitEdge(mesh.art, a, b);
+  return art ? withMesh(mesh, { art }) : null;
+}
+
+/** Перевернуть диагональ между двумя треугольниками. */
+export function flipArtEdge(mesh: MeshSpec, a: number, b: number): MeshSpec | null {
+  const art = flipDiagonal(mesh.art, a, b);
+  return art ? withMesh(mesh, { art }) : null;
+}
+
+/** Удалить треугольник по номеру. */
+export function removeArtTriangle(mesh: MeshSpec, index: number): MeshSpec {
+  const art = deleteTriangle(mesh.art, index);
+  return art === mesh.art ? mesh : withMesh(mesh, { art });
+}
+
+/** Удалить точку нарезки вместе с её треугольниками. */
+export function removeArtPoint(mesh: MeshSpec, index: number): MeshSpec {
+  const art = deleteArtPoint(mesh.art, index);
+  return art === mesh.art ? mesh : withMesh(mesh, { art });
+}
+
+/**
+ * Разбить треугольник точкой: одна точка и три треугольника вместо одного.
+ *
+ * Это и есть «добавить треугольник» руками: точку некуда поставить, пока она
+ * не внутри треугольника, а вставлять её в ребро умеет `splitArtEdge`.
+ */
+export function splitArtTriangle(mesh: MeshSpec, index: number, at: Vec2): MeshSpec | null {
+  if (index < 0 || index * 3 + 2 >= mesh.art.triangles.length) return null;
+  const [a, b, c] = [
+    mesh.art.triangles[index * 3],
+    mesh.art.triangles[index * 3 + 1],
+    mesh.art.triangles[index * 3 + 2],
+  ];
+  const points = [...mesh.art.points, { x: round(at.x), y: round(at.y) }];
+  const middle = points.length - 1;
+  if (Math.abs(triangleArea(points[a], points[b], points[middle])) < 1e-9
+    || Math.abs(triangleArea(points[b], points[c], points[middle])) < 1e-9
+    || Math.abs(triangleArea(points[c], points[a], points[middle])) < 1e-9) {
+    return null;
+  }
+  const triangles = [...mesh.art.triangles];
+  triangles.splice(index * 3, 3, a, b, middle, b, c, middle, c, a, middle);
+  return withMesh(mesh, { art: { points, triangles, auto: null } });
+}

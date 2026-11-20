@@ -478,3 +478,168 @@ function drawWithWebgl(
 function canvasSize(ctx: CanvasRenderingContext2D): { width: number; height: number } {
   return { width: ctx.canvas.width, height: ctx.canvas.height };
 }
+
+/* ── Ручки и попадания: то, чем живёт спецрежим сцены ─────────────────────
+ *
+ * Точки отдаются в тех же координатах, что и старая деформация: пиксели от
+ * левого верхнего угла картинки. Сцена переводит их в экранные через матрицу
+ * объекта, поэтому ручки стоят там, где нарисована картинка, — с учётом
+ * поворота, масштаба и пивота.
+ */
+
+/** Вершины нарезки после деформации: пиксели от угла картинки. */
+export function artPointPoints(
+  object: RigObject,
+  values?: ObjectFrame | null,
+  width = object.width,
+  height = object.height,
+): Vec2[] {
+  const geometry = meshGeometry(object, width, height, values);
+  return geometry ? geometry.targets : [];
+}
+
+/** Узлы сетки после смещений: пиксели от угла картинки. */
+export function meshNodePoints(
+  object: RigObject,
+  values?: ObjectFrame | null,
+  width = object.width,
+  height = object.height,
+  keyOffsets?: Record<string, Vec2> | null,
+): Vec2[] {
+  const mesh = meshOf(object);
+  if (!mesh) return [];
+  const offsets: Record<string, Vec2> = {};
+  for (const source of [paramOffsets(mesh, values), keyOffsets]) {
+    for (const [index, offset] of Object.entries(source ?? {})) {
+      const previous = offsets[index];
+      offsets[index] = previous
+        ? { x: previous.x + offset.x, y: previous.y + offset.y }
+        : offset;
+    }
+  }
+  const grid = applyOffsets(mesh.deform, Object.keys(offsets).length ? offsets : undefined);
+  const zone = zoneGeometry(object, width, height);
+  return grid.points.map((point) => zone.toObject(point.x, point.y));
+}
+
+/** Ближайшая точка в радиусе: индекс или `null`. */
+export function nearestPoint(points: Vec2[], point: Vec2, radius: number): number | null {
+  let best: number | null = null;
+  let distance = radius;
+  points.forEach((candidate, index) => {
+    const length = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+    if (length <= distance) {
+      distance = length;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/** Расстояние от точки до отрезка: по нему ловится ребро нарезки. */
+function distanceToSegment(point: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 1e-9) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = Math.min(1, Math.max(0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t));
+}
+
+/** Ребро нарезки под курсором: ближайшее в радиусе. */
+export function artEdgeHit(
+  object: RigObject,
+  point: Vec2,
+  radius: number,
+  values?: ObjectFrame | null,
+): { a: number; b: number } | null {
+  const points = artPointPoints(object, values);
+  if (!points.length) return null;
+  const edges = edgePairs(object);
+  let best: { a: number; b: number } | null = null;
+  let distance = radius;
+  for (const [a, b] of edges) {
+    const length = distanceToSegment(point, points[a], points[b]);
+    if (length <= distance) {
+      distance = length;
+      best = { a, b };
+    }
+  }
+  return best;
+}
+
+/** Рёбра нарезки без повторов: пары индексов. */
+export function edgePairs(object: RigObject): [number, number][] {
+  const mesh = meshOf(object);
+  if (!mesh) return [];
+  const seen = new Set<string>();
+  const pairs: [number, number][] = [];
+  for (let index = 0; index < mesh.art.triangles.length; index += 3) {
+    const ids = [mesh.art.triangles[index], mesh.art.triangles[index + 1], mesh.art.triangles[index + 2]];
+    for (let at = 0; at < 3; at += 1) {
+      const a = ids[at];
+      const b = ids[(at + 1) % 3];
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push([a, b]);
+    }
+  }
+  return pairs;
+}
+
+/** Треугольник нарезки под курсором. */
+export function artTriangleHit(
+  object: RigObject,
+  point: Vec2,
+  values?: ObjectFrame | null,
+): number | null {
+  const mesh = meshOf(object);
+  const points = artPointPoints(object, values);
+  if (!mesh || !points.length) return null;
+  for (let index = 0; index < mesh.art.triangles.length; index += 3) {
+    const a = points[mesh.art.triangles[index]];
+    const b = points[mesh.art.triangles[index + 1]];
+    const c = points[mesh.art.triangles[index + 2]];
+    const area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+    if (Math.abs(area) < 1e-9) continue;
+    const s1 = ((b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)) / area;
+    const s2 = ((c.x - b.x) * (point.y - b.y) - (c.y - b.y) * (point.x - b.x)) / area;
+    const s3 = ((a.x - c.x) * (point.y - c.y) - (a.y - c.y) * (point.x - c.x)) / area;
+    if (s1 >= 0 && s2 >= 0 && s3 >= 0) return index / 3;
+  }
+  return null;
+}
+
+/** Смещение в пикселях объекта → доли зоны (с учётом поворота зоны). */
+export function zoneDelta(
+  object: RigObject,
+  from: Vec2,
+  to: Vec2,
+  width = object.width,
+  height = object.height,
+): Vec2 {
+  const zone = zoneGeometry(object, width, height);
+  const start = zone.toZone(from);
+  const end = zone.toZone(to);
+  return { x: end.x - start.x, y: end.y - start.y };
+}
+
+/** Пиксели объекта → доли зоны: куда ставить новую точку нарезки. */
+export function zonePoint(
+  object: RigObject,
+  point: Vec2,
+  width = object.width,
+  height = object.height,
+): Vec2 {
+  return zoneGeometry(object, width, height).toZone(point);
+}
+
+/** Углы зоны на объекте для оверлея. */
+export function zoneOutline(
+  object: RigObject,
+  width = object.width,
+  height = object.height,
+): Vec2[] {
+  return zoneQuad(zoneGeometry(object, width, height));
+}

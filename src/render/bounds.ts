@@ -1,6 +1,8 @@
 import type { ObjectFrame, RigObject, RigPreset } from "../types";
 import { type Affine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 import { warpEnabled, warpQuad } from "./warp";
+import { meshQuad } from "./mesh";
+import { meshEnabled } from "../engine/mesh";
 
 export interface Point { x: number; y: number }
 
@@ -24,13 +26,17 @@ export function spriteBounds(object: RigObject, matrix: Affine): Point[] {
  * мышь там, где картинки уже нет.
  */
 export function objectOutline(object: RigObject, values: ObjectFrame, matrix?: Affine): Point[] {
-  if (!warpEnabled(object) || object.kind === "group" || object.kind === "shape") {
+  const deformed = object.kind !== "group" && object.kind !== "shape"
+    && (meshEnabled(object) || warpEnabled(object));
+  if (!deformed) {
     return spriteBounds(object, matrix ?? objectMatrix(object, values));
   }
   const transform = matrix ?? objectMatrix(object, values);
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
-  return warpQuad(object, values).map((point) => transformPoint(transform, left + point.x, top + point.y));
+  // Сетка может увести картинку за рамку: границы считаются по треугольникам.
+  const quad = meshEnabled(object) ? meshQuad(object, values) : warpQuad(object, values);
+  return quad.map((point) => transformPoint(transform, left + point.x, top + point.y));
 }
 
 /** Базовые границы группы: объединение базовых рамок всех её потомков-спрайтов. */

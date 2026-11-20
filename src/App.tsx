@@ -70,7 +70,7 @@ import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout, type EnvironmentSpec,
-  type ModuleInstance, type RigObject, type RigPreset, type Vec2, type WarpSpec,
+  type MeshSpec, type ModuleInstance, type RigObject, type RigPreset, type Vec2, type WarpSpec,
 } from "./types";
 import type { StatePreview } from "./engine/states";
 
@@ -1003,6 +1003,19 @@ export default function App() {
   }, [setPreset]);
 
   /**
+   * Сетка и нарезка из сцены. Как и `warpObject`, шага истории не создаёт:
+   * снимок кладёт начало жеста, поэтому весь жест откатывается одним Ctrl+Z.
+   */
+  const meshObject = useCallback((id: string, mesh: MeshSpec) => {
+    setPreset((current) => ({
+      ...current,
+      objects: current.objects.map((object) => (
+        object.id === id ? { ...object, mesh, warp: undefined } : object
+      )),
+    }));
+  }, [setPreset]);
+
+  /**
    * Базовая поза выделения. `record: false` — предпросмотр состояния: он двигает
    * объект на сцене, но шагом истории не становится, иначе перетаскивание
    * ползунка таймлайна забивало бы отмену.
@@ -1624,6 +1637,7 @@ export default function App() {
             }}
             onPivot={pivotObject}
             onWarp={warpObject}
+            onMesh={meshObject}
             pen={pen}
             onPenPoints={penPoints}
             onPenDragEnd={endLiveEdit}

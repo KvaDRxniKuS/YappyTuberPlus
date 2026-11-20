@@ -3,7 +3,9 @@ import {
   BoxSelect, CircleDot, Crosshair, Focus, Frame, Ghost, Grid3X3, Hand, LassoSelect,
   LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, ZoomIn, ZoomOut,
 } from "lucide-react";
-import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec } from "../types";
+import type {
+  BasePose, GuideMode, MeshSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2, WarpCorner, WarpSpec,
+} from "../types";
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
 import { createCollector, disposeLighting, resetCollector, retainLightingSources } from "../render/lighting";
@@ -30,6 +32,14 @@ import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
   warpGrabAt, warpHandlesAt, warpQuad, warpEnabled,
 } from "../render/warp";
+import {
+  artEdgeHit, artPointPoints, artTriangleHit, meshNodePoints, meshQuad, nearestPoint, zoneDelta, zoneOutline,
+  zonePoint,
+} from "../render/mesh";
+import {
+  defaultMesh, flipArtEdge, meshEnabled, meshOf, moveArtPoint, moveNode, removeArtPoint, removeArtTriangle,
+  splitArtEdge, splitArtTriangle,
+} from "../engine/mesh";
 
 export type SceneTool =
   | "move" | "pivot" | "pan" | "marquee" | "lasso"
@@ -121,6 +131,8 @@ interface SceneProps {
   onPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
   /** Деформация из спецрежима: углы и зона правятся прямо в сцене. */
   onWarp: (id: string, warp: WarpSpec) => void;
+  /** Сетка и нарезка из спецрежима: узлы, точки, рёбра, треугольники. */
+  onMesh: (id: string, mesh: MeshSpec) => void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
@@ -145,7 +157,53 @@ type Interaction =
   | { type: "warpFrame"; objectId: string; handle: string; start: Point; initial: WarpSpec }
   | { type: "warpCorner"; objectId: string; corner: WarpCorner; start: Point; initial: WarpSpec }
   | { type: "warpRotate"; objectId: string; center: Point; start: number; initial: WarpSpec }
+  /** Сетка: тянем узел деформера (`index` — `j·cols + i`). */
+  | {
+      type: "meshNode";
+      objectId: string;
+      index: number;
+      start: Point;
+      initial: MeshSpec;
+      /** Ось, выбранная Shift: фиксируется один раз за жест. */
+      axis?: "x" | "y" | null;
+    }
+  /** Нарезка: тянем точку артмеша. */
+  | {
+      type: "meshArtPoint";
+      objectId: string;
+      index: number;
+      start: Point;
+      initial: MeshSpec;
+      axis?: "x" | "y" | null;
+    }
+  /** Зона сетки: стороны, поворот и перенос — тем же кодом, что у старого `warp`. */
+  | {
+      type: "meshZone";
+      objectId: string;
+      handle: string;
+      start: Point;
+      center?: Point;
+      angle?: number;
+      initial: MeshSpec;
+    }
   | null;
+
+/** Старая деформация без смещений: с ней работает инструмент зоны сетки. */
+function zoneShim(object: RigObject, mesh: MeshSpec): RigObject {
+  return {
+    ...object,
+    warp: {
+      enabled: true,
+      frame: mesh.frame,
+      corners: { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } },
+    },
+  };
+}
+
+/** Сетка объекта для редактора: без неё редактор начинает с чистой. */
+function editMesh(object: RigObject): MeshSpec {
+  return meshOf(object) ?? defaultMesh();
+}
 
 /** Мировые координаты → координаты рамки объекта: там живут контуры фигуры. */
 function shapePoint(object: RigObject, frame: RigFrame | null, point: Point): Point {
@@ -317,8 +375,8 @@ export function Scene(props: SceneProps) {
     }
     drawGuides(ctx, previewed, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, previewed, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
-    if (current.tool === "warp") drawWarpOverlay(ctx, previewed, frame, zoom, current.primaryId, "frame");
-    if (current.tool === "deform") drawWarpOverlay(ctx, previewed, frame, zoom, current.primaryId, "corners");
+    if (current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid");
+    if (current.tool === "deform") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art");
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
     if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, previewed, zoom);
@@ -562,11 +620,13 @@ export function Scene(props: SceneProps) {
       const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;
-      if (warpEnabled(object)) {
-        // Деформированный спрайт — четырёхугольник: угол, который уехал,
-        // больше не должен ловить мышь, а вытянутый — наоборот.
+      if (meshEnabled(object) || warpEnabled(object)) {
+        // Деформированный спрайт — не прямоугольник: угол, который уехал,
+        // больше не должен ловить мышь, а вытянутый — наоборот. У сетки
+        // границы идут по треугольникам.
         const content = { x: local.x - left, y: local.y - top };
-        if (pointInQuad(content, warpQuad(object, values))) return object;
+        const quad = meshEnabled(object) ? meshQuad(object, values) : warpQuad(object, values);
+        if (pointInQuad(content, quad)) return object;
         continue;
       }
       if (local.x >= left && local.x <= left + object.width && local.y >= top && local.y <= top + object.height) return object;
@@ -633,13 +693,13 @@ export function Scene(props: SceneProps) {
           <span className="tool-separator" />
           <button
             className={props.tool === "warp" ? "active" : ""}
-            title="Зона деформации (T) · прямоугольник, его стороны и поворот"
+            title="Сетка (T) · узлы деформации, стороны зоны и поворот"
             disabled={!props.primaryId}
             onClick={() => props.onTool("warp")}
           ><Frame size={15} /></button>
           <button
             className={props.tool === "deform" ? "active" : ""}
-            title="Углы деформации (R) · тяните углы картинки, не задевая зону"
+            title="Нарезка (R) · точки и треугольники: двойной клик по ребру, Alt и Ctrl — правки"
             disabled={!props.primaryId}
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
@@ -778,15 +838,106 @@ export function Scene(props: SceneProps) {
                 const matrix = objectMatrix(object, values);
                 const left = -object.pivot.x * object.width;
                 const top = -object.pivot.y * object.height;
-                // Инструменты разделены: «Зона» не ловит углы, «Углы» не ловит
-                // рамку — прямоугольники больше не пересекаются в работе.
+                const mesh = editMesh(object);
+                const local = transformPoint(invertAffine(matrix), point.x, point.y);
+                const content = { x: local.x - left, y: local.y - top };
+                // Радиус захвата — в экранных пикселях: у мелкого спрайта ручка
+                // не должна требовать пиксельного попадания.
+                const radius = 9 / camera.current.zoom;
+                // Правка одним движением: разрезать, перевернуть, удалить.
+                // Снимок истории кладёт `onDragStart`, закрывает `onDragEnd`.
+                const commit = (next: MeshSpec | null): boolean => {
+                  if (!next || next === mesh) return false;
+                  current.onDragStart();
+                  propsRef.current.onMesh(object.id, next);
+                  current.onDragEnd?.();
+                  return true;
+                };
+
+                if (current.tool === "deform") {
+                  // «Нарезка»: точки, рёбра и треугольники. Редактор работает и
+                  // на выключенной сетке — первая правка включает её сама.
+                  const shown = { ...object, mesh: { ...mesh, enabled: true } };
+                  const points = artPointPoints(shown, values);
+                  const edge = artEdgeHit(shown, content, radius, values);
+                  const triangle = artTriangleHit(shown, content, values);
+                  if (event.detail >= 2) {
+                    if (edge) {
+                      if (commit(splitArtEdge(mesh, edge.a, edge.b))) return;
+                    }
+                  }
+                  if (event.altKey) {
+                    // Alt по ребру — перевернуть диагональ, Alt по треугольнику —
+                    // поставить точку и разбить его на три.
+                    if (edge) {
+                      if (commit(flipArtEdge(mesh, edge.a, edge.b))) return;
+                    } else if (triangle !== null) {
+                      if (commit(splitArtTriangle(mesh, triangle, zonePoint(object, content)))) return;
+                    }
+                  }
+                  if (event.ctrlKey || event.metaKey) {
+                    if (triangle !== null) {
+                      if (commit(removeArtTriangle(mesh, triangle))) return;
+                    }
+                  }
+                  if (event.shiftKey) {
+                    const victim = nearestPoint(points, content, radius);
+                    if (victim !== null) {
+                      if (commit(removeArtPoint(mesh, victim))) return;
+                    }
+                  }
+                  const index = nearestPoint(points, content, radius);
+                  if (index !== null) {
+                    current.onDragStart();
+                    interaction.current = {
+                      type: "meshArtPoint", objectId: object.id, index, start: point,
+                      initial: { ...mesh, enabled: true },
+                    };
+                    return;
+                  }
+                } else {
+                  // «Сетка»: сначала узлы, потом зона — узел внутри зоны должен
+                  // выигрывать, иначе его невозможно сдвинуть.
+                  const nodes = meshNodePoints({ ...object, mesh }, values);
+                  const index = nearestPoint(nodes, content, radius);
+                  if (index !== null) {
+                    current.onDragStart();
+                    interaction.current = {
+                      type: "meshNode", objectId: object.id, index, start: point,
+                      initial: { ...mesh, enabled: true },
+                    };
+                    return;
+                  }
+                  const shim = zoneShim(object, mesh);
+                  const grab = warpGrabAt(shim, values, left, top, matrix, camera.current.zoom, point, "frame");
+                  if (grab) {
+                    current.onDragStart();
+                    if (grab.kind === "rotation") {
+                      interaction.current = {
+                        type: "meshZone", objectId: object.id, handle: "rotate", start: point,
+                        center: grab.center, angle: grab.angle, initial: { ...mesh, enabled: true },
+                      };
+                    } else if (grab.kind === "handle") {
+                      interaction.current = {
+                        type: "meshZone", objectId: object.id, handle: grab.handle, start: point,
+                        initial: { ...mesh, enabled: true },
+                      };
+                    } else {
+                      interaction.current = {
+                        type: "meshZone", objectId: object.id, handle: "move", start: point,
+                        initial: { ...mesh, enabled: true },
+                      };
+                    }
+                    return;
+                  }
+                }
+                // Старая деформация без сетки: инструменты остаются рабочими
+                // для объектов, к которым сетку ещё не применяли.
                 const grab = warpGrabAt(
                   object, values, left, top, matrix, camera.current.zoom, point,
                   current.tool === "deform" ? "corners" : "frame",
                 );
                 if (grab) {
-                  // Первое движение в режиме включает деформацию: иначе ручки
-                  // не меняли бы картинку, и это выглядело бы поломкой.
                   const initial = { ...(object.warp ?? defaultWarp()), enabled: true };
                   current.onDragStart();
                   if (grab.kind === "corner") {
@@ -912,6 +1063,59 @@ export function Scene(props: SceneProps) {
               });
               return;
             }
+            if (current.type === "meshNode" || current.type === "meshArtPoint" || current.type === "meshZone") {
+              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
+              if (!object) return;
+              const values = propsRef.current.frameRef.current?.objects[object.id] || staticValues(object);
+              const point = scenePoint(event);
+              const matrix = objectMatrix(object, values);
+              const left = -object.pivot.x * object.width;
+              const top = -object.pivot.y * object.height;
+              const toContent = (at: Point) => {
+                const local = transformPoint(invertAffine(matrix), at.x, at.y);
+                return { x: local.x - left, y: local.y - top };
+              };
+              const id = object.id;
+              const initial = current.initial;
+              if (current.type === "meshZone") {
+                // Зона правится тем же кодом, что старая деформация: ручки,
+                // якоря и поворот уже проверены, дублировать их нельзя.
+                const shim = zoneShim(object, initial);
+                if (current.handle === "rotate" && current.center) {
+                  const angle = Math.atan2(point.y - current.center.y, point.x - current.center.x);
+                  const degrees = ((angle - (current.angle ?? 0)) * 180) / Math.PI;
+                  const next = rotateWarpFrame(shim.warp!, event.shiftKey ? Math.round(degrees / 15) * 15 : degrees);
+                  queueLive(() => propsRef.current.onMesh(id, { ...initial, frame: next.frame }));
+                  return;
+                }
+                const from = toContent(current.start);
+                const to = toContent(point);
+                const dx = to.x - from.x;
+                const dy = to.y - from.y;
+                const next = current.handle === "move"
+                  ? moveWarpFrame(shim.warp!, object, dx, dy)
+                  : resizeWarpFrame(shim.warp!, current.handle, object, dx, dy);
+                queueLive(() => propsRef.current.onMesh(id, { ...initial, frame: next.frame }));
+                return;
+              }
+              const from = toContent(current.start);
+              const to = toContent(point);
+              let delta = zoneDelta(object, from, to);
+              if (event.shiftKey) {
+                // Ось держится до конца жеста: иначе у диагонали точка дрожит.
+                if (!current.axis && Math.hypot(delta.x, delta.y) > 4 / camera.current.zoom) {
+                  current.axis = Math.abs(delta.x) >= Math.abs(delta.y) ? "x" : "y";
+                }
+                delta = current.axis === "y" ? { x: 0, y: delta.y } : current.axis === "x" ? { x: delta.x, y: 0 } : delta;
+              } else {
+                current.axis = null;
+              }
+              const next = current.type === "meshNode"
+                ? moveNode(initial, current.index, delta.x, delta.y)
+                : moveArtPoint(initial, current.index, delta.x, delta.y);
+              queueLive(() => propsRef.current.onMesh(id, next));
+              return;
+            }
             if (current.type === "warpCorner" || current.type === "warpFrame" || current.type === "warpRotate") {
               const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
               if (!object) return;
@@ -947,6 +1151,7 @@ export function Scene(props: SceneProps) {
               queueLive(() => propsRef.current.onWarp(id, next));
               return;
             }
+            if (current.type !== "drag") return;
             const point = scenePoint(event);
             if (Math.hypot(point.x - current.start.x, point.y - current.start.y) > 2) current.moved = true;
             let delta = { x: point.x - current.start.x, y: point.y - current.start.y };
@@ -974,7 +1179,7 @@ export function Scene(props: SceneProps) {
             // Отложенная правка могла ещё не примениться: применяем до того,
             // как закрыть тягу, иначе последнее положение курсора потеряется.
             flushLive();
-            if (current?.type === "drag") propsRef.current.onDragEnd?.();
+            if (isDragInteraction(current)) propsRef.current.onDragEnd?.();
             if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             if (current?.type === "marquee") {
               current.points.push(screenPoint(event));
@@ -993,7 +1198,7 @@ export function Scene(props: SceneProps) {
             const current = interaction.current;
             interaction.current = null;
             marqueeRef.current = null;
-            if (current?.type === "drag") propsRef.current.onDragEnd?.();
+            if (isDragInteraction(current)) propsRef.current.onDragEnd?.();
             if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             markDirty();
           }}
@@ -1060,8 +1265,8 @@ const TOOL_HINT: Record<SceneTool, string> = {
   lasso: "Обведите объекты; Shift — добавить к выборке",
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
-  warp: "Зона деформации: тяните стороны и поворот; Shift на повороте — шаг 15°",
-  deform: "Углы деформации: тяните углы картинки; Shift на повороте — шаг 15°",
+  warp: "Сетка: тяните узлы (Shift — по осям), стороны зоны и поворот; Shift на повороте — шаг 15°",
+  deform: "Нарезка: тяните точки; двойной клик по ребру — разрезать; Alt — перевернуть диагональ или разбить треугольник; Ctrl — удалить треугольник; Shift — удалить точку",
   pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
 
@@ -1203,6 +1408,140 @@ const PEN_LINE_COLOR = "#e4bd7c";
 /** Цвет спецрежима «Границы текстуры»: зона и её углы. */
 const WARP_COLOR = "#e0834a";
 const WARP_CORNER_COLOR = "#f0c36b";
+
+/** Жест, который начался со снимка истории: его и надо закрыть на отпускании. */
+function isDragInteraction(current: Interaction | null): boolean {
+  if (!current) return false;
+  return current.type === "drag" || current.type === "warpFrame" || current.type === "warpCorner"
+    || current.type === "warpRotate" || current.type === "meshNode" || current.type === "meshArtPoint"
+    || current.type === "meshZone";
+}
+
+/** Цвет сетки и нарезки: холодный — сетка, тёплый — нарезка. */
+const MESH_GRID_COLOR = "#6fa8c8";
+const MESH_ART_COLOR = "#e0a34a";
+
+/**
+ * Отрисовка спецрежима сетки.
+ *
+ * «Сетка» (T) показывает зону с её ручками и узлы деформера с рёбрами: видно,
+ * что именно тянется. «Нарезка» (R) показывает треугольники и точки артмеша —
+ * по ним щёлкают, чтобы разрезать ребро или перевернуть диагональ.
+ *
+ * У объекта без сетки остаются прежние ручки: старую деформацию крайних точек
+ * редактор не отбирает.
+ */
+function drawMeshOverlay(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  zoom: number,
+  primaryId: string | null,
+  mode: "grid" | "art",
+) {
+  if (!primaryId) return;
+  const object = preset.objects.find((item) => item.id === primaryId);
+  if (!object || object.kind === "group" || object.kind === "text") return;
+  const mesh = meshOf(object);
+  if (!mesh) {
+    drawWarpOverlay(ctx, preset, frame, zoom, primaryId, mode === "grid" ? "frame" : "corners");
+    return;
+  }
+  const values = frame?.objects[object.id] || staticValues(object);
+  const matrix = objectMatrix(object, values);
+  const left = -object.pivot.x * object.width;
+  const top = -object.pivot.y * object.height;
+  const at = (point: Vec2) => ({
+    x: matrix.a * (left + point.x) + matrix.c * (top + point.y) + matrix.e,
+    y: matrix.b * (left + point.x) + matrix.d * (top + point.y) + matrix.f,
+  });
+  const zone = zoneOutline(object).map(at);
+  const size = 3.5 / zoom;
+  const line = 1 / zoom;
+
+  ctx.save();
+  if (mode === "grid") {
+    drawWarpOverlay(ctx, preset, frame, zoom, primaryId, "frame");
+    const nodes = meshNodePoints(object, values);
+    ctx.strokeStyle = MESH_GRID_COLOR;
+    ctx.lineWidth = line;
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    // Горизонтали, потом вертикали: по узлам сетки, а не по зоне — иначе линии
+    // не совпадут с ручками, когда зону повернули.
+    for (let j = 0; j < mesh.deform.rows; j += 1) {
+      for (let i = 0; i < mesh.deform.cols; i += 1) {
+        const point = nodes[j * mesh.deform.cols + i];
+        if (!point) continue;
+        const screen = at(point);
+        if (i === 0) ctx.moveTo(screen.x, screen.y);
+        else ctx.lineTo(screen.x, screen.y);
+      }
+    }
+    for (let i = 0; i < mesh.deform.cols; i += 1) {
+      for (let j = 0; j < mesh.deform.rows; j += 1) {
+        const point = nodes[j * mesh.deform.cols + i];
+        if (!point) continue;
+        const screen = at(point);
+        if (j === 0) ctx.moveTo(screen.x, screen.y);
+        else ctx.lineTo(screen.x, screen.y);
+      }
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#1b2026";
+    ctx.strokeStyle = MESH_GRID_COLOR;
+    for (const point of nodes) {
+      const screen = at(point);
+      ctx.beginPath();
+      ctx.rect(screen.x - size, screen.y - size, size * 2, size * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  // Нарезка: зона пунктиром, треугольники и точки — цветом инструмента.
+  ctx.strokeStyle = "rgba(224, 163, 74, 0.45)";
+  ctx.lineWidth = line;
+  ctx.setLineDash([5 / zoom, 4 / zoom]);
+  ctx.beginPath();
+  zone.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const points = artPointPoints({ ...object, mesh: { ...mesh, enabled: true } }, values);
+  ctx.strokeStyle = MESH_ART_COLOR;
+  ctx.lineWidth = line;
+  ctx.beginPath();
+  for (let index = 0; index < mesh.art.triangles.length; index += 3) {
+    const ids = [mesh.art.triangles[index], mesh.art.triangles[index + 1], mesh.art.triangles[index + 2]];
+    ids.forEach((id, at2) => {
+      const source = points[id];
+      if (!source) return;
+      const screen = at(source);
+      if (at2 === 0) ctx.moveTo(screen.x, screen.y);
+      else ctx.lineTo(screen.x, screen.y);
+    });
+    const first = points[ids[0]];
+    if (first) {
+      const screen = at(first);
+      ctx.lineTo(screen.x, screen.y);
+    }
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#1b2026";
+  for (const point of points) {
+    const screen = at(point);
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 
 /** Отрисовка спецрежима: зона деформации и её углы. */
 function drawWarpOverlay(
