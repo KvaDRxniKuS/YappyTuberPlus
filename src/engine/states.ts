@@ -387,21 +387,22 @@ export function statesBlock(states: States, object: RigObject): string {
     parts.push({ layer, weights });
   });
   const channels: string[] = [];
-  const mirrors: string[] = [];
   for (const field of STATE_FIELDS) {
     const expressionText = channelExpression(field, parts);
     if (!expressionText) continue;
-    if (MULTIPLICATIVE.has(field) && field !== "visible") {
-      channels.push(`${field}_states = 1 + ${expressionText}`);
-    } else if (field === "visible") {
-      channels.push(`visible_states = ${expressionText}`);
-    } else {
-      channels.push(`${field}_states = ${expressionText}`);
-    }
-    // Зеркало канала в локальную переменную: кадр отдаёт локальные переменные
-    // по списку `watch`, и редактор берёт живой вклад слоя из того же кадра,
-    // что нарисовала сцена (`previewLive`). Каналы в `vars` не попадают.
-    mirrors.push(`${liveName(field)} = ${channelName(field)}`);
+    // Значение канала: у множителей вокруг единицы, у остальных — как есть.
+    const value = MULTIPLICATIVE.has(field) && field !== "visible"
+      ? `1 + ${expressionText}`
+      : expressionText;
+    // Канал определяется **через зеркало**, а не наоборот.
+    //
+    // Живой вклад слоя нужен редактору в том же кадре, что нарисовала сцена:
+    // кадр отдаёт локальные переменные по списку `watch`. Но каналы в `vars` не
+    // попадают, а локальная переменная без чтения не считается вовсе — ядро
+    // лениво, присваивание без чтения в кэш кадра не кладёт ничего. Поэтому
+    // авторская строка читает канал, канал читает зеркало, и зеркало попадает в
+    // кадр вместе с ним.
+    channels.push(`${liveName(field)} = ${value}`, `${channelName(field)} = ${liveName(field)}`);
   }
   // Каналов может не быть: слой только что создан, поза ещё пустая. Блок всё
   // равно пишется — иначе настройки исчезли бы с первым же пересозданием
@@ -410,8 +411,8 @@ export function statesBlock(states: States, object: RigObject): string {
     START,
     `${STATES_META}${JSON.stringify({ layers })}`,
     ...body,
+    // Пара «зеркало → канал»: канал ссылается на зеркало, поэтому оно выше.
     ...channels,
-    ...mirrors,
     END,
   ].join("\n");
 }
@@ -429,18 +430,43 @@ export function withLiveMirrors(script: string): string {
   const range = blockRange(script);
   if (!range) return script;
   const block = script.slice(range.start, range.end);
-  const fields = new Set<StateField>();
-  for (const layer of readStates(script).layers) {
-    for (const pose of layer.poses) {
-      for (const field of Object.keys(pose.pose) as StateField[]) fields.add(field);
+  if (!block.includes(END)) return script;
+  const isField = (name: string): name is StateField => (STATE_FIELDS as readonly string[]).includes(name);
+  const expressions = new Map<StateField, string>();
+  const lines = block.split("\n");
+  for (const line of lines) {
+    // Ссылка на зеркало (`x_states = states_x`) — не значение: его знает сама
+    // строка зеркала. Так читаются и новые блоки, и блоки прошлой версии, где
+    // зеркало было ссылкой на канал.
+    const channel = /^(\w+?)_states = (.*)$/.exec(line);
+    if (channel && isField(channel[1])) {
+      if (channel[2] !== liveName(channel[1])) expressions.set(channel[1], channel[2]);
+      continue;
+    }
+    // Старое зеркало `states_x = x_states` — ссылка на канал, а не значение.
+    const mirror = /^states_(\w+) = (.*)$/.exec(line);
+    if (mirror && isField(mirror[1]) && mirror[2] !== channelName(mirror[1])) {
+      expressions.set(mirror[1], mirror[2]);
     }
   }
-  const missing = [...fields].filter((field) => !new RegExp(`^\\s*${liveName(field)}\\s*=`, "m").test(block));
-  if (!missing.length) return script;
-  const at = script.lastIndexOf(END, range.end);
-  if (at < 0) return script;
-  const lines = missing.map((field) => `${liveName(field)} = ${channelName(field)}`).join("\n");
-  return `${script.slice(0, at)}${lines}\n${script.slice(at)}`;
+  const kept = lines.filter((line) => {
+    const channel = /^(\w+?)_states = /.exec(line);
+    if (channel && isField(channel[1])) return false;
+    const mirror = /^states_(\w+) = /.exec(line);
+    return !(mirror && isField(mirror[1]));
+  });
+  const built: string[] = [];
+  for (const field of STATE_FIELDS) {
+    const value = expressions.get(field);
+    if (value === undefined || value === liveName(field) || value === channelName(field)) continue;
+    built.push(`${liveName(field)} = ${value}`, `${channelName(field)} = ${liveName(field)}`);
+  }
+  // Строки каналов и зеркал стоят перед концом блока — там же их и собираем.
+  const end = kept.findIndex((line) => line.trim() === END);
+  const head = end >= 0 ? kept.slice(0, end) : kept;
+  const tail = end >= 0 ? kept.slice(end) : [];
+  const next = [...head, ...built, ...tail].join("\n");
+  return next === block ? script : `${script.slice(0, range.start)}${next}${script.slice(range.end)}`;
 }
 
 /** Границы блока в скрипте или `null`, если блока нет. */

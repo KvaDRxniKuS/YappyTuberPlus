@@ -41,7 +41,8 @@ function states(layer: StateLayer): States {
 test("две позы дают линейный базис из двух весов", () => {
   const block = statesBlock(states(bound()), object(""));
   expect(block).toContain("t0_0 = limit((manual.eye_x - (-1)) / 2, 0, 1)");
-  expect(block).toContain("x_states = (-20) * (1 - t0_0) + 20 * t0_0");
+  expect(block).toContain("states_x = (-20) * (1 - t0_0) + 20 * t0_0");
+  expect(block).toContain("x_states = states_x");
   // Терм веса в сумме даёт единицу — это и есть «две позы = сетка по одной оси».
   expect(block).not.toContain("y_states");
 });
@@ -60,7 +61,7 @@ test("четыре ключа дают три участка и разные с�
   expect(block).toContain("t0_1 = limit((manual.eye_x - (-0.5)) / 1, 0, 1)");
   expect(block).toContain("t0_2 = limit((manual.eye_x - 0.5) / 0.5, 0, 1)");
   // Крайние веса — крайние участки, средние — разность соседних.
-  expect(block).toContain("x_states = (-30) * (1 - t0_0) + (-10) * (t0_0 * (1 - t0_1))"
+  expect(block).toContain("states_x = (-30) * (1 - t0_0) + (-10) * (t0_0 * (1 - t0_1))"
     + " + 10 * (t0_1 * (1 - t0_2)) + 30 * t0_2");
 });
 
@@ -78,7 +79,7 @@ test("свободный слой объявляет веса выражения
   };
   const block = statesBlock(states(layer), object(""));
   expect(block).toContain("w0_0 = (smooth(mood, 240))");
-  expect(block).toContain("y_states = 6 * w0_0");
+  expect(block).toContain("states_y = 6 * w0_0");
 });
 
 test("average делит на сумму весов, sum — нет", () => {
@@ -88,8 +89,8 @@ test("average делит на сумму весов, sum — нет", () => {
   ];
   const sum = statesBlock(states({ ...bound(), param: null, normalize: "sum", poses }), object(""));
   const average = statesBlock(states({ ...bound(), param: null, normalize: "average", poses }), object(""));
-  expect(sum).toContain("y_states = 10 * w0_0 + 6 * w0_1");
-  expect(average).toContain("y_states = (10 * w0_0 + 6 * w0_1) / (w0_0 + w0_1)");
+  expect(sum).toContain("states_y = 10 * w0_0 + 6 * w0_1");
+  expect(average).toContain("states_y = (10 * w0_0 + 6 * w0_1) / (w0_0 + w0_1)");
 });
 
 test("размер — множитель, видимость только гасит", () => {
@@ -100,8 +101,8 @@ test("размер — множитель, видимость только га�
     ],
   });
   const block = statesBlock(states(layer), object(""));
-  expect(block).toContain("sizeX_states = 1 + ((-0.5) * (1 - t0_0))");
-  expect(block).toContain("visible_states = (1 - (1 - t0_0) * 0.75)");
+  expect(block).toContain("states_sizeX = 1 + ((-0.5) * (1 - t0_0))");
+  expect(block).toContain("states_visible = (1 - (1 - t0_0) * 0.75)");
 });
 
 test("терм вставляется в авторскую строку и убирается при сбросе", () => {
@@ -184,27 +185,44 @@ test("структура для ядра просит переменные об�
 });
 
 test("блок зеркалит каналы в локальные переменные", () => {
-  // Каналы `<поле>_states` в `vars` ядра не попадают: смотреть на живой вклад
-  // редактору нужно через локальные переменные — их кадр и отдаёт.
+  // Каналы `<поле>_states` в `vars` ядра не попадают, а локальная переменная без
+  // чтения не считается вовсе. Поэтому значение живёт в зеркале `states_<поле>`,
+  // а канал определяется через него: авторская строка читает канал, канал —
+  // зеркало, и вклад попадает в кадр.
   const block = statesBlock(states(bound()), object(""));
-  expect(block).toContain("x_states = (-20) * (1 - t0_0) + 20 * t0_0");
-  expect(block).toContain("states_x = x_states");
-  // Зеркало идёт после канала и до конца блока: значение уже посчитано.
-  expect(block.indexOf("states_x = x_states")).toBeGreaterThan(block.indexOf("x_states ="));
-  expect(block.indexOf("states_x = x_states")).toBeLessThan(block.indexOf("// ── конец состояний ──"));
+  expect(block).toContain("states_x = (-20) * (1 - t0_0) + 20 * t0_0");
+  expect(block).toContain("x_states = states_x");
+  // Зеркало стоит выше канала: канал на него ссылается.
+  expect(block.indexOf("states_x = (-20)")).toBeLessThan(block.indexOf("x_states = states_x"));
+  // Множитель зеркалится уже со своей единицей.
+  const scaled = statesBlock(states(bound({ poses: [
+    { at: -1, pose: { sizeX: 0.5 } }, { at: 1, pose: { sizeX: 1 } },
+  ] })), object(""));
+  expect(scaled).toContain("states_sizeX = 1 + ((-0.5) * (1 - t0_0))");
+  expect(scaled).toContain("sizeX_states = states_sizeX");
 });
 
 test("зеркала дописываются в блок старой версии, готовый блок не трогается", () => {
   const fresh = writeStates("x = inherit\n", states(bound()), object("x = inherit")).script;
   expect(withLiveMirrors(fresh)).toBe(fresh);
-  // Блок, записанный до зеркал: строки дописываются на месте, остальное цело.
-  const old = fresh.replace(/^states_x = x_states\n/m, "");
-  expect(old).not.toContain("states_x = x_states");
+  // Блок, записанный до зеркал: канал с выражением прямо в нём.
+  const old = fresh
+    .replace(/^states_x = .*\n/m, "")
+    .replace(/^x_states = states_x$/m, "x_states = (-20) * (1 - t0_0) + 20 * t0_0");
+  expect(old).not.toContain("states_x =");
   const patched = withLiveMirrors(old);
-  expect(patched).toContain("states_x = x_states");
-  expect(patched.replace("states_x = x_states\n", "")).toBe(old);
+  expect(patched).toBe(fresh);
+  // Повторный проход ничего не меняет: миграция одноразовая.
+  expect(withLiveMirrors(patched)).toBe(patched);
   // Скрипт без блока не переписывается.
   expect(withLiveMirrors("x = inherit\n")).toBe("x = inherit\n");
+  // Блок прошлой версии: зеркало было ссылкой на канал. Значение не теряется —
+  // оно берётся из канала, а ссылка заменяется парой «зеркало → канал».
+  const previous = fresh
+    .replace(/^states_x = .*\n/m, "")
+    .replace(/^x_states = states_x$/m, "x_states = (-20) * (1 - t0_0) + 20 * t0_0\nstates_x = x_states");
+  expect(previous).toContain("states_x = x_states");
+  expect(withLiveMirrors(previous)).toBe(fresh);
 });
 
 test("новый слой: привязка к первому входу или свободные веса", () => {

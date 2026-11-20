@@ -123,6 +123,8 @@ export function StatesPanel(props: StatesPanelProps) {
   const lastBase = useRef<BasePose | null>(null);
   /** Что уже отправлено в предпросмотр: без этого эффект крутился бы вечно. */
   const sent = useRef<string | null>(null);
+  /** Вклад, посчитанный по входам: помним, к какому кадру он относится. */
+  const liveCache = useRef<{ key: string; live: Partial<Record<StateField, number>> } | null>(null);
   /** Колбэки в ref: уборка при закрытии вкладки видит актуальные. */
   const previewApi = useRef(props.onPreviewState);
   previewApi.current = props.onPreviewState;
@@ -348,9 +350,19 @@ export function StatesPanel(props: StatesPanelProps) {
       }
       if (Object.keys(live).length) return live;
     }
-    // Ядро старое или кадр ещё не пришёл — считаем по входам, как раньше.
+    // Ядро старое или кадр ещё не пришёл — считаем по входам, как раньше, но
+    // только когда кадр сменился.
+    //
+    // В паузе кадр стоит, а вход продолжает меняться. Считая вклад по текущему
+    // входу, вкладка тянула бы объект за мышью, хотя на сцене ничего не
+    // происходит. Вклад относится к кадру — значит и пересчитывается вместе с
+    // ним: новый кадр (или другой слой) — новый вклад, иначе прежний.
+    const key = `${objectId}|${props.frame?.seq ?? -1}|${layerIndex}|${layer.param}`;
+    if (liveCache.current?.key === key) return liveCache.current.live;
     const value = liveValue(layer.param);
-    return value === undefined ? {} : poseAt(layer, value);
+    const live = value === undefined ? {} : poseAt(layer, value);
+    liveCache.current = { key, live };
+    return live;
   };
 
   /**
