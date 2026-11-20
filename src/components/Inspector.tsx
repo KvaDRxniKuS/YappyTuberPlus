@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, PenTool,
-  Lightbulb, RotateCcw, Shapes, Trash2, Type, Waves,
+  ClipboardPaste, Copy, Lightbulb, RotateCcw, Shapes, Trash2, Type, Waves, X,
 } from "lucide-react";
 import type {
-  BasePose, EnvironmentSpec, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
+  BasePose, EnvironmentSpec, MaskKind, MaskSpec, MediaRepeat, MediaSpec, MeshSpec, RigFrame, RigObject, ShapeItem,
   ShapeItemKind, ShapeSpec, TextSpec, Vec2, WarpCorner, WarpFrame, WarpSpec,
 } from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
@@ -14,6 +14,9 @@ import {
   defaultMask, defaultShape, formatPoints, makeItem, parsePoints, uniqueItemId,
 } from "../render/shape";
 import { setScriptValue } from "../engine/preset";
+import {
+  askPasteMode, heldMesh, holdMesh, pasteMesh, type PasteMode,
+} from "../engine/meshClipboard";
 import { groupBounds } from "../render/bounds";
 import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT } from "../render/warp";
 import {
@@ -506,6 +509,25 @@ function MeshSection({ object, onChange }: {
   const isQuad = mesh.deform.cols === 2 && mesh.deform.rows === 2;
   const brush = mesh.brush ?? BRUSH_DEFAULT;
   const mirror = mesh.mirror ?? MIRROR_DEFAULT;
+  // Вставка чужой сетки: если густота или нарезка другие, спрашиваем режим —
+  // молча портить форму нельзя (§10.6 плана).
+  const [pasted, setPasted] = useState<MeshSpec | null>(null);
+  const copyMesh = () => holdMesh(mesh);
+  const pasteMeshNow = () => {
+    const source = heldMesh();
+    if (!source) return;
+    if (askPasteMode(mesh, source)) {
+      setPasted(source);
+      return;
+    }
+    update({ deform: pasteMesh(mesh, source, "transfer").deform });
+  };
+  const applyPaste = (mode: PasteMode) => {
+    if (!pasted) return;
+    const next = pasteMesh(mesh, pasted, mode);
+    setPasted(null);
+    update({ deform: next.deform, mirror: next.mirror });
+  };
 
   return (
     <div className="property-section compact-section">
@@ -574,6 +596,26 @@ function MeshSection({ object, onChange }: {
               <Waves size={14} /> Сгладить
             </button>
           </div>
+
+          <div className="section-title"><span>Сетка между объектами</span><small>БУФЕР</small></div>
+          <div className="image-actions">
+            <button className="button secondary" onClick={copyMesh} title="Скопировать форму сетки этого объекта">
+              <Copy size={14} /> Копировать сетку
+            </button>
+            <button
+              className="button secondary"
+              onClick={pasteMeshNow}
+              disabled={!heldMesh()}
+              title="Вставить форму сетки другого объекта; нарезка останется своя"
+            >
+              <ClipboardPaste size={14} /> Вставить сетку
+            </button>
+          </div>
+          <p className="behaviour-hint">
+            Переносится форма: густота, узлы и ось симметрии. Нарезка и зона остаются
+            своими — они принадлежат картинке. Если густота другая, редактор спросит,
+            что делать.
+          </p>
 
           <div className="section-title"><span>Кисть</span><small>СВОБОДНО В ПЛОСКОСТИ</small></div>
           <label className="check-line">
@@ -726,6 +768,44 @@ function MeshSection({ object, onChange }: {
             </button>
           </div>
         </>
+      )}
+
+      {pasted && (
+        <div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setPasted(null); }}>
+          <div className="overlay-dialog" role="dialog" aria-label="Вставить сетку">
+            <header className="dialog-head">
+              <div className="dialog-title">
+                <div className="dialog-icon"><ClipboardPaste size={17} /></div>
+                <div>
+                  <span className="eyebrow">СЕТКА ИЗ БУФЕРА</span>
+                  <h2>Вставить сетку</h2>
+                </div>
+              </div>
+              <button className="icon-button" title="Закрыть" onClick={() => setPasted(null)}>
+                <X size={15} />
+              </button>
+            </header>
+            <div className="dialog-body">
+              <p className="dialog-note">
+                В буфере сетка {pasted.deform.cols}×{pasted.deform.rows}, у объекта —
+                {" "}{mesh.deform.cols}×{mesh.deform.rows}. Нарезка не переносится: она остаётся
+                своя.
+              </p>
+              <div className="dialog-actions">
+                <button className="button primary" onClick={() => applyPaste("transfer")}>
+                  Перенести сетку
+                </button>
+                <button className="button secondary" onClick={() => applyPaste("resample")}>
+                  Пересчитать на текущую
+                </button>
+                <button className="button secondary" onClick={() => applyPaste("reset")}>
+                  Сбросить
+                </button>
+                <button className="button ghost" onClick={() => setPasted(null)}>Отмена</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
