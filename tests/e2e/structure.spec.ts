@@ -156,6 +156,28 @@ test("предпросмотр перекрывает только вклад с
   expect(previewFrame(frame, objects, null)).toBe(frame);
 });
 
+test("живой вклад берётся из кадра, а не из числа, которое посчитала вкладка", () => {
+  const objects = [object("eye", null, base(100, 100))];
+  const frame: RigFrame = {
+    seq: 9, time: 1, dt: 0.016, globals: {}, order: ["eye"], diagnostics: [],
+    // Сцена уже получила новый кадр: мышь успела уехать.
+    objects: { eye: { ...NEUTRAL_PARAMS, x: 55 } },
+    // Блок состояний зеркалит вклад слоя в `vars` — из этого же кадра.
+    vars: { eye: { states_x: 55 } },
+  };
+  const shown = previewFrame(frame, objects, {
+    id: "eye",
+    pose: { x: 20 },
+    // Вкладка считала по прошлому кадру: это число не должно попасть в картинку,
+    // иначе разница 55 − 10 осталась бы в объекте и он дёргался бы вместе с входом.
+    live: { x: 10 },
+  })!;
+  expect(shown.objects.eye.x).toBe(20);
+  // Кадр без `vars` (старое ядро) живёт на том, что прислала вкладка.
+  const legacy: RigFrame = { ...frame, vars: undefined };
+  expect(previewFrame(legacy, objects, { id: "eye", pose: { x: 20 }, live: { x: 10 } })!.objects.eye.x).toBe(65);
+});
+
 test("предпросмотр без кадра всё равно показывает позу", () => {
   const objects = [object("eye", null, base(100, 100))];
   // Движок на паузе кадр не присылает: значения берутся из базы, как в отрисовке.

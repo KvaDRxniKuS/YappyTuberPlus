@@ -1,6 +1,6 @@
 import type { BasePose, ObjectFrame, RigFrame, RigObject } from "../types";
 import { NEUTRAL_PARAMS } from "./frame";
-import type { StateField, StatePreview } from "./states";
+import { liveName, type StateField, type StatePreview } from "./states";
 import { setParent } from "./preset";
 import { selectionRoots } from "./selection";
 
@@ -424,21 +424,31 @@ export function previewFrame(
   if (!preview) return frame;
   const target = objects.find((object) => object.id === preview.id);
   if (!target) return frame;
+  // Живой вклад слоя читаем из **того же кадра**, который сейчас рисуется:
+  // блок состояний кладёт его в `vars` (`states_<поле>`). Иначе вычиталось бы
+  // то, что посчитала вкладка по своему (более свежему) кадру, и разница
+  // оставалась бы в картинке — объект дёргался бы вместе с входом.
+  const liveOf = (field: StateField): number | undefined => {
+    const fromFrame = frame?.vars?.[preview.id]?.[liveName(field)];
+    if (typeof fromFrame === "number" && Number.isFinite(fromFrame)) return fromFrame;
+    return preview.live[field];
+  };
   // Прибавки: у смещений — разница, у множителей — отношение.
   const shifts = new Map<StateField, number>();
   const factors = new Map<StateField, number>();
   for (const field of ADDITIVE_FIELDS) {
-    const shift = (preview.pose[field] ?? 0) - (preview.live[field] ?? 0);
+    const shift = (preview.pose[field] ?? 0) - (liveOf(field) ?? 0);
     if (Math.abs(shift) > 1e-9) shifts.set(field, shift);
   }
   for (const field of FACTOR_FIELDS) {
-    const live = preview.live[field];
+    const live = liveOf(field);
     const factor = (preview.pose[field] ?? 1) / (live === undefined || Math.abs(live) < 1e-9 ? 1 : live);
     if (Math.abs(factor - 1) > 1e-9) factors.set(field, factor);
   }
-  const visible = preview.live.visible === undefined || preview.live.visible <= 0
+  const liveVisible = liveOf("visible");
+  const visible = liveVisible === undefined || liveVisible <= 0
     ? (preview.pose.visible ?? 1)
-    : (preview.pose.visible ?? 1) / preview.live.visible;
+    : (preview.pose.visible ?? 1) / liveVisible;
 
   const objects0 = { ...(frame?.objects ?? {}) };
   const shown: ObjectFrame = { ...(objects0[target.id] ?? standbyValues(target)) };
