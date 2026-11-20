@@ -4,6 +4,8 @@ import {
   deleteTriangle, earClip, edgeMap, flipDiagonal, gridCorners, gridIndex, gridMoved, gridTriangles,
   migrateWarp, mirrorPoint, meshIsZoneQuad, meshOf, meshVertices, normalizeMesh, paramOffsets, regularGrid,
   resizeGrid, sampleGrid, shiftNode, splitEdge, validateArt, addTriangle, hasTriangle,
+  BRUSH_DEFAULT, MIRROR_DEFAULT, brushGrid, brushWeights, mirrorAcross, mirrorNode, moveNodeMirrored,
+  normalizeBrush, normalizeMirror, smoothGrid, symmetrizeGrid,
 } from "../../src/engine/mesh";
 import { defaultWarp } from "../../src/render/warp";
 import { DEFAULT_BASE, type RigObject } from "../../src/types";
@@ -300,4 +302,109 @@ test("зеркало точки относительно оси", () => {
   // Точка на оси остаётся на месте.
   expect(mirrorPoint({ x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5, angle: 90 }))
     .toEqual({ x: 0.5, y: 0.1 });
+});
+
+/*
+ * Кисть, сглаживание и симметрия. Всё это — правки авторской сетки, поэтому
+ * проверяется без сцены: веса, пары узлов и ход к середине соседей.
+ */
+
+const VERTICAL = { on: true, x: 0.5, y: 0.5, angle: 90 };
+const HORIZONTAL = { on: true, x: 0.5, y: 0.5, angle: 0 };
+
+test("веса кисти: центр единица, край ноль, за краем пусто", () => {
+  const center = { x: 100, y: 100 };
+  const points = [
+    { x: 100, y: 100 },
+    { x: 150, y: 100 },
+    { x: 200, y: 100 },
+    { x: 260, y: 100 },
+  ];
+  const weights = brushWeights(points, center, 100, 0.5);
+  expect(weights[0]).toBe(1);
+  // На границе жёсткости вес ещё единица, дальше гаснет.
+  expect(weights[1]).toBeCloseTo(1, 6);
+  expect(weights[2]).toBeCloseTo(0, 6);
+  expect(weights[3]).toBe(0);
+  // Жёсткость 1 — резкая граница: всё внутри тянется целиком.
+  expect(brushWeights(points, center, 100, 1)[1]).toBe(1);
+  // Жёсткость 0 — мягко от самого центра.
+  expect(brushWeights(points, center, 100, 0)[1]).toBeLessThan(1);
+});
+
+test("мазок двигает узлы с весом, нулевой сдвиг сетку не трогает", () => {
+  const grid = regularGrid(3, 3);
+  const next = brushGrid(grid, [1, 0.5, 0, 0, 0, 0, 0, 0, 0], 0.1, 0);
+  expect(round(next.points[0].x)).toBe(0.1);
+  // Узел с весом 0.5 прошёл половину пути — от своего места, а не от нуля.
+  expect(round(next.points[1].x)).toBe(0.55);
+  expect(round(next.points[2].x)).toBe(1);
+  // Простой клик без движения пресет не переписывает.
+  expect(brushGrid(grid, [1, 1, 1, 1, 1, 1, 1, 1, 1], 0, 0)).toBe(grid);
+});
+
+test("сглаживание тянет внутренние узлы к соседям, край стоит", () => {
+  const grid = regularGrid(3, 3);
+  const moved = { ...grid, points: grid.points.map((point, index) => (index === 4 ? { x: 0.5, y: 0.7 } : point)) };
+  const smooth = smoothGrid(moved, 1);
+  // Внутренний узел встал в середину своих соседей.
+  expect(round(smooth.points[4].x)).toBe(0.5);
+  expect(round(smooth.points[4].y)).toBe(0.5);
+  // Крайние узлы не двигаются: иначе сетка сжималась бы с каждым нажатием.
+  expect(smooth.points[0]).toEqual(grid.points[0]);
+  // Сетка 2×2 — это четыре угла: сглаживать нечего.
+  expect(smoothGrid(regularGrid(2, 2))).toEqual(regularGrid(2, 2));
+});
+
+test("отражение точки относительно оси: вертикальная и горизонтальная", () => {
+  expect(mirrorAcross({ x: 0.2, y: 0.3 }, VERTICAL)).toEqual({ x: 0.8, y: 0.3 });
+  expect(mirrorAcross({ x: 0.2, y: 0.3 }, HORIZONTAL)).toEqual({ x: 0.2, y: 0.7 });
+  // Узел на оси остаётся на месте.
+  expect(mirrorAcross({ x: 0.5, y: 0.3 }, VERTICAL)).toEqual({ x: 0.5, y: 0.3 });
+  // Косая ось 45° меняет знак у обеих координат относительно центра.
+  expect(mirrorAcross({ x: 0.7, y: 0.2 }, { on: true, x: 0.5, y: 0.5, angle: 45 }))
+    .toEqual({ x: 0.2, y: 0.7 });
+});
+
+test("пара узлов известна по индексу у осей сетки", () => {
+  const grid = regularGrid(3, 3);
+  // Левый верхний (0) ↔ правый верхний (2).
+  expect(mirrorNode(grid, 0, VERTICAL)).toBe(2);
+  expect(mirrorNode(grid, 2, VERTICAL)).toBe(0);
+  // Узел на оси пары не имеет.
+  expect(mirrorNode(grid, 1, VERTICAL)).toBeNull();
+});
+
+test("симметрия при перетаскивании: пара едет зеркально", () => {
+  const grid = regularGrid(3, 3);
+  const next = moveNodeMirrored(grid, 0, 0.1, 0.05, VERTICAL);
+  expect(round(next.points[0].x)).toBe(0.1);
+  expect(round(next.points[0].y)).toBe(0.05);
+  // Отражённый узел ушёл влево и вниз ровно на столько же.
+  expect(round(next.points[2].x)).toBe(0.9);
+  expect(round(next.points[2].y)).toBe(0.05);
+  // Без пары сдвиг обычный: узлы на оси двигаются по одному.
+  expect(moveNodeMirrored(grid, 1, 0.1, 0, VERTICAL).points[1].x).toBe(0.5 + 0.1 > 1 ? 0.5 : 0.6);
+});
+
+test("симметризация сводит пары к середине и ставит узлы на ось", () => {
+  const grid = regularGrid(3, 3);
+  const skewed = { ...grid, points: grid.points.map((point, index) => (index === 2 ? { x: 0.9, y: 0.1 } : point)) };
+  const next = symmetrizeGrid(skewed, VERTICAL);
+  // Пара проходит полпути: правый узел встал зеркально левому, левый — на
+  // середину между собой и отражением правого.
+  expect(round(next.points[0].x)).toBe(0.05);
+  expect(round(next.points[2].x)).toBe(0.95);
+  expect(round(next.points[2].y)).toBe(0.05);
+  expect(next.points[2].y).toBe(next.points[0].y);
+  // Узлы на оси остаются на месте.
+  expect(next.points[1].x).toBe(0.5);
+});
+
+test("настройки кисти и оси: битые значения дают разумные", () => {
+  expect(normalizeBrush(undefined)).toEqual(BRUSH_DEFAULT);
+  expect(normalizeBrush({ on: true, radius: 99, hardness: -3 })).toEqual({ on: true, radius: 2, hardness: 0 });
+  expect(normalizeMirror(undefined)).toEqual(MIRROR_DEFAULT);
+  // Угол — это прямая: 270° и −90° одно и то же.
+  expect(normalizeMirror({ on: true, x: 0.5, y: 0.5, angle: 270 }).angle).toBe(-90);
 });

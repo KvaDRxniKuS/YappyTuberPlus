@@ -1,5 +1,6 @@
 import type {
-  ArtMesh, GridSpec, MeshSpec, ObjectFrame, RigObject, Vec2, WarpCorner, WarpSpec,
+  ArtMesh, BrushSpec, GridSpec, MeshSpec, MirrorSpec, ObjectFrame, RigObject, Vec2, WarpCorner,
+  WarpSpec,
 } from "../types";
 import { WARP_CORNERS, defaultWarp } from "../render/warp";
 
@@ -31,6 +32,12 @@ export const MESH_MAX = 32;
  * 17…32, которые нужны раз в жизни, а 3×3 и 4×4 — постоянно.
  */
 export const GRID_STEPS = [2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32] as const;
+
+/** Кисть по умолчанию: выключена, радиус — четверть зоны, край мягкий. */
+export const BRUSH_DEFAULT: BrushSpec = { on: false, radius: 0.25, hardness: 0.5 };
+
+/** Ось симметрии по умолчанию: вертикальная через центр зоны, выключена. */
+export const MIRROR_DEFAULT: MirrorSpec = { on: false, x: 0.5, y: 0.5, angle: 90 };
 
 /** Округление до тысячных: доли зоны, больше знаков в пресете не нужно. */
 function round(value: number): number {
@@ -224,6 +231,31 @@ export function normalizeArt(raw: unknown): ArtMesh | undefined {
  * сетка пересобирается регулярной: иначе редактор и рендер разойдутся в
  * индексах, и «поехала одна точка» превратится в кашу.
  */
+/** Кисть из пресета: выключена, если её нет. Радиус и жёсткость — в разумных пределах. */
+export function normalizeBrush(raw: unknown): BrushSpec {
+  if (!raw || typeof raw !== "object") return { ...BRUSH_DEFAULT };
+  const source = raw as Partial<BrushSpec>;
+  return {
+    on: source.on === true,
+    radius: Math.min(2, Math.max(0.02, numberOr(source.radius, BRUSH_DEFAULT.radius))),
+    hardness: Math.min(1, Math.max(0, numberOr(source.hardness, BRUSH_DEFAULT.hardness))),
+  };
+}
+
+/** Ось симметрии из пресета: точка в долях зоны, угол в градусах. */
+export function normalizeMirror(raw: unknown): MirrorSpec {
+  if (!raw || typeof raw !== "object") return { ...MIRROR_DEFAULT };
+  const source = raw as Partial<MirrorSpec>;
+  const angle = numberOr(source.angle, MIRROR_DEFAULT.angle);
+  return {
+    on: source.on === true,
+    x: numberOr(source.x, MIRROR_DEFAULT.x),
+    y: numberOr(source.y, MIRROR_DEFAULT.y),
+    // Угол держим в −180…180: ось — это прямая, лишние обороты не нужны.
+    angle: ((angle % 360) + 540) % 360 - 180,
+  };
+}
+
 export function normalizeGrid(raw: unknown): GridSpec | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const source = raw as Partial<GridSpec>;
@@ -257,6 +289,8 @@ export function normalizeMesh(raw: unknown): MeshSpec | undefined {
     },
     art: normalizeArt(source.art) ?? base.art,
     deform: normalizeGrid(source.deform) ?? base.deform,
+    brush: normalizeBrush(source.brush),
+    mirror: normalizeMirror(source.mirror),
   };
   return mesh;
 }
@@ -337,6 +371,209 @@ export function applyOffsets(grid: GridSpec, offsets?: Record<string, Vec2> | nu
     const offset = offsets[String(index)];
     if (!offset) return point;
     return { x: round(point.x + offset.x), y: round(point.y + offset.y) };
+  });
+  return { ...grid, points };
+}
+
+/* ── Кисть, сглаживание и симметрия ───────────────────────────────────────
+ *
+ * Всё это правки **авторской** сетки: они не знают ни о состояниях, ни о
+ * нарезке. Точки — доли зоны, поэтому кисть получает расстояния в пикселях
+ * картинки: радиус должен быть круглым на экране, а не в UV.
+ */
+
+/** Ось симметрии как прямая: точка и единичное направление в долях зоны. */
+function axisLine(axis: MirrorSpec): { x: number; y: number; ux: number; uy: number } {
+  const radians = (axis.angle * Math.PI) / 180;
+  return { x: axis.x, y: axis.y, ux: Math.cos(radians), uy: Math.sin(radians) };
+}
+
+/** Отражение точки относительно оси симметрии (в долях зоны). */
+export function mirrorAcross(point: Vec2, axis: MirrorSpec): Vec2 {
+  const { x, y, ux, uy } = axisLine(axis);
+  const dx = point.x - x;
+  const dy = point.y - y;
+  const dot = dx * ux + dy * uy;
+  return { x: round(x + 2 * dot * ux - dx), y: round(y + 2 * dot * uy - dy) };
+}
+
+/** Проекция точки на ось: так узел, лежащий на оси, остаётся на ней. */
+function ontoAxis(point: Vec2, axis: MirrorSpec): Vec2 {
+  const { x, y, ux, uy } = axisLine(axis);
+  const dot = (point.x - x) * ux + (point.y - y) * uy;
+  return { x: round(x + dot * ux), y: round(y + dot * uy) };
+}
+
+/** Шаг сетки в долях зоны — по нему меряется «соседний узел». */
+function gridStep(grid: GridSpec): number {
+  return Math.min(1 / Math.max(1, grid.cols - 1), 1 / Math.max(1, grid.rows - 1));
+}
+
+/** Ближайший узел к точке в пределах допуска: пара для симметрии. */
+function nearestNode(grid: GridSpec, point: Vec2, tolerance: number): number | null {
+  let best: number | null = null;
+  let distance = tolerance;
+  grid.points.forEach((candidate, index) => {
+    const length = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+    if (length <= distance) {
+      distance = length;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/**
+ * Ось совпадает с осями сетки: вертикальная меняет столбцы, горизонтальная — строки.
+ *
+ * Для таких осей пара узлов известна по индексу (`j·cols + i`), и это надёжнее
+ * поиска по положению: у правленой сетки сосед может оказаться ближе «своего»
+ * отражения, и пара разъехалась бы.
+ */
+function alignedAxis(axis: MirrorSpec): "vertical" | "horizontal" | null {
+  const radians = (axis.angle * Math.PI) / 180;
+  if (Math.abs(Math.cos(radians)) < 1e-6) return "vertical";
+  if (Math.abs(Math.sin(radians)) < 1e-6) return "horizontal";
+  return null;
+}
+
+/** Узел-отражение: где та же точка на другой стороне оси. */
+export function mirrorNode(grid: GridSpec, index: number, axis: MirrorSpec): number | null {
+  const point = grid.points[index];
+  if (!point) return null;
+  const aligned = alignedAxis(axis);
+  if (aligned) {
+    const i = index % grid.cols;
+    const j = Math.floor(index / grid.cols);
+    const mate = aligned === "vertical"
+      ? j * grid.cols + (grid.cols - 1 - i)
+      : (grid.rows - 1 - j) * grid.cols + i;
+    return mate === index ? null : mate;
+  }
+  const mate = nearestNode(grid, mirrorAcross(point, axis), gridStep(grid) * 0.75);
+  return mate === index ? null : mate;
+}
+
+/**
+ * Сдвиг узла вместе с его отражением: так работает симметрия при перетаскивании.
+ *
+ * Отражение получает **отражённый** сдвиг, иначе пара разъехалась бы: у
+ * вертикальной оси `dx` меняет знак, у горизонтальной — `dy`.
+ */
+export function moveNodeMirrored(
+  grid: GridSpec,
+  index: number,
+  dx: number,
+  dy: number,
+  axis: MirrorSpec,
+): GridSpec {
+  const mate = mirrorNode(grid, index, axis);
+  // Отражённый вектор — это отражение конца сдвинутого отрезка, а не самого
+  // вектора: у косой оси разница видна.
+  const point = grid.points[index];
+  let mirrored = grid;
+  if (mate !== null && point) {
+    const movedPoint = { x: point.x + dx, y: point.y + dy };
+    const matePoint = grid.points[mate];
+    if (matePoint) {
+      const target = mirrorAcross(movedPoint, axis);
+      mirrored = shiftNode(grid, mate, target.x - matePoint.x, target.y - matePoint.y);
+    }
+  }
+  return shiftNode(mirrored, index, dx, dy);
+}
+
+/**
+ * Симметризация сетки: пары узлов встают зеркально, узлы на оси — на ось.
+ *
+ * Форма при этом меняется наполовину хода каждой пары — это и есть «сделать
+ * симметрично», а не «отразить одну сторону на другую».
+ */
+export function symmetrizeGrid(grid: GridSpec, axis: MirrorSpec): GridSpec {
+  const points = grid.points.map((point) => ({ ...point }));
+  const done = new Set<number>();
+  const tolerance = gridStep(grid) * 0.75;
+  grid.points.forEach((point, index) => {
+    if (done.has(index)) return;
+    done.add(index);
+    const mate = mirrorNode(grid, index, axis);
+    if (mate === null) {
+      // Пары нет: если узел стоит на оси (с точностью до шага) — ставим ровно
+      // на неё, иначе оставляем как есть.
+      if (Math.hypot(mirrorAcross(point, axis).x - point.x, mirrorAcross(point, axis).y - point.y) <= tolerance) {
+        points[index] = ontoAxis(point, axis);
+      }
+      return;
+    }
+    done.add(mate);
+    // Середина пары — половина хода каждой стороны: сетка становится
+    // симметричной, но форма не «переезжает» целиком на одну сторону.
+    const other = grid.points[mate];
+    if (!other) return;
+    const mirrored = mirrorAcross(other, axis);
+    const middle = { x: round((point.x + mirrored.x) / 2), y: round((point.y + mirrored.y) / 2) };
+    points[index] = middle;
+    points[mate] = mirrorAcross(middle, axis);
+  });
+  return { ...grid, points };
+}
+
+/**
+ * Веса кисти по узлам: 1 в центре, 0 на краю, между ними — плавное затухание.
+ *
+ * `hardness` — доля радиуса, где вес ещё единица. Косинус выбран за нулевую
+ * производную на краю: сетка не получает ступеньки там, где мазок кончается.
+ */
+export function brushWeights(points: readonly Vec2[], center: Vec2, radius: number, hardness: number): number[] {
+  const inner = Math.max(0, Math.min(1, hardness)) * radius;
+  return points.map((point) => {
+    const distance = Math.hypot(point.x - center.x, point.y - center.y);
+    if (distance >= radius) return 0;
+    if (distance <= inner) return 1;
+    const t = (distance - inner) / Math.max(1e-6, radius - inner);
+    return 0.5 + 0.5 * Math.cos(Math.PI * t);
+  });
+}
+
+/** Мазок: узлы едут на `delta`, умноженную на свой вес. Один проход по сетке. */
+export function brushGrid(grid: GridSpec, weights: readonly number[], dx: number, dy: number): GridSpec {
+  if (!dx && !dy) return grid;
+  const points = grid.points.map((point, index) => {
+    const weight = weights[index] ?? 0;
+    if (weight <= 0) return point;
+    return { x: round(point.x + dx * weight), y: round(point.y + dy * weight) };
+  });
+  return { ...grid, points };
+}
+
+/**
+ * Сглаживание сетки: каждый внутренний узел тянется к середине соседей.
+ *
+ * Крайние узлы не двигаются — иначе сетка «сжималась» бы с каждым нажатием.
+ * `strength` — доля хода к середине: 1 — сразу среднее, 0.35 — мягко.
+ */
+export function smoothGrid(grid: GridSpec, strength = 0.35): GridSpec {
+  const { cols, rows } = grid;
+  if (cols < 3 && rows < 3) return grid;
+  const points = grid.points.map((point, index) => {
+    const i = index % cols;
+    const j = Math.floor(index / cols);
+    if (i === 0 || j === 0 || i === cols - 1 || j === rows - 1) return point;
+    const neighbours = [
+      grid.points[gridIndex(cols, i - 1, j)],
+      grid.points[gridIndex(cols, i + 1, j)],
+      grid.points[gridIndex(cols, i, j - 1)],
+      grid.points[gridIndex(cols, i, j + 1)],
+    ].filter(Boolean) as Vec2[];
+    if (!neighbours.length) return point;
+    const middle = neighbours.reduce(
+      (sum, item) => ({ x: sum.x + item.x / neighbours.length, y: sum.y + item.y / neighbours.length }),
+      { x: 0, y: 0 },
+    );
+    return {
+      x: round(point.x + (middle.x - point.x) * Math.max(0, Math.min(1, strength))),
+      y: round(point.y + (middle.y - point.y) * Math.max(0, Math.min(1, strength))),
+    };
   });
   return { ...grid, points };
 }

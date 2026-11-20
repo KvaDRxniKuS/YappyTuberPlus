@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, PenTool,
-  Lightbulb, RotateCcw, Shapes, Trash2, Type,
+  Lightbulb, RotateCcw, Shapes, Trash2, Type, Waves,
 } from "lucide-react";
 import type {
   BasePose, EnvironmentSpec, MaskKind, MaskSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, ShapeItem,
@@ -17,8 +17,8 @@ import { setScriptValue } from "../engine/preset";
 import { groupBounds } from "../render/bounds";
 import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT } from "../render/warp";
 import {
-  GRID_STEPS, artFromGrid, clampGrid, defaultMesh, gridCorners, meshOf, regularGrid, resetArt, resetGrid,
-  resizeGrid, shiftNode,
+  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, artFromGrid, clampGrid, defaultMesh, gridCorners, meshOf,
+  normalizeMirror, regularGrid, resetArt, resetGrid, resizeGrid, shiftNode, smoothGrid, symmetrizeGrid,
 } from "../engine/mesh";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
@@ -504,6 +504,8 @@ function MeshSection({ object, onChange }: {
   const setGrid = (cols: number, rows: number) => update({ deform: resizeGrid(mesh.deform, clampGrid(cols), clampGrid(rows)) });
   const setArt = (cols: number, rows: number) => update({ art: artFromGrid(cols, rows) });
   const isQuad = mesh.deform.cols === 2 && mesh.deform.rows === 2;
+  const brush = mesh.brush ?? BRUSH_DEFAULT;
+  const mirror = mesh.mirror ?? MIRROR_DEFAULT;
 
   return (
     <div className="property-section compact-section">
@@ -515,6 +517,16 @@ function MeshSection({ object, onChange }: {
         <input type="checkbox" checked={mesh.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
         <span>Гнуть картинку сеткой</span>
       </label>
+      {object.parentId && (
+        <label className="check-line" title="Включено — место объекта берётся с деформированной поверхности родителя">
+          <input
+            type="checkbox"
+            checked={object.deformParent !== false}
+            onChange={(event) => onChange({ ...object, deformParent: event.target.checked })}
+          />
+          <span>Деформируется родителем</span>
+        </label>
+      )}
 
       {mesh.enabled && (
         <>
@@ -554,7 +566,92 @@ function MeshSection({ object, onChange }: {
             <button className="button secondary" onClick={() => update({ deform: resetGrid(mesh.deform) })}>
               <RotateCcw size={14} /> Сбросить форму
             </button>
+            <button
+              className="button secondary"
+              title="Каждый внутренний узел тянется к середине соседей: крайние стоят на месте"
+              onClick={() => update({ deform: smoothGrid(mesh.deform) })}
+            >
+              <Waves size={14} /> Сгладить
+            </button>
           </div>
+
+          <div className="section-title"><span>Кисть</span><small>СВОБОДНО В ПЛОСКОСТИ</small></div>
+          <label className="check-line">
+            <input
+              type="checkbox"
+              checked={brush.on}
+              onChange={(event) => update({ brush: { ...brush, on: event.target.checked } })}
+            />
+            <span>Тянуть пятно, а не узел</span>
+          </label>
+          {brush.on && (
+            <>
+              <div className="property-grid two-columns">
+                <NumberField
+                  label="Радиус"
+                  value={Math.round(brush.radius * 100)}
+                  step={1}
+                  suffix="%"
+                  onCommit={(value) => update({ brush: { ...brush, radius: Math.min(2, Math.max(0.02, fromPercent(value))) } })}
+                />
+                <NumberField
+                  label="Жёсткость"
+                  value={Math.round(brush.hardness * 100)}
+                  step={5}
+                  suffix="%"
+                  onCommit={(value) => update({ brush: { ...brush, hardness: Math.min(1, Math.max(0, value / 100)) } })}
+                />
+              </div>
+              <p className="behaviour-hint">
+                Радиус — доля меньшей стороны зоны. Жёсткость — какая часть радиуса
+                тянется целиком; дальше вес плавно гаснет до нуля на краю.
+              </p>
+            </>
+          )}
+
+          <div className="section-title"><span>Симметрия</span><small>{`${Math.round(mirror.angle)}°`}</small></div>
+          <label className="check-line">
+            <input
+              type="checkbox"
+              checked={mirror.on}
+              onChange={(event) => update({ mirror: { ...mirror, on: event.target.checked } })}
+            />
+            <span>Двигать узлы парой</span>
+          </label>
+          {mirror.on && (
+            <>
+              <div className="property-grid two-columns">
+                <NumberField label="Ось X" value={percent(mirror.x)} step={1} suffix="%" onCommit={(value) => update({ mirror: { ...mirror, x: fromPercent(value) } })} />
+                <NumberField label="Ось Y" value={percent(mirror.y)} step={1} suffix="%" onCommit={(value) => update({ mirror: { ...mirror, y: fromPercent(value) } })} />
+                <NumberField
+                  label="Угол оси"
+                  value={Math.round(mirror.angle)}
+                  step={15}
+                  suffix="°"
+                  onCommit={(angle) => update({ mirror: normalizeMirror({ ...mirror, angle }) })}
+                />
+              </div>
+              <div className="image-actions">
+                <button className="button secondary" onClick={() => update({ mirror: { ...mirror, on: true, angle: 90 } })}>
+                  Вертикальная
+                </button>
+                <button className="button secondary" onClick={() => update({ mirror: { ...mirror, on: true, angle: 0 } })}>
+                  Горизонтальная
+                </button>
+                <button
+                  className="button secondary"
+                  title="Пары узлов встают зеркально: каждая половина проходит полпути"
+                  onClick={() => update({ deform: symmetrizeGrid(mesh.deform, mirror) })}
+                >
+                  Симметризовать
+                </button>
+              </div>
+              <p className="behaviour-hint">
+                Ось — точка в долях зоны и угол: 0° — горизонтальная, 90° — вертикальная.
+                Ось хранится в сетке объекта и переезжает вместе с ней.
+              </p>
+            </>
+          )}
 
           {isQuad && (
             <>
