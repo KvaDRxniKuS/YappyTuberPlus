@@ -2027,28 +2027,44 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .states-smooth { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--muted); }
 /* Таймлайн — линия, а не поле: ключи стоят на ней, точка ездит по ней. */
 .states-track {
-  position: relative; height: 30px; margin: 2px 10px 12px; cursor: crosshair;
+  position: relative; height: 46px; margin: 2px 10px 12px; cursor: crosshair;
   touch-action: none;
 }
 .states-track-line {
-  position: absolute; left: 0; right: 0; top: 8px; height: 2px;
+  position: absolute; left: 0; right: 0; top: 7px; height: 2px;
   background: var(--border); border-radius: 1px;
 }
 .states-key {
-  position: absolute; top: 4px; width: 10px; height: 10px; margin-left: -5px; padding: 0;
+  position: absolute; top: 3px; width: 10px; height: 10px; margin-left: -5px; padding: 0;
   border: 1px solid var(--accent-dim); border-radius: 50%; background: var(--surface);
   cursor: grab; z-index: 2;
 }
 .states-key:hover { border-color: var(--accent); }
 .states-key.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 3px rgba(130, 213, 193, 0.16); }
 .states-key:active { cursor: grabbing; }
-/* Точка таймлайна: линия вверх через ключи и кружок под линией. */
+/* Крайние ключи держат отрезок — тянуть их нельзя, и курсор об этом говорит. */
+.states-key.edge { cursor: not-allowed; border-style: dashed; }
+.states-key.edge:hover { border-color: var(--faint); }
+/* Точка таймлайна: луч вверх через ключи и кружок внизу. */
 .states-head { position: absolute; top: 0; bottom: 0; width: 0; z-index: 3; pointer-events: none; }
-.states-head-line { position: absolute; top: 0; bottom: 8px; left: -1px; width: 2px; background: var(--accent); opacity: 0.75; }
+.states-head-line {
+  position: absolute; top: 0; bottom: 14px; left: -1px; width: 2px;
+  background: var(--accent); opacity: 0.6; border-radius: 1px;
+  pointer-events: auto; cursor: grab;
+}
+.states-head-line:hover { opacity: 1; width: 3px; left: -1.5px; }
 .states-head-dot {
   position: absolute; bottom: 0; left: -5px; width: 10px; height: 10px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: auto; cursor: grab;
 }
+.states-head-dot:hover { transform: scale(1.2); }
+/* Значение точки — своё поле с постоянной шириной: ключи рядом не едут. */
+.states-point {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 2px;
+  color: var(--faint); font-size: 11px;
+}
+.states-point-value { width: 64px; flex: 0 0 64px; font-variant-numeric: tabular-nums; }
 .states-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .states-key-chip {
   display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px 1px 6px;
@@ -2060,7 +2076,6 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
   border: none; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; line-height: 1;
 }
 .states-key-chip button:hover, .states-weight button:hover { color: var(--danger); }
-.states-at { color: var(--faint); font-size: 11px; align-self: center; margin-right: 2px; }
 .states-key-add {
   display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
   padding: 0; border: 1px dashed var(--border); border-radius: 4px; background: transparent;

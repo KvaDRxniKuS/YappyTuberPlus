@@ -374,3 +374,29 @@ export function propagateBase(
   }
   return objects.map((object) => (moved.has(object.id) ? { ...object, base: moved.get(object.id) as BasePose } : object));
 }
+
+/**
+ * База выделения вместе с потомками.
+ *
+ * Потомок рисуется как `своя база + значение`, а значение берёт `inherit` у
+ * родителя — то есть **базу** родителя оно не видит. Поэтому сдвинуть одного
+ * родителя мало: группа поехала бы пивотом, а её объекты остались на месте.
+ * Здесь база двигается всем, а `propagateBase` пересчитывает поворот и размер
+ * вокруг пивота — по одному разу на каждое выделение, а не на каждом уровне.
+ */
+export function withBases(
+  objects: RigObject[],
+  ids: Iterable<string>,
+  change: (base: BasePose) => BasePose,
+): RigObject[] {
+  const picked = new Set(ids);
+  if (!picked.size) return objects;
+  let next = objects.map((object) => (picked.has(object.id) ? { ...object, base: change(object.base) } : object));
+  for (const object of objects) {
+    if (!picked.has(object.id)) continue;
+    // В `handled` — только другие выделенные: собственное поддерево не должно
+    // считаться уже обработанным, иначе потомки не едут вовсе.
+    next = propagateBase(next, object.id, object.base, change(object.base), [...picked].filter((id) => id !== object.id));
+  }
+  return next;
+}

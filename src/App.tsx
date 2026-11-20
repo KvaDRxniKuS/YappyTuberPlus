@@ -49,7 +49,7 @@ import { textChannel } from "./render/text";
 import { resolvedColors } from "./render/color";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
-import { propagateBase, repivot, reorderNeighbor, reorderObjects } from "./engine/structure";
+import { propagateBase, repivot, reorderNeighbor, reorderObjects, withBases } from "./engine/structure";
 import { useRigEngine } from "./engine/useRigEngine";
 import { appendSnippet } from "./engine/scripts";
 import {
@@ -987,30 +987,32 @@ export default function App() {
    */
   const updateSelectedBases = useCallback((patch: Partial<BasePose>, coalesce = "multi-base", record = true) => {
     const current = presetRef.current;
-    const ids = new Set(selectionRef.current);
-    let objects = current.objects.map((object) => (ids.has(object.id)
-      ? { ...object, base: { ...object.base, ...patch } }
-      : object));
-    // У каждого выделенного родителя потомки едут за его новой базой.
-    for (const object of current.objects) {
-      if (!ids.has(object.id)) continue;
-      const nextBase = { ...object.base, ...patch };
-      objects = propagateBase(objects, object.id, object.base, nextBase, ids);
-    }
+    // Потомки едут за базой выделенного: у группы иначе двигался бы один пивот.
+    const objects = withBases(current.objects, selectionRef.current, (base) => ({ ...base, ...patch }));
     commit({ ...current, objects }, { label: "Правка выделения", coalesce, record });
+  }, [commit]);
+
+  /**
+   * Предпросмотр состояния: двигает **только** объект вкладки.
+   *
+   * Выделение тут ни при чём — иначе с двумя выделенными объектами
+   * предпросмотр одного тащил бы оба. Шаг истории не пишется.
+   */
+  const previewBase = useCallback((patch: Partial<BasePose>) => {
+    // Основной объект — последний в выделении: его и показывает вкладка.
+    const id = selectionRef.current.at(-1);
+    if (!id) return;
+    const current = presetRef.current;
+    const objects = withBases(current.objects, [id], (base) => ({ ...base, ...patch }));
+    commit({ ...current, objects }, { label: "Предпросмотр состояния", coalesce: "state-preview", record: false });
   }, [commit]);
 
   /** Относительный сдвиг всей выборки. */
   const offsetSelected = useCallback((delta: { x?: number; y?: number }) => {
     const current = presetRef.current;
-    const ids = new Set(selectionRef.current);
     const shift = (base: BasePose): BasePose => ({ ...base, x: base.x + (delta.x || 0), y: base.y + (delta.y || 0) });
-    let objects = current.objects.map((object) => (ids.has(object.id) ? { ...object, base: shift(object.base) } : object));
     // Сдвиг выделения тянет и потомков — как перетаскивание на сцене.
-    for (const object of current.objects) {
-      if (!ids.has(object.id)) continue;
-      objects = propagateBase(objects, object.id, object.base, shift(object.base), ids);
-    }
+    const objects = withBases(current.objects, selectionRef.current, shift);
     commit({ ...current, objects }, { label: "Смещение выделения", coalesce: "multi-offset" });
   }, [commit]);
 
@@ -1620,7 +1622,7 @@ export default function App() {
           onBehaviour={updateScripts}
           onStates={updateStateScripts}
           onBase={(base) => updateSelectedBases(base, "state-record")}
-          onPreviewBase={(base) => updateSelectedBases(base, "state-preview", false)}
+          onPreviewBase={(base) => previewBase(base)}
           onText={updateTextObjects}
           onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}

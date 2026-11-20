@@ -97,8 +97,15 @@ export function StatesPanel(props: StatesPanelProps) {
   const [authorBase, setAuthorBase] = useState<BasePose | null>(null);
   /** Что мы сами записали в базу прошлым предпросмотром. */
   const applied = useRef<BasePose | null>(null);
+  /**
+   * Предпросмотр, который уже отправлен, но ещё не вернулся в `object.base`.
+   *
+   * Без этой отметки собственный предпросмотр выглядел бы как правка человека:
+   * запись позы срабатывала бы на каждый шаг точки и плодила ключи.
+   */
+  const pending = useRef<BasePose | null>(null);
   /** Перетаскивание: ключ или точка таймлайна. */
-  const drag = useRef<{ kind: "key"; index: number } | { kind: "head" } | null>(null);
+  const drag = useRef<{ kind: "key"; index: number } | { kind: "head"; free: boolean } | null>(null);
 
   const layer: StateLayer | null = states.layers[layerIndex] ?? null;
   const range = layer ? layerRange(layer, metaRange(props, layer.param)) : [0, 1];
@@ -121,7 +128,14 @@ export function StatesPanel(props: StatesPanelProps) {
   /** Смена слоя: точка таймлайна встаёт на его первый ключ. */
   useEffect(() => {
     const target = states.layers[layerIndex] ?? null;
-    setAt(target?.param ? (target.poses[0]?.at ?? null) : null);
+    // Предпросмотр нового слоя начинается с чистого листа: иначе база,
+    // оставленная прошлым слоем, выглядела бы как движение руками.
+    applied.current = null;
+    pending.current = null;
+    // Значение точки не переезжает со слоя на слой: у каждого слоя своя шкала.
+    setAt(target?.param
+      ? (target.poses[0]?.at ?? layerRange(target, metaRange(props, target.param))[0])
+      : null);
     setKeyIndex(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layerIndex, objectId]);
@@ -228,10 +242,18 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   useEffect(() => {
     if (!object || !layer || !authorBase || !props.onPreviewBase) return;
-    if (!sameBase(object.base, applied.current)) return;
+    // База не наша — её двинул человек; перебивать нечего, запись идёт ниже.
+    const ours = !applied.current
+      || sameBase(object.base, applied.current)
+      || (!!pending.current && sameBase(object.base, pending.current));
+    if (!ours) return;
     const next = applyPoseToBase(authorBase, previewDelta()) as BasePose;
-    if (sameBase(next, object.base)) return;
-    applied.current = next;
+    if (sameBase(next, object.base)) {
+      applied.current = next;
+      pending.current = null;
+      return;
+    }
+    pending.current = next;
     props.onPreviewBase(next);
   });
 
@@ -242,6 +264,21 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   useEffect(() => {
     if (!object || !layer || !authorBase) return;
+    // Пока тянут точку, база меняется предпросмотром — писать нечего.
+    if (drag.current?.kind === "head") return;
+    // Дождались собственного предпросмотра — это не правка человека.
+    if (pending.current) {
+      if (sameBase(object.base, pending.current)) {
+        applied.current = pending.current;
+        pending.current = null;
+        return;
+      }
+      // База ещё прежняя — запись просто не дошла. Ждём, а не считаем это
+      // движением: иначе каждый шаг точки ставил бы ключ.
+      if (applied.current && sameBase(object.base, applied.current)) return;
+      pending.current = null;
+    }
+    if (!applied.current) return;
     if (sameBase(object.base, applied.current)) return;
     const delta = poseFromBase(authorBase, object.base);
     applied.current = { ...object.base };
@@ -570,6 +607,20 @@ export function StatesPanel(props: StatesPanelProps) {
             )}
           </div>
 
+          {/* Значение точки — отдельное поле: цифры разной длины не должны
+              сдвигать ключи, которые стоят рядом. */}
+          <div className="states-point">
+            <span>точка</span>
+            <NumberField
+              className="states-point-value"
+              value={at ?? range[0]}
+              step={Math.max(1e-6, span / 100)}
+              title="Значение на шкале, где стоит точка таймлайна"
+              onCommit={(value) => moveHead(Math.min(range[1], Math.max(range[0], value)), true)}
+            />
+            <span className="states-unit">на шкале</span>
+          </div>
+
           {/* Линия таймлайна: ключи на ней, точка — предпросмотр. */}
           <div
             className="states-track"
@@ -582,20 +633,25 @@ export function StatesPanel(props: StatesPanelProps) {
               const key = target.closest("[data-key]");
               if (key) {
                 const index = Number(key.getAttribute("data-key"));
-                drag.current = { kind: "key", index };
                 setKeyIndex(index);
                 setAt(layer.poses[index]?.at ?? at);
+                // Крайние ключи держат отрезок: тронешь — поплывёт вся шкала.
+                const edge = layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1;
+                drag.current = edge ? null : { kind: "key", index };
                 return;
               }
-              drag.current = { kind: "head" };
-              moveHead(valueAt(pointOf(event, element)));
+              // За луч точка прилипает к ключам, за сам кружок — идёт плавно.
+              const head = target.closest("[data-head]");
+              const free = head ? head.getAttribute("data-head") === "dot" : false;
+              drag.current = { kind: "head", free };
+              moveHead(valueAt(pointOf(event, element)), free);
             }}
             onPointerMove={(event) => {
               const element = event.currentTarget;
               if (!drag.current) return;
               const shareX = pointOf(event, element);
               if (drag.current.kind === "head") {
-                moveHead(valueAt(shareX));
+                moveHead(valueAt(shareX), drag.current.free);
                 return;
               }
               // Ключ тянется по шагу 5% отрезка: ровные значения без возни с полем.
@@ -619,9 +675,13 @@ export function StatesPanel(props: StatesPanelProps) {
               <button
                 key={index}
                 data-key={index}
-                className={`states-key ${index === keyIndex ? "active" : ""}`}
+                className={`states-key ${index === keyIndex ? "active" : ""} ${
+                  layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1 ? "edge" : ""
+                }`}
                 style={{ left: `${share(item.at ?? range[0]) * 100}%` }}
-                title={`Ключ ${item.at} · тяните, чтобы перенести`}
+                title={layer.poses.length <= 1 || index === 0 || index === layer.poses.length - 1
+                  ? `Ключ ${item.at} · крайний ключ держит отрезок, поэтому не двигается`
+                  : `Ключ ${item.at} · тяните, чтобы перенести`}
                 onClick={(event) => {
                   event.stopPropagation();
                   setKeyIndex(index);
@@ -630,13 +690,12 @@ export function StatesPanel(props: StatesPanelProps) {
               />
             ))}
             <div className="states-head" style={{ left: `${share(at ?? range[0]) * 100}%` }}>
-              <div className="states-head-line" />
-              <div className="states-head-dot" />
+              <div className="states-head-line" data-head="beam" title="Тяните за луч — точка прилипает к ключам" />
+              <div className="states-head-dot" data-head="dot" title="Тяните за точку — плавный ход без привязки" />
             </div>
           </div>
 
           <div className="states-keys">
-            <span className="states-at">точка {fmt(at ?? range[0])}</span>
             {layer.poses.map((item, index) => (
               <span
                 key={index}

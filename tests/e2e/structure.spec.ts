@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { orderedObjects } from "../../src/render/rigCanvas";
-import { propagateBase } from "../../src/engine/structure";
+import { propagateBase, withBases } from "../../src/engine/structure";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { BasePose, RigFrame, RigObject } from "../../src/types";
 
@@ -94,4 +94,30 @@ test("порядок отрисовки: слой из кадра, при рав
   expect(indexOf("mouth")).toBeGreaterThan(indexOf("mouth_closed"));
   // Порядок не зависит от порядка массива в пресете: он общий для массива и дерева.
   expect(indexOf("head")).toBeGreaterThan(indexOf("body"));
+});
+
+test("выделенная группа двигает и свои объекты, а не один пивот", () => {
+  const objects = [
+    object("group", null, base(100, 100)),
+    object("child", "group", base(140, 100)),
+    object("grandchild", "child", base(140, 140)),
+    object("other", null, base(400, 400)),
+  ];
+  const moved = withBases(objects, ["group"], (pose) => ({ ...pose, x: pose.x + 20, y: pose.y + 5 }));
+  const at = (id: string) => moved.find((item) => item.id === id)!.base;
+  expect(at("group")).toMatchObject({ x: 120, y: 105 });
+  expect(at("child")).toMatchObject({ x: 160, y: 105 });
+  expect(at("grandchild")).toMatchObject({ x: 160, y: 145 });
+  // Сосед не тронут.
+  expect(at("other")).toMatchObject({ x: 400, y: 400 });
+});
+
+test("общий ребёнок двух выделенных родителей двигается один раз", () => {
+  const objects = [
+    object("a", null, base(0, 0)),
+    object("b", null, base(0, 0)),
+    object("child", "a", base(10, 0)),
+  ];
+  const moved = withBases(objects, ["a", "b"], (pose) => ({ ...pose, x: pose.x + 10 }));
+  expect(moved.find((item) => item.id === "child")!.base.x).toBe(20);
 });
