@@ -2,9 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import type { BasePose, InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
 import { NumberField } from "./NumberField";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { ParamPicker } from "./ParamPicker";
+import { paramGroups as collectParams } from "../engine/paramNames";
+import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import {
-  addKey, addLayer, layerRange, makeLayer, manualInputOf, moveKey, patchLayer, poseFromBase,
-  readStates, removeKey, removeLayer, resetStatesFor, setPose, writeStates,
+  addKey, addLayer, cloneLayers, insertLayers, invertByInput, layerRange, makeLayer, manualInputOf,
+  mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer, removeLayers,
+  resetStatesFor, reversePoses, scaleKeys, setPose, writeStates,
   STATE_FIELDS, type Pose, type StateField, type StateLayer, type States,
 } from "../engine/states";
 import { moduleInputs } from "../modules/values";
@@ -44,6 +49,8 @@ interface StatesPanelProps {
   frame: RigFrame | null;
   inputs: InputValues;
   modules: ModuleInstance[];
+  /** Имена глобальных переменных: их тоже можно привязать к слою. */
+  globals?: string[];
   onChange: (scripts: Record<string, string>) => void;
   /** Вернуть базовую позу после записи: объект остаётся там, где его поставили. */
   onBase?: (base: Partial<BasePose>) => void;
@@ -57,6 +64,18 @@ export function StatesPanel(props: StatesPanelProps) {
   const [layerIndex, setLayerIndex] = useState(0);
   const [keyIndex, setKeyIndex] = useState(0);
   const [baseline, setBaseline] = useState<BasePose | null>(null);
+  /** Выделенные строки: копирование и правки из меню идут по ним. */
+  const [picked, setPicked] = useState<number[]>([]);
+  /** Открытое контекстное меню: где и для какой строки. */
+  const [menu, setMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  /** Замена параметра: диалог с поиском и картой «было → стало». */
+  const [replaceFor, setReplaceFor] = useState<number[] | null>(null);
+  const [replaceMap, setReplaceMap] = useState<Record<string, string>>({});
+  /** Пересчитать ключи под диапазон нового входа (по умолчанию — нет). */
+  const [replaceScale, setReplaceScale] = useState(false);
+  /** Зеркало: точка оси в сцене и угол. */
+  const [mirrorFor, setMirrorFor] = useState<number[] | null>(null);
+  const [axis, setAxis] = useState({ x: 0, y: 0, angle: 90 });
 
   // Смена объекта или ключа начинает запись заново: сравнивать нужно с тем
   // положением, которое было в момент выбора.
@@ -84,11 +103,198 @@ export function StatesPanel(props: StatesPanelProps) {
 
   const applyLayer = (next: StateLayer) => apply(patchLayer(states, layerIndex, next));
 
+  /**
+   * Правка сразу нескольких слоёв: выделение важнее активной строки, но если
+   * ничего не выделено, правится текущий слой.
+   */
+  const each = (indexes: number[], change: (layer: StateLayer, index: number) => StateLayer) => {
+    let next = states;
+    for (const index of indexes) {
+      const layer = states.layers[index];
+      if (layer) next = patchLayer(next, index, change(layer, index));
+    }
+    apply(next, indexes[0] ?? layerIndex, keyIndex);
+  };
+
+  /** Выбор строки: обычный клик, Ctrl — добавить, Shift — диапазон. */
+  const pickRow = (index: number, event: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
+    setLayerIndex(index);
+    setKeyIndex(0);
+    setPicked((current) => {
+      if (event.shiftKey) {
+        const from = Math.min(layerIndex, index);
+        const to = Math.max(layerIndex, index);
+        return Array.from({ length: to - from + 1 }, (_, step) => from + step);
+      }
+      if (event.ctrlKey || event.metaKey) {
+        return current.includes(index) ? current.filter((item) => item !== index) : [...current, index];
+      }
+      return [index];
+    });
+  };
+
+  const copy = (indexes: number[]) => {
+    const layers = indexes.map((index) => states.layers[index]).filter(Boolean);
+    if (layers.length) writeClipboard(layers);
+  };
+
+  /** Вставка — в конец списка: буфер общий для всех объектов и вкладок. */
+  const paste = () => {
+    const copies = cloneLayers(readClipboard(), states.layers.map((item) => item.name));
+    if (!copies.length) return;
+    const at = states.layers.length;
+    apply(insertLayers(states, copies), at + copies.length - 1, 0);
+    setPicked(copies.map((_, step) => at + step));
+  };
+
+  /** Привязка слоя к параметру и обратно: позы получают `at` или `weight`. */
+  const rebind = (index: number, param: string | null) => {
+    const source = states.layers[index];
+    if (!source) return;
+    const [from, to] = layerRange(source, metaRange(props, source.param));
+    const next: StateLayer = { ...source, param };
+    next.poses = param
+      ? source.poses.map((pose, position) => (
+        pose.at === undefined ? { ...pose, at: position === 0 ? from : to } : pose
+      ))
+      : source.poses.map((pose) => (pose.weight === undefined ? { ...pose, weight: "1" } : pose));
+    apply(patchLayer(states, index, next), index);
+  };
+
+  /**
+   * Замена параметра у выделения одним шагом истории: карта «было → стало»
+   * собирается в диалоге, ключи переносятся как значения шкалы — и только по
+   * галочке пересчитываются в границы нового входа.
+   */
+  const applyReplace = () => {
+    const targets = replaceFor ?? [];
+    let next = states;
+    for (const index of targets) {
+      const source = states.layers[index];
+      if (!source?.param) continue;
+      const param = replaceMap[source.param]?.trim();
+      if (!param || param === source.param) continue;
+      let layer: StateLayer = { ...source, param };
+      if (replaceScale) {
+        const from = metaRange(props, source.param) ?? layerRange(source, null);
+        const to = metaRange(props, param);
+        if (to) layer = scaleKeys(layer, from, to);
+      }
+      next = patchLayer(next, index, layer);
+    }
+    apply(next, targets[0] ?? layerIndex, keyIndex);
+    setReplaceFor(null);
+    setPicked(targets);
+  };
+
+  // Ctrl+C / Ctrl+V по выделенным строкам. В полях ввода не мешаем: там
+  // копируется текст, а не слои.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const key = event.key.toLowerCase();
+      if (key === "c") {
+        // Без выделения копируется активная строка — так же ведёт себя дерево.
+        const targets = picked.length ? picked : [layerIndex];
+        if (!targets.length) return;
+        event.preventDefault();
+        copy(targets);
+      } else if (key === "v") {
+        event.preventDefault();
+        paste();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   if (!object) {
     return <div className="states-empty">Выберите объект: состояния принадлежат объекту и лежат в его скрипте.</div>;
   }
 
-  const names = paramNames(props);
+  /** Пункты меню строки: копирование, правки формы и привязки, удаление. */
+  const layerMenu = (index: number): ContextMenuItem[] => {
+    const targets = picked.includes(index) && picked.length ? picked : [index];
+    const names = targets.map((position) => states.layers[position]?.name).filter(Boolean);
+    return [
+      {
+        label: "Копировать",
+        hint: "Ctrl+C",
+        disabled: !targets.length,
+        onSelect: () => copy(targets),
+      },
+      {
+        label: "Вставить",
+        hint: "Ctrl+V",
+        disabled: !readClipboard().length,
+        onSelect: () => paste(),
+      },
+      { label: "", rule: true },
+      {
+        label: "Инвертировать по входу",
+        hint: "at → от + до − at",
+        disabled: !states.layers[index]?.param,
+        onSelect: () => each(targets, (source) => invertByInput(source, metaRange(props, source.param))),
+      },
+      {
+        label: "Развернуть по таймлайну",
+        hint: "позы в обратном порядке",
+        disabled: !states.layers[index]?.param,
+        onSelect: () => each(targets, (source) => reversePoses(source)),
+      },
+      { label: "", rule: true },
+      {
+        label: "Заменить параметр…",
+        hint: "список с поиском",
+        onSelect: () => {
+          const map: Record<string, string> = {};
+          for (const position of targets) {
+            const param = states.layers[position]?.param;
+            if (param) map[param] = param;
+          }
+          setReplaceMap(map);
+          setReplaceScale(false);
+          setReplaceFor(targets);
+        },
+      },
+      {
+        label: "Зеркало…",
+        hint: "точка + угол",
+        onSelect: () => {
+          setAxis({ x: object.base.x, y: object.base.y, angle: 90 });
+          setMirrorFor(targets);
+        },
+      },
+      { label: "", rule: true },
+      {
+        label: "Удалить",
+        hint: names.length > 1 ? `слоёв: ${names.length}` : names[0],
+        danger: true,
+        onSelect: () => {
+          apply(removeLayers(states, targets), Math.min(...targets), 0);
+          setPicked([]);
+        },
+      },
+    ];
+  };
+
+  // Шаблоны модулей читаются с диска во время работы приложения. Пока папка
+  // `modules` не прочитана, входов у экземпляров нет — подписка на версию
+  // библиотеки пересобирает список, иначе он остался бы пустым.
+  const library = useModuleLibrary();
+  const valuesKey = Object.keys(props.inputs.values).sort().join("|");
+  const globalKey = Object.keys(props.frame?.globals ?? {}).sort().join("|");
+  const groups = useMemo(() => collectParams({
+    modules: props.modules,
+    globals: props.globals,
+    values: props.inputs.values,
+    frameGlobals: props.frame?.globals,
+    script: object.script,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [props.modules, props.globals, valuesKey, globalKey, object.script, library.version]);
+  const names = groups.flatMap((group) => group.items.map((item) => item.name));
   const manual = manualInputOf(layer?.param ?? null);
   const range = layer ? layerRange(layer, metaRange(props, layer.param)) : [0, 1];
 
@@ -130,8 +336,15 @@ export function StatesPanel(props: StatesPanelProps) {
           {states.layers.map((item, index) => (
             <div
               key={index}
-              className={`states-layer ${index === layerIndex ? "active" : ""}`}
-              onClick={() => { setLayerIndex(index); setKeyIndex(0); }}
+              className={`states-layer ${index === layerIndex ? "active" : ""} ${picked.includes(index) ? "picked" : ""}`}
+              onClick={(event) => pickRow(index, event)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                const targets = picked.includes(index) && picked.length ? picked : [index];
+                if (!picked.includes(index)) pickRow(index, { ctrlKey: false, metaKey: false, shiftKey: false });
+                setMenu({ x: event.clientX, y: event.clientY, index });
+                setPicked(targets);
+              }}
             >
               <input
                 className="states-name"
@@ -139,31 +352,13 @@ export function StatesPanel(props: StatesPanelProps) {
                 onChange={(event) => apply(patchLayer(states, index, { name: event.target.value }), index)}
                 title="Имя слоя"
               />
-              <input
+              <ParamPicker
                 className="states-param"
-                list="states-params"
                 value={item.param ?? ""}
+                groups={groups}
                 placeholder="вес выражением"
-                onChange={(event) => {
-                  const value = event.target.value.trim();
-                  const param = value ? value : null;
-                  const next: StateLayer = { ...item, param };
-                  // Переход между привязкой и свободными весами: позы без `at`
-                  // некуда поставить на шкале, поэтому ключи получают значения.
-                  if (param) {
-                    next.poses = item.poses.map((pose, position) => (
-                      pose.at === undefined
-                        ? { ...pose, at: position === 0 ? range[0] : range[1] }
-                        : pose
-                    ));
-                  } else {
-                    next.poses = item.poses.map((pose) => (
-                      pose.weight === undefined ? { ...pose, weight: "1" } : pose
-                    ));
-                  }
-                  apply(patchLayer(states, index, next), index);
-                }}
                 title="Параметр: вход модуля, глобальная или локальная переменная"
+                onChange={(value) => rebind(index, value.trim() ? value.trim() : null)}
               />
               <select
                 className="states-normalize"
@@ -356,22 +551,119 @@ export function StatesPanel(props: StatesPanelProps) {
         </>
       )}
 
-      <datalist id="states-params">
-        {names.map((name) => <option key={name} value={name} />)}
-      </datalist>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={layerMenu(menu.index)}
+        />
+      )}
+
+      {replaceFor && (
+        <div className="states-dialog-back" onClick={() => setReplaceFor(null)}>
+          <div className="states-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="states-dialog-head">
+              Заменить параметр
+              <small>{replaceFor.length > 1 ? `слоёв: ${replaceFor.length}` : states.layers[replaceFor[0]]?.name}</small>
+            </div>
+            {Object.keys(replaceMap).map((param) => (
+              <div className="states-dialog-param" key={param}>
+                <span title="Сейчас в слоях">{param}</span>
+                <ParamPicker
+                  value={replaceMap[param]}
+                  groups={groups}
+                  autoFocus={Object.keys(replaceMap).length === 1}
+                  placeholder="начните вписывать имя"
+                  onChange={(value) => setReplaceMap((current) => ({ ...current, [param]: value.trim() }))}
+                />
+              </div>
+            ))}
+            <label className="states-dialog-scale" title="Перенести ключи в границы нового входа пропорционально">
+              <input
+                type="checkbox"
+                checked={replaceScale}
+                onChange={(event) => setReplaceScale(event.target.checked)}
+              />
+              масштабировать ключи под новый диапазон
+            </label>
+            <div className="states-dialog-foot">
+              <button className="primary" onClick={() => applyReplace()}>Заменить</button>
+              <button onClick={() => setReplaceFor(null)}>Отмена</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mirrorFor && (
+        <div className="states-dialog-back" onClick={() => setMirrorFor(null)}>
+          <div className="states-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="states-dialog-head">
+              Зеркало
+              <small>ось: точка в сцене и угол</small>
+            </div>
+            <div className="states-dialog-grid">
+              <span>точка X</span>
+              <NumberField value={axis.x} step={1} onCommit={(value) => setAxis((current) => ({ ...current, x: value }))} />
+              <span>точка Y</span>
+              <NumberField value={axis.y} step={1} onCommit={(value) => setAxis((current) => ({ ...current, y: value }))} />
+              <span>угол, °</span>
+              <NumberField value={axis.angle} step={5} onCommit={(value) => setAxis((current) => ({ ...current, angle: value }))} />
+            </div>
+            <div className="states-dialog-axes">
+              <button onClick={() => setAxis((current) => ({ ...current, angle: 90 }))}>вертикальная ось</button>
+              <button onClick={() => setAxis((current) => ({ ...current, angle: 0 }))}>горизонтальная</button>
+              <button onClick={() => setAxis((current) => ({ ...current, x: object.base.x, y: object.base.y }))}>через объект</button>
+            </div>
+            <div className="states-dialog-foot">
+              <button
+                className="primary"
+                onClick={() => {
+                  const targets = mirrorFor;
+                  each(targets, (source) => mirrorLayer(source, axis, {
+                    x: object.base.x,
+                    y: object.base.y,
+                    width: object.width,
+                    height: object.height,
+                  }));
+                  setMirrorFor(null);
+                }}
+              >
+                Отразить
+              </button>
+              <button onClick={() => setMirrorFor(null)}>Отмена</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/** Имена, которые можно привязать: входы модулей и глобальные переменные. */
-function paramNames(props: StatesPanelProps): string[] {
-  const names = new Set<string>();
-  for (const instance of props.modules) {
-    for (const input of moduleInputs(instance)) names.add(input.key);
-  }
-  for (const key of Object.keys(props.inputs.values)) names.add(key);
-  for (const key of Object.keys(props.frame?.globals ?? {})) names.add(key);
-  return [...names].sort();
+/* ── буфер обмена слоёв ─────────────────────────────────────────────── */
+
+/**
+ * Буфер живёт в профиле приложения, а не в состоянии вкладки: скопировали слои,
+ * переключились на другой объект — вставка всё ещё работает.
+ */
+const CLIP_KEY = "yappytuberplus.states.clip.v1";
+
+function writeClipboard(layers: StateLayer[]) {
+  try { localStorage.setItem(CLIP_KEY, JSON.stringify(layers)); } catch { /* профиль недоступен */ }
+}
+
+function readClipboard(): StateLayer[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(CLIP_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    // Свой же формат, но профиль мог остаться от старой версии: берём только
+    // то, что похоже на слой, — правки через `patchLayer` иначе уронили бы вкладку.
+    return parsed.filter((item): item is StateLayer => (
+      !!item && typeof item === "object"
+      && typeof (item as StateLayer).name === "string"
+      && Array.isArray((item as StateLayer).poses)
+    ));
+  } catch { return []; }
 }
 
 /** Границы входа из паспорта — отрезок по умолчанию. */

@@ -250,6 +250,7 @@ export function RightPanel(props: RightPanelProps) {
           frame={props.frame}
           inputs={props.inputs}
           modules={props.modules}
+          globals={props.globals}
           onChange={props.onStates ?? props.onBehaviour}
           onBase={props.onBase}
           onManual={props.onManual}

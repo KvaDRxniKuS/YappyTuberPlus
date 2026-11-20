@@ -65,6 +65,7 @@ import {
 } from "./overlay/window";
 import { useOverlayHost } from "./hooks/useOverlayHost";
 import { WorkMeter } from "./components/WorkMeter";
+import { ContextMenu, type ContextMenuItem } from "./components/ContextMenu";
 import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
@@ -241,6 +242,66 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(GHOSTS_KEY, ghosts ? "on" : "off"); } catch { /* профиль недоступен */ }
   }, [ghosts]);
+
+  /**
+   * ПКМ в редакторе не открывает меню браузера: у приложения своё меню
+   * (сцена, слои состояний), а у страницы здесь нет ни «назад», ни «сохранить».
+   * Над полем ввода показываем самое нужное из браузерного — вырезать,
+   * копировать, вставить, выделить всё, — иначе правка скрипта на ноутбуке
+   * стала бы неудобной.
+   */
+  const [editMenu, setEditMenu] = useState<{
+    x: number;
+    y: number;
+    field: HTMLInputElement | HTMLTextAreaElement;
+  } | null>(null);
+
+  useEffect(() => {
+    const block = (event: MouseEvent) => {
+      event.preventDefault();
+      const target = event.target instanceof Element ? event.target : null;
+      const field = target?.closest("input, textarea");
+      if (
+        field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement
+      ) {
+        if (field.disabled || field.readOnly) return;
+        field.focus();
+        setEditMenu({ x: event.clientX, y: event.clientY, field });
+      }
+    };
+    document.addEventListener("contextmenu", block);
+    return () => document.removeEventListener("contextmenu", block);
+  }, []);
+
+  /**
+   * Остальные следы браузера: масштаб `Ctrl+±` и `Ctrl+колесо`, перезагрузка по
+   * `F5`/`Ctrl+R`, поиск `Ctrl+F`, печать `Ctrl+P`. В редакторе у сцены свой
+   * масштаб, а страница здесь — оболочка приложения, а не документ.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      const browserCommand = event.key === "F5"
+        || (mod && ["r", "f", "p", "+", "-", "=", "0"].includes(key));
+      if (browserCommand) event.preventDefault();
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) event.preventDefault();
+    };
+    const onDrag = (event: DragEvent) => {
+      // Перетаскивание картинки из панели в окно — тоже браузерный жест.
+      if (event.target instanceof HTMLImageElement) event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("wheel", onWheel, { passive: false });
+    document.addEventListener("dragstart", onDrag);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("wheel", onWheel);
+      document.removeEventListener("dragstart", onDrag);
+    };
+  }, []);
   const [overlayOpen, setOverlayOpen] = useState(false);
   /** Пресет, ждущий решения по модулям при открытии. */
   const [pending, setPending] = useState<{ preset: RigPreset; path: string | null } | null>(null);
@@ -1717,10 +1778,62 @@ export default function App() {
         onClose={() => setOverlayOpen(false)}
         onNotify={notify}
       />}
+      {editMenu && (
+        <ContextMenu
+          x={editMenu.x}
+          y={editMenu.y}
+          onClose={() => setEditMenu(null)}
+          items={fieldMenu(editMenu.field)}
+        />
+      )}
       {toast && <div className="toast"><ImagePlus size={15} />{toast}</div>}
       <div className="mobile-warning">Для работы с ригом откройте редактор на широком экране.</div>
     </div>
   );
+
+  /**
+   * Меню над полем ввода: браузерное меню мы погасили, поэтому четыре самые
+   * нужные команды возвращаем сами. Работают через буфер обмена системы, а
+   * значение поля ставится нативным сеттером — иначе React не заметит правку.
+   */
+  function fieldMenu(field: HTMLInputElement | HTMLTextAreaElement): ContextMenuItem[] {
+    const { start, end } = selectionOf(field);
+    const selected = end > start;
+    const insert = (text: string) => {
+      const value = field.value.slice(0, start) + text + field.value.slice(end);
+      setFieldValue(field, value);
+      const caret = start + text.length;
+      field.setSelectionRange(caret, caret);
+    };
+    return [
+      {
+        label: "Вырезать",
+        hint: "Ctrl+X",
+        disabled: !selected,
+        onSelect: () => {
+          void clipboardWrite(field.value.slice(start, end));
+          insert("");
+        },
+      },
+      {
+        label: "Копировать",
+        hint: "Ctrl+C",
+        disabled: !selected,
+        onSelect: () => { void clipboardWrite(field.value.slice(start, end)); },
+      },
+      {
+        label: "Вставить",
+        hint: "Ctrl+V",
+        onSelect: () => { void clipboardRead().then((text) => { if (text) insert(text); }); },
+      },
+      {
+        label: "Выделить всё",
+        hint: "Ctrl+A",
+        disabled: !field.value.length,
+        onSelect: () => field.select(),
+      },
+    ];
+  }
 
   function updateObjectScriptGlobals(globals: string) {
     // Функциональная форма: рядом может лежать вторая правка того же кадра
@@ -1796,6 +1909,33 @@ function FpsControl({ mode, limit, actual, onChange }: {
       </label>
     </div>
   );
+}
+
+/** Выделение в поле ввода: границы текущей отметки. */
+function selectionOf(field: HTMLInputElement | HTMLTextAreaElement): { start: number; end: number } {
+  const start = field.selectionStart ?? 0;
+  return { start, end: field.selectionEnd ?? start };
+}
+
+/**
+ * Значение поля так, как его увидит React: нативный сеттер плюс `input`.
+ * Прямая запись в `field.value` оставила бы состояние компонента прежним.
+ */
+function setFieldValue(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = field instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Буфер обмена системы; в нативном окне может быть недоступен — молча. */
+async function clipboardWrite(text: string) {
+  try { await navigator.clipboard.writeText(text); } catch { /* нет доступа */ }
+}
+
+async function clipboardRead(): Promise<string> {
+  try { return await navigator.clipboard.readText(); } catch { return ""; }
 }
 
 /** Совпадают ли наборы модулей по именам и типам (настройки устройств не важны). */

@@ -629,3 +629,188 @@ export function poseFromBase(
   ratio("opacity");
   return pose;
 }
+
+/** Ось зеркала: точка в координатах сцены и угол в градусах. */
+export interface MirrorAxis {
+  x: number;
+  y: number;
+  /** Градусы: 90 — вертикальная ось, 0 — горизонтальная. */
+  angle: number;
+}
+
+export interface MirrorOrigin {
+  /**
+   * Базовая позиция объекта: относительно неё считаются дельты позы.
+   * Если ось проходит через неё (значение по умолчанию), отражение вектора
+   * дельты совпадает с отражением положения.
+   */
+  x: number;
+  y: number;
+  /** Размер объекта: точки деформера живут в долях картинки. */
+  width?: number;
+  height?: number;
+}
+
+/** Ось ортогональна: только у неё наклоны меняют знак без искажения формы. */
+function orthogonal(angle: number): boolean {
+  const quarter = ((angle % 180) + 180) % 180;
+  return Math.abs(quarter) < 1e-9 || Math.abs(quarter - 90) < 1e-9;
+}
+
+/**
+ * Зеркало позы относительно оси «точка + угол».
+ *
+ * Смещения отражаются как положения в сцене относительно базы объекта: при оси
+ * через саму базу (по умолчанию) это ровно `d′ = 2(d·u)·u − d` из плана.
+ * Поворот меняет знак: отражение переворачивает обход, а не поворачивает
+ * картинку. Наклоны меняют знак только у ортогональных осей — при косой оси
+ * отражённый наклон нашими полями не выражается, и подменять его нельзя.
+ */
+export function mirrorLayer(
+  layer: StateLayer,
+  axis: MirrorAxis,
+  origin: MirrorOrigin,
+): StateLayer {
+  const radians = (axis.angle * Math.PI) / 180;
+  const ux = Math.cos(radians);
+  const uy = Math.sin(radians);
+  const flip = orthogonal(axis.angle);
+  /** Отражение вектора относительно направления оси. */
+  const reflect = (dx: number, dy: number): [number, number] => {
+    const dot = dx * ux + dy * uy;
+    return [2 * dot * ux - dx, 2 * dot * uy - dy];
+  };
+  const width = origin.width ?? 1;
+  const height = origin.height ?? 1;
+  const round = (value: number) => {
+    const result = Math.round(value * 1000) / 1000;
+    return Object.is(result, -0) ? 0 : result;
+  };
+  return {
+    ...layer,
+    poses: layer.poses.map((pose) => {
+      const next: Partial<Record<StateField, number>> = { ...pose.pose };
+      if (pose.pose.x !== undefined || pose.pose.y !== undefined) {
+        const [rx, ry] = reflect(
+          origin.x + (pose.pose.x ?? 0) - axis.x,
+          origin.y + (pose.pose.y ?? 0) - axis.y,
+        );
+        const x = round(rx + axis.x - origin.x);
+        const y = round(ry + axis.y - origin.y);
+        if (x === 0) delete next.x; else next.x = x;
+        if (y === 0) delete next.y; else next.y = y;
+      }
+      for (const field of ["rotation", "skewX", "skewY"] as const) {
+        const value = pose.pose[field];
+        if (value === undefined) continue;
+        if (field !== "rotation" && !flip) continue;
+        const flipped = round(-value);
+        if (flipped === 0) delete next[field]; else next[field] = flipped;
+      }
+      const points = pose.points
+        ? Object.fromEntries(Object.entries(pose.points).map(([key, point]) => {
+          const [dx, dy] = reflect(point[0] * width, point[1] * height);
+          return [key, [round(dx / width), round(dy / height)]];
+        })) as Record<string, PosePoint>
+        : undefined;
+      return { ...pose, pose: next, points };
+    }),
+  };
+}
+
+/**
+ * «Инвертировать по входу»: значения ключей зеркалятся на отрезке параметра
+ * (`at → от + до − at`), позы остаются при своих ключах.
+ */
+export function invertByInput(layer: StateLayer, fallback: [number, number] | null = null): StateLayer {
+  const [from, to] = layerRange(layer, fallback);
+  const sum = from + to;
+  const poses = layer.poses.map((pose) => (
+    pose.at === undefined ? pose : { ...pose, at: Math.round((sum - pose.at) * 1000) / 1000 }
+  ));
+  return sortKeys({ ...layer, poses });
+}
+
+/**
+ * «Развернуть по таймлайну»: значения ключей на месте, позы идут в обратном
+ * порядке. На несимметричных ключах это не то же самое, что инверсия по входу.
+ */
+export function reversePoses(layer: StateLayer): StateLayer {
+  const positions = [...layer.poses]
+    .map((pose) => pose.at)
+    .sort((a, b) => (a ?? 0) - (b ?? 0));
+  const reversed = [...layer.poses].sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).reverse();
+  return {
+    ...layer,
+    poses: positions.map((at, index) => ({ ...reversed[index], at })),
+  };
+}
+
+/**
+ * Свободное имя: копия получает ` (2)`, если имя уже занято.
+ *
+ * Имена уникальны и внутри пачки, и относительно существующих слоёв: две
+ * вставки одного и того же слоя не должны выглядеть одинаково.
+ */
+export function uniqueLayerName(name: string, taken: readonly string[]): string {
+  const busy = new Set(taken);
+  const base = name.trim() || "слой";
+  if (!busy.has(base)) return base;
+  const bare = base.replace(/\s*\(\d+\)$/, "");
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${bare} (${index})`;
+    if (!busy.has(candidate)) return candidate;
+  }
+  return `${bare} (${busy.size + 1})`;
+}
+
+/** Копии слоёв с новыми именами: правка копии не задевает оригинал. */
+export function cloneLayers(layers: readonly StateLayer[], taken: readonly string[]): StateLayer[] {
+  const names = [...taken];
+  return layers.map((layer) => {
+    const name = uniqueLayerName(layer.name, names);
+    names.push(name);
+    return {
+      ...layer,
+      name,
+      range: layer.range ? [layer.range[0], layer.range[1]] : null,
+      poses: layer.poses.map((pose) => ({
+        ...pose,
+        pose: { ...pose.pose },
+        points: pose.points ? { ...pose.points } : undefined,
+      })),
+    };
+  });
+}
+
+/** Вставить слои после указанного места (по умолчанию — в конец). */
+export function insertLayers(states: States, layers: readonly StateLayer[], after = states.layers.length - 1): States {
+  const at = Math.min(states.layers.length, Math.max(0, after + 1));
+  return { layers: [...states.layers.slice(0, at), ...layers, ...states.layers.slice(at)] };
+}
+
+/** Убрать слои по индексам: выделение может быть любым. */
+export function removeLayers(states: States, indexes: readonly number[]): States {
+  const drop = new Set(indexes);
+  return { layers: states.layers.filter((_, position) => !drop.has(position)) };
+}
+
+/**
+ * Пересчёт ключей под новый диапазон входа: `at` остаётся значением шкалы, но
+ * пропорционально переносится в границы нового параметра.
+ *
+ * Нужен при замене параметра, у которого другой паспорт (`−1…1` → `0…1`):
+ * без пересчёта ключ на `1` уехал бы за край и слой стоял бы в крайнем весе.
+ */
+export function scaleKeys(layer: StateLayer, from: [number, number], to: [number, number]): StateLayer {
+  const span = from[1] - from[0];
+  if (!span) return layer;
+  const scale = (to[1] - to[0]) / span;
+  const poses = layer.poses.map((pose) => (
+    pose.at === undefined ? pose : {
+      ...pose,
+      at: Math.round((to[0] + (pose.at - from[0]) * scale) * 1000) / 1000,
+    }
+  ));
+  return sortKeys({ ...layer, range: to, poses });
+}

@@ -1,10 +1,12 @@
 import { test, expect } from "@playwright/test";
 import {
-  EMPTY_STATES, addKey, addLayer, layerRange, makeLayer, manualInputOf, moveKey, patchLayer,
-  poseFromBase, readStates, removeKey, removeLayer, resetStatesFor, setPose, statesBlock,
+  EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, layerRange, makeLayer,
+  manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
+  removeLayers, resetStatesFor, reversePoses, scaleKeys, setPose, statesBlock, uniqueLayerName,
   watchNames, writeStates,
   type StateLayer, type States,
 } from "../../src/engine/states";
+import { paramGroups } from "../../src/engine/paramNames";
 import { engineStructure } from "../../src/engine/preset";
 import { DEFAULT_BASE, type RigObject, type RigPreset } from "../../src/types";
 
@@ -256,4 +258,146 @@ test("пустая поза не теряет слой: блок остаётс�
   expect(written.script).not.toContain("x_states");
   expect(readStates(written.script).layers[0].poses).toHaveLength(2);
   expect(written.script).toContain("x = inherit");
+});
+
+
+/* ── список параметров ───────────────────────────────────────────────── */
+
+test("в списке параметров все группы: входы, глобальные, свои и кадр", () => {
+  const groups = paramGroups({
+    // Библиотека шаблонов в тесте не загружена, поэтому входы берём у ручного
+    // модуля в режиме «состояния»: они выводятся из настроек экземпляра.
+    modules: [{
+      name: "mode", type: "manual", enabled: true, source: "manual",
+      config: { mode: "enum", states: [{ name: "idle", label: "Покой" }, { name: "walk", label: "Идёт" }] },
+    }],
+    globals: ["blink", "mood"],
+    values: { "clock.beat": 0 },
+    script: "eye = mode.value * 2\nx = eye * 10",
+  });
+  const where = (name: string) => groups.find((group) => group.items.some((item) => item.name === name))?.title;
+  // Раньше список обрывался на одном `auto.blink`: проверяем, что видны все источники.
+  expect(groups.map((group) => group.title))
+    .toEqual(["входы", "глобальные", "свои переменные", "значения кадра"]);
+  expect(where("mode.walk")).toBe("входы");
+  expect(where("blink")).toBe("глобальные");
+  expect(where("eye")).toBe("свои переменные");
+  expect(where("clock.beat")).toBe("значения кадра");
+});
+
+test("имя в списке встречается один раз и с подписью входа", () => {
+  const groups = paramGroups({
+    modules: [{
+      name: "mode", type: "manual", enabled: true, source: "manual",
+      config: { mode: "enum", states: [{ name: "walk", label: "Идёт" }] },
+    }],
+    globals: ["mode.walk"],
+    values: { "mode.walk": 1 },
+  });
+  const flat = groups.flatMap((group) => group.items);
+  expect(flat.filter((item) => item.name === "mode.walk")).toHaveLength(1);
+  expect(flat.find((item) => item.name === "mode.walk")?.note).toBe("Идёт");
+});
+
+test("переменные кадра, которых нет у модулей, попадают отдельной группой", () => {
+  const groups = paramGroups({ modules: [], values: { "signal.pulse": 0 } });
+  expect(groups).toEqual([{ title: "значения кадра", items: [{ name: "signal.pulse", note: undefined }] }]);
+});
+
+/* ── инверсия, разворот, зеркало ─────────────────────────────────────── */
+
+test("инверсия по входу зеркалит значения ключей, позы остаются при них", () => {
+  const layer = invertByInput(bound({ range: [-1, 1], poses: [{ at: -1, pose: { x: -20 } }, { at: 1, pose: { x: 20 } }] }));
+  expect(layer.poses.map((pose) => pose.at)).toEqual([-1, 1]);
+  expect(layer.poses.map((pose) => pose.pose.x)).toEqual([20, -20]);
+});
+
+test("на несимметричных ключах инверсия по входу и разворот расходятся", () => {
+  const source = bound({ range: [-10, 10], poses: [{ at: -10, pose: { x: 1 } }, { at: 4, pose: { x: 2 } }] });
+  // По входу: ключи уезжают в симметричные точки, позы едут с ключами.
+  expect(invertByInput(source).poses.map((pose) => [pose.at, pose.pose.x])).toEqual([[-4, 2], [10, 1]]);
+  // По таймлайну: ключи на месте, позы меняются местами.
+  expect(reversePoses(source).poses.map((pose) => [pose.at, pose.pose.x])).toEqual([[-10, 2], [4, 1]]);
+});
+
+test("инверсия по входу дважды возвращает исходные ключи", () => {
+  const source = bound({ range: [0, 10], poses: [{ at: 2, pose: { x: 1 } }, { at: 8, pose: { x: 2 } }] });
+  expect(invertByInput(invertByInput(source)).poses).toEqual(source.poses);
+});
+
+test("разворот по таймлайну не трогает значения ключей у свободного слоя", () => {
+  const free = bound({ param: null, range: null, poses: [{ weight: "1", pose: { x: 1 } }, { weight: "2", pose: { x: 2 } }] });
+  expect(reversePoses(free).poses.map((pose) => pose.weight)).toEqual(["2", "1"]);
+});
+
+test("зеркало относительно вертикальной оси через объект отражает X и знак поворота", () => {
+  const layer = mirrorLayer(
+    bound({ poses: [{ at: 0, pose: { x: 20, y: 4, rotation: 10, sizeX: 1.5 } }] }),
+    { x: 0, y: 0, angle: 90 },
+    { x: 0, y: 0 },
+  );
+  expect(layer.poses[0].pose.x).toBe(-20);
+  expect(layer.poses[0].pose.y).toBe(4);
+  expect(layer.poses[0].pose.rotation).toBe(-10);
+  expect(layer.poses[0].pose.sizeX).toBe(1.5);
+});
+
+test("наклон при косой оси не переворачивается, при ортогональной — да", () => {
+  const pose = { at: 0, pose: { x: 1, skewX: 6 } };
+  expect(mirrorLayer(bound({ poses: [pose] }), { x: 0, y: 0, angle: 90 }, { x: 0, y: 0 }).poses[0].pose.skewX).toBe(-6);
+  expect(mirrorLayer(bound({ poses: [pose] }), { x: 0, y: 0, angle: 30 }, { x: 0, y: 0 }).poses[0].pose.skewX).toBe(6);
+});
+
+test("зеркало считает точку оси: смещение за точкой отражается на другую сторону", () => {
+  const layer = mirrorLayer(
+    bound({ poses: [{ at: 0, pose: { x: 110 } }] }),
+    { x: 100, y: 0, angle: 90 },
+    { x: 0, y: 0 },
+  );
+  // Положение (110, 0) относительно оси x = 100 уходит в (90, 0).
+  expect(layer.poses[0].pose.x).toBe(90);
+});
+
+test("зеркало отражает точки деформера в долях картинки", () => {
+  const layer = mirrorLayer(
+    bound({ poses: [{ at: 0, pose: {}, points: { "1": [0.1, 0.05] } }] }),
+    { x: 0, y: 0, angle: 90 },
+    { x: 0, y: 0, width: 200, height: 100 },
+  );
+  expect(layer.poses[0].points?.["1"]).toEqual([-0.1, 0.05]);
+});
+
+test("масштабирование ключей под новый диапазон переносит пропорционально", () => {
+  const layer = scaleKeys(
+    bound({ range: [-1, 1], poses: [{ at: -1, pose: { x: -20 } }, { at: 0, pose: {} }, { at: 1, pose: { x: 20 } }] }),
+    [-1, 1],
+    [0, 1],
+  );
+  expect(layer.range).toEqual([0, 1]);
+  expect(layer.poses.map((pose) => pose.at)).toEqual([0, 0.5, 1]);
+});
+
+/* ── копии и вставка ─────────────────────────────────────────────────── */
+
+test("копии получают свободные имена, в том числе внутри пачки", () => {
+  const layers = [bound({ name: "взгляд" }), bound({ name: "взгляд" })];
+  const copies = cloneLayers(layers, ["взгляд", "взгляд (2)"]);
+  expect(copies.map((layer) => layer.name)).toEqual(["взгляд (3)", "взгляд (4)"]);
+  // Правка копии не задевает оригинал: позы — свои объекты.
+  copies[0].poses[0].pose.x = 999;
+  expect(layers[0].poses[0].pose.x).toBe(-20);
+});
+
+test("имя слоя свободно и не переименовывает без нужды", () => {
+  expect(uniqueLayerName("грусть", ["радость"])).toBe("грусть");
+  expect(uniqueLayerName("грусть", ["грусть"])).toBe("грусть (2)");
+  expect(uniqueLayerName("грусть (2)", ["грусть", "грусть (2)"])).toBe("грусть (3)");
+});
+
+test("вставка ставит копии после указанного слоя, удаление убирает пачку", () => {
+  const source: States = { layers: [bound({ name: "a" }), bound({ name: "b" }), bound({ name: "c" })] };
+  const pasted = insertLayers(source, [bound({ name: "x" })], 0);
+  expect(pasted.layers.map((layer) => layer.name)).toEqual(["a", "x", "b", "c"]);
+  expect(insertLayers(source, [], 99).layers.map((layer) => layer.name)).toEqual(["a", "b", "c"]);
+  expect(removeLayers(source, [0, 2]).layers.map((layer) => layer.name)).toEqual(["b"]);
 });
