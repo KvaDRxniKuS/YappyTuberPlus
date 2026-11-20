@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Blocks, Braces, ChevronRight, CircleAlert, Crosshair, Gauge, Globe2, Layers, Shapes, SlidersHorizontal, Spline } from "lucide-react";
 import type { InputValues, ModuleInstance, RigFrame, RigObject } from "../types";
+import type { StatePreview } from "../engine/states";
 import type { AudioFrame, DeviceOption } from "../modules/audio";
 import { ScriptEditor } from "./ScriptEditor";
 import { moduleConstants } from "../modules/presets";
@@ -46,7 +47,7 @@ interface RightPanelProps {
   onBase?: (patch: Partial<RigObject["base"]>, objectId: string) => void;
   /** Предпросмотр состояния: двигает базу без шага истории. */
   /** Предпросмотр состояний — только отрисовка; `null` снимает его. */
-  onPreviewBase?: (patch: Partial<RigObject["base"]> | null, objectId: string) => void;
+  onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
   /** Настройки текста (шрифт, оформление, источник) у выделенных объектов. */
   onText: (objects: RigObject[]) => void;
   /** Привязка цветов объекта к каналам модулей: один шаг истории на всю пачку. */
@@ -256,8 +257,7 @@ export function RightPanel(props: RightPanelProps) {
           globals={props.globals}
           onChange={props.onStates ?? props.onBehaviour}
           onBase={props.onBase}
-          onPreviewBase={props.onPreviewBase
-            ?? (props.onBase ? (patch, id) => props.onBase?.(patch ?? {}, id) : undefined)}
+          onPreviewState={props.onPreviewState}
           onManual={props.onManual}
         />
       ) : tab === "shape" ? (

@@ -72,6 +72,7 @@ import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout, type EnvironmentSpec,
   type ModuleInstance, type RigObject, type RigPreset, type Vec2, type WarpSpec,
 } from "./types";
+import type { StatePreview } from "./engine/states";
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
 const LAYOUT_KEY = "yappytuberplus.layout.v1";
@@ -403,7 +404,7 @@ export default function App() {
   const inputsRef = useRef(moduleInputs.inputs);
   const history = useRef(new History());
   /** Предпросмотр состояний: только для отрисовки, в пресет не попадает. */
-  const [statePreview, setStatePreview] = useState<{ id: string; base: Partial<BasePose> } | null>(null);
+  const [statePreview, setStatePreview] = useState<StatePreview | null>(null);
   const selectionRef = useRef(selection);
   const fileInput = useRef<HTMLInputElement>(null);
   const [filesOpen, setFilesOpen] = useState(false);
@@ -1003,10 +1004,10 @@ export default function App() {
    * Поэтому уход из вкладки сам возвращает объект на место, а отменять нечего —
    * истории у предпросмотра нет.
    */
-  const previewBase = useCallback((base: Partial<BasePose> | null, objectId?: string) => {
+  const previewState = useCallback((preview: StatePreview | null, objectId?: string) => {
     // Объект вкладки приходит явно: последний в выделении — не всегда он.
     const id = objectId || selectionRef.current.at(-1);
-    setStatePreview(id && base ? { id, base } : null);
+    setStatePreview(id && preview ? { ...preview, id } : null);
   }, []);
 
   /**
@@ -1640,7 +1641,7 @@ export default function App() {
           onBehaviour={updateScripts}
           onStates={updateStateScripts}
           onBase={(base, id) => restoreBase(base, id)}
-          onPreviewBase={(base, id) => previewBase(base, id)}
+          onPreviewState={(preview, id) => previewState(preview, id)}
           onText={updateTextObjects}
           onColors={updateColorObjects}
           onObject={(object) => updateObject(object)}

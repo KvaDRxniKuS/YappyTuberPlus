@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { orderedObjects } from "../../src/render/rigCanvas";
-import { previewFrame, previewObjects, propagateBase, withBases } from "../../src/engine/structure";
+import { inheritsField, previewFrame, propagateBase, withBases } from "../../src/engine/structure";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import type { BasePose, RigFrame, RigObject } from "../../src/types";
 import { NEUTRAL_PARAMS } from "../../src/engine/frame";
@@ -123,72 +123,81 @@ test("общий ребёнок двух выделенных родителей
   expect(moved.find((item) => item.id === "child")!.base.x).toBe(20);
 });
 
-test("предпросмотр состояний меняет только отрисовку, а не пресет", () => {
-  const objects = [
-    object("group", null, base(100, 100)),
-    object("child", "group", base(140, 100)),
-    object("other", null, base(400, 400)),
-  ];
-  const shown = previewObjects(objects, { id: "group", base: { x: 160, y: 100 } });
-  const at = (list: RigObject[], id: string) => list.find((item) => item.id === id)!;
-  expect(at(shown, "group").base.x).toBe(160);
-  // Потомок едет за базой родителя — как при перетаскивании.
-  expect(at(shown, "child").base.x).toBe(200);
-  // Пресет не тронут: предпросмотр живёт только в отрисовке.
-  expect(at(objects, "group").base.x).toBe(100);
-  expect(at(objects, "child").base.x).toBe(140);
-  expect(at(shown, "other").base.x).toBe(400);
-  // Снятый предпросмотр возвращает те же объекты.
-  expect(previewObjects(objects, null)).toBe(objects);
-});
-
-test("предпросмотр состояния переписывает значения кадра, а не складывает", () => {
+test("предпросмотр перекрывает только вклад своего слоя", () => {
   const objects = [object("eye", null, base(100, 100)), object("mouth", null, base(300, 300))];
   const frame: RigFrame = {
     seq: 4, time: 1, dt: 0.016, globals: {}, order: ["eye", "mouth"], diagnostics: [],
     objects: {
-      // Живая симуляция уже сдвинула глаз: 40 px и 15° от позы скрипта.
+      // Живая симуляция: поведение + состояния по текущему входу.
       eye: { ...NEUTRAL_PARAMS, x: 40, y: 10, rotation: 15, sizeX: 2, opacity: 0.5 },
       mouth: { ...NEUTRAL_PARAMS, x: 7 },
     },
   };
-  const shown = previewFrame(frame, objects, { id: "eye" })!;
-  // Поза предпросмотра уже в базе: кадровый вклад по объекту обнулён.
-  expect(shown.objects.eye.x).toBe(0);
-  expect(shown.objects.eye.y).toBe(0);
-  expect(shown.objects.eye.rotation).toBe(0);
-  expect(shown.objects.eye.sizeX).toBe(1);
-  expect(shown.objects.eye.opacity).toBe(1);
+  const shown = previewFrame(frame, objects, {
+    id: "eye",
+    // Слой вкладки даёт сейчас x = 40 и rotation = 15, а в точке — x = 25, rotation = 5.
+    live: { x: 40, rotation: 15, sizeX: 2 },
+    pose: { x: 25, rotation: 5, sizeX: 3 },
+  })!;
+  // Свой вклад снят, поза вкладки поставлена: 40 − 40 + 25, 15 − 15 + 5.
+  expect(shown.objects.eye.x).toBe(25);
+  expect(shown.objects.eye.rotation).toBe(5);
+  // Множители перекрываются отношением: 2 × (3 / 2) = 3.
+  expect(shown.objects.eye.sizeX).toBe(3);
+  // Всё, чего слой не касается, остаётся кадровым — inherit и прочее не стираются.
+  expect(shown.objects.eye.y).toBe(10);
+  expect(shown.objects.eye.opacity).toBe(0.5);
+  expect(shown.objects.eye.layer).toBe(NEUTRAL_PARAMS.layer);
   // Соседние объекты живут своим кадром.
   expect(shown.objects.mouth.x).toBe(7);
   // Исходный кадр не правится: движок продолжает считать как считал.
   expect(frame.objects.eye.x).toBe(40);
   // Без предпросмотра кадр идёт как есть.
   expect(previewFrame(frame, objects, null)).toBe(frame);
-  expect(previewFrame(null, objects, { id: "eye" })).toBeNull();
 });
 
-test("предпросмотр группы переписывает и кадр её детей", () => {
+test("предпросмотр без кадра всё равно показывает позу", () => {
+  const objects = [object("eye", null, base(100, 100))];
+  // Движок на паузе кадр не присылает: значения берутся из базы, как в отрисовке.
+  const shown = previewFrame(null, objects, { id: "eye", live: {}, pose: { x: 12 } })!;
+  expect(shown.objects.eye.x).toBe(12);
+  expect(shown.objects.eye.sizeX).toBe(1);
+});
+
+test("дети едут за предпросмотром только через inherit", () => {
   const objects = [
-    object("head", null, base(100, 100)),
-    object("eye", "head", base(140, 100)),
-    object("other", null, base(400, 400)),
+    { ...object("head", null, base(100, 100)), script: "x = inherit\ny = inherit\n" },
+    { ...object("eye", "head", base(140, 100)), script: "x = inherit + 4\ny = 30\n" },
+    { ...object("pin", "head", base(160, 100)), script: "x = 5\n" },
   ];
   const frame: RigFrame = {
     seq: 1, time: 0, dt: 0.016, globals: {}, order: [], diagnostics: [],
     objects: {
       head: { ...NEUTRAL_PARAMS, x: 30 },
-      eye: { ...NEUTRAL_PARAMS, x: 12, rotation: 8 },
-      other: { ...NEUTRAL_PARAMS, x: 5 },
+      eye: { ...NEUTRAL_PARAMS, x: 34, y: 30 },
+      pin: { ...NEUTRAL_PARAMS, x: 5 },
     },
   };
-  const shown = previewFrame(frame, objects, { id: "head" })!;
-  // База предпросмотра уезжает и детям, значит их кадровый вклад тоже обнулён.
-  expect(shown.objects.head.x).toBe(0);
-  expect(shown.objects.eye.x).toBe(0);
-  expect(shown.objects.eye.rotation).toBe(0);
-  // Чужое поддерево живёт своим кадром.
-  expect(shown.objects.other.x).toBe(5);
-  // Медиа и материал остаются кадровыми: подменяется положение, а не игра.
-  expect(shown.objects.head.mask).toBe(1);
+  const shown = previewFrame(frame, objects, { id: "head", live: { x: 30 }, pose: { x: 10 } })!;
+  // Голова: 30 − 30 + 10.
+  expect(shown.objects.head.x).toBe(10);
+  // Глаз пишет x через inherit — значит меняется ровно на ту же поправку (−20).
+  expect(shown.objects.eye.x).toBe(14);
+  // Своё значение не трогаем: inherit тут ни при чём.
+  expect(shown.objects.pin.x).toBe(5);
+  // Поле y у глаза своё (30) — поправка y = 0 его и не касается.
+  expect(shown.objects.eye.y).toBe(30);
+  // Пресет не тронут.
+  expect(objects[1].base.x).toBe(140);
+});
+
+test("поле пишется через inherit — видно по авторской строке", () => {
+  expect(inheritsField("x = inherit + follow(offset, parent).x", "x")).toBe(true);
+  expect(inheritsField("  y = inherit * 2\n", "y")).toBe(true);
+  expect(inheritsField("x = follow(offset, parent).x", "x")).toBe(false);
+  expect(inheritsField("rotation = 12\n", "rotation")).toBe(false);
+  // Поле не объявлено — наследовать нечего.
+  expect(inheritsField("y = inherit\n", "x")).toBe(false);
+  // Чужое поле с похожим именем не путается: x и sizeX разные.
+  expect(inheritsField("sizeX = inherit\n", "x")).toBe(false);
 });

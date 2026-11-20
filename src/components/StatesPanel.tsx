@@ -7,11 +7,11 @@ import { ParamPicker } from "./ParamPicker";
 import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
 import {
-  addKey, addLayer, applyPoseToBase, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
+  addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, replacePose, patchLayer, poseAt, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, resetStatesFor, reversePoses, sameBase, scaleKeys, setPose, writeStates,
   SMOOTH_DEFAULT, SMOOTH_LIMIT,
-  STATE_FIELDS, type Pose, type StateField, type StateLayer, type States,
+  STATE_FIELDS, type Pose, type StateField, type StateLayer, type StatePreview, type States,
 } from "../engine/states";
 
 /**
@@ -71,7 +71,7 @@ interface StatesPanelProps {
    * База объекта при этом не меняется, поэтому выход из вкладки сам возвращает
    * объект на место: ни истории, ни «отменить», ни двойной позы.
    */
-  onPreviewBase?: (base: Partial<BasePose> | null, objectId: string) => void;
+  onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
   /** Предпросмотр входа `manual.*` — двигает то же значение, что и ползунок входов. */
   onManual?: (key: string, value: number) => void;
 }
@@ -112,10 +112,10 @@ export function StatesPanel(props: StatesPanelProps) {
   /** База в прошлом кадре: по её изменению видно движение руками. */
   const lastBase = useRef<BasePose | null>(null);
   /** Что уже отправлено в предпросмотр: без этого эффект крутился бы вечно. */
-  const sent = useRef<BasePose | null>(null);
+  const sent = useRef<string | null>(null);
   /** Колбэки в ref: уборка при закрытии вкладки видит актуальные. */
-  const previewApi = useRef(props.onPreviewBase);
-  previewApi.current = props.onPreviewBase;
+  const previewApi = useRef(props.onPreviewState);
+  previewApi.current = props.onPreviewState;
   const restoreApi = useRef(props.onBase);
   restoreApi.current = props.onBase;
   /** Перетаскивание: ключ или точка таймлайна. */
@@ -278,32 +278,57 @@ export function StatesPanel(props: StatesPanelProps) {
   };
 
   /**
-   * Дельта превью: что показывает сцена прямо сейчас.
+   * Поза предпросмотра: что вкладка показывает в точке таймлайна.
    *
-   * Привязанный слой считается по точке таймлайна (между ключами — интерполяция),
+   * Привязанный слой считается по точке (между ключами — интерполяция),
    * свободный — по выбранной позе: у него нет шкалы.
    */
-  const previewDelta = (): Partial<Record<StateField, number>> => {
+  const previewPose = (): Partial<Record<StateField, number>> => {
     if (!layer) return {};
     if (layer.param) return poseAt(layer, at ?? range[0]);
     const chosen = layer.poses[keyIndex];
     return chosen ? { ...chosen.pose } : {};
   };
 
+  /** Что параметр слоя даёт сейчас: вход модуля, глобальная или локальная. */
+  const liveValue = (param: string): number | undefined => {
+    const fromInputs = props.inputs.values[param];
+    if (Number.isFinite(fromInputs)) return fromInputs;
+    const fromGlobals = props.frame?.globals?.[param];
+    if (Number.isFinite(fromGlobals)) return fromGlobals;
+    const fromVars = object ? props.frame?.vars?.[object.id]?.[param] : undefined;
+    return Number.isFinite(fromVars) ? fromVars : undefined;
+  };
+
   /**
-   * Предпросмотр на сцене. Глаз видит дельту слоя, а не числа в полях.
+   * Живой вклад этого же слоя — ровно то, что предпросмотр перекрывает.
    *
-   * Если база уже не та, что мы поставили, — её правит человек, и перебивать
-   * его нельзя: запись идёт отдельным эффектом ниже.
+   * Сцена вычитает его из кадра и прибавляет позу, поэтому `inherit`, поведение,
+   * другие слои и видимость остаются кадровыми. У свободного слоя вес — чужое
+   * выражение: его здесь не посчитать, и поза показывается поверх скрипта.
+   */
+  const previewLive = (): Partial<Record<StateField, number>> => {
+    if (!layer?.param) return {};
+    const value = liveValue(layer.param);
+    return value === undefined ? {} : poseAt(layer, value);
+  };
+
+  /**
+   * Предпросмотр на сцене: поправка к кадру, а не подмена базы.
+   *
+   * В пресете и в базе объекта ничего не меняется, поэтому уход из вкладки сам
+   * возвращает объект на место — без истории и без «двойного применения».
    */
   useEffect(() => {
-    if (!object || !layer || !authorBase || !props.onPreviewBase) return;
-    const next = applyPoseToBase(authorBase, previewDelta()) as BasePose;
-    if (sent.current && sameBase(sent.current, next)) return;
-    sent.current = next;
+    if (!object || !layer || !props.onPreviewState) return;
+    const pose = previewPose();
+    const live = previewLive();
+    const stamp = JSON.stringify({ pose, live });
+    if (sent.current === stamp) return;
+    sent.current = stamp;
     // Id передаём явно: предпросмотр — про объект вкладки, а не про последний
     // в выделении. Иначе при мультивыделении поза уезжала чужому объекту.
-    props.onPreviewBase(next, object.id);
+    props.onPreviewState({ id: object.id, pose, live }, object.id);
   });
 
   /** Вышли из вкладки — предпросмотр снят, объект сразу на своём месте. */

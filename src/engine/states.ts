@@ -36,6 +36,20 @@ export const STATE_FIELDS = [
 export type StateField = (typeof STATE_FIELDS)[number];
 
 /**
+ * Предпросмотр состояний — тоже данные, а не правка пресета.
+ *
+ * `pose` — что показывает вкладка в точке таймлайна, `live` — что этот же слой
+ * даёт сейчас по живому входу. Сцена вычитает `live` из кадра и прибавляет
+ * `pose`: перекрывается только вклад своего слоя, а `inherit`, поведение, другие
+ * слои и видимость остаются кадровыми.
+ */
+export interface StatePreview {
+  id: string;
+  pose: Partial<Record<StateField, number>>;
+  live: Partial<Record<StateField, number>>;
+}
+
+/**
  * Поля-множители: нейтраль 1 и `*` в авторской строке.
  *
  * Позиция, поворот и наклон складываются (нейтраль 0), размер и прозрачность

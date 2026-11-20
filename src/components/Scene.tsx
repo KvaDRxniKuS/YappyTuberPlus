@@ -14,7 +14,8 @@ import {
   transformPoint, type Affine,
 } from "../render/rigCanvas";
 import { MediaAssets, MaskMedia } from "../render/media";
-import { previewFrame, previewObjects } from "../engine/structure";
+import { previewFrame } from "../engine/structure";
+import type { StatePreview } from "../engine/states";
 import { onAssetsChanged } from "../engine/assets";
 import type { TextChannel } from "../render/text";
 import {
@@ -100,8 +101,13 @@ interface SceneProps {
   onSelect: (id: string | null, mode: SelectMode) => void;
   onSelectMany: (ids: string[], mode: "replace" | "add") => void;
   onDragStart: () => void;
-  /** Предпросмотр состояний: рисуется вместо базы объекта, пресет не меняет. */
-  preview?: { id: string; base: Partial<BasePose> } | null;
+  /**
+   * Предпросмотр состояний: поправка к кадру объекта, пресет не меняет.
+   *
+   * Перекрывается только вклад слоя вкладки — `inherit`, поведение, другие слои
+   * и видимость остаются кадровыми.
+   */
+  preview?: StatePreview | null;
   onDragObjects: (ids: string[], initial: Record<string, BasePose>, delta: { x: number; y: number }) => void;
   /**
    * Пивот ставится кликом в его новую точку: `base` — она же в мировых
@@ -262,13 +268,9 @@ export function Scene(props: SceneProps) {
 
     const { zoom, x, y } = camera.current;
     const preset = current.preset;
-    // Предпросмотр состояний живёт только здесь: копия объектов с подменённой
-    // базой. В пресете база не меняется, поэтому сцена и вкладка не спорят.
-    const previewed = current.preview
-      ? { ...preset, objects: previewObjects(preset.objects, current.preview) }
-      : preset;
-    // Поза предпросмотра переписывает значения объекта, а не складывается с
-    // текущими: по предпросмотренному объекту кадр движка обнуляется.
+    // Предпросмотр состояний живёт только в кадре: пресет не меняется, поэтому
+    // сцена и вкладка не спорят, а объект остаётся на своём месте в данных.
+    const previewed = preset;
     const frame = previewFrame(current.frameRef.current, preset.objects, current.preview);
     const colors = current.colors;
     ctx.save();
@@ -495,10 +497,8 @@ export function Scene(props: SceneProps) {
    */
   const groupAt = (point: { x: number; y: number }): string | null => {
     const current = propsRef.current;
-    const shown = current.preview
-      ? { ...current.preset, objects: previewObjects(current.preset.objects, current.preview) }
-      : current.preset;
-    const order = orderedObjects(shown, current.frameRef.current);
+    const shown = current.preset;
+    const order = orderedObjects(shown, previewFrame(current.frameRef.current, shown.objects, current.preview));
     const position = new Map(order.map((object, index) => [object.id, index]));
     // Верх группы — самый верхний её потомок: он и есть её «пиксель».
     const top = (id: string) => Math.max(-1, ...subtreeIds(shown.objects, [id]).map((child) => position.get(child) ?? -1));
@@ -529,10 +529,8 @@ export function Scene(props: SceneProps) {
     if (hit) {
       // Спрайт — потомок группы: это её пиксель, он и отвечает.
       if (subtreeIds(current.preset.objects, [group]).includes(hit.id)) return null;
-      const shown = current.preview
-        ? { ...current.preset, objects: previewObjects(current.preset.objects, current.preview) }
-        : current.preset;
-      const order = orderedObjects(shown, current.frameRef.current);
+      const shown = current.preset;
+      const order = orderedObjects(shown, previewFrame(current.frameRef.current, shown.objects, current.preview));
       const position = new Map(order.map((object, index) => [object.id, index]));
       const top = Math.max(-1, ...subtreeIds(shown.objects, [group]).map((child) => position.get(child) ?? -1));
       // Спрайт рисуется выше группы — он и впереди.
@@ -543,10 +541,8 @@ export function Scene(props: SceneProps) {
 
   const hitTest = (point: { x: number; y: number }, accept?: (object: RigObject) => boolean): RigObject | null => {
     const current = propsRef.current;
-    const frame = current.frameRef.current;
-    const shown = current.preview
-      ? { ...current.preset, objects: previewObjects(current.preset.objects, current.preview) }
-      : current.preset;
+    const frame = previewFrame(current.frameRef.current, current.preset.objects, current.preview);
+    const shown = current.preset;
     const ordered = orderedObjects(shown, frame);
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
       const object = ordered[index];

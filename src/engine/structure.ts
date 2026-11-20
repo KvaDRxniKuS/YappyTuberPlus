@@ -1,5 +1,6 @@
 import type { BasePose, ObjectFrame, RigFrame, RigObject } from "../types";
 import { NEUTRAL_PARAMS } from "./frame";
+import type { StateField, StatePreview } from "./states";
 import { setParent } from "./preset";
 import { selectionRoots } from "./selection";
 
@@ -403,55 +404,98 @@ export function withBases(
 }
 
 /**
- * Пресет с наложенным предпросмотром состояний.
- *
- * Предпросмотр — это **отрисовка**, а не правка: база в настоящем пресете не
- * меняется, поэтому уход из вкладки сам возвращает объект на место — без
- * истории, без «отменить» и без двойного применения позы.
- */
-/**
  * Кадр предпросмотра состояний.
  *
- * База объекта уже несёт значение предпросмотра, поэтому поза из кадра по
- * этому объекту обнуляется: иначе значение складывалось бы с текущим — при
- * живой симуляции объект уезжал бы на сумму позы и анимации. Медиа и материал
- * при этом остаются кадровыми: предпросмотр переписывает положение, а не
- * воспроизведение.
+ * Предпросмотр **перекрывает только то, что даёт вход его слоя**: живой вклад
+ * слоя из кадра вычитается, а поза из вкладки прибавляется. Всё остальное —
+ * `inherit`, поведение, другие слои, видимость, медиа и материал — остаётся
+ * кадровым. Поэтому предпросмотр больше не «обнуляет» объект: он показывает
+ * ту же сцену, но с входом, поставленным в точку таймлайна.
+ *
+ * Дети, у которых поле пишется через `inherit`, едут за родителем: их кадровое
+ * значение — это живое значение родителя плюс своё, значит меняется ровно на ту
+ * же поправку. У остальных детей поле своё, и его предпросмотр не трогает.
  */
 export function previewFrame(
   frame: RigFrame | null,
   objects: RigObject[],
-  preview: { id: string } | null | undefined,
+  preview: StatePreview | null | undefined,
 ): RigFrame | null {
-  if (!frame || !preview) return frame;
+  if (!preview) return frame;
   const target = objects.find((object) => object.id === preview.id);
   if (!target) return frame;
-  // Всё поддерево: база предпросмотра уезжает и детям, поэтому их собственный
-  // кадровый вклад тоже обнуляется — иначе группа «суммировала» бы позу с
-  // анимацией детей.
-  const overwritten = { ...(frame.objects ?? {}) };
-  for (const object of subtreeBlock(objects, target.id)) {
-    const live: ObjectFrame = frame.objects?.[object.id] ?? NEUTRAL_PARAMS;
-    overwritten[object.id] = {
-      ...live,
-      x: 0, y: 0, rotation: 0, skewX: 0, skewY: 0,
-      sizeX: 1, sizeY: 1, opacity: 1,
-      // Видимость — тоже из позы: она уже лежит в базе предпросмотра.
-      visible: object.enabled === false ? 0 : object.base.visible,
-    };
+  // Прибавки: у смещений — разница, у множителей — отношение.
+  const shifts = new Map<StateField, number>();
+  const factors = new Map<StateField, number>();
+  for (const field of ADDITIVE_FIELDS) {
+    const shift = (preview.pose[field] ?? 0) - (preview.live[field] ?? 0);
+    if (Math.abs(shift) > 1e-9) shifts.set(field, shift);
   }
-  return { ...frame, objects: overwritten };
+  for (const field of FACTOR_FIELDS) {
+    const live = preview.live[field];
+    const factor = (preview.pose[field] ?? 1) / (live === undefined || Math.abs(live) < 1e-9 ? 1 : live);
+    if (Math.abs(factor - 1) > 1e-9) factors.set(field, factor);
+  }
+  const visible = preview.live.visible === undefined || preview.live.visible <= 0
+    ? (preview.pose.visible ?? 1)
+    : (preview.pose.visible ?? 1) / preview.live.visible;
+
+  const objects0 = { ...(frame?.objects ?? {}) };
+  const shown: ObjectFrame = { ...(objects0[target.id] ?? standbyValues(target)) };
+  for (const [field, shift] of shifts) shown[field] += shift;
+  for (const [field, factor] of factors) shown[field] *= factor;
+  if (Math.abs(visible - 1) > 1e-9) shown.visible *= visible;
+  objects0[target.id] = shown;
+
+  for (const object of subtreeBlock(objects, target.id)) {
+    if (object.id === target.id) continue;
+    const values: ObjectFrame = { ...(objects0[object.id] ?? standbyValues(object)) };
+    let touched = false;
+    for (const [field, shift] of shifts) {
+      if (!inheritsField(object.script, field)) continue;
+      values[field] += shift;
+      touched = true;
+    }
+    for (const [field, factor] of factors) {
+      if (!inheritsField(object.script, field)) continue;
+      values[field] *= factor;
+      touched = true;
+    }
+    if (Math.abs(visible - 1) > 1e-9 && inheritsField(object.script, "visible")) {
+      values.visible *= visible;
+      touched = true;
+    }
+    if (touched) objects0[object.id] = values;
+  }
+
+  const source: RigFrame = frame ?? {
+    seq: 0, time: 0, dt: 0, globals: {}, objects: {}, order: [], diagnostics: [],
+  };
+  return { ...source, objects: objects0 };
 }
 
+/** Поля-смещения: складываются. */
+const ADDITIVE_FIELDS = ["x", "y", "rotation", "skewX", "skewY"] as const;
+/** Поля-множители: перемножаются. */
+const FACTOR_FIELDS = ["sizeX", "sizeY", "opacity"] as const;
 
-export function previewObjects(
-  objects: RigObject[],
-  preview: { id: string; base: Partial<BasePose> } | null,
-): RigObject[] {
-  if (!preview) return objects;
-  const target = objects.find((object) => object.id === preview.id);
-  if (!target) return objects;
-  const next = { ...target.base, ...preview.base } as BasePose;
-  // Потомки едут за базой родителя — так же, как при перетаскивании на сцене.
-  return withBases(objects, [preview.id], () => next);
+/** Кадровые значения объекта, когда движок его не прислал: нейтраль и база. */
+function standbyValues(object: RigObject): ObjectFrame {
+  return {
+    ...NEUTRAL_PARAMS,
+    visible: object.enabled === false ? 0 : object.base.visible,
+    layer: object.base.layer,
+  };
+}
+
+/**
+ * Пишется ли поле объекта через `inherit`.
+ *
+ * Нужно предпросмотру: у такого поля живое значение родителя уже внутри, поэтому
+ * поправка родителя переносится на ребёнка один в один. У поля со своим
+ * выражением — не переносится: это независимое значение.
+ */
+export function inheritsField(script: string, field: string): boolean {
+  const match = new RegExp(`^[ \t]*${field}[ \t]*=([^\n]*)`, "m").exec(script);
+  return !!match && /\binherit\b/.test(match[1]);
 }
