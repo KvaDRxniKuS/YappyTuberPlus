@@ -225,3 +225,45 @@ test("правка карточки пишет машинные настройк
   expect(app).toContain("adoptTrackerProfile");
   expect(app).toContain("JSON.stringify(stripTrackerProfile(preset))");
 });
+
+/**
+ * Галки входов — часть рига, а не профиля: какими полями трекера пользуется
+ * персонаж, решает автор, и это едет вместе с пресетом. Имена проверяются по
+ * готовому списку входов экземпляра: у трекера они заданы таблицей отображения,
+ * а не шаблоном, поэтому раньше все галки молча пропадали при загрузке.
+ */
+test("галки входов трекера живут в пресете и переживают загрузку", () => {
+  const module = {
+    ...trackerModule({
+      host: "192.168.1.7",
+      mapping: [
+        { input: "jawOpen", path: "$.arkit.jawOpen" },
+        { input: "headRx", path: "$.head.rx" },
+        { input: "eyeBlinkLeft", path: "$.arkit.eyeBlinkL" },
+      ],
+    }),
+    disabledInputs: ["headrx", "eyeblinkleft"],
+  } as ModuleInstance;
+  // Сохранение вырезает адрес телефона, но галки и отображение остаются.
+  const saved = JSON.stringify(stripTrackerProfile(presetWith(module)));
+  expect(saved).not.toContain("192.168.1.7");
+  expect(JSON.parse(saved).modules[0].disabledInputs).toEqual(["headrx", "eyeblinkleft"]);
+
+  // Старт приложения: папка modules ещё не прочитана — имена не фильтруются.
+  const loaded = normalizePreset(JSON.parse(saved));
+  expect(loaded).not.toBeNull();
+  expect(loaded!.modules[0].disabledInputs).toEqual(["headrx", "eyeblinkleft"]);
+
+  // Папка прочитана: имена сверяются со списком входов экземпляра.
+  const directory = join(process.cwd(), "public", "modules");
+  const index = JSON.parse(readFileSync(join(directory, "index.json"), "utf8")) as { modules: string[] };
+  registerDefinitions(index.modules
+    .map((id) => normalizeDefinition(JSON.parse(readFileSync(join(directory, `${id}.json`), "utf8"))))
+    .filter((definition): definition is NonNullable<typeof definition> => definition !== null));
+  const after = normalizeModules(loaded!.modules);
+  expect(after[0].disabledInputs).toEqual(["headrx", "eyeblinkleft"]);
+
+  // Несуществующий вход отбрасывается уже после того, как шаблон известен.
+  const stale = normalizeModules([{ ...module, disabledInputs: ["headrx", "нет_такого"] } as ModuleInstance]);
+  expect(stale[0].disabledInputs).toEqual(["headrx"]);
+});

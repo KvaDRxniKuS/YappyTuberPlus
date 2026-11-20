@@ -87,6 +87,20 @@ export function inputEnabled(module: ModuleInstance, input: string): boolean {
 }
 
 /**
+ * Переименование входа: галка выключенного входа переезжает на новое имя.
+ *
+ * Выключенные входы хранятся **именами**, поэтому после переименования старое
+ * имя ничего не выключает, а новый вход молча включается. Возвращает `null`,
+ * когда менять нечего: пустой шаг истории не нужен.
+ */
+export function renameDisabledInput(module: ModuleInstance, from: string, to: string): ModuleInstance | null {
+  const disabled = module.disabledInputs;
+  if (!disabled?.includes(from) || from === to) return null;
+  const next = disabled.map((name) => (name === from ? to : name));
+  return { ...module, disabledInputs: [...new Set(next)] };
+}
+
+/**
  * Имя модуля должно быть пригодно для скрипта: латиница, цифры и `_`,
  * первый символ — буква или `_`. Всё остальное превращается в `_`.
  */

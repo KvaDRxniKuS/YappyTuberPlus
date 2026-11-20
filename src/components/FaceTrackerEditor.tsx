@@ -63,6 +63,12 @@ interface FaceTrackerEditorProps {
   preview?: Record<string, number>;
   logs?: ExternalLogEntry[];
   onChange: (source: ExternalSourceConfig, label?: string) => void;
+  /**
+   * Вход переименовали. Галки выключенных входов хранят **имя**, поэтому о
+   * переименовании надо сказать модулю: иначе выключенный вход молча включится
+   * обратно — со старым именем в списке выключенных.
+   */
+  onRenameInput?: (from: string, to: string) => void;
 }
 
 /** Значение для показа: доли — сотыми, повороты — градусами, флаги — да/нет. */
@@ -481,7 +487,12 @@ export function FaceTrackerEditor(props: FaceTrackerEditorProps) {
                   spellCheck={false}
                   placeholder="jawopen"
                   title="Имя входа: в скрипте это <модуль>.<вход>"
-                  onChange={(event) => patchRule(index, { input: externalInputName(event.target.value) }, "Имя входа трекера")}
+                  onChange={(event) => {
+                    const next = externalInputName(event.target.value);
+                    if (next === rule.input) return;
+                    patchRule(index, { input: next }, "Имя входа трекера");
+                    props.onRenameInput?.(rule.input, next);
+                  }}
                 />
                 <select
                   value={rule.path}

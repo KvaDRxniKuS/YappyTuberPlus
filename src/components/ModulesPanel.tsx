@@ -11,7 +11,10 @@ import {
   type ModuleDefinition, type ModuleField,
 } from "../modules/registry";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
-import { inputEnabled, instanceInputs, moduleInputs, sanitizeModuleName, uniqueModuleName, validateModules } from "../modules/values";
+import {
+  inputEnabled, instanceInputs, moduleInputs, renameDisabledInput, sanitizeModuleName,
+  uniqueModuleName, validateModules,
+} from "../modules/values";
 import { Switch } from "./Switch";
 import { VisemeEditor } from "./VisemeEditor";
 import { KeyBindingRow, KeyboardKeysEditor } from "./KeyboardEditor";
@@ -331,6 +334,11 @@ export function ModulesPanel(props: ModulesPanelProps) {
                         <FaceTrackerEditor
                           module={module}
                           transport={transport}
+                          onRenameInput={(from, to) => {
+                            const renamed = renameDisabledInput(module, from, to);
+                            if (!renamed) return;
+                            patch(module.name, { disabledInputs: renamed.disabledInputs }, "Переименование входа трекера");
+                          }}
                           status={props.externalStatuses?.[module.name]}
                           preview={props.externalPreviews?.[module.name]}
                           logs={props.externalLogs?.[module.name]}

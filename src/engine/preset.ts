@@ -1,5 +1,5 @@
 import { childScript, rootScript } from "../data/demoPreset";
-import { ensureModules } from "../modules/values";
+import { ensureModules, instanceInputs } from "../modules/values";
 import { selectionRoots } from "./selection";
 import {
   DEFAULT_BASE, DEFAULT_OVERLAY, type BasePose, type EnumState, type KeyboardKey, type MediaRepeat,
@@ -575,21 +575,7 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
     const presetConfig = definition.kind === "presets" || Array.isArray(rawConfig.presets)
       ? normalizePresetsConfig(item.config)
       : null;
-    const knownInputs = states
-      ? ["value", ...states.map((entry) => entry.name)]
-      : presetConfig
-      ? ["value", ...(presetConfig.presets as EnumState[]).map((entry) => entry.name)]
-      : visemes
-      ? visemes.map((entry) => entry.name)
-      : keys
-        ? keys.map((key) => key.name)
-        : buttons
-          ? [...definition.inputs.map((spec) => spec.name), ...buttons.map((item) => item.name)]
-          : definition.inputs.map((spec) => spec.name);
-    const disabled = Array.isArray(item.disabledInputs)
-      ? item.disabledInputs.filter((input): input is string => typeof input === "string" && knownInputs.includes(input))
-      : [];
-    modules.push({
+    const normalized: ModuleInstance = {
       name,
       type,
       enabled: item.enabled !== false,
@@ -611,8 +597,27 @@ export function normalizeModules(value: unknown): ModuleInstance[] {
         // Пустая строка — это осознанный «бинда нет», её тоже сохраняем.
         ...(typeof rawConfig.code === "string" ? { code: rawConfig.code.trim() } : {}),
       },
-      ...(disabled.length > 0 ? { disabledInputs: disabled } : {}),
-    });
+    };
+    /**
+     * Выключенные входы — часть рига, а не профиля: какими полями трекера
+     * пользуется персонаж, решает автор, и это переезжает вместе с пресетом.
+     *
+     * Имена проверяются по **готовому** списку входов экземпляра, а не по
+     * шаблону: у внешнего источника (все три трекера) входы задаёт таблица
+     * отображения, и шаблон знает только `value`. Из-за этого галки трекера
+     * молча пропадали при каждой загрузке. Пока папка `modules` не прочитана,
+     * проверять нечего — имена остаются как есть.
+     */
+    const knownInputs = unknown
+      ? null
+      : new Set(instanceInputs(normalized).map((spec) => spec.name));
+    const disabled = Array.isArray(item.disabledInputs)
+      ? [...new Set(item.disabledInputs
+        .filter((input): input is string => typeof input === "string")
+        .map((input) => input.trim())
+        .filter((input) => !!input && (!knownInputs || knownInputs.has(input))))]
+      : [];
+    modules.push(disabled.length ? { ...normalized, disabledInputs: disabled } : normalized);
   }
   return modules;
 }

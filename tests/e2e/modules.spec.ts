@@ -5,7 +5,8 @@ import {
   moduleDefaults, moduleDefinition, normalizeDefinition, registerDefinitions,
 } from "../../src/modules/registry";
 import {
-  composeValues, ensureModules, migrateLegacyScript, sanitizeModuleName, uniqueModuleName, validateModules,
+  composeValues, ensureModules, migrateLegacyScript, renameDisabledInput, sanitizeModuleName,
+  uniqueModuleName, validateModules,
 } from "../../src/modules/values";
 import { normalizeModules } from "../../src/engine/preset";
 import { createDemoPreset, createEmptyPreset } from "../../src/data/demoPreset";
@@ -214,4 +215,15 @@ test("демо-пресет и пустой пресет согласованы 
   expect(demo.globals).toContain("auto.blink");
   expect(demo.objects.some((object) => object.script.includes("mic.talking"))).toBe(true);
   expect(createEmptyPreset("x").modules).toEqual([]);
+});
+
+test("переименование входа переносит галку выключенного входа", () => {
+  const before = module("face", "ifacialmocap", { disabledInputs: ["jawopen", "headrx"] });
+  const renamed = renameDisabledInput(before, "jawopen", "jaw");
+  expect(renamed?.disabledInputs).toEqual(["jaw", "headrx"]);
+  // Вход, которого в списке нет, ничего не меняет: лишнего шага истории не будет.
+  expect(renameDisabledInput(before, "eyeBlinkLeft", "eye")).toBeNull();
+  expect(renameDisabledInput(before, "jawopen", "jawopen")).toBeNull();
+  // Исходный модуль не правится: правка уходит в пресет целиком.
+  expect(before.disabledInputs).toEqual(["jawopen", "headrx"]);
 });
