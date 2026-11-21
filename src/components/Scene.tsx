@@ -39,9 +39,10 @@ import {
   zoneGeometry, zoneOutline, zonePoint,
 } from "../render/mesh";
 import {
-  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, artFromGrid, brushGrid, brushWeights, defaultMesh, flipArtEdge,
-  meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode, moveNodeMirrored, removeArtPoint,
-  removeArtTriangle, smoothGrid, splitArtEdge, splitArtTriangle, symmetrizeGrid,
+  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, artFromGrid, artFromOutline, brushGrid, brushWeights,
+  defaultMesh, flipArtEdge, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode, moveNodeMirrored,
+  mergeArt, removeArtPoint, removeArtTriangle, smoothGrid, splitArtEdge, splitArtTriangle,
+  symmetrizeGrid,
 } from "../engine/mesh";
 
 export type SceneTool =
@@ -255,6 +256,15 @@ export function Scene(props: SceneProps) {
   const interaction = useRef<Interaction>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
+  /**
+   * Контур новой нарезки: клики по пустому месту в «Нарезке».
+   *
+   * Точки копятся в пикселях картинки, поэтому перерисовка сцены контур не
+   * теряет. Замыкание — двойной клик или Enter: контур уходит в `earClip` и
+   * становится нарезкой, то есть полигон работает и как обрезка.
+   */
+  const polygon = useRef<{ objectId: string; points: Vec2[] } | null>(null);
+  const [polygonCount, setPolygonCount] = useState(0);
   const spaceDown = useRef(false);
   const initialized = useRef(false);
   const marqueeRef = useRef<Marquee | null>(null);
@@ -418,6 +428,9 @@ export function Scene(props: SceneProps) {
     drawSelection(ctx, previewed, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     if (current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current);
     if (current.tool === "deform") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null);
+    if (current.tool === "deform" && polygon.current) {
+      drawPolygonOverlay(ctx, previewed, frame, zoom, polygon.current);
+    }
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
     if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, previewed, zoom);
@@ -742,6 +755,73 @@ export function Scene(props: SceneProps) {
     current.onDragEnd?.();
   };
 
+  /**
+   * Точка контура: клик по пустому месту в «Нарезке».
+   *
+   * К существующей вершине контур прилипает — так удобно продолжать нарезку с
+   * уже поставленной точки, а не рядом с ней.
+   */
+  const addPolygonPoint = (object: RigObject, content: Vec2) => {
+    const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
+    const shown = { ...object, mesh: { ...editMesh(object), enabled: true } };
+    const radius = 9 / camera.current.zoom;
+    const near = nearestPoint(artPointPoints(shown, values), content, radius);
+    const point = near === null ? content : artPointPoints(shown, values)[near];
+    const current = polygon.current;
+    const points = current && current.objectId === object.id ? [...current.points, point] : [point];
+    polygon.current = { objectId: object.id, points };
+    setPolygonCount(points.length);
+    markDirty();
+  };
+
+  /** Замкнуть контур: `earClip` превращает его в треугольники нарезки. */
+  const finishPolygon = (additive = false) => {
+    const current = polygon.current;
+    polygon.current = null;
+    setPolygonCount(0);
+    markDirty();
+    const object = current && propsRef.current.preset.objects.find((item) => item.id === current.objectId);
+    if (!current || !object || current.points.length < 3) return;
+    const mesh = editMesh(object);
+    const art = artFromOutline(current.points.map((point) => zonePoint(object, point)));
+    if (!art) return;
+    const next = additive ? mergeArt(mesh.art, art) : art;
+    const current2 = propsRef.current;
+    current2.onDragStart();
+    current2.onMesh(object.id, { ...mesh, enabled: true, art: next });
+    current2.onDragEnd?.();
+  };
+
+  /** Отменить контур: недостроенные точки в нарезку не идут. */
+  const cancelPolygon = () => {
+    polygon.current = null;
+    setPolygonCount(0);
+    markDirty();
+  };
+
+  // Esc и Enter работают, пока контур не замкнут: иначе их пришлось бы ловить
+  // на канве, а фокус в этот момент может быть где угодно.
+  useEffect(() => {
+    if (!polygonCount) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelPolygon();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        finishPolygon(event.shiftKey);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // Смена объекта или инструмента недостроенный контур не тащит за собой.
+  useEffect(() => {
+    polygon.current = null;
+    setPolygonCount(0);
+  }, [props.primaryId, props.tool]);
+
   return (
     <section className="scene-panel panel-surface">
       <div className="scene-toolbar">
@@ -772,6 +852,51 @@ export function Scene(props: SceneProps) {
             disabled={!props.primaryId}
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
+          {/* Инструменты сетки — в том же ряду, но своей группой: ими работают
+              на сцене, а не в параметрах объекта. */}
+          {props.tool === "warp" && meshEditing && (
+            <>
+              <span className="tool-separator" />
+              <button
+                className={brush.on ? "active" : ""}
+                title={`Кисть · ${brush.on ? "вкл" : "выкл"}: тянет пятно узлов, а не один узел`}
+                onClick={() => quietMeshTool({ enabled: true, brush: { ...brush, on: !brush.on } })}
+              ><Brush size={15} /></button>
+              <button
+                className={mirror.on ? "active" : ""}
+                title={`Симметрия · ${mirror.on ? `ось ${Math.round(mirror.angle)}°` : "выкл"}: пара узлов двигается зеркально`}
+                onClick={() => quietMeshTool({ enabled: true, mirror: { ...mirror, on: !mirror.on } })}
+              ><FlipHorizontal size={15} /></button>
+              <button
+                title="Сглаживание: внутренние узлы тянутся к середине соседей, крайние стоят"
+                onClick={() => actMeshTool({ deform: smoothGrid(meshEditing.deform) })}
+              ><Waves size={15} /></button>
+            </>
+          )}
+          {props.tool === "deform" && meshEditing && (
+            <>
+              <span className="tool-separator" />
+              <select
+                className="tool-select"
+                title="Автосетка: пересобрать нарезку регулярной сеткой"
+                value={meshEditing.art.auto ? String(meshEditing.art.auto.cols) : "manual"}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "manual") {
+                    // Ручная нарезка — та, которую собрали руками: точки
+                    // остаются, пометка автосетки снимается.
+                    actMeshTool({ art: { ...meshEditing.art, auto: null } });
+                    return;
+                  }
+                  const step = Number(value);
+                  if (Number.isFinite(step)) actMeshTool({ art: artFromGrid(step, step) });
+                }}
+              >
+                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
+                <option value="manual">ручная</option>
+              </select>
+            </>
+          )}
           <span className="tool-separator" />
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
           <button
@@ -802,106 +927,71 @@ export function Scene(props: SceneProps) {
           <button title="Вписать сцену" onClick={fit}><Focus size={15} /></button>
         </div>
       </div>
-      {meshEditing && (props.tool === "warp" || props.tool === "deform") && (
+      {/* Полоска настроек появляется только у включённого инструмента: сами
+          кисть и симметрия живут в общем ряду, а здесь — их числа. */}
+      {props.tool === "deform" && polygonCount > 0 && (
         <div className="scene-tool-options">
-          {props.tool === "warp" ? (
+          <span className="tool-label">контур: {polygonCount} {polygonCount === 1 ? "точка" : polygonCount < 5 ? "точки" : "точек"}</span>
+          <button
+            disabled={polygonCount < 3}
+            title="Замкнуть контур: точки разобьются на треугольники (Shift — добавить к текущей нарезке)"
+            onClick={(event) => finishPolygon(event.shiftKey)}
+          >Замкнуть</button>
+          <button title="Отменить контур (Esc)" onClick={cancelPolygon}>Отмена</button>
+          <span className="tool-label">двойной клик или Enter — замкнуть, Esc — отменить; Shift+Замкнуть добавит к нарезке</span>
+        </div>
+      )}
+      {props.tool === "warp" && meshEditing && (brush.on || mirror.on) && (
+        <div className="scene-tool-options">
+          {brush.on && (
             <>
-              <button
-                className={brush.on ? "active" : ""}
-                title="Кисть: тянет пятно узлов, а не один узел"
-                onClick={() => quietMeshTool({ enabled: true, brush: { ...brush, on: !brush.on } })}
-              >
-                <Brush size={13} /> Кисть
-              </button>
-              {brush.on && (
-                <>
-                  <label className="tool-range" title="Радиус кисти — в долях меньшей стороны зоны">
-                    <span>радиус</span>
-                    <input
-                      type="range" min={2} max={100} step={1}
-                      value={Math.round(brush.radius * 100)}
-                      onChange={(event) => quietMeshTool({ brush: { ...brush, radius: Number(event.target.value) / 100 } })}
-                    />
-                    <b>{Math.round(brush.radius * 100)}%</b>
-                  </label>
-                  <label className="tool-range" title="Жёсткость: какая часть радиуса тянется целиком, дальше вес гаснет">
-                    <span>жёстк.</span>
-                    <input
-                      type="range" min={0} max={100} step={5}
-                      value={Math.round(brush.hardness * 100)}
-                      onChange={(event) => quietMeshTool({ brush: { ...brush, hardness: Number(event.target.value) / 100 } })}
-                    />
-                    <b>{Math.round(brush.hardness * 100)}%</b>
-                  </label>
-                </>
-              )}
-              <span className="tool-separator" />
-              <button
-                className={mirror.on ? "active" : ""}
-                title="Симметрия: пара узлов двигается зеркально относительно оси"
-                onClick={() => quietMeshTool({ enabled: true, mirror: { ...mirror, on: !mirror.on } })}
-              >
-                <FlipHorizontal size={13} /> Симметрия
-              </button>
-              {mirror.on && (
-                <>
-                  <button
-                    className={Math.abs(mirror.angle - 90) < 1e-6 ? "active" : ""}
-                    title="Вертикальная ось через центр зоны"
-                    onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 90 } })}
-                  >верт.</button>
-                  <button
-                    className={Math.abs(mirror.angle) < 1e-6 ? "active" : ""}
-                    title="Горизонтальная ось через центр зоны"
-                    onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 0 } })}
-                  >гор.</button>
-                  <label className="tool-range" title="Угол оси в градусах">
-                    <span>угол</span>
-                    <input
-                      type="range" min={-90} max={90} step={5}
-                      value={Math.round(mirror.angle)}
-                      onChange={(event) => quietMeshTool({ mirror: { ...mirror, angle: Number(event.target.value) } })}
-                    />
-                    <b>{Math.round(mirror.angle)}°</b>
-                  </label>
-                  <button
-                    title="Свести пары узлов к середине: каждая половина проходит полпути"
-                    onClick={() => actMeshTool({ deform: symmetrizeGrid(meshEditing.deform, mirror) })}
-                  >Симметризовать</button>
-                </>
-              )}
-              <span className="tool-separator" />
-              <button
-                title="Сглаживание: внутренние узлы тянутся к середине соседей, крайние стоят"
-                onClick={() => actMeshTool({ deform: smoothGrid(meshEditing.deform) })}
-              >
-                <Waves size={13} /> Сгладить
-              </button>
+              <label className="tool-range" title="Радиус кисти — в долях меньшей стороны зоны">
+                <span>кисть</span>
+                <input
+                  type="range" min={2} max={100} step={1}
+                  value={Math.round(brush.radius * 100)}
+                  onChange={(event) => quietMeshTool({ brush: { ...brush, radius: Number(event.target.value) / 100 } })}
+                />
+                <b>{Math.round(brush.radius * 100)}%</b>
+              </label>
+              <label className="tool-range" title="Жёсткость: какая часть радиуса тянется целиком, дальше вес гаснет">
+                <span>жёсткость</span>
+                <input
+                  type="range" min={0} max={100} step={5}
+                  value={Math.round(brush.hardness * 100)}
+                  onChange={(event) => quietMeshTool({ brush: { ...brush, hardness: Number(event.target.value) / 100 } })}
+                />
+                <b>{Math.round(brush.hardness * 100)}%</b>
+              </label>
             </>
-          ) : (
+          )}
+          {brush.on && mirror.on && <span className="tool-separator" />}
+          {mirror.on && (
             <>
-              <span className="tool-label">Автосетка</span>
-              <select
-                className="tool-select"
-                value={meshEditing.art.auto ? String(meshEditing.art.auto.cols) : "manual"}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === "manual") {
-                    // Ручная нарезка — это та, которую собрали руками: точки
-                    // остаются, пометка автосетки снимается.
-                    actMeshTool({ art: { ...meshEditing.art, auto: null } });
-                    return;
-                  }
-                  const step = Number(value);
-                  if (Number.isFinite(step)) actMeshTool({ art: artFromGrid(step, step) });
-                }}
-              >
-                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
-                <option value="manual">ручная</option>
-              </select>
-              <span className="tool-label">
-                {meshEditing.art.points.length} точек · {meshEditing.art.triangles.length / 3} треугольников
-              </span>
+              <span className="tool-label">симметрия</span>
+              <button
+                className={Math.abs(mirror.angle - 90) < 1e-6 ? "active" : ""}
+                title="Вертикальная ось через центр зоны"
+                onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 90 } })}
+              >верт.</button>
+              <button
+                className={Math.abs(mirror.angle) < 1e-6 ? "active" : ""}
+                title="Горизонтальная ось через центр зоны"
+                onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 0 } })}
+              >гор.</button>
+              <label className="tool-range" title="Угол оси в градусах">
+                <span>угол</span>
+                <input
+                  type="range" min={-90} max={90} step={5}
+                  value={Math.round(mirror.angle)}
+                  onChange={(event) => quietMeshTool({ mirror: { ...mirror, angle: Number(event.target.value) } })}
+                />
+                <b>{Math.round(mirror.angle)}°</b>
+              </label>
+              <button
+                title="Свести пары узлов к середине: каждая половина проходит полпути"
+                onClick={() => actMeshTool({ deform: symmetrizeGrid(meshEditing.deform, mirror) })}
+              >Симметризовать</button>
             </>
           )}
         </div>
@@ -1038,6 +1128,12 @@ export function Scene(props: SceneProps) {
                     if (edge) {
                       if (commit(splitArtEdge(mesh, edge.a, edge.b))) return;
                     }
+                    // Двойной клик по пустому месту замыкает контур: точки уже
+                    // стоят, осталось разбить их на треугольники.
+                    if (polygon.current && polygon.current.objectId === object.id) {
+                      finishPolygon(event.shiftKey);
+                      return;
+                    }
                   }
                   if (event.altKey) {
                     // Alt по ребру — перевернуть диагональ, Alt по треугольнику —
@@ -1066,6 +1162,17 @@ export function Scene(props: SceneProps) {
                       type: "meshArtPoint", objectId: object.id, index, start: point,
                       initial: { ...mesh, enabled: true },
                     };
+                    return;
+                  }
+                  // Пустое место — вершина нового контура: нарезку можно не
+                  // только править, но и нарисовать руками. Shift при
+                  // замыкании добавит её к текущей нарезке. Клик мимо картинки
+                  // контур не начинает: там работает обычное выделение.
+                  const margin = 12 / camera.current.zoom;
+                  const inside = content.x >= -margin && content.y >= -margin
+                    && content.x <= object.width + margin && content.y <= object.height + margin;
+                  if (inside && !event.ctrlKey && !event.metaKey) {
+                    addPolygonPoint(object, content);
                     return;
                   }
                 } else {
@@ -1515,7 +1622,7 @@ const TOOL_HINT: Record<SceneTool, string> = {
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
   warp: "Сетка: узлы (Shift — по осям), кисть, симметрия и сглаживание — во второй строке панели; зона и поворот",
-  deform: "Нарезка: автосетка во второй строке панели; двойной клик по ребру — разрезать; Alt — перевернуть диагональ или разбить треугольник; Ctrl — удалить треугольник; Shift — удалить точку",
+  deform: "Нарезка: клик по пустому месту — контур будущих треугольников (двойной клик или Enter — замкнуть); двойной клик по ребру — разрезать; Alt — перевернуть диагональ или разбить треугольник; Ctrl — удалить треугольник; Shift — удалить точку",
   pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
 
@@ -1834,6 +1941,51 @@ function drawMeshOverlay(
     const screen = at(point);
     ctx.beginPath();
     ctx.arc(screen.x, screen.y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/**
+ * Контур новой нарезки: пунктир по точкам и кружки на них.
+ *
+ * Пока контур не замкнут, он живёт только здесь: в нарезку точки уходят
+ * одним шагом, когда их разбивает `earClip`.
+ */
+function drawPolygonOverlay(
+  ctx: CanvasRenderingContext2D,
+  preset: RigPreset,
+  frame: RigFrame | null,
+  zoom: number,
+  shape: { objectId: string; points: Vec2[] },
+) {
+  const object = preset.objects.find((item) => item.id === shape.objectId);
+  if (!object || object.kind === "group" || object.kind === "text") return;
+  const values = frame?.objects[object.id] || staticValues(object);
+  const matrix = objectMatrix(object, values);
+  const left = -object.pivot.x * object.width;
+  const top = -object.pivot.y * object.height;
+  const at = (point: Vec2) => ({
+    x: matrix.a * (left + point.x) + matrix.c * (top + point.y) + matrix.e,
+    y: matrix.b * (left + point.x) + matrix.d * (top + point.y) + matrix.f,
+  });
+  const points = shape.points.map(at);
+  ctx.save();
+  ctx.strokeStyle = "rgba(224, 163, 74, 0.9)";
+  ctx.lineWidth = 1 / zoom;
+  ctx.setLineDash([6 / zoom, 4 / zoom]);
+  ctx.beginPath();
+  points.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+  // Контур на трёх точках уже замкнут — показываем, каким он станет.
+  if (points.length >= 3) ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#1b2026";
+  const size = 3 / zoom;
+  for (const point of points) {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, size, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   }

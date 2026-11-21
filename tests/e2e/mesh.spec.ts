@@ -5,7 +5,7 @@ import {
   migrateWarp, mirrorPoint, meshIsZoneQuad, meshOf, meshVertices, normalizeMesh, paramOffsets, regularGrid,
   resizeGrid, sampleGrid, shiftNode, splitEdge, validateArt, addTriangle, hasTriangle,
   BRUSH_DEFAULT, MIRROR_DEFAULT, brushGrid, brushWeights, mirrorAcross, mirrorNode, moveNodeMirrored,
-  normalizeBrush, normalizeMirror, smoothGrid, symmetrizeGrid,
+  normalizeBrush, normalizeMirror, smoothGrid, symmetrizeGrid, mergeArt,
 } from "../../src/engine/mesh";
 import { defaultWarp } from "../../src/render/warp";
 import { DEFAULT_BASE, type RigObject } from "../../src/types";
@@ -407,4 +407,43 @@ test("настройки кисти и оси: битые значения да�
   expect(normalizeMirror(undefined)).toEqual(MIRROR_DEFAULT);
   // Угол — это прямая: 270° и −90° одно и то же.
   expect(normalizeMirror({ on: true, x: 0.5, y: 0.5, angle: 270 }).angle).toBe(-90);
+});
+
+/*
+ * Триангуляция руками: контур из кликов.
+ *
+ * Полигон замыкается двойным кликом (или Enter), после чего «отрезание уха»
+ * разбивает его на треугольники. Контур работает и как обрезка: картинка
+ * рисуется только внутри треугольников.
+ */
+
+test("контур из кликов становится нарезкой", () => {
+  // Квадрат против часовой: два треугольника, четыре точки, контур сохранён.
+  const art = artFromOutline([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]);
+  expect(art).not.toBeNull();
+  expect(art!.points).toHaveLength(4);
+  expect(art!.triangles).toHaveLength(6);
+  expect(art!.auto).toBeNull();
+  expect(art!.outline).toEqual([0, 1, 2, 3]);
+  // Меньше трёх точек — не контур.
+  expect(artFromOutline([{ x: 0, y: 0 }, { x: 1, y: 1 }])).toBeNull();
+});
+
+test("«отрезание уха» разворачивает обход и пропускает вырожденные углы", () => {
+  // Тот же квадрат по часовой: обход разворачивается, площадь та же.
+  const clockwise = earClip([{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 }]);
+  expect(clockwise).toHaveLength(6);
+  // Три точки на одной прямой — это не контур: площадь нулевая.
+  expect(artFromOutline([{ x: 0, y: 0 }, { x: 0.5, y: 0 }, { x: 1, y: 0 }])).toBeNull();
+});
+
+test("второй контур добавляется к нарезке, а не стирает первый", () => {
+  const first = artFromOutline([{ x: 0, y: 0 }, { x: 0.4, y: 0 }, { x: 0.4, y: 0.4 }, { x: 0, y: 0.4 }])!;
+  const second = artFromOutline([{ x: 0.6, y: 0.6 }, { x: 1, y: 0.6 }, { x: 1, y: 1 }, { x: 0.6, y: 1 }])!;
+  const merged = mergeArt(first, second);
+  expect(merged.points).toHaveLength(8);
+  expect(merged.triangles).toHaveLength(12);
+  // Индексы второго контура сдвинуты: он ссылается на свои точки.
+  expect(Math.min(...merged.triangles.slice(6))).toBeGreaterThanOrEqual(4);
+  expect(merged.auto).toBeNull();
 });

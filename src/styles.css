@@ -140,6 +140,11 @@ input, select { color: var(--text); }
 .scene-tools button { width: 27px; height: 27px; display: grid; place-items: center; color: #77818c; border-radius: 5px; }
 .scene-tools button:hover { color: var(--text); background: #ffffff08; }
 .scene-tools button.active { color: var(--accent); background: #82d5c112; }
+/* Инструменты сетки в общем ряду: у нарезки — выбор автосетки. */
+.scene-tools .tool-select {
+  height: 24px; margin-left: 2px; padding: 0 4px; border-radius: 5px;
+  border: 1px solid var(--border); background: #23272d; color: #aab3bd; font-size: 11px;
+}
 .tool-separator { width: 1px; height: 16px; margin: 0 4px; background: var(--border); }
 /* Вторая строка панели сцены: настройки инструментов сетки и нарезки. */
 .scene-tool-options {
@@ -158,6 +163,7 @@ input, select { color: var(--text); }
   height: 23px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border);
   background: #23272d; color: #b6c0c9; font-size: 11px;
 }
+.scene-tools { flex-wrap: nowrap; }
 /* Ползунок инструмента: подпись, дорожка и значение — в одну строку. */
 .scene-tool-options .tool-range { display: inline-flex; align-items: center; gap: 5px; }
 .scene-tool-options .tool-range input { width: 74px; }

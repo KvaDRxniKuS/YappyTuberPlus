@@ -868,12 +868,34 @@ export function earClip(points: Vec2[]): number[] {
 /** Артмеш по контуру: точки контура и автотриангуляция. */
 export function artFromOutline(points: Vec2[]): ArtMesh | null {
   const clipped = points.map((point) => ({ x: round(point.x), y: round(point.y) }));
+  // Площадь контура: три точки на одной прямой контуром не считаются, иначе
+  // нарезка получила бы вырожденный треугольник и «нулевую» картинку.
+  const area = clipped.reduce((sum, point, index) => {
+    const next = clipped[(index + 1) % Math.max(1, clipped.length)];
+    return next ? sum + point.x * next.y - next.x * point.y : sum;
+  }, 0);
+  if (Math.abs(area) < 1e-6) return null;
   const triangles = earClip(clipped);
   if (triangles.length < 3) return null;
   return {
     points: clipped,
     triangles,
     outline: clipped.map((_, index) => index),
+    auto: null,
+  };
+}
+
+/**
+ * Добавить к нарезке ещё один контур: точки и треугольники дописываются.
+ *
+ * Так второй контур (Shift при замыкании) не стирает первый: картинка может
+ * состоять из нескольких кусков, и нарезать их по одному — обычное дело.
+ */
+export function mergeArt(art: ArtMesh, extra: ArtMesh): ArtMesh {
+  const offset = art.points.length;
+  return {
+    points: [...art.points, ...extra.points],
+    triangles: [...art.triangles, ...extra.triangles.map((index) => index + offset)],
     auto: null,
   };
 }
