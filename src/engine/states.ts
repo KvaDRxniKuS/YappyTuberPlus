@@ -1152,6 +1152,7 @@ export function gridRecordDelta(
   current: GridSpec,
 ): Record<string, Vec2> | null {
   if (!previous) return null;
+  if (JSON.stringify(current.rest) !== JSON.stringify(previous.rest)) return null;
   if (current.cols !== author.cols || current.rows !== author.rows) return null;
   const delta = pointsFromGrids(author, current);
   if (samePoints(delta, pointsFromGrids(author, previous))) return null;

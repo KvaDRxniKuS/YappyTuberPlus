@@ -181,7 +181,7 @@ function normalizePoint(raw: unknown): Vec2 | null {
   const x = numberOr(point.x, Number.NaN);
   const y = numberOr(point.y, Number.NaN);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return { x: round(Math.min(4, Math.max(-3, x))), y: round(Math.min(4, Math.max(-3, y))) };
+  return { x: round(x), y: round(y) };
 }
 
 /** Артмеш из пресета: мусор отбрасывается, битые треугольники не ломают сцену. */
@@ -242,6 +242,7 @@ export function normalizeArt(raw: unknown): ArtMesh | undefined {
     points,
     triangles,
     ...(manual.length ? { manual } : {}),
+    ...(Array.isArray(source.edges) ? { edges: source.edges.filter((edge) => Array.isArray(edge) && edge.length === 2 && edge.every((i) => Number.isInteger(i) && i >= 0 && i < points.length) && edge[0] !== edge[1]) } : {}),
     ...(outline.length >= 3 ? { outline } : {}),
     auto,
   };
@@ -290,7 +291,9 @@ export function normalizeGrid(raw: unknown): GridSpec | undefined {
     if (!point) return regularGrid(cols, rows);
     points.push(point);
   }
-  return { cols, rows, points };
+  const rest = Array.isArray(source.rest) && source.rest.length === expected
+    ? source.rest.map(normalizePoint) : undefined;
+  return { cols, rows, points, ...(rest?.every((p) => p !== null) ? { rest: rest as Vec2[] } : {}) };
 }
 
 /** Деформация из пресета: галочка, зона, нарезка и сетка. */
@@ -356,6 +359,71 @@ export function sampleGrid(grid: GridSpec, u: number, v: number): Vec2 {
   };
 }
 
+/** Evaluate a deformer in its rest domain. Outside it, points are unchanged. */
+export function sampleDeform(grid: GridSpec, u: number, v: number): Vec2 {
+  if (!grid.rest) {
+    if (u < 0 || u > 1 || v < 0 || v > 1) return { x: u, y: v };
+    return sampleGrid(grid, u, v);
+  }
+  const rest = { ...grid, points: grid.rest };
+  for (let j = 0; j < grid.rows - 1; j += 1) for (let i = 0; i < grid.cols - 1; i += 1) {
+    const ids = [j * grid.cols + i, j * grid.cols + i + 1, (j + 1) * grid.cols + i, (j + 1) * grid.cols + i + 1];
+    const [a, b, c, d] = ids.map((id) => rest.points[id]);
+    let x = 0.5, y = 0.5;
+    for (let n = 0; n < 12; n += 1) {
+      const ex = a.x + (b.x - a.x) * x + (c.x - a.x) * y + (a.x - b.x - c.x + d.x) * x * y - u;
+      const ey = a.y + (b.y - a.y) * x + (c.y - a.y) * y + (a.y - b.y - c.y + d.y) * x * y - v;
+      const ax = b.x - a.x + (a.x - b.x - c.x + d.x) * y;
+      const ay = b.y - a.y + (a.y - b.y - c.y + d.y) * y;
+      const bx = c.x - a.x + (a.x - b.x - c.x + d.x) * x;
+      const by = c.y - a.y + (a.y - b.y - c.y + d.y) * x;
+      const det = ax * by - ay * bx;
+      if (Math.abs(det) < 1e-12) break;
+      x -= (ex * by - ey * bx) / det;
+      y -= (ax * ey - ay * ex) / det;
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < -1e-7 || x > 1 + 1e-7 || y < -1e-7 || y > 1 + 1e-7) continue;
+    const px = a.x + (b.x-a.x)*x + (c.x-a.x)*y + (a.x-b.x-c.x+d.x)*x*y;
+    const py = a.y + (b.y-a.y)*x + (c.y-a.y)*y + (a.y-b.y-c.y+d.y)*x*y;
+    if (Math.hypot(px-u, py-v) > 1e-5) continue;
+    return sampleGrid(grid, (i+x)/(grid.cols-1), (j+y)/(grid.rows-1));
+  }
+  return { x: u, y: v };
+}
+
+/** Edit controls and their rest positions together, without introducing strain. */
+export function editGridRest(grid: GridSpec, transform: (p: Vec2, index: number) => Vec2): GridSpec {
+  const before = grid.rest ?? regularPoints(grid.cols, grid.rows);
+  const rest = before.map(transform);
+  return { ...grid, rest: rest.map((p) => ({x:round(p.x),y:round(p.y)})), points: grid.points.map((p, i) => ({ x: round(p.x + rest[i].x - before[i].x), y: round(p.y + rest[i].y - before[i].y) })) };
+}
+
+/** Ctrl-drag a corner to resize the entire rest cage; other controls edit its base locally. */
+export function resizeRestControl(grid: GridSpec, index: number, delta: Vec2): GridSpec {
+  const rest = grid.rest ?? regularPoints(grid.cols, grid.rows);
+  const corners = [0, grid.cols-1, (grid.rows-1)*grid.cols, grid.points.length-1];
+  if (!corners.includes(index)) return editGridRest(grid,(p,i) => i === index ? {x:p.x+delta.x,y:p.y+delta.y} : p);
+  const opposite = rest[corners[3-corners.indexOf(index)]];
+  const origin = rest[0], right = rest[grid.cols-1], bottom = rest[(grid.rows-1)*grid.cols];
+  const ax = right.x-origin.x, ay = right.y-origin.y, bx = bottom.x-origin.x, by = bottom.y-origin.y;
+  const det = ax*by-ay*bx;
+  if (Math.abs(det) < 1e-8) return grid;
+  const coordinates = (p: Vec2) => ({x:(p.x*by-p.y*bx)/det,y:(ax*p.y-ay*p.x)/det});
+  const old = coordinates({x:rest[index].x-opposite.x,y:rest[index].y-opposite.y});
+  const change = coordinates(delta);
+  const sx = Math.max(0.01,1+change.x/old.x), sy = Math.max(0.01,1+change.y/old.y);
+  return editGridRest(grid,p => {
+    const local = coordinates({x:p.x-opposite.x,y:p.y-opposite.y});
+    return {x:opposite.x+ax*local.x*sx+bx*local.y*sy,y:opposite.y+ay*local.x*sx+by*local.y*sy};
+  });
+}
+
+/** Source coordinate under a displayed deformer point, used by topology tools. */
+export function inverseDeform(grid: GridSpec, point: Vec2): Vec2 {
+  return sampleDeform({ ...grid, rest: grid.points, points: grid.rest ?? regularPoints(grid.cols,grid.rows) },point.x,point.y);
+}
+
 /**
  * Смена густоты сетки без потери формы.
  *
@@ -373,7 +441,8 @@ export function resizeGrid(grid: GridSpec, cols: number, rows: number): GridSpec
       points.push(sampleGrid(grid, i / (c - 1), j / (r - 1)));
     }
   }
-  return { cols: c, rows: r, points };
+  const rest = grid.rest ? resizeGrid({ ...grid, rest: undefined, points: grid.rest }, c, r).points : undefined;
+  return { cols: c, rows: r, points, ...(rest ? { rest } : {}) };
 }
 
 /** Сдвиг одного узла сетки в долях зоны. */
@@ -661,7 +730,7 @@ export function meshVertices(mesh: MeshSpec, offsets?: Record<string, Vec2> | nu
   const grid = applyOffsets(mesh.deform, offsets);
   return {
     params: mesh.art.points,
-    targets: mesh.art.points.map((point) => sampleGrid(grid, point.x, point.y)),
+    targets: mesh.art.points.map((point) => sampleDeform(grid, point.x, point.y)),
     triangles: mesh.art.triangles,
   };
 }
@@ -719,28 +788,8 @@ function nextInTriangle(triangle: number[], value: number): number {
  * ставшего треугольника поменяла бы знак.
  */
 export function splitEdge(art: ArtMesh, a: number, b: number): ArtMesh | null {
-  if (a === b || a < 0 || b < 0 || a >= art.points.length || b >= art.points.length) return null;
-  const key = edgeKey(a, b);
-  const owners = edgeMap(art).get(key) ?? [];
-  if (!owners.length) return null;
-  const start = art.points[a];
-  const end = art.points[b];
-  const points = [...art.points, { x: round((start.x + end.x) / 2), y: round((start.y + end.y) / 2) }];
-  const middle = points.length - 1;
-  const triangles: number[] = [];
-  for (let index = 0; index < art.triangles.length; index += 3) {
-    const triangle = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
-    if (!owners.includes(index / 3)) {
-      triangles.push(...triangle);
-      continue;
-    }
-    // Порядок «a → b» задаёт, с какой стороны встаёт новая точка.
-    const forward = nextInTriangle(triangle, a) === b;
-    const [from, to] = forward ? [a, b] : [b, a];
-    const third = triangle.find((value) => value !== a && value !== b)!;
-    triangles.push(from, middle, third, middle, to, third);
-  }
-  return { points, triangles, ...(art.outline ? { outline: art.outline } : {}), auto: null };
+  if (a === b || !art.points[a] || !art.points[b] || !edgeMap(art).has(edgeKey(a,b))) return null;
+  return addArtPoint(art, { x: (art.points[a].x+art.points[b].x)/2, y: (art.points[a].y+art.points[b].y)/2 });
 }
 
 /** Площадь треугольника со знаком: по ней проверяются вырожденность и обход. */
@@ -782,7 +831,7 @@ export function flipDiagonal(art: ArtMesh, a: number, b: number): ArtMesh | null
   const positions = [...owners].sort((left, right) => left - right);
   triangles.splice(positions[1] * 3, 3, ...replacement.slice(3));
   triangles.splice(positions[0] * 3, 3, ...replacement.slice(0, 3));
-  return { ...art, triangles, auto: null };
+  return { ...art, triangles, ...(art.edges ? { edges: art.edges.filter(([x,y]) => edgeKey(x,y) !== edgeKey(a,b)) } : {}), auto: null };
 }
 
 /** Есть ли такой треугольник (порядок вершин и обход не важны). */
@@ -836,6 +885,7 @@ export function deleteArtPoint(art: ArtMesh, index: number): ArtMesh {
     points,
     triangles,
     ...(manual.length ? { manual } : {}),
+    edges: artLines(art).auto.filter(([a,b]) => a !== index && b !== index).map(([a,b]) => [a > index ? a-1 : a, b > index ? b-1 : b] as [number, number]),
     ...(outline && outline.length >= 3 ? { outline } : {}),
     auto: null,
   };
@@ -903,6 +953,12 @@ export function artLines(art: ArtMesh): { manual: Array<[number, number]>; auto:
     manual.push([from, to]);
   }
   const auto: Array<[number, number]> = [];
+  for (const [a, b] of art.edges ?? []) {
+    const key = edgeKey(a, b);
+    if (a === b || !art.points[a] || !art.points[b] || seen.has(key)) continue;
+    seen.add(key);
+    auto.push([a, b]);
+  }
   for (let index = 0; index < art.triangles.length; index += 3) {
     const tri = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
     for (const [from, to] of [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]) {
@@ -964,18 +1020,37 @@ function markManual(art: ArtMesh, a: number, b: number): ArtMesh {
  * Как и базовая, она сразу участвует в триангуляции: попала внутрь
  * треугольника — он делится на три, попала на линию — делятся оба
  * треугольника по её сторонам. Линии к ближайшим вершинам получаются
- * автоматическими: ручных здесь нет. Вне покрытия точка не появляется —
- * иначе она была бы невидимой и ничего не гнула.
+ * автоматическими. Вне покрытия соединяем только видимые вершины; даже
+ * изолированная точка допустима. Третья связь через барьер не достраивается.
  */
 export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
   if (art.points.length >= 1024) return null;
   const at = { x: round(point.x), y: round(point.y) };
   if (art.points.some((existing) => Math.hypot(existing.x - at.x, existing.y - at.y) < 1e-3)) return null;
 
+  // 2. На линии — делим её: треугольники по обе стороны распадаются на два.
+  const { manual, auto } = artLines(art);
+  let best: { a: number; b: number; distance: number } | null = null;
+  for (const [a, b] of [...manual, ...auto]) {
+    const distance = pointSegmentDistance(at, art.points[a], art.points[b]);
+    if (distance > 1e-3) continue;
+    if (best && distance >= best.distance) continue;
+    best = { a, b, distance };
+  }
+  if (best) {
+    const a = art.points[best.a], b = art.points[best.b];
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const t = Math.max(0, Math.min(1, ((at.x-a.x)*dx+(at.y-a.y)*dy)/(dx*dx+dy*dy)));
+    at.x = a.x + t*dx;
+    at.y = a.y + t*dy;
+  }
   // 1. Внутри треугольника — три новых треугольника.
   for (let index = 0; index < art.triangles.length; index += 3) {
     const tri = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
+    if (best) break;
     if (!triangleHolds(art.points, tri, at, -1e-7)) continue;
+    const barriers = [...artLines(art).manual, ...artLines(art).auto];
+    if (tri.some((id) => barriers.some(([a, b]) => a !== id && b !== id && crossesInterior(at, art.points[id], art.points[a], art.points[b])))) continue;
     const points = [...art.points, at];
     const next = points.length - 1;
     const triangles = [...art.triangles];
@@ -988,15 +1063,6 @@ export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
     return { ...art, points, triangles, auto: null };
   }
 
-  // 2. На линии — делим её: треугольники по обе стороны распадаются на два.
-  const { manual, auto } = artLines(art);
-  let best: { a: number; b: number; distance: number } | null = null;
-  for (const [a, b] of [...manual, ...auto]) {
-    const distance = pointSegmentDistance(at, art.points[a], art.points[b]);
-    if (distance > 1e-3) continue;
-    if (best && distance >= best.distance) continue;
-    best = { a, b, distance };
-  }
   if (!best) {
     // Outside the current coverage (including a deleted patch): connect only
     // visible boundary edges. Existing triangles and manual lines are barriers.
@@ -1004,18 +1070,19 @@ export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
     const next = art.points.length;
     const triangles = [...art.triangles];
     const edges = [...artLines(art).auto, ...artLines(art).manual];
-    const visible = (id: number) => !edges.some(([a, b]) =>
-      a !== id && b !== id && crossesInterior(at, points[id], points[a], points[b]));
+    const visible = (id: number) => !points.some((p, other) => other !== id && other !== next
+      && pointSegmentDistance(p, at, points[id]) < 1e-7)
+      && !edges.some(([a, b]) => a !== id && b !== id && crossesInterior(at, points[id], points[a], points[b]));
     const covered = (point: Vec2) => {
       for (let i = 0; i < art.triangles.length; i += 3) {
         if (triangleHolds(points, art.triangles.slice(i, i + 3), point)) return true;
       }
       return false;
     };
-    const boundary = [...edgeMap(art)].filter(([, owners]) => owners.length === 1)
-      .map(([key]) => key.split(":").map(Number) as [number, number]);
+    const owners = edgeMap(art);
+    const boundary = edges.filter(([a,b]) => (owners.get(edgeKey(a,b))?.length ?? 0) <= 1);
     // With no faces left, the first three non-collinear points seed a face.
-    if (!art.triangles.length) {
+    if (!art.triangles.length && !boundary.length) {
       for (let a = 0; a < next; a += 1) for (let b = a + 1; b < next; b += 1) {
         if (Math.abs(triangleArea(points[a], points[b], at)) > 1e-6) {
           boundary.push([a, b]);
@@ -1027,11 +1094,15 @@ export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
     for (const [a, b] of boundary) {
       if (!visible(a) || !visible(b)) continue;
       if (Math.abs(triangleArea(points[a], points[b], at)) < 1e-6) continue;
+      if (points.some((p, id) => id !== a && id !== b && id !== next && triangleHolds(points, [a, b, next], p, -1e-7))) continue;
+      if (edges.some(([c, d]) => [a, b].every((id) => id !== c && id !== d)
+        && crossesInterior(points[a], points[b], points[c], points[d]))) continue;
       const center = { x: (points[a].x + points[b].x + at.x) / 3, y: (points[a].y + points[b].y + at.y) / 3 };
       if (covered(center)) continue;
       triangles.push(a, b, next);
     }
-    return { ...art, points, triangles, auto: null };
+    const links = points.slice(0, next).flatMap((_, id): Array<[number, number]> => visible(id) ? [[id, next]] : []);
+    return { ...art, points, triangles, edges: [...(art.edges ?? []), ...links], auto: null };
   }
   const { a, b } = best;
   const points = [...art.points, at];
@@ -1065,6 +1136,7 @@ export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
     points,
     triangles,
     ...(manualNext.length ? { manual: manualNext } : {}),
+    ...(art.edges ? { edges: art.edges.flatMap(([from, to]): Array<[number, number]> => edgeKey(from,to) === key ? [[from,next],[next,to]] : [[from,to]]) } : {}),
     ...(art.outline ? { outline: art.outline } : {}),
     auto: null,
   };
@@ -1103,7 +1175,7 @@ export function addArtLine(art: ArtMesh, a: number, b: number): ArtMesh | null {
   });
   between.sort((left, right) => left.t - right.t);
   const chain = [a, ...between.map((item) => item.index), b];
-  let current = art;
+  let current = { ...art, ...(art.edges ? { edges: art.edges.filter(([x,y]) => !crossesInterior(start,end,art.points[x],art.points[y])) } : {}) };
   for (let step = 0; step + 1 < chain.length; step += 1) {
     const next = cutArtLine(current, chain[step], chain[step + 1]);
     if (!next) return null;
@@ -1125,7 +1197,7 @@ export function addArtLine(art: ArtMesh, a: number, b: number): ArtMesh | null {
  */
 function cutArtLine(art: ArtMesh, a: number, b: number): ArtMesh | null {
   const key = edgeKey(a, b);
-  if ((edgeMap(art).get(key) ?? []).length) return markManual(art, a, b);
+  if ((edgeMap(art).get(key) ?? []).length || (art.edges ?? []).some(([x,y]) => edgeKey(x,y) === key)) return markManual(art, a, b);
   const manualKeys = new Set((art.manual ?? []).map(([from, to]) => edgeKey(from, to)));
   let current = art;
   const limit = art.triangles.length * 4 + 32;
@@ -1179,9 +1251,9 @@ function crossingLines(art: ArtMesh, a: number, b: number): Array<[number, numbe
 export function removeArtLine(art: ArtMesh, a: number, b: number): ArtMesh {
   const key = edgeKey(a, b);
   const owners = edgeMap(art).get(key) ?? [];
-  if (!owners.length) return art;
+  if (!owners.length) return { ...art, manual: (art.manual ?? []).filter(([x,y]) => edgeKey(x,y) !== key), edges: (art.edges ?? []).filter(([x,y]) => edgeKey(x,y) !== key), auto: null };
   const manual = (art.manual ?? []).filter(([from, to]) => edgeKey(from, to) !== key);
-  const base: ArtMesh = { ...art, manual };
+  const base: ArtMesh = { ...art, manual, ...(art.edges ? { edges: art.edges.filter(([x,y]) => edgeKey(x,y) !== key) } : {}) };
   if (owners.length === 2) {
     const first = [art.triangles[owners[0] * 3], art.triangles[owners[0] * 3 + 1], art.triangles[owners[0] * 3 + 2]];
     const second = [art.triangles[owners[1] * 3], art.triangles[owners[1] * 3 + 1], art.triangles[owners[1] * 3 + 2]];
@@ -1378,10 +1450,50 @@ export function moveNode(mesh: MeshSpec, index: number, du: number, dv: number):
 /** Сдвиг точки нарезки: сама нарезка правится, сетка не трогается. */
 export function moveArtPoint(mesh: MeshSpec, index: number, du: number, dv: number): MeshSpec {
   if (index < 0 || index >= mesh.art.points.length) return mesh;
-  const points = mesh.art.points.map((point, position) => (position === index
-    ? { x: round(point.x + du), y: round(point.y + dv) }
-    : point));
-  return withMesh(mesh, { art: { ...mesh.art, points, auto: null } });
+  const art = mesh.art;
+  const point = { x: round(art.points[index].x + du), y: round(art.points[index].y + dv) };
+  let rest = deleteArtPoint(art, index);
+  // Close the old interior star before inserting at the new location. Otherwise
+  // crossing an automatic edge would leave the old cavity behind as a hole.
+  const boundary: Array<[number, number]> = [];
+  for (let at = 0; at < art.triangles.length; at += 3) {
+    const tri = art.triangles.slice(at,at+3);
+    if (!tri.includes(index)) continue;
+    const edge = tri.filter((id) => id !== index).map((id) => id > index ? id-1 : id);
+    boundary.push(edge as [number,number]);
+  }
+  const adjacent = new Map<number, number[]>();
+  for (const [a,b] of boundary) { adjacent.set(a,[...(adjacent.get(a) ?? []),b]); adjacent.set(b,[...(adjacent.get(b) ?? []),a]); }
+  if (adjacent.size >= 3 && [...adjacent.values()].every((ids) => ids.length === 2)) {
+    const ring: number[] = [];
+    let id = boundary[0][0], previous = -1;
+    while (!ring.includes(id) && ring.length <= adjacent.size) {
+      ring.push(id);
+      const next = adjacent.get(id)!.find((other) => other !== previous)!;
+      previous = id; id = next;
+    }
+    if (ring.length === adjacent.size && id === ring[0]) {
+      rest = { ...rest, triangles: [...rest.triangles,...earClip(ring.map((id) => rest.points[id])).map((at) => ring[at])] };
+    }
+  }
+  const inserted = addArtPoint(rest, point);
+  if (!inserted) return mesh;
+  // Reconnect manual constraints; reject the gesture rather than crossing one.
+  const remap = (id: number) => id === rest.points.length ? index : id >= index ? id + 1 : id;
+  const points = [...rest.points];
+  points.splice(index, 0, point);
+  let next: ArtMesh = { ...inserted, points,
+    triangles: inserted.triangles.map(remap),
+    ...(inserted.edges ? { edges: inserted.edges.map(([a,b]) => [remap(a),remap(b)] as [number,number]) } : {}),
+    manual: (inserted.manual ?? []).map(([a, b]) => [remap(a), remap(b)]),
+  };
+  for (const [a, b] of art.manual ?? []) {
+    if (a !== index && b !== index) continue;
+    const constrained = addArtLine(next, a, b);
+    if (!constrained) return mesh;
+    next = constrained;
+  }
+  return withMesh(mesh, { art: next });
 }
 
 /** Разрезать ребро нарезки: между двумя точками появляется третья. */

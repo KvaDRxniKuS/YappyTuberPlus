@@ -1,5 +1,5 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
-import { applyOffsets, meshOf, paramOffsets, sampleGrid } from "../engine/mesh";
+import { applyOffsets, meshOf, paramOffsets, sampleDeform } from "../engine/mesh";
 import { invertAffine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 import { zoneGeometry } from "./mesh";
 
@@ -76,8 +76,8 @@ export function deformOffset(
   const zone = zoneGeometry(object);
   const uv = zone.toZone(content);
   // За зоной картинка не деформируется — там и изгиба нет.
-  if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return { x: 0, y: 0 };
-  const shifted = sampleGrid(applyOffsets(mesh.deform, offsets), uv.x, uv.y);
+
+  const shifted = sampleDeform(applyOffsets(mesh.deform, offsets), uv.x, uv.y);
   const target = zone.toObject(shifted.x, shifted.y);
   const du = target.x - content.x;
   const dv = target.y - content.y;

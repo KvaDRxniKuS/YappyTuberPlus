@@ -41,7 +41,7 @@ import {
 } from "../render/mesh";
 import {
   BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, addArtLine, addArtPoint, applyOffsets, artFromGrid, artLines,
-  brushGrid, brushWeights, defaultMesh, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode,
+  brushGrid, brushWeights, defaultMesh, editGridRest, inverseDeform, paramOffsets, resizeRestControl, regularGrid, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode,
   moveNodeMirrored, nearestArtLine, removeArtLine, removeArtPoint, smoothGrid, symmetrizeGrid,
 } from "../engine/mesh";
 
@@ -164,6 +164,7 @@ type Interaction =
   /** Сетка: тянем узел деформера (`index` — `j·cols + i`). */
   | {
       type: "meshNode";
+      setup?: boolean;
       objectId: string;
       index: number;
       start: Point;
@@ -195,7 +196,18 @@ type Interaction =
       initial: MeshSpec;
       axis?: "x" | "y" | null;
     }
+  | { type: "meshRestRotate"; objectId: string; initial: MeshSpec; center: Vec2; start: number }
   | null;
+
+function restMesh(mesh: MeshSpec): MeshSpec {
+  return { ...mesh, deform: { ...mesh.deform, points: mesh.deform.rest ?? regularGrid(mesh.deform.cols,mesh.deform.rows).points } };
+}
+function gridRotationHandle(points: Vec2[], cols: number, zoom: number) {
+  const base = { x: (points[0].x+points[cols-1].x)/2, y: (points[0].y+points[cols-1].y)/2 };
+  const center = { x: points.reduce((sum,p) => sum+p.x,0)/points.length, y: points.reduce((sum,p) => sum+p.y,0)/points.length };
+  const length = Math.hypot(base.x-center.x,base.y-center.y) || 1;
+  return { base, tip: { x: base.x+(base.x-center.x)*26/zoom/length, y: base.y+(base.y-center.y)*26/zoom/length } };
+}
 
 /** Сетка объекта для редактора: без неё редактор начинает с чистой. */
 function editMesh(object: RigObject): MeshSpec {
@@ -244,6 +256,7 @@ export function Scene(props: SceneProps) {
   const [lineCount, setLineCount] = useState(0);
   /** Инструмент «Ручная линия» включён: клики копят точки, а не ставят новые. */
   const [lineMode, setLineMode] = useState(false);
+  const setupGrid = useRef(false);
   /**
    * Что видно в сцене: сетка, нарезка или обе. По умолчанию обе — без этого
    * сетка и артмеш ложатся друг на друга (у 2×2 они совпадают), и не видно,
@@ -416,7 +429,7 @@ export function Scene(props: SceneProps) {
       if (!showGrid && (current.tool === "deform")) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", null, true, offsets);
       if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true, offsets);
     }
-    if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets);
+    if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets, setupGrid.current);
     if (showArt) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
     if (current.tool === "deform" && line.current) {
       drawLineChain(ctx, previewed, frame, zoom, line.current, offsets);
@@ -482,6 +495,18 @@ export function Scene(props: SceneProps) {
     if (sameCanvasSize(size, { width: current.width, height: current.height })) return;
     propsRef.current.onCanvasSize(size.width, size.height);
   };
+
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      const next = event.ctrlKey;
+      if (setupGrid.current !== next) { setupGrid.current = next; markDirty(); }
+    };
+    const blur = () => { setupGrid.current = false; markDirty(); };
+    window.addEventListener("keydown", key);
+    window.addEventListener("keyup", key);
+    window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("keydown", key); window.removeEventListener("keyup", key); window.removeEventListener("blur", blur); };
+  }, []);
 
   useEffect(() => {
     const element = viewport.current;
@@ -872,7 +897,7 @@ export function Scene(props: SceneProps) {
           <span className="tool-separator" />
           <button
             className={props.tool === "warp" ? "active" : ""}
-            title="Сетка (T) · узлы деформации, стороны зоны и поворот"
+            title="Сетка (T) · узлы — деформация; Ctrl — база, углы — размер, верхняя ручка — поворот"
             disabled={!props.primaryId}
             onClick={() => props.onTool("warp")}
           ><Frame size={15} /></button>
@@ -1208,14 +1233,15 @@ export function Scene(props: SceneProps) {
                     };
                     return;
                   }
-                  const art = addArtPoint(mesh.art, zonePoint(object, content));
+                  const displayGrid = applyOffsets(shown.mesh.deform, paramOffsets(mesh,values));
+                  const art = addArtPoint(mesh.art, inverseDeform(displayGrid, zonePoint(object, content)));
                   if (art) commit({ ...mesh, enabled: true, art });
                   return;
                 } else {
                   // «Сетка»: кисть важнее узла — она и означает «тянуть пятно,
                   // а не узел». Дальше уже узлы и зона.
                   const brush = mesh.brush ?? BRUSH_DEFAULT;
-                  if (brush.on) {
+                  if (brush.on && !event.ctrlKey) {
                     current.onDragStart();
                     interaction.current = {
                       type: "meshBrush", objectId: object.id, start: point, last: content,
@@ -1225,17 +1251,33 @@ export function Scene(props: SceneProps) {
                   }
                   // «Сетка»: сначала узлы, потом зона — узел внутри зоны должен
                   // выигрывать, иначе его невозможно сдвинуть.
-                  const nodes = meshNodePoints({ ...object, mesh: shownMesh(mesh, stateOffsets(object.id)) }, values);
-                  const index = nearestPoint(nodes, content, radius);
+                  const display = event.ctrlKey ? restMesh(mesh) : shownMesh(mesh, stateOffsets(object.id));
+                  const nodes = meshNodePoints({ ...object, mesh: display }, event.ctrlKey ? null : values);
+                  if (event.ctrlKey) {
+                    const worldNodes = nodes.map((p) => transformPoint(matrix, left+p.x, top+p.y));
+                    const handle = gridRotationHandle(worldNodes, mesh.deform.cols, camera.current.zoom);
+                    if (Math.hypot(point.x-handle.tip.x, point.y-handle.tip.y) <= radius) {
+                      const center = zonePoint(object, {
+                        x: nodes.reduce((sum,p) => sum+p.x,0)/nodes.length,
+                        y: nodes.reduce((sum,p) => sum+p.y,0)/nodes.length,
+                      });
+                      const at = zonePoint(object, content);
+                      current.onDragStart();
+                      interaction.current = { type: "meshRestRotate", objectId: object.id, initial: mesh, center, start: Math.atan2((at.y-center.y)*zoneGeometry(object).height,(at.x-center.x)*zoneGeometry(object).width) };
+                      return;
+                    }
+                  }
+                  const worldNodes = nodes.map((p) => transformPoint(matrix,left+p.x,top+p.y));
+                  const index = nearestPoint(worldNodes, point, radius);
                   if (index !== null) {
                     current.onDragStart();
                     interaction.current = {
-                      type: "meshNode", objectId: object.id, index, start: point,
+                      type: "meshNode", setup: event.ctrlKey, objectId: object.id, index, start: point,
                       initial: { ...mesh, enabled: true },
                     };
                     return;
                   }
-                  // Only the blue grid controls deformation; no hidden frame handles.
+                  // Ctrl edits the rest grid; rotation is available on its visible top handle.
                   return;
                 }
               }
@@ -1410,6 +1452,22 @@ export function Scene(props: SceneProps) {
               queueLive(() => propsRef.current.onMesh(object.id, { ...current.initial, deform: next }));
               return;
             }
+            if (current.type === "meshRestRotate") {
+              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
+              if (!object) return;
+              const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
+              const world = scenePoint(event);
+              const local = transformPoint(invertAffine(objectMatrix(object, values)),world.x,world.y);
+              const at = zonePoint(object,{ x: local.x+object.pivot.x*object.width, y: local.y+object.pivot.y*object.height });
+              const zone = zoneGeometry(object);
+              let angle = Math.atan2((at.y-current.center.y)*zone.height,(at.x-current.center.x)*zone.width)-current.start;
+              if (event.shiftKey) angle = Math.round(angle/(Math.PI/12))*(Math.PI/12);
+              const c = Math.cos(angle), sin = Math.sin(angle), center = current.center;
+              const deform = editGridRest(current.initial.deform,(p) => ({ x: center.x+(p.x-center.x)*c-(p.y-center.y)*sin*zone.height/zone.width, y: center.y+(p.x-center.x)*sin*zone.width/zone.height+(p.y-center.y)*c }));
+              const id = current.objectId, initial = current.initial;
+              queueLive(() => propsRef.current.onMesh(id,{ ...initial, deform }));
+              return;
+            }
             if (current.type === "meshNode" || current.type === "meshArtPoint") {
               const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
               if (!object) return;
@@ -1436,11 +1494,19 @@ export function Scene(props: SceneProps) {
               } else {
                 current.axis = null;
               }
+              if (current.type === "meshArtPoint") {
+                const displayed = applyOffsets(shownMesh(initial,stateOffsets(object.id)).deform,paramOffsets(initial,values));
+                const fromSource = inverseDeform(displayed,zonePoint(object,from));
+                const toSource = inverseDeform(displayed,zonePoint(object,to));
+                delta = {x:toSource.x-fromSource.x,y:toSource.y-fromSource.y};
+              }
               // Симметрия — про сетку: нарезка правится по точкам и её пары
               // не зеркалятся, иначе ребро «разъехалось» бы с картинкой.
               const mirror = initial.mirror ?? MIRROR_DEFAULT;
               const next = current.type === "meshNode"
-                ? (mirror.on
+                ? (current.setup
+                  ? { ...initial, deform: resizeRestControl(initial.deform,current.index,delta) }
+                  : mirror.on
                   ? { ...initial, deform: moveNodeMirrored(initial.deform, current.index, delta.x, delta.y, mirror) }
                   : moveNode(initial, current.index, delta.x, delta.y))
                 : moveArtPoint(initial, current.index, delta.x, delta.y);
@@ -1596,7 +1662,7 @@ const TOOL_HINT: Record<SceneTool, string> = {
   lasso: "Обведите объекты; Shift — добавить к выборке",
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
-  warp: "Сетка: узлы (Shift — по осям), кисть, симметрия и сглаживание — во второй строке панели; зона и поворот",
+  warp: "Сетка: узлы — деформация; Ctrl+угол — размер базы, Ctrl+узел — базовая форма, верхняя ручка с Ctrl — поворот; Shift — оси / шаг 15°",
   deform: "Нарезка: ЛКМ — новая точка или перетаскивание; Alt+ЛКМ — удалить точку/линию; инструмент линии — выбрать точки, Enter или повторный клик по инструменту для построения, Esc — отмена",
   pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
@@ -1761,7 +1827,7 @@ function previewPoints(preview: StatePreview | null | undefined): Map<string, Re
 function isDragInteraction(current: Interaction | null): boolean {
   if (!current) return false;
   return current.type === "drag" || current.type === "warpFrame" || current.type === "warpCorner"
-    || current.type === "warpRotate" || current.type === "meshNode" || current.type === "meshArtPoint"
+    || current.type === "meshRestRotate" || current.type === "warpRotate" || current.type === "meshNode" || current.type === "meshArtPoint"
     || current.type === "meshBrush";
 }
 
@@ -1795,17 +1861,13 @@ function drawMeshOverlay(
   faint = false,
   /** Смещения узлов от предпросмотра состояний: форма, которую видно. */
   offsets?: Record<string, Vec2> | null,
+  setup = false,
 ) {
   if (!primaryId) return;
   const object = preset.objects.find((item) => item.id === primaryId);
   if (!object || object.kind === "group" || object.kind === "text") return;
   const fade = faint ? 0.35 : 1;
-  const mesh = meshOf(object);
-  if (!mesh) {
-    if (faint) return;
-    drawWarpOverlay(ctx, preset, frame, zoom, primaryId, mode === "grid" ? "frame" : "corners");
-    return;
-  }
+  const mesh = meshOf(object) ?? defaultMesh();
   const values = frame?.objects[object.id] || staticValues(object);
   const matrix = objectMatrix(object, values);
   const left = -object.pivot.x * object.width;
@@ -1821,7 +1883,14 @@ function drawMeshOverlay(
   ctx.save();
   if (mode === "grid") {
 
-    const nodes = meshNodePoints({ ...object, mesh: shownMesh(mesh, offsets) }, values);
+    const nodes = meshNodePoints({ ...object, mesh: setup ? restMesh(mesh) : shownMesh(mesh, offsets) }, setup ? null : values);
+    if (setup && !faint) {
+      const handle = gridRotationHandle(nodes.map(at), mesh.deform.cols, zoom);
+      ctx.strokeStyle = MESH_GRID_COLOR;
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath(); ctx.moveTo(handle.base.x,handle.base.y); ctx.lineTo(handle.tip.x,handle.tip.y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(handle.tip.x,handle.tip.y,5/zoom,0,Math.PI*2); ctx.stroke();
+    }
     ctx.strokeStyle = MESH_GRID_COLOR;
     ctx.lineWidth = line;
     ctx.globalAlpha = 0.75 * fade;

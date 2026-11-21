@@ -256,6 +256,8 @@ export interface WarpSpec {
  * площадь, проверяется вырожденность и переворачивается диагональ.
  */
 export interface ArtMesh {
+  /** Automatic edges which do not yet bound a face. */
+  edges?: Array<[number, number]>;
   points: Vec2[];
   /** Тройки индексов точек. */
   triangles: number[];
@@ -280,6 +282,8 @@ export interface ArtMesh {
  * двигают инструментом на сцене и позами состояний.
  */
 export interface GridSpec {
+  /** Rest positions of controls; absent means the regular unit grid. */
+  rest?: Vec2[];
   cols: number;
   rows: number;
   points: Vec2[];

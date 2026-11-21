@@ -6,7 +6,7 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ParamPicker } from "./ParamPicker";
 import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
-import { meshOf, resizeGrid } from "../engine/mesh";
+import { editGridRest, meshOf, resizeGrid } from "../engine/mesh";
 import {
   addKey, addLayer, addPoints, cloneLayers, gridRecordDelta, fromPosePoints, insertLayers, invertByInput, keyAt, keyUnderPoint,
   layerRange, makeLayer, mirrorLayer, moveKey, noPoints, patchLayer, pointsFromGrids, poseAt, poseFromBase,
@@ -512,6 +512,11 @@ export function StatesPanel(props: StatesPanelProps) {
     if (props.dragging) return;
     // Первый кадр вкладки и предпросмотр сетку не меняют — писать нечего.
     const previous = lastMesh.current;
+    if (JSON.stringify(author.rest) !== JSON.stringify(mesh.deform.rest)) {
+      authorMesh.current = editGridRest(author, (p,i) => mesh.deform.rest?.[i] ?? p);
+      lastMesh.current = mesh.deform;
+      return;
+    }
     lastMesh.current = { ...mesh.deform, points: [...mesh.deform.points] };
     const delta = gridRecordDelta(author, previous, mesh.deform);
     if (!delta) return;

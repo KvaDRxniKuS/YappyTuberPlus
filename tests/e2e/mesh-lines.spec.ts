@@ -190,3 +190,47 @@ test("новая точка вне покрытия соединяется с в
   expect(next.points).toHaveLength(5);
   expect(artArea(next)).toBeCloseTo(1.25, 6);
 });
+
+test("при переносе внутренней точки её звезда перестраивается без потери покрытия", async () => {
+  const { defaultMesh, moveArtPoint } = await import("../../src/engine/mesh");
+  const art = addArtPoint(artFromGrid(2, 2), { x: 0.5, y: 0.5 })!;
+  const next = moveArtPoint({ ...defaultMesh(), art }, 4, 0.2, -0.1).art;
+  expect(artArea(next)).toBeCloseTo(1, 6);
+  expect(next.triangles).toHaveLength(12);
+  for (const [a,b] of [...artLines(next).auto, ...artLines(next).manual]) {
+    for (const [c,d] of [...artLines(next).auto, ...artLines(next).manual]) expect(crosses(next,a,b,c,d)).toBe(false);
+  }
+});
+
+test("линия не удваивается при добавлении точки почти на ребро", () => {
+  const next = addArtPoint(artFromGrid(2, 2), { x: 0.5, y: 0.5001 })!;
+  expect(next.points[4].x).toBeCloseTo(next.points[4].y, 6);
+  expect(hasLine(next,0,3)).toBe(false);
+  const edges = artLines(next).auto.map(([a,b]) => edgeKey(a,b));
+  expect(new Set(edges).size).toBe(edges.length);
+});
+
+test("два видимых соседа не требуют третьей линии через барьер", () => {
+  const art: ArtMesh = {
+    points: [{x:0,y:0},{x:0,y:1},{x:1,y:0},{x:1,y:1}],
+    triangles: [], manual: [[0,1]], edges: [[0,2],[1,3],[2,3]], auto: null,
+  };
+  const next = addArtPoint(art,{x:-0.5,y:0.5})!;
+  expect(hasLine(next,4,0)).toBe(true);
+  expect(hasLine(next,4,1)).toBe(true);
+  expect(hasLine(next,4,2)).toBe(false);
+  expect(hasLine(next,4,3)).toBe(false);
+});
+
+test("многократная вставка и переход точки через авто-линии не создают пересечений", async () => {
+  const { defaultMesh, moveArtPoint } = await import("../../src/engine/mesh");
+  let art = artFromGrid(2,2);
+  for (const point of [{x:0.2,y:0.3},{x:0.7,y:0.4},{x:0.3,y:0.8},{x:0.9,y:0.7}]) art = addArtPoint(art,point)!;
+  for (const target of [{x:0.6,y:0.6},{x:0.8,y:0.2},{x:0.4,y:0.7}]) {
+    const p = art.points[4];
+    art = moveArtPoint({...defaultMesh(),art},4,target.x-p.x,target.y-p.y).art;
+    expect(artArea(art)).toBeCloseTo(1,5);
+    const edges = [...artLines(art).auto,...artLines(art).manual];
+    for (const [a,b] of edges) for (const [c,d] of edges) expect(crosses(art,a,b,c,d)).toBe(false);
+  }
+});

@@ -170,7 +170,7 @@ test("отрисовка: старая деформация идёт тем же
   expect(clean(geometry.targets)[1]).toEqual({ x: 220, y: 0 });
   const { ctx, calls } = fakeContext();
   expect(drawMeshImage(ctx, {} as CanvasImageSource, object, 200, 100)).toBe(true);
-  expect(calls.drawImage).toBe(2);
+  expect(calls.drawImage).toBe(128);
 });
 
 test("ручки: узлы сетки и точки нарезки в координатах картинки", () => {

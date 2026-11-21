@@ -1,5 +1,5 @@
 import type { ObjectFrame, RigObject, Vec2 } from "../types";
-import { applyOffsets, meshOf, meshVertices, paramOffsets } from "../engine/mesh";
+import { applyOffsets, meshOf, meshVertices, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
 import { affineFromTriangles } from "./warp";
 
 /*
@@ -101,10 +101,10 @@ export function meshGeometry(
     targets: vertices.targets.map((point) => zone.toObject(point.x, point.y)),
     // Текстурная координата — положение точки внутри картинки: зона вырезает
     // свой кусок картинки, и UV считается от её границ.
-    uv: vertices.params.map((point) => ({
-      x: mesh.frame.x + point.x * mesh.frame.width,
-      y: mesh.frame.y + point.y * mesh.frame.height,
-    })),
+    uv: vertices.params.map((point) => {
+      const source = zone.toObject(point.x, point.y);
+      return { x: source.x / width, y: source.y / height };
+    }),
     triangles: vertices.triangles,
   };
 }
@@ -156,17 +156,42 @@ export function drawMeshImage(
   let geometry = meshGeometry(object, width, height, values, keyOffsets);
   if (!geometry) return false;
   if (geometry.triangles.length < 3) return true;
-  if (deform) geometry = deformGeometry(geometry, deform);
+  const grid = applyOffsets(mesh.deform, mergeGridOffsets(paramOffsets(mesh,values),keyOffsets));
+  const rest = grid.rest ?? regularGrid(grid.cols,grid.rows).points;
+  const strained = grid.points.some((p,i) => Math.hypot(p.x-rest[i].x,p.y-rest[i].y) > 1e-7);
+  if (strained) {
+    // Tessellate the SOURCE surface, then sample its deformer. Subdividing
+    // already deformed triangles would miss interior controls and stretch the
+    // texture differently whenever an art vertex moved.
+    const source = meshGeometry({ ...object, mesh: { ...mesh, deform: regularGrid(2,2) } },width,height)!;
+    const zone = zoneGeometry(object,width,height);
+    const levels = Math.max(3,Math.ceil(Math.log2(Math.max(grid.cols,grid.rows)-1)));
+    geometry = deformGeometry(source,(p) => {
+      const uv = zone.toZone(p);
+      const target = sampleDeform(grid,uv.x,uv.y);
+      const point = zone.toObject(target.x,target.y);
+      return deform ? deform(point) : point;
+    },levels);
+  } else if (deform) geometry = deformGeometry(geometry, deform);
   drawTriangles(ctx, image, width, height, geometry);
   return true;
 }
 
 /** Картинка целиком, но с вырезанной зоной: под сетку она не попадает. */
+function mergeGridOffsets(...sources: Array<Record<string, Vec2> | null | undefined>): Record<string, Vec2> {
+  const result: Record<string,Vec2> = {};
+  for (const source of sources) for (const [id,delta] of Object.entries(source ?? {})) {
+    const previous = result[id] ?? {x:0,y:0};
+    result[id] = {x:previous.x+delta.x,y:previous.y+delta.y};
+  }
+  return result;
+}
+
 /** Subdivide only covered triangles before a non-affine parent deformation.
  * UVs stay fixed; no control grid is changed and holes remain holes. */
-export function deformGeometry(geometry: MeshGeometry, deform: (point: Vec2) => Vec2): MeshGeometry {
+export function deformGeometry(geometry: MeshGeometry, deform: (point: Vec2) => Vec2, levels = 3): MeshGeometry {
   let result = geometry;
-  for (let level = 0; level < 3 && result.triangles.length < 24000; level += 1) {
+  for (let level = 0; level < levels && result.triangles.length < 24000; level += 1) {
     const targets = [...result.targets];
     const uv = [...result.uv];
     const triangles: number[] = [];
