@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { defaultMesh, regularGrid, shiftNode } from "../../src/engine/mesh";
 import {
-  artEdgeHit, artPointPoints, artTriangleHit, drawMeshImage, edgePairs, meshGeometry, meshNodePoints,
+  artEdgeHit, artPointPoints, deformGeometry, artTriangleHit, drawMeshImage, edgePairs, meshGeometry, meshNodePoints,
   meshMatrix, meshQuad, nearestPoint, zoneDelta, zoneGeometry, zoneOutline, zonePoint,
 } from "../../src/render/mesh";
 import {
@@ -133,13 +133,13 @@ test("рамка объекта: деформация расширяет чет�
   ]);
 });
 
-test("отрисовка: картинка с дырой под зоной плюс треугольники", () => {
+test("отрисовка: только треугольники без фоновой копии", () => {
   const object = sprite({ mesh: enabled() });
   const { ctx, calls } = fakeContext();
   expect(drawMeshImage(ctx, {} as CanvasImageSource, object, 200, 100)).toBe(true);
   // Один раз — картинка вокруг зоны, два — треугольники нет: у 2×2 их две пары.
-  expect(calls.drawImage).toBe(3);
-  expect(calls.clip).toBe(3);
+  expect(calls.drawImage).toBe(2);
+  expect(calls.clip).toBe(2);
   // Выключенная сетка — рендер обычный, вызовов нет.
   const off = sprite({ mesh: { ...enabled(), enabled: false } });
   const quiet = fakeContext();
@@ -170,7 +170,7 @@ test("отрисовка: старая деформация идёт тем же
   expect(clean(geometry.targets)[1]).toEqual({ x: 220, y: 0 });
   const { ctx, calls } = fakeContext();
   expect(drawMeshImage(ctx, {} as CanvasImageSource, object, 200, 100)).toBe(true);
-  expect(calls.drawImage).toBe(3);
+  expect(calls.drawImage).toBe(2);
 });
 
 test("ручки: узлы сетки и точки нарезки в координатах картинки", () => {
@@ -298,4 +298,16 @@ test("сдвиг камеры и окна не переворачивает ка
   const corner = applyGl(matrix, 40, 30);
   expect(corner.x).toBeCloseTo(1, 6);
   expect(corner.y).toBeCloseTo(-1, 6);
+});
+
+
+test("родитель делит только покрытые треугольники, UV и дырки сохраняются", () => {
+  const mesh = enabled();
+  mesh.art = { ...mesh.art, triangles: mesh.art.triangles.slice(0, 3), auto: null };
+  const source = meshGeometry(sprite({ mesh }))!;
+  const bent = deformGeometry(source, (p) => ({ x: p.x + p.y * p.y / 100, y: p.y }));
+  expect(bent.triangles).toHaveLength(3 * 64);
+  expect(source.triangles).toHaveLength(3);
+  expect(bent.uv.slice(0, source.uv.length)).toEqual(source.uv);
+  expect(bent.targets[3].x).toBeCloseTo(source.targets[3].x + source.targets[3].y ** 2 / 100);
 });

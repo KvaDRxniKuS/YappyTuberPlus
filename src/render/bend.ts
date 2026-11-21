@@ -1,6 +1,6 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { applyOffsets, meshOf, paramOffsets, sampleGrid } from "../engine/mesh";
-import { invertAffine, objectMatrix, transformPoint } from "./rigCanvas";
+import { invertAffine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 import { zoneGeometry } from "./mesh";
 
 /*
@@ -78,8 +78,9 @@ export function deformOffset(
   // За зоной картинка не деформируется — там и изгиба нет.
   if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return { x: 0, y: 0 };
   const shifted = sampleGrid(applyOffsets(mesh.deform, offsets), uv.x, uv.y);
-  const du = (shifted.x - uv.x) * zone.width;
-  const dv = (shifted.y - uv.y) * zone.height;
+  const target = zone.toObject(shifted.x, shifted.y);
+  const du = target.x - content.x;
+  const dv = target.y - content.y;
   return {
     x: matrix.a * du + matrix.c * dv,
     y: matrix.b * du + matrix.d * dv,
@@ -132,4 +133,31 @@ export function bendFrame(
       : values;
   }
   return { ...frame, objects };
+}
+
+/** Maps mesh vertices, not object bases or child deformer control points. */
+export function parentMeshTransform(
+  preset: RigPreset,
+  object: RigObject,
+  frame: RigFrame | null,
+  points?: Map<string, Record<string, Vec2>>,
+): ((point: Vec2) => Vec2) | undefined {
+  if (object.deformParent === false) return undefined;
+  // Apply the nearest parent first, then its ancestors. Control grids always
+  // remain in their own authored coordinate system.
+  const chain = ancestors(preset, object).reverse().filter((parent) => meshOf(parent)?.enabled);
+  if (!chain.length) return undefined;
+  const values = frame?.objects[object.id] ?? staticValues(object);
+  const matrix = objectMatrix(object, values);
+  const inverse = invertAffine(matrix);
+  return (point) => {
+    let world = transformPoint(matrix, point.x - object.pivot.x * object.width, point.y - object.pivot.y * object.height);
+    for (const parent of chain) {
+      const values = frame?.objects[parent.id] ?? staticValues(parent);
+      const delta = deformOffset(parent, values, world, points?.get(parent.id));
+      world = { x: world.x + delta.x, y: world.y + delta.y };
+    }
+    const local = transformPoint(inverse, world.x, world.y);
+    return { x: local.x + object.pivot.x * object.width, y: local.y + object.pivot.y * object.height };
+  };
 }

@@ -1185,6 +1185,16 @@ export function StatesPanel(props: StatesPanelProps) {
                 step={Math.max(1e-6, round3(span / 100))}
                 autoFocus
                 title="Значение на шкале, где встанет новый ключ"
+                onConfirm={(value) => {
+                  if (!layer) return;
+                  const at = round3(value);
+                  if (keyAt(layer, at) >= 0) {
+                    setNewKey({ value: at, error: "здесь уже есть ключ — выберите другое значение" });
+                    return;
+                  }
+                  createKey(at);
+                  setNewKey(null);
+                }}
                 onCommit={(value) => setNewKey((current) => (current ? { ...current, value: round3(value), error: "" } : current))}
               />
             </div>

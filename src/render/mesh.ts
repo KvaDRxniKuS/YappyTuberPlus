@@ -1,5 +1,5 @@
 import type { ObjectFrame, RigObject, Vec2 } from "../types";
-import { applyOffsets, meshIsZoneQuad, meshOf, meshVertices, paramOffsets } from "../engine/mesh";
+import { applyOffsets, meshOf, meshVertices, paramOffsets } from "../engine/mesh";
 import { affineFromTriangles } from "./warp";
 
 /*
@@ -149,38 +149,46 @@ export function drawMeshImage(
   height: number,
   values?: ObjectFrame | null,
   keyOffsets?: Record<string, Vec2> | null,
+  deform?: (point: Vec2) => Vec2,
 ): boolean {
   const mesh = meshOf(object);
   if (!mesh || !mesh.enabled) return false;
-  const geometry = meshGeometry(object, width, height, values, keyOffsets);
+  let geometry = meshGeometry(object, width, height, values, keyOffsets);
   if (!geometry) return false;
   if (geometry.triangles.length < 3) return true;
-  // Нарезка, которая ровно повторяет зону: картинка вне зоны остаётся ровной,
-  // как в старой деформации крайних точек. Если же артмеш правили руками, он
-  // сам решает, что и где рисовать, — второй раз картинку не кладём.
-  if (meshIsZoneQuad(mesh)) {
-    drawImageWithHole(ctx, image, width, height, zoneQuad(zoneGeometry(object, width, height)));
-  }
+  if (deform) geometry = deformGeometry(geometry, deform);
   drawTriangles(ctx, image, width, height, geometry);
   return true;
 }
 
 /** Картинка целиком, но с вырезанной зоной: под сетку она не попадает. */
-function drawImageWithHole(
-  ctx: CanvasRenderingContext2D,
-  image: CanvasImageSource,
-  width: number,
-  height: number,
-  hole: Vec2[],
-): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, width, height);
-  hole.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
-  ctx.closePath();
-  ctx.clip("evenodd");
-  ctx.drawImage(image, 0, 0, width, height);
-  ctx.restore();
+/** Subdivide only covered triangles before a non-affine parent deformation.
+ * UVs stay fixed; no control grid is changed and holes remain holes. */
+export function deformGeometry(geometry: MeshGeometry, deform: (point: Vec2) => Vec2): MeshGeometry {
+  let result = geometry;
+  for (let level = 0; level < 3 && result.triangles.length < 24000; level += 1) {
+    const targets = [...result.targets];
+    const uv = [...result.uv];
+    const triangles: number[] = [];
+    const midpoints = new Map<string, number>();
+    const midpoint = (a: number, b: number) => {
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      const previous = midpoints.get(key);
+      if (previous !== undefined) return previous;
+      const index = targets.length;
+      targets.push({ x: (targets[a].x + targets[b].x) / 2, y: (targets[a].y + targets[b].y) / 2 });
+      uv.push({ x: (uv[a].x + uv[b].x) / 2, y: (uv[a].y + uv[b].y) / 2 });
+      midpoints.set(key, index);
+      return index;
+    };
+    for (let i = 0; i < result.triangles.length; i += 3) {
+      const [a, b, c] = result.triangles.slice(i, i + 3);
+      const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
+      triangles.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+    }
+    result = { targets, uv, triangles };
+  }
+  return { ...result, targets: result.targets.map(deform) };
 }
 
 /* ── Треугольники ───────────────────────────────────────────────────────── */

@@ -17,6 +17,7 @@ interface NumberFieldProps {
   inputRef?: RefObject<HTMLInputElement | null>;
   /** Забрать фокус при появлении: так открывается диалог с одним полем. */
   autoFocus?: boolean;
+  onConfirm?: (value: number) => void;
 }
 
 /**
@@ -82,7 +83,9 @@ export function NumberField(props: NumberFieldProps) {
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
+          const parsed = parse(draft, integer);
           event.currentTarget.blur();
+          if (parsed !== null) props.onConfirm?.(clamp(parsed, min, max));
         }
         if (event.key === "Escape") {
           setDraft(format(value));

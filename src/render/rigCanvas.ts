@@ -1,3 +1,5 @@
+import { parentMeshTransform } from "./bend";
+import { defaultMesh } from "../engine/mesh";
 import type { EnvironmentSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
@@ -221,6 +223,7 @@ export interface DrawRigOptions {
    * точки двигает редактор — ровно как позы предпросмотра.
    */
   meshPoints?: Map<string, Record<string, Vec2>>;
+  meshTransform?: (object: RigObject) => ((point: Vec2) => Vec2) | undefined;
   /** Текстовый канал модулей: подстановки в шаблоне текстового объекта. */
   texts?: TextChannel;
   /**
@@ -251,6 +254,7 @@ export function drawRig(
   assets: SpriteAssets,
   options: DrawRigOptions = {},
 ): void {
+  options = { ...options, meshTransform: (object) => parentMeshTransform(preset, object, frame, options.meshPoints) };
   const zoom = options.lineScale ?? 1;
   const ghostAlpha = options.ghostAlpha ?? 0.25;
   // Камера и масштаб экрана: свет и нормали нужны в пикселях холста, а не в
@@ -508,14 +512,6 @@ function drawPlain(
   ctx.save();
   ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
   ctx.globalAlpha = alpha;
-  if (object.kind === "shape") {
-    // Контуры живут в координатах рамки объекта: пивот и поворот те же, что
-    // у спрайта, поэтому фигура — обычный объект сцены.
-    ctx.translate(left, top);
-    drawShapeObject(ctx, object);
-    ctx.restore();
-    return;
-  }
   drawObjectContent(ctx, object, frame, assets, options, zoom);
   ctx.restore();
 }
@@ -529,8 +525,22 @@ function drawObjectContent(
   options: DrawRigOptions,
   zoom: number,
 ): void {
+  const deform = options.meshTransform?.(object);
+  // A child without its own enabled deformer still has a triangulated surface.
+  // This is a render-only mesh: no child control points or saved data are moved.
+  if (deform && !meshEnabled(object)) object = { ...object, mesh: { ...defaultMesh(), enabled: true } };
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
+  if (object.kind === "shape") {
+    ctx.save();
+    ctx.translate(left, top);
+    if (meshEnabled(object)) {
+      const image = shapeSurface(object);
+      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform);
+    } else drawShapeObject(ctx, object);
+    ctx.restore();
+    return;
+  }
   if (object.kind === "light") {
     // Свет рисуется от пивота: пятно — это градиент в форме, поэтому объект с
     // тёмным цветом работает тенью, со светлым — лампой. Маска и прозрачность
@@ -559,7 +569,7 @@ function drawObjectContent(
       // медиа-объекта начинается его рамка.
       ctx.save();
       ctx.translate(boxLeft, boxTop);
-      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id], options.meshPoints?.get(object.id));
+      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform);
       ctx.restore();
     } else if (picture && warpEnabled(object)) {
       // Деформация крайних точек: остаётся для объектов, которые ещё не
@@ -582,7 +592,7 @@ function drawObjectContent(
     if (meshEnabled(object)) {
       ctx.save();
       ctx.translate(left, top);
-      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id));
+      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform);
       ctx.restore();
     } else if (warpEnabled(object)) {
       ctx.save();
@@ -599,6 +609,20 @@ function drawObjectContent(
     ctx.lineWidth = 1 / zoom;
     ctx.strokeRect(left, top, object.width, object.height);
   }
+}
+
+const shapeSurfaces = new WeakMap<RigObject, HTMLCanvasElement>();
+function shapeSurface(object: RigObject): HTMLCanvasElement {
+  let canvas = shapeSurfaces.get(object);
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(object.width));
+    canvas.height = Math.max(1, Math.ceil(object.height));
+    const ctx = canvas.getContext("2d");
+    if (ctx) drawShapeObject(ctx, object);
+    shapeSurfaces.set(object, canvas);
+  }
+  return canvas;
 }
 
 /** Фигура: заливка и обводка каждого контура. */

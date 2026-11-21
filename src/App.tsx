@@ -231,6 +231,7 @@ export default function App() {
    * ничего не делали бы и инструмент выглядел бы сломанным.
    */
   const chooseTool = useCallback((next: SceneTool) => {
+    if (next === "pen" && presetRef.current.objects.find((item) => item.id === selectionRef.current.at(-1))?.kind !== "shape") return;
     setTool(next);
     // Ушли с пера — рисование закончилось: иначе клики продолжали бы ставить
     // точки в невидимом режиме.

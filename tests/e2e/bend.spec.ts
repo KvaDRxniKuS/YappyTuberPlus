@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { bendFrame, deformOffset } from "../../src/render/bend";
+import { bendFrame, deformOffset, parentMeshTransform } from "../../src/render/bend";
 import { shiftNode } from "../../src/engine/mesh";
 import { objectMatrix, staticValues, transformPoint } from "../../src/render/rigCanvas";
 import { DEFAULT_BASE, type ObjectFrame, type RigFrame, type RigObject, type RigPreset } from "../../src/types";
@@ -118,4 +118,26 @@ test("вложенные деформеры складываются, а вык�
   // Голова выключена — глаз за ней больше не гнётся.
   middle.deformParent = false;
   expect(bendFrame(presetOf([root, middle, leaf]), frame)!.objects.eye.x).toBeCloseTo(120, 6);
+});
+
+
+test("родитель гнёт вершины поверхности, не базу и не сетку ребёнка", () => {
+  const parent = object({ mesh: meshOfShifted() });
+  const child = object({ id: "eye", parentId: parent.id, mesh: meshOfShifted() });
+  const preset = presetOf([parent, child]);
+  const frame = frameOf([parent, child]);
+  const before = JSON.stringify({ preset, frame });
+  const deform = parentMeshTransform(preset, child, frame)!;
+  expect(deform({ x: 0, y: 0 })).toEqual({ x: 0, y: 0 });
+  expect(deform({ x: 200, y: 200 }).x).toBeCloseTo(220, 6);
+  expect(deform({ x: 100, y: 100 }).x).toBeCloseTo(105, 6);
+  expect(JSON.stringify({ preset, frame })).toBe(before);
+  expect(parentMeshTransform(preset, { ...child, deformParent: false }, frame)).toBeUndefined();
+});
+
+test("наследуемая поверхность гнётся и без живого кадра", () => {
+  const parent = object({ mesh: meshOfShifted() });
+  const child = object({ id: "eye", parentId: parent.id });
+  const deform = parentMeshTransform(presetOf([parent, child]), child, null)!;
+  expect(deform({ x: 200, y: 200 }).x).toBeCloseTo(220, 6);
 });

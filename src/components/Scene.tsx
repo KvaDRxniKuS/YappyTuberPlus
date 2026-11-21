@@ -1,3 +1,4 @@
+import { parentMeshTransform } from "../render/bend";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   BoxSelect, Brush, CircleDot, Crosshair, FlipHorizontal, Focus, Frame, Ghost, Grid3X3, Hand,
@@ -28,14 +29,14 @@ import {
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
 import { countDraw } from "../engine/meter";
-import { bendFrame } from "../render/bend";
+
 import { penAction, smoothingOf, traceItem } from "../render/shape";
 import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
-  warpGrabAt, warpHandlesAt, warpQuad, warpEnabled,
+  warpHandlesAt, warpQuad, warpEnabled,
 } from "../render/warp";
 import {
-  artPointPoints, meshNodePoints, meshQuad, nearestPoint, zoneDelta,
+  artPointPoints, deformGeometry, meshGeometry, meshNodePoints, meshQuad, nearestPoint, zoneDelta,
   zoneGeometry, zoneOutline, zonePoint,
 } from "../render/mesh";
 import {
@@ -194,29 +195,7 @@ type Interaction =
       initial: MeshSpec;
       axis?: "x" | "y" | null;
     }
-  /** Зона сетки: стороны, поворот и перенос — тем же кодом, что у старого `warp`. */
-  | {
-      type: "meshZone";
-      objectId: string;
-      handle: string;
-      start: Point;
-      center?: Point;
-      angle?: number;
-      initial: MeshSpec;
-    }
   | null;
-
-/** Старая деформация без смещений: с ней работает инструмент зоны сетки. */
-function zoneShim(object: RigObject, mesh: MeshSpec): RigObject {
-  return {
-    ...object,
-    warp: {
-      enabled: true,
-      frame: mesh.frame,
-      corners: { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } },
-    },
-  };
-}
 
 /** Сетка объекта для редактора: без неё редактор начинает с чистой. */
 function editMesh(object: RigObject): MeshSpec {
@@ -307,11 +286,8 @@ export function Scene(props: SceneProps) {
    * Иначе ребёнок, которого гнёт родитель, рисовался бы в одном месте, а
    * ловился мышью в другом.
    */
-  const liveFrame = (preset: RigPreset): RigFrame | null => bendFrame(
-    preset,
-    previewFrame(propsRef.current.frameRef.current, preset.objects, propsRef.current.preview),
-    previewPoints(propsRef.current.preview),
-  );
+  const liveFrame = (preset: RigPreset): RigFrame | null =>
+    previewFrame(propsRef.current.frameRef.current, preset.objects, propsRef.current.preview);
 
   /**
    * Живые правки мышью (точка пера, угол деформации, перенос объектов).
@@ -389,11 +365,7 @@ export function Scene(props: SceneProps) {
     // вкладки, а не из кадра — ядро про артмеш не знает.
     const meshPoints = previewPoints(current.preview);
     // Кадр с изгибом детей: сетка родителя двигает и то, что на ней висит.
-    const frame = bendFrame(
-      preset,
-      previewFrame(current.frameRef.current, preset.objects, current.preview),
-      meshPoints,
-    );
+    const frame = previewFrame(current.frameRef.current, preset.objects, current.preview);
     const colors = current.colors;
     ctx.save();
     ctx.translate(x, y);
@@ -678,6 +650,12 @@ export function Scene(props: SceneProps) {
     const current = propsRef.current;
     const frame = previewFrame(current.frameRef.current, current.preset.objects, current.preview);
     const shown = current.preset;
+    const selected = shown.objects.find((item) => item.id === current.primaryId);
+    if (selected?.kind === "shape" && (!accept || accept(selected))) {
+      const values = frame?.objects[selected.id] || staticValues(selected);
+      const center = transformPoint(objectMatrix(selected, values), 0, 0);
+      if (values.visible !== 0 && Math.hypot(point.x - center.x, point.y - center.y) <= 10 / camera.current.zoom) return selected;
+    }
     const ordered = orderedObjects(shown, frame);
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
       const object = ordered[index];
@@ -692,6 +670,19 @@ export function Scene(props: SceneProps) {
       const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;
+      const inherited = parentMeshTransform(shown, object, frame, previewPoints(current.preview));
+      if (inherited) {
+        const surface = meshEnabled(object) ? object : { ...object, mesh: { ...defaultMesh(), enabled: true } };
+        const geometry = meshGeometry(surface, object.width, object.height, values, stateOffsets(object.id));
+        if (geometry) {
+          const bent = deformGeometry(geometry, inherited);
+          const content = { x: local.x - left, y: local.y - top };
+          for (let i = 0; i < bent.triangles.length; i += 3) {
+            if (pointInPolygon(content, bent.triangles.slice(i, i + 3).map((id) => bent.targets[id]))) return object;
+          }
+        }
+        continue;
+      }
       if (meshEnabled(object) || warpEnabled(object)) {
         // Деформированный спрайт — не прямоугольник: угол, который уехал,
         // больше не должен ловить мышь, а вытянутый — наоборот. У сетки
@@ -857,6 +848,10 @@ export function Scene(props: SceneProps) {
     setLineMode(false);
   }, [props.primaryId, props.tool]);
 
+  useEffect(() => {
+    if (props.tool === "pen" && props.preset.objects.find((item) => item.id === props.primaryId)?.kind !== "shape") props.onTool("move");
+  }, [props.primaryId, props.tool, props.preset.objects]);
+
   return (
     <section className="scene-panel panel-surface">
       <div className="scene-toolbar">
@@ -866,11 +861,11 @@ export function Scene(props: SceneProps) {
           <button className={props.tool === "marquee" ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => props.onTool("marquee")}><BoxSelect size={15} /></button>
           <button className={props.tool === "lasso" ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => props.onTool("lasso")}><LassoSelect size={15} /></button>
           <button className={props.tool === "pivot" ? "active" : ""} title="Пивот (P)" onClick={() => props.onTool("pivot")}><Crosshair size={15} /></button>
-          <button
+          {props.preset.objects.find((item) => item.id === props.primaryId)?.kind === "shape" && <button
             className={props.tool === "pen" ? "active" : ""}
             title="Перо (N) · клик ставит точку между ближайшими, Alt+клик меняет сглаживание точки"
             onClick={() => props.onTool("pen")}
-          ><PenTool size={15} /></button>
+          ><PenTool size={15} /></button>}
           <button className={props.tool === "pan" ? "active" : ""} title="Панорамирование (Space)" onClick={() => props.onTool("pan")}><Hand size={15} /></button>
           {/* Деформация — отдельной группой: зона и углы это разные правки,
               и в работе они не должны пересекаться. */}
@@ -1240,47 +1235,7 @@ export function Scene(props: SceneProps) {
                     };
                     return;
                   }
-                  const shim = zoneShim(object, mesh);
-                  const grab = warpGrabAt(shim, values, left, top, matrix, camera.current.zoom, point, "frame");
-                  if (grab) {
-                    current.onDragStart();
-                    if (grab.kind === "rotation") {
-                      interaction.current = {
-                        type: "meshZone", objectId: object.id, handle: "rotate", start: point,
-                        center: grab.center, angle: grab.angle, initial: { ...mesh, enabled: true },
-                      };
-                    } else if (grab.kind === "handle") {
-                      interaction.current = {
-                        type: "meshZone", objectId: object.id, handle: grab.handle, start: point,
-                        initial: { ...mesh, enabled: true },
-                      };
-                    } else {
-                      interaction.current = {
-                        type: "meshZone", objectId: object.id, handle: "move", start: point,
-                        initial: { ...mesh, enabled: true },
-                      };
-                    }
-                    return;
-                  }
-                }
-                // Старая деформация без сетки: инструменты остаются рабочими
-                // для объектов, к которым сетку ещё не применяли.
-                const grab = warpGrabAt(
-                  object, values, left, top, matrix, camera.current.zoom, point,
-                  "frame",
-                );
-                if (grab) {
-                  const initial = { ...(object.warp ?? defaultWarp()), enabled: true };
-                  current.onDragStart();
-                  if (grab.kind === "corner") {
-                    interaction.current = { type: "warpCorner", objectId: object.id, corner: grab.corner, start: point, initial };
-                  } else if (grab.kind === "handle") {
-                    interaction.current = { type: "warpFrame", objectId: object.id, handle: grab.handle, start: point, initial };
-                  } else if (grab.kind === "rotation") {
-                    interaction.current = { type: "warpRotate", objectId: object.id, center: grab.center, start: grab.angle, initial };
-                  } else {
-                    interaction.current = { type: "warpFrame", objectId: object.id, handle: "move", start: point, initial };
-                  }
+                  // Only the blue grid controls deformation; no hidden frame handles.
                   return;
                 }
               }
@@ -1312,7 +1267,7 @@ export function Scene(props: SceneProps) {
             }
             // Группа своих пикселей не имеет, но её габарит — такой же хитбокс:
             // пустое место внутри группы хватает саму группу, а не объект за ней.
-            const container = containerAt(point, hit);
+            const container = hit?.kind === "shape" && hit.id === current.primaryId ? null : containerAt(point, hit);
             const targetObject = container
               ? current.preset.objects.find((object) => object.id === container) ?? hit
               : hit;
@@ -1455,7 +1410,7 @@ export function Scene(props: SceneProps) {
               queueLive(() => propsRef.current.onMesh(object.id, { ...current.initial, deform: next }));
               return;
             }
-            if (current.type === "meshNode" || current.type === "meshArtPoint" || current.type === "meshZone") {
+            if (current.type === "meshNode" || current.type === "meshArtPoint") {
               const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
               if (!object) return;
               const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
@@ -1469,27 +1424,6 @@ export function Scene(props: SceneProps) {
               };
               const id = object.id;
               const initial = current.initial;
-              if (current.type === "meshZone") {
-                // Зона правится тем же кодом, что старая деформация: ручки,
-                // якоря и поворот уже проверены, дублировать их нельзя.
-                const shim = zoneShim(object, initial);
-                if (current.handle === "rotate" && current.center) {
-                  const angle = Math.atan2(point.y - current.center.y, point.x - current.center.x);
-                  const degrees = ((angle - (current.angle ?? 0)) * 180) / Math.PI;
-                  const next = rotateWarpFrame(shim.warp!, event.shiftKey ? Math.round(degrees / 15) * 15 : degrees);
-                  queueLive(() => propsRef.current.onMesh(id, { ...initial, frame: next.frame }));
-                  return;
-                }
-                const from = toContent(current.start);
-                const to = toContent(point);
-                const dx = to.x - from.x;
-                const dy = to.y - from.y;
-                const next = current.handle === "move"
-                  ? moveWarpFrame(shim.warp!, object, dx, dy)
-                  : resizeWarpFrame(shim.warp!, current.handle, object, dx, dy);
-                queueLive(() => propsRef.current.onMesh(id, { ...initial, frame: next.frame }));
-                return;
-              }
               const from = toContent(current.start);
               const to = toContent(point);
               let delta = zoneDelta(object, from, to);
@@ -1828,7 +1762,7 @@ function isDragInteraction(current: Interaction | null): boolean {
   if (!current) return false;
   return current.type === "drag" || current.type === "warpFrame" || current.type === "warpCorner"
     || current.type === "warpRotate" || current.type === "meshNode" || current.type === "meshArtPoint"
-    || current.type === "meshZone" || current.type === "meshBrush";
+    || current.type === "meshBrush";
 }
 
 /** Цвет сетки и нарезки: холодный — сетка, тёплый — нарезка. */
@@ -1886,7 +1820,7 @@ function drawMeshOverlay(
 
   ctx.save();
   if (mode === "grid") {
-    if (!faint) drawWarpOverlay(ctx, preset, frame, zoom, primaryId, "frame");
+
     const nodes = meshNodePoints({ ...object, mesh: shownMesh(mesh, offsets) }, values);
     ctx.strokeStyle = MESH_GRID_COLOR;
     ctx.lineWidth = line;
@@ -1967,17 +1901,8 @@ function drawMeshOverlay(
     return;
   }
 
-  // Нарезка: зона пунктиром, треугольники и точки — цветом инструмента.
+  // Only mesh edges are shown, not a second undeformed region.
   ctx.globalAlpha = fade;
-  ctx.strokeStyle = "rgba(224, 163, 74, 0.45)";
-  ctx.lineWidth = line;
-  ctx.setLineDash([5 / zoom, 4 / zoom]);
-  ctx.beginPath();
-  zone.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
-  ctx.closePath();
-  ctx.stroke();
-  ctx.setLineDash([]);
-
   const points = artPointPoints({ ...object, mesh: { ...shownMesh(mesh, offsets), enabled: true } }, values);
   ctx.strokeStyle = MESH_ART_COLOR;
   ctx.lineWidth = line;
