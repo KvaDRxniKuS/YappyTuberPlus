@@ -1,3 +1,4 @@
+import type { PreparedMeshes } from "../render/rigCanvas";
 import type { BasePose, OverlayConfig, RigFrame } from "../types";
 import type { CompositeBus, TransportStats } from "./bus";
 import {
@@ -90,6 +91,7 @@ export class OverlayClient {
   config: OverlayConfig | null = null;
   bases: Record<string, BasePose> | null = null;
   frame: RigFrame | null = null;
+  meshes:PreparedMeshes|undefined;
   /** Цвета из модулей с последнего кадра: ядро их не считает. */
   colors: FrameColors | null = null;
   status: OverlayStatus = "connecting";
@@ -243,6 +245,7 @@ export class OverlayClient {
           this.lastHostSender = message.sender;
           this.scene = null;
           this.frame = null;
+          this.meshes=undefined;
           this.frameAt = -1;
           this.lastSender = null;
           this.lastSeq = -1;
@@ -303,6 +306,7 @@ export class OverlayClient {
         }
         this.lastSeq = message.frame.seq;
         this.frame = message.frame;
+        this.meshes=message.meshes;
         this.frameAt = this.now();
         this.colors = message.colors ?? null;
         this.frameCount += 1;

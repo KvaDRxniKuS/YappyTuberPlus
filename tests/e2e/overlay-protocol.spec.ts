@@ -310,3 +310,25 @@ test("протокол моста: оверлей другой сборки ви
     viewerBus.close();
   }
 });
+
+test("готовые меши доставляются атомарно вместе с кадром и не откатываются",async()=>{
+  const {defaultMesh}=await import("../../src/engine/mesh");
+  const {prepareRigMeshes}=await import("../../src/render/rigCanvas");
+  const {hostBus,viewerBus}=channelPair(`mesh-packet-${Date.now()}`);
+  const host=new OverlayHost(hostBus,{hostName:"mesh-test"});
+  const client=new OverlayClient(viewerBus,{});
+  try {
+    const preset=createDemoPreset();
+    preset.objects[0]={...preset.objects[0],mesh:{...defaultMesh(),enabled:true}};
+    host.start();host.setPreset(preset);client.start();
+    await expect.poll(()=>host.viewerIds.length).toBe(1);
+    const ready=frame(100);
+    host.pushFrame(ready);
+    await expect.poll(()=>client.frame?.seq).toBe(100);
+    expect(client.meshes).toEqual(prepareRigMeshes(preset,ready));
+    const held=client.meshes;
+    host.pushFrame(frame(99));
+    await new Promise(resolve=>setTimeout(resolve,30));
+    expect(client.meshes).toBe(held);
+  } finally {client.dispose();host.dispose();hostBus.close();viewerBus.close();}
+});

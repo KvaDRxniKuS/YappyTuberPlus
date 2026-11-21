@@ -14,7 +14,7 @@ import { createCollector, disposeLighting, resetCollector, retainLightingSources
 import { applyColors, type ColorField, type Rgba } from "../render/color";
 import { sceneSampler } from "../render/sceneSample";
 import {
-  drawRig, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
+  drawRig, prepareRigMeshes, invertAffine, objectMatrix, orderedObjects, scriptHidden, SpriteAssets, staticValues,
   transformPoint, type Affine,
 } from "../render/rigCanvas";
 import { MediaAssets, MaskMedia } from "../render/media";
@@ -402,7 +402,9 @@ export function Scene(props: SceneProps) {
     // Цвета из модулей подставляются в копию пресета: свет, фигуры, текст и
     // материал уже читают цвет из объекта, поэтому менять их код не нужно.
     const shown = colors ? applyColors(previewed, colors) : previewed;
+    const preparedMeshes=prepareRigMeshes(previewed,frame,meshPoints);
     drawRig(ctx, shown, frame, assets.current, {
+      preparedMeshes,
       placeholders: true, lineScale: zoom, ghosts: current.ghosts,
       media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
       lighting: lighting.current,
@@ -418,6 +420,7 @@ export function Scene(props: SceneProps) {
     const probe = sceneSampler.prepare(preset.canvas.width, preset.canvas.height);
     if (probe) {
       drawRig(probe.ctx, shown, frame, assets.current, {
+        preparedMeshes,
         placeholders: false, lineScale: 1,
         media: mediaAssets.current, texts: current.texts, maskMedia: maskMedia.current,
         environment: preset.environment,

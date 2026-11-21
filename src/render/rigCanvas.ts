@@ -9,7 +9,7 @@ import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
-import { drawMeshImage, meshSurfaceGeometry, meshQuad } from "./mesh";
+import { drawMeshImage, meshSurfaceGeometry, meshQuad, type MeshGeometry } from "./mesh";
 import { meshEnabled } from "../engine/mesh";
 import { paintLight } from "./light";
 import { DEFAULT_LIGHT, lightHeight } from "../types";
@@ -199,7 +199,32 @@ export function orderedObjects(preset: RigPreset, frame: RigFrame | null): RigOb
     || frontness(paths.get(a.id), paths.get(b.id)));
 }
 
+export type PreparedMeshes = Record<string,MeshGeometry>;
+const preparedFrames=new WeakMap<RigFrame,WeakMap<RigPreset,PreparedMeshes>>();
+/** A serializable evaluated surface, shared by the editor and all viewers. */
+export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Map<string,Record<string,Vec2>>):PreparedMeshes {
+  let cache=frame && !points ? preparedFrames.get(frame):undefined;
+  if(cache?.has(preset)) return cache.get(preset)!;
+  const result:PreparedMeshes={};
+  const inheritedFor=createParentMeshTransforms(preset,frame,points);
+  for(const object of preset.objects) {
+    if(object.kind!=="sprite"&&object.kind!=="shape"&&object.kind!=="media") continue;
+    const inherited=inheritedFor?.(object);
+    if(!inherited && !meshEnabled(object)) continue;
+    const surface=meshEnabled(object)?object:{...object,mesh:{...defaultMesh(),enabled:true}};
+    const geometry=meshSurfaceGeometry(surface,object.width,object.height,frame?.objects[object.id],points?.get(object.id),inherited);
+    if(geometry) result[object.id]=geometry;
+  }
+  if(frame && !points) {
+    if(!cache) {cache=new WeakMap();preparedFrames.set(frame,cache);}
+    cache.set(preset,result);
+  }
+  return result;
+}
+
 export interface DrawRigOptions {
+  /** Presence (even empty) means geometry has already been evaluated by the host. */
+  preparedMeshes?:PreparedMeshes;
   /** Draw a wireframe box for sprites whose image has not decoded yet. */
   placeholders?: boolean;
   /** Line width scale for placeholders (editor zoom). */
@@ -254,7 +279,7 @@ export function drawRig(
   assets: SpriteAssets,
   options: DrawRigOptions = {},
 ): void {
-  const meshTransform=options.meshTransform ?? createParentMeshTransforms(preset,frame,options.meshPoints);
+  const meshTransform=options.preparedMeshes ? undefined : options.meshTransform ?? createParentMeshTransforms(preset,frame,options.meshPoints);
   if(meshTransform) options={...options,meshTransform};
   const zoom = options.lineScale ?? 1;
   const ghostAlpha = options.ghostAlpha ?? 0.25;
@@ -496,6 +521,7 @@ function drawShaded(
 }
 
 function surfaceBounds(object:RigObject,frame:RigFrame|null,options:DrawRigOptions):Vec2[]|null {
+  if(options.preparedMeshes) return options.preparedMeshes[object.id]?.targets ?? null;
   const inherited=options.meshTransform?.(object);
   if(!inherited && !meshEnabled(object)) return warpEnabled(object)?warpQuad(object,frame?.objects[object.id]):null;
   const surface=inherited && !meshEnabled(object) ? {...object,mesh:{...defaultMesh(),enabled:true}} : object;
@@ -532,10 +558,11 @@ function drawObjectContent(
   options: DrawRigOptions,
   zoom: number,
 ): void {
-  const deform = options.meshTransform?.(object);
+  const prepared=options.preparedMeshes?.[object.id];
+  const deform = options.preparedMeshes ? undefined : options.meshTransform?.(object);
   // A child without its own enabled deformer still has a triangulated surface.
   // This is a render-only mesh: no child control points or saved data are moved.
-  if (deform && !meshEnabled(object)) object = { ...object, mesh: { ...defaultMesh(), enabled: true } };
+  if ((deform || prepared) && !meshEnabled(object)) object = { ...object, mesh: { ...defaultMesh(), enabled: true } };
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
   if (object.kind === "shape") {
@@ -543,7 +570,7 @@ function drawObjectContent(
     ctx.translate(left, top);
     if (meshEnabled(object)) {
       const image = shapeSurface(object);
-      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform);
+      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform, prepared);
     } else drawShapeObject(ctx, object);
     ctx.restore();
     return;
@@ -576,7 +603,7 @@ function drawObjectContent(
       // медиа-объекта начинается его рамка.
       ctx.save();
       ctx.translate(boxLeft, boxTop);
-      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform);
+      drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform, prepared);
       ctx.restore();
     } else if (picture && warpEnabled(object)) {
       // Деформация крайних точек: остаётся для объектов, которые ещё не
@@ -599,7 +626,7 @@ function drawObjectContent(
     if (meshEnabled(object)) {
       ctx.save();
       ctx.translate(left, top);
-      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform);
+      drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform, prepared);
       ctx.restore();
     } else if (warpEnabled(object)) {
       ctx.save();
@@ -814,10 +841,11 @@ function paintMask(
     // Фигура может быть скрыта и анимирована: маска берёт её текущее место.
     ctx.transform(shapeMatrix.a, shapeMatrix.b, shapeMatrix.c, shapeMatrix.d, shapeMatrix.e, shapeMatrix.f);
     ctx.translate(-shape.pivot.x * shape.width, -shape.pivot.y * shape.height);
-    const inherited=options.meshTransform?.(shape);
-    if(meshEnabled(shape) || inherited) {
+    const prepared=options.preparedMeshes?.[shape.id];
+    const inherited=options.preparedMeshes ? undefined : options.meshTransform?.(shape);
+    if(meshEnabled(shape) || inherited || prepared) {
       const surface=meshEnabled(shape)?shape:{...shape,mesh:{...defaultMesh(),enabled:true}};
-      drawMeshImage(ctx,shapeSurface(shape,true),surface,shape.width,shape.height,values,options.meshPoints?.get(shape.id),inherited);
+      drawMeshImage(ctx,shapeSurface(shape,true),surface,shape.width,shape.height,values,options.meshPoints?.get(shape.id),inherited,prepared);
       return;
     }
     ctx.beginPath();

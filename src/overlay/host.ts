@@ -1,3 +1,4 @@
+import { prepareRigMeshes } from "../render/rigCanvas";
 import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
 import { neutralFrame } from "../engine/frame";
 import { nextFrameSeq } from "../engine/frameSeq";
@@ -189,9 +190,10 @@ export class OverlayHost {
     // Номер берём из того же счётчика, что и живые кадры: иначе свой счётчик
     // хоста мог совпасть с номером следующего живого кадра, и оверлей отбросил
     // бы его как повтор — источник замирал бы ровно после «Стопа».
+    const frame=neutralFrame(preset,nextFrameSeq());
     this.bus.post({
       t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
-      frame: neutralFrame(preset, nextFrameSeq()),
+      frame, meshes:prepareRigMeshes(preset,frame),
       colors: Object.keys(this.colors).length ? this.colors : undefined,
     });
   }
@@ -215,6 +217,7 @@ export class OverlayHost {
     // оверлей отбрасывает всё, что не новее прошлого кадра.
     this.bus.post({
       t: "frame", sender: this.id, frame, sceneVersion: this.sceneVersion,
+      meshes:this.presetRef ? prepareRigMeshes(this.presetRef,frame) : undefined,
       colors: Object.keys(this.colors).length ? this.colors : undefined,
     });
   }

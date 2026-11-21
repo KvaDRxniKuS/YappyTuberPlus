@@ -1,3 +1,4 @@
+import type { PreparedMeshes } from "../render/rigCanvas";
 import type { BasePose, EnvironmentSpec, OverlayConfig, RigFrame, RigPreset } from "../types";
 import { PRESET_FORMAT } from "../version";
 
@@ -78,6 +79,8 @@ export interface FrameMessage {
   sceneVersion: number;
   /** Цвета с этого кадра; нет — у объектов остаются свои. */
   colors?: FrameColors;
+  /** Host-evaluated surfaces; optional for older hosts. Same sequence/version as frame. */
+  meshes?: PreparedMeshes;
 }
 
 export interface ByeMessage {
@@ -248,6 +251,8 @@ export function structureSignature(preset: RigPreset): string {
       object.colors ?? null,
       object.mask ? [object.mask.kind, object.mask.shapeId, object.mask.points,
         sourceKey(object.mask.file), object.mask.origin, object.mask.invert, object.mask.feather] : null,
+      object.mesh ?? null,
+      object.deformParent ?? true,
       object.warp ? [object.warp.enabled, object.warp.frame, object.warp.corners] : null,
     ]),
   });

@@ -1,3 +1,4 @@
+import { meshRenderBackend } from "../render/mesh";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERLAY, type RigPreset } from "../types";
 import { drawRig, SpriteAssets, viewTransform } from "../render/rigCanvas";
@@ -65,6 +66,8 @@ export function OverlayApp() {
    * крутить надо разрешение, а не транспорт.
    */
   const [renderMs, setRenderMs] = useState(0);
+  const [meshBackend,setMeshBackend]=useState("меши не отрисовывались");
+  const [preparedByHost,setPreparedByHost]=useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -257,6 +260,7 @@ export function OverlayApp() {
       drawRig(ctx, colored, frame, assets.current, {
         media: mediaAssets.current, maskMedia: maskMedia.current, lighting,
         environment: current.environment,
+        preparedMeshes:client?.meshes,
       });
       ctx.restore();
       if (guide) {
@@ -276,6 +280,7 @@ export function OverlayApp() {
       drawnCount += 1;
       if (guide && now - windowStart >= 1000) {
         setFps(Math.round(frames * 1000 / (now - windowStart)));
+        setMeshBackend(meshRenderBackend());setPreparedByHost(client?.meshes!==undefined);
         setRenderMs(drawnCount ? Math.round((drawnMs / drawnCount) * 10) / 10 : 0);
         frames = 0;
         drawnMs = 0;
@@ -358,6 +363,8 @@ export function OverlayApp() {
           <div className="overlay-meta">
             <span>{snapshot?.scene ? `${snapshot.scene.canvas.width} × ${snapshot.scene.canvas.height}` : "нет сцены"}</span>
             <span>{fps} FPS рендера</span>
+            <span>{preparedByHost?"Геометрия от редактора":"Локальный расчёт геометрии (старый хост)"}</span>
+            <span>{meshBackend}</span>
             <span title="Среднее время отрисовки одного кадра: цена самого оверлея">{renderMs} мс на кадр</span>
             <span>{snapshot?.config?.scaleMode ?? "contain"}</span>
             <span>транспорт: {snapshot?.transport || "…"}</span>

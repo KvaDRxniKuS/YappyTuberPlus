@@ -17,7 +17,7 @@ import { affineFromTriangles } from "./warp";
  */
 
 /** Геометрия одного объекта: UV в долях картинки и цели в координатах объекта. */
-interface MeshGeometry {
+export interface MeshGeometry {
   /** Куда точка картинки попадает на объекте (пиксели от левого верхнего угла картинки). */
   targets: Vec2[];
   /** Текстурная координата точки: доли картинки. */
@@ -164,8 +164,9 @@ export function drawMeshImage(
   values?: ObjectFrame | null,
   keyOffsets?: Record<string, Vec2> | null,
   deform?: (point: Vec2) => Vec2,
+  prepared?: MeshGeometry,
 ): boolean {
-  const geometry=meshSurfaceGeometry(object,width,height,values,keyOffsets,deform);
+  const geometry=prepared ?? meshSurfaceGeometry(object,width,height,values,keyOffsets,deform);
   if(!geometry) return false;
   if(geometry.triangles.length) drawTriangles(ctx,image,width,height,geometry);
   return true;
@@ -439,6 +440,15 @@ function uploadTexture(state: GlState, image: CanvasImageSource, width: number, 
  * Иначе каждый объект с сеткой стирал и склеивал бы весь кадр — на пяти
  * спрайтах в OBS это заметно.
  */
+/** Diagnostic only: WebGL2 may itself be software-backed by the browser. */
+export function meshRenderBackend():string {
+  if(glFailed) return "Canvas 2D — резервный рендер мешей";
+  if(!glState) return "меши не отрисовывались";
+  const gl=glState.gl,debug=gl.getExtension("WEBGL_debug_renderer_info");
+  const renderer=debug?gl.getParameter(debug.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+  return `WebGL2 · ${String(renderer)}`;
+}
+
 function drawWithWebgl(
   ctx: CanvasRenderingContext2D,
   image: CanvasImageSource,
@@ -449,6 +459,7 @@ function drawWithWebgl(
   if (glFailed) return false;
   if (!glState) glState = createGlState();
   if (!glState) {
+    console.warn("WebGL2 недоступен: деформированные меши рисуются через медленный Canvas 2D. Проверьте аппаратное ускорение OBS/браузера.");
     glFailed = true;
     return false;
   }

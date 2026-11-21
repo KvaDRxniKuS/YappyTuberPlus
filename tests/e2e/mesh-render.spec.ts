@@ -311,3 +311,25 @@ test("родитель делит только покрытые треуголь
   expect(bent.uv.slice(0, source.uv.length)).toEqual(source.uv);
   expect(bent.targets[3].x).toBeCloseTo(source.targets[3].x + source.targets[3].y ** 2 / 100);
 });
+
+test("готовая геометрия обходит повторный расчёт деформера в получателе",()=>{
+  const object=sprite({mesh:enabled()});
+  const geometry=meshGeometry(object)!;
+  Object.defineProperty(object.mesh!,"deform",{get(){throw new Error("повторный расчёт сетки");}});
+  const {ctx,calls}=fakeContext();
+  expect(drawMeshImage(ctx,{} as CanvasImageSource,object,200,100,null,null,undefined,geometry)).toBe(true);
+  expect(calls.drawImage).toBe(2);
+});
+
+test("редактор и отправитель получают один расчёт поверхности на кадр",async()=>{
+  const {prepareRigMeshes}=await import("../../src/render/rigCanvas");
+  const {neutralFrame}=await import("../../src/engine/frame");
+  const {createDemoPreset}=await import("../../src/data/demoPreset");
+  const preset=createDemoPreset();
+  preset.objects[0]={...preset.objects[0],mesh:enabled()};
+  const frame=neutralFrame(preset,1);
+  const first=prepareRigMeshes(preset,frame);
+  expect(prepareRigMeshes(preset,frame)).toBe(first);
+  expect(prepareRigMeshes(preset,{...frame,seq:2})).not.toBe(first);
+  expect(JSON.parse(JSON.stringify(first))).toEqual(first);
+});
