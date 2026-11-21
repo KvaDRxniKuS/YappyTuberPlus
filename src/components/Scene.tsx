@@ -1,4 +1,4 @@
-import { parentMeshTransform } from "../render/bend";
+import { createParentMeshTransforms } from "../render/bend";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   BoxSelect, Brush, CircleDot, Crosshair, FlipHorizontal, Focus, Frame, Ghost, Grid3X3, Hand,
@@ -699,6 +699,7 @@ export function Scene(props: SceneProps) {
     const current = propsRef.current;
     const frame = previewFrame(current.frameRef.current, current.preset.objects, current.preview);
     const shown = current.preset;
+    const inheritedFor=createParentMeshTransforms(shown,frame,previewPoints(current.preview));
     const selected = shown.objects.find((item) => item.id === current.primaryId);
     if (selected?.kind === "shape" && (!accept || accept(selected))) {
       const values = frame?.objects[selected.id] || staticValues(selected);
@@ -719,7 +720,7 @@ export function Scene(props: SceneProps) {
       const local = transformPoint(invertAffine(objectMatrix(object, values)), point.x, point.y);
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;
-      const inherited = parentMeshTransform(shown, object, frame, previewPoints(current.preview));
+      const inherited = inheritedFor?.(object);
       if (inherited) {
         const surface = meshEnabled(object) ? object : { ...object, mesh: { ...defaultMesh(), enabled: true } };
         const geometry = meshSurfaceGeometry(surface, object.width, object.height, values, stateOffsets(object.id),inherited);

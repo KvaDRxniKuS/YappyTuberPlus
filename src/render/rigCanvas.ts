@@ -1,4 +1,4 @@
-import { parentMeshTransform } from "./bend";
+import { createParentMeshTransforms } from "./bend";
 import { defaultMesh } from "../engine/mesh";
 import type { EnvironmentSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
@@ -254,7 +254,8 @@ export function drawRig(
   assets: SpriteAssets,
   options: DrawRigOptions = {},
 ): void {
-  options = { ...options, meshTransform: (object) => parentMeshTransform(preset, object, frame, options.meshPoints) };
+  const meshTransform=options.meshTransform ?? createParentMeshTransforms(preset,frame,options.meshPoints);
+  if(meshTransform) options={...options,meshTransform};
   const zoom = options.lineScale ?? 1;
   const ghostAlpha = options.ghostAlpha ?? 0.25;
   // Камера и масштаб экрана: свет и нормали нужны в пикселях холста, а не в
@@ -496,6 +497,7 @@ function drawShaded(
 
 function surfaceBounds(object:RigObject,frame:RigFrame|null,options:DrawRigOptions):Vec2[]|null {
   const inherited=options.meshTransform?.(object);
+  if(!inherited && !meshEnabled(object)) return warpEnabled(object)?warpQuad(object,frame?.objects[object.id]):null;
   const surface=inherited && !meshEnabled(object) ? {...object,mesh:{...defaultMesh(),enabled:true}} : object;
   const geometry=meshSurfaceGeometry(surface,surface.width,surface.height,frame?.objects[surface.id],options.meshPoints?.get(surface.id),inherited);
   return geometry?.targets.length ? geometry.targets : warpEnabled(object) ? warpQuad(object,frame?.objects[object.id]) : null;

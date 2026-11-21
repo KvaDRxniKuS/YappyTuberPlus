@@ -1,5 +1,5 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
-import { applyOffsets, meshOf, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
+import { applyOffsets, meshEnabled, meshOf, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
 import { invertAffine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 import { zoneGeometry } from "./mesh";
 
@@ -69,6 +69,7 @@ export function deformOffset(
 
 /** Prepare once per object/frame, never normalize or allocate grids per vertex. */
 export function prepareDeformOffset(object: RigObject,values: ObjectFrame,points?: Record<string,Vec2>): ((point:Vec2)=>Vec2) | undefined {
+  if(!meshEnabled(object)) return undefined;
   const mesh=meshOf(object);
   if(!mesh?.enabled) return undefined;
   const grid=applyOffsets(mesh.deform,gridOffsets(object,values,points));
@@ -139,22 +140,42 @@ export function parentMeshTransform(
   frame: RigFrame | null,
   points?: Map<string, Record<string, Vec2>>,
 ): ((point: Vec2) => Vec2) | undefined {
-  if (object.deformParent === false) return undefined;
-  // Apply the nearest parent first, then its ancestors. Control grids always
-  // remain in their own authored coordinate system.
-  const chain = ancestors(preset,object).reverse().map(parent => prepareDeformOffset(parent,frame?.objects[parent.id] ?? staticValues(parent),points?.get(parent.id)))
-    .filter((sampler): sampler is (point:Vec2)=>Vec2 => !!sampler);
-  if (!chain.length) return undefined;
-  const values = frame?.objects[object.id] ?? staticValues(object);
-  const matrix = objectMatrix(object, values);
-  const inverse = invertAffine(matrix);
-  return (point) => {
-    let world = transformPoint(matrix, point.x - object.pivot.x * object.width, point.y - object.pivot.y * object.height);
-    for (const sampler of chain) {
-      const delta=sampler(world);
-      world = { x: world.x + delta.x, y: world.y + delta.y };
+  return createParentMeshTransforms(preset,frame,points)?.(object);
+}
+
+/** One lazy hierarchy index per draw, and no hierarchy work for ordinary rigs. */
+export function createParentMeshTransforms(
+  preset:RigPreset,frame:RigFrame|null,points?:Map<string,Record<string,Vec2>>,
+):((object:RigObject)=>((point:Vec2)=>Vec2)|undefined)|undefined {
+  if(!preset.objects.some(meshEnabled)) return undefined;
+  const byId=new Map(preset.objects.map(object=>[object.id,object]));
+  type Sampler=(point:Vec2)=>Vec2;
+  const samplers=new Map<string,Sampler|undefined>();
+  const transforms=new WeakMap<RigObject,Sampler|undefined>();
+  return object=>{
+    if(object.deformParent===false || !object.parentId) return undefined;
+    if(transforms.has(object)) return transforms.get(object);
+    const chain:Sampler[]=[];
+    const seen=new Set<string>([object.id]);
+    let parent=byId.get(object.parentId);
+    for(let depth=0;parent&&depth<MAX_DEPTH&&!seen.has(parent.id);depth++) {
+      seen.add(parent.id);
+      if(meshEnabled(parent)) {
+        if(!samplers.has(parent.id)) samplers.set(parent.id,prepareDeformOffset(parent,frame?.objects[parent.id]??staticValues(parent),points?.get(parent.id)));
+        const sampler=samplers.get(parent.id);
+        if(sampler) chain.push(sampler);
+      }
+      parent=parent.parentId?byId.get(parent.parentId):undefined;
     }
-    const local = transformPoint(inverse, world.x, world.y);
-    return { x: local.x + object.pivot.x * object.width, y: local.y + object.pivot.y * object.height };
+    if(!chain.length) {transforms.set(object,undefined);return undefined;}
+    const values=frame?.objects[object.id]??staticValues(object);
+    const matrix=objectMatrix(object,values),inverse=invertAffine(matrix);
+    const transform:Sampler=point=>{
+      let world=transformPoint(matrix,point.x-object.pivot.x*object.width,point.y-object.pivot.y*object.height);
+      for(const sampler of chain) {const delta=sampler(world);world={x:world.x+delta.x,y:world.y+delta.y};}
+      const local=transformPoint(inverse,world.x,world.y);
+      return {x:local.x+object.pivot.x*object.width,y:local.y+object.pivot.y*object.height};
+    };
+    transforms.set(object,transform);return transform;
   };
 }

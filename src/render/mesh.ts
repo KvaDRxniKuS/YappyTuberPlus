@@ -1,5 +1,5 @@
 import type { ObjectFrame, RigObject, Vec2 } from "../types";
-import { applyOffsets, meshOf, meshVertices, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
+import { applyOffsets, meshEnabled, meshOf, meshVertices, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
 import { affineFromTriangles } from "./warp";
 
 /*
@@ -81,6 +81,7 @@ export function meshGeometry(
   values?: ObjectFrame | null,
   keyOffsets?: Record<string, Vec2> | null,
 ): MeshGeometry | null {
+  if(!meshEnabled(object)) return null;
   const mesh = meshOf(object);
   if (!mesh || !mesh.enabled) return null;
   // Параметры скрипта и смещения ключа двигают один и тот же узел: они
@@ -175,6 +176,7 @@ export function meshSurfaceGeometry(
   object:RigObject,width=object.width,height=object.height,values?:ObjectFrame|null,
   keyOffsets?:Record<string,Vec2>|null,deform?:(point:Vec2)=>Vec2,
 ):MeshGeometry|null {
+  if(!meshEnabled(object)) return null;
   const mesh = meshOf(object);
   if (!mesh || !mesh.enabled) return null;
   let geometry = meshGeometry(object, width, height, values, keyOffsets);

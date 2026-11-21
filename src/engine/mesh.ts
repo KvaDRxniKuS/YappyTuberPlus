@@ -334,8 +334,9 @@ export function meshOf(object: RigObject): MeshSpec | undefined {
 
 /** Включена ли деформация сеткой. */
 export function meshEnabled(object: RigObject): boolean {
-  const mesh = meshOf(object);
-  return mesh?.enabled === true;
+  // The enabled flag needs no migration or normalization. Old projects often
+  // carry a disabled warp on every sprite; inspecting it must stay allocation-free.
+  return object.mesh ? object.mesh.enabled === true : object.warp?.enabled === true;
 }
 
 /** Значение сетки в параметрической точке `u`, `v` (0…1) — билинейно по ячейке. */

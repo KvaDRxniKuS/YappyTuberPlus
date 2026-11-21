@@ -178,3 +178,24 @@ test("подготовленный деформер совпадает с пря
   expect(prepared).toEqual(direct);
   console.log(`2048 вершин: прямая подготовка ${directMs.toFixed(2)} мс; подготовка один раз ${preparedMs.toFixed(2)} мс`);
 });
+
+test("проект без активных сеток не читает иерархию и данные выключенного warp",async()=>{
+  const { createParentMeshTransforms }=await import("../../src/render/bend");
+  const { defaultWarp }=await import("../../src/render/warp");
+  const objects=Array.from({length:200},(_,i)=>{
+    const item=object({id:`plain-${i}`,warp:defaultWarp()});
+    Object.defineProperty(item,"parentId",{get(){throw new Error("ненужный обход родителей");}});
+    Object.defineProperty(item.warp!,"corners",{get(){throw new Error("ненужная миграция выключенного warp");}});
+    return item;
+  });
+  expect(createParentMeshTransforms(presetOf(objects),null)).toBeUndefined();
+});
+
+test("в смешанном проекте преобразование ребёнка вычисляется один раз на кадр",async()=>{
+  const { createParentMeshTransforms }=await import("../../src/render/bend");
+  const parent=object({mesh:meshOfShifted()}),child=object({id:"child",parentId:parent.id});
+  const resolver=createParentMeshTransforms(presetOf([parent,child]),frameOf([parent,child]))!;
+  expect(resolver(child)).toBe(resolver(child));
+  expect(resolver(parent)).toBeUndefined();
+  expect(resolver(child)!({x:200,y:200}).x).toBeCloseTo(220,6);
+});

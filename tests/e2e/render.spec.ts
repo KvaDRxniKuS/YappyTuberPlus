@@ -169,3 +169,24 @@ test("маска работает только в рамке объекта, а 
   // Рамка объекта с запасом на размытие края: заметно меньше кадра целиком.
   expect(area).toBeLessThan(1920 * 1080 / 4);
 });
+
+test("обычные спрайты с выключенными warp/mesh рисуются без их нормализации",async()=>{
+  const { defaultWarp }=await import("../../src/render/warp");
+  const { defaultMesh,meshEnabled }=await import("../../src/engine/mesh");
+  const preset=createDemoPreset();
+  const template=preset.objects.find(object=>object.kind==="sprite")!;
+  preset.objects=Array.from({length:200},(_,i)=>{
+    const object={...template,id:`sprite-${i}`,parentId:i?`sprite-${i-1}`:null,warp:defaultWarp()};
+    if(i%2===0) {
+      object.mesh=defaultMesh();
+      Object.defineProperty(object.mesh,"art",{get(){throw new Error("нормализация выключенной сетки");}});
+    }
+    Object.defineProperty(object.warp,"corners",{get(){throw new Error("миграция выключенного warp");}});
+    expect(meshEnabled(object)).toBe(false);
+    return object;
+  });
+  const frame=frameFor(preset,preset.objects.map(object=>object.id));
+  const {calls,context}=recordingContext();
+  drawRig(context,preset,frame,assets);
+  expect(calls.filter(call=>call.startsWith("draw "))).toHaveLength(200);
+});
