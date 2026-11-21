@@ -921,7 +921,16 @@ export default function App() {
     })();
     commit((current) => {
       const previous = current.objects.find((object) => object.id === withMask.id);
-      const objects = current.objects.map((object) => object.id === withMask.id ? withMask : object);
+      // Густота сетки из инспектора: индексы узлов новые, поэтому точки ключей
+      // раскладываются билинейно — тем же правилом, что и правка из сцены.
+      // Иначе состояние гнуло бы не те места картинки.
+      const before = previous ? meshOf(previous)?.deform : undefined;
+      const after = meshOf(withMask)?.deform;
+      const target = previous && before && after
+        && (before.cols !== after.cols || before.rows !== after.rows)
+        ? remapObjectPoints(withMask, before, after)
+        : withMask;
+      const objects = current.objects.map((object) => object.id === withMask.id ? target : object);
       // Поворот, масштаб и сдвиг родителя тянут за собой потомков — иначе
       // группа «отклеивается» от своих детей.
       const propagated = previous

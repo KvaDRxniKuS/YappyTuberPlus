@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
 import {
   EMPTY_STATES, addKey, addLayer, cloneLayers, insertLayers, invertByInput, keyAt, keyUnderPoint,
-  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
+  layerRange, makeLayer, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, replacePose, resetStatesFor, reversePoses, scaleKeys, setPose, shiftPose, statesBlock, uniqueLayerName,
   weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, withLiveMirrors, writeStates,
   addPoints, fromPosePoints, noPoints, pointsFromGrids, posePoints, samePoints, tidyPoints, toPosePoints,
-  remapKeyPoints, remapStatesPoints,
+  remapKeyPoints, remapStatesPoints, gridRecordDelta,
   type StateLayer, type States,
 } from "../../src/engine/states";
 import { paramGroups } from "../../src/engine/paramNames";
@@ -276,12 +276,6 @@ test("шкала неявная: её задают крайние ключи, у
 test("в формате слоя нет поля «отрезок»", () => {
   const written = writeStates("x = 0", states(bound()), object(""));
   expect(written.script).not.toContain("\"range\"");
-});
-
-test("предпросмотр двигает только manual-входы", () => {
-  expect(manualInputOf("manual.eye_x")).toBe("eye_x");
-  expect(manualInputOf("tracker.head_rx")).toBeNull();
-  expect(manualInputOf(null)).toBeNull();
 });
 
 test("запись позы: сдвиг складывается, размер — отношением", () => {
@@ -676,6 +670,37 @@ test("зеркало слоя отражает точки деформера в�
   const mirrored = mirrorLayer(layer, { x: 0, y: 0, angle: 90 }, { x: 0, y: 0, width: 100, height: 100 });
   // Точки — в долях ширины и высоты, поэтому зеркало по X меняет знак только у x.
   expect(mirrored.poses[0].points?.["2"]).toEqual([-0.1, 0.2]);
+});
+
+/*
+ * Запись правки сетки в ключ.
+ *
+ * Правило одно и то же — «что сдвинули относительно авторской формы», — но есть
+ * два случая, когда писать нечего. Оба проверяются здесь: именно на них правка
+ * сетки раньше молча пропадала.
+ */
+
+test("правка сетки пишется в ключ после жеста, а не во время него", () => {
+  const author = grid(3, 3);
+  const start = grid(3, 3);
+  const moved = grid(3, 3);
+  moved.points[4] = { x: 0.1, y: -0.05 };
+  // Жест закончился: прошлое — форма до него, поэтому дельта видна.
+  expect(gridRecordDelta(author, start, moved)).toEqual({ "4": { x: 0.1, y: -0.05 } });
+  // Вкладка только открылась — прошлого нет.
+  expect(gridRecordDelta(author, null, moved)).toBeNull();
+  // Прошлое уже совпало с текущим (жест «проглочен») — писать нечего.
+  expect(gridRecordDelta(author, moved, moved)).toBeNull();
+  // Щелчок без движения тоже ничего не пишет.
+  expect(gridRecordDelta(author, start, start)).toBeNull();
+});
+
+test("смена густоты — не поза: дельт между разными сетками нет", () => {
+  const author = grid(2, 2);
+  const resized = grid(3, 3);
+  // Индексы узлов разные, поэтому в ключ не уходит ничего: ключи пересчитывает
+  // `remapKeyPoints`, а форма базы берётся из новой авторской сетки.
+  expect(gridRecordDelta(author, grid(2, 2), resized)).toBeNull();
 });
 
 test("точки ключа переезжают на новую густоту сетки", () => {

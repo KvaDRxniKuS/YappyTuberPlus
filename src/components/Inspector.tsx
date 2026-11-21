@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import type {
   BasePose, EnvironmentSpec, MaskKind, MaskSpec, MediaRepeat, MediaSpec, MeshSpec, RigFrame, RigObject, ShapeItem,
-  ShapeItemKind, ShapeSpec, TextSpec, Vec2, WarpCorner, WarpFrame, WarpSpec,
+  ShapeItemKind, ShapeSpec, TextSpec, WarpFrame, WarpSpec,
 } from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
 import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
@@ -18,7 +18,6 @@ import {
   askPasteMode, heldMesh, holdMesh, pasteMesh, type PasteMode,
 } from "../engine/meshClipboard";
 import { groupBounds } from "../render/bounds";
-import { WARP_CORNERS, WARP_CORNER_LABEL, WARP_LIMIT } from "../render/warp";
 
 /**
  * Сворачиваемый блок параметров.
@@ -65,7 +64,7 @@ function Fold({ title, note, className, id, children }: {
   );
 }
 import {
-  clampGrid, defaultMesh, gridCorners, meshOf, regularGrid, resetArt, resetGrid, resizeGrid, shiftNode,
+  clampGrid, defaultMesh, meshOf, regularGrid, resetArt, resetGrid, resizeGrid,
 } from "../engine/mesh";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
@@ -528,20 +527,7 @@ function MeshSection({ object, onChange }: {
   // Доли картинки показываем процентами: так числа читаются без калькулятора.
   const percent = (value: number) => Math.round(value * 1000) / 10;
   const fromPercent = (value: number) => Math.round((value / 100) * 10000) / 10000;
-  const corners = gridCorners(mesh.deform);
-  const setCorner = (position: number, patch: Partial<Vec2>) => {
-    const index = corners[position];
-    const point = mesh.deform.points[index];
-    if (!point) return;
-    const next = shiftNode(mesh.deform, index, (patch.x ?? 0) / 100 - point.x, (patch.y ?? 0) / 100 - point.y);
-    update({ deform: next });
-  };
-  const cornerValue = (position: number, axis: "x" | "y") => {
-    const point = mesh.deform.points[corners[position]];
-    return Math.round(((point?.[axis] ?? 0) * 100) * 10) / 10;
-  };
   const setGrid = (cols: number, rows: number) => update({ deform: resizeGrid(mesh.deform, clampGrid(cols), clampGrid(rows)) });
-  const isQuad = mesh.deform.cols === 2 && mesh.deform.rows === 2;
   // Вставка чужой сетки: если густота или нарезка другие, спрашиваем режим —
   // молча портить форму нельзя (§10.6 плана).
   const [pasted, setPasted] = useState<MeshSpec | null>(null);
@@ -598,8 +584,10 @@ function MeshSection({ object, onChange }: {
             </div>
             <p className="behaviour-hint">
               Столбцы и строки — число узлов, 2…32. Смена размера форму не сбрасывает:
-              узлы новой сетки считаются из старой. Узлы двигаются в сцене
-              инструментом «Сетка» (T) — там же кисть и симметрия.
+              узлы новой сетки считаются из старой, а смещения в ключах состояний
+              переезжают на новые индексы. Форму правят узлами в сцене инструментом
+              «Сетка» (T) — там же кисть и симметрия. Пока открыта вкладка
+              «Состояния», правка узлов уходит в ключ под точкой таймлайна.
             </p>
             <div className="image-actions">
               <button className="button secondary" onClick={() => update({ deform: resetGrid(mesh.deform) })}>
@@ -628,36 +616,6 @@ function MeshSection({ object, onChange }: {
               спросит, что делать.
             </p>
           </Fold>
-
-          {isQuad && (
-            <Fold title="Углы" note="% ЗОНЫ">
-              <div className="property-grid two-columns">
-                {WARP_CORNERS.map((corner, position) => (
-                  <div key={corner} className="warp-corner">
-                    <span className="warp-corner-label">{WARP_CORNER_LABEL[corner]}</span>
-                    <NumberField
-                      label={`${corner.toUpperCase()} X`}
-                      value={cornerValue(position, "x")}
-                      step={1}
-                      suffix="%"
-                      onCommit={(value) => setCorner(position, { x: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, value)) })}
-                    />
-                    <NumberField
-                      label={`${corner.toUpperCase()} Y`}
-                      value={cornerValue(position, "y")}
-                      step={1}
-                      suffix="%"
-                      onCommit={(value) => setCorner(position, { y: Math.max(-WARP_LIMIT, Math.min(WARP_LIMIT, value)) })}
-                    />
-                  </div>
-                ))}
-              </div>
-              <p className="behaviour-hint">
-                Углы можно анимировать: параметры `warpTLx`, `warpTLy`, `warpTRx`… двигают
-                те же четыре узла, что и здесь.
-              </p>
-            </Fold>
-          )}
 
           <Fold title="Зона деформации" note="% КАРТИНКИ">
             <div className="property-grid two-columns">

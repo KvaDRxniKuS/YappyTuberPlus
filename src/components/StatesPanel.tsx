@@ -6,10 +6,10 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ParamPicker } from "./ParamPicker";
 import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
-import { meshOf } from "../engine/mesh";
+import { meshOf, resizeGrid } from "../engine/mesh";
 import {
-  addKey, addLayer, addPoints, cloneLayers, fromPosePoints, insertLayers, invertByInput, keyAt, keyUnderPoint,
-  layerRange, makeLayer, manualInputOf, mirrorLayer, moveKey, noPoints, patchLayer, pointsFromGrids, poseAt, poseFromBase,
+  addKey, addLayer, addPoints, cloneLayers, gridRecordDelta, fromPosePoints, insertLayers, invertByInput, keyAt, keyUnderPoint,
+  layerRange, makeLayer, mirrorLayer, moveKey, noPoints, patchLayer, pointsFromGrids, poseAt, poseFromBase,
   posePoints, readStates, removeKey, removeLayer, replacePose,
   removeLayers, resetStatesFor, reversePoses, sameBase, samePoints, scaleKeys, setPose, shiftPose, toPosePoints,
   withLiveMirrors, writeStates,
@@ -85,8 +85,6 @@ interface StatesPanelProps {
   onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
   /** Идёт перетаскивание на сцене: запись позы ждёт конца жеста. */
   dragging?: boolean;
-  /** Предпросмотр входа `manual.*` — двигает то же значение, что и ползунок входов. */
-  onManual?: (key: string, value: number) => void;
   /**
    * Вернуть сетку объекта после записи точек в ключ.
    *
@@ -495,12 +493,28 @@ export function StatesPanel(props: StatesPanelProps) {
     const mesh = meshOf(object);
     const author = authorMesh.current;
     if (!mesh || !author) return;
+    // Густота — авторская настройка, а не поза: индексы узлов другие. Базу
+    // пересобираем из авторской формы в новый размер (ключи уже пересчитаны
+    // записью пресета), иначе дельты считались бы между разными сетками.
+    if (mesh.deform.cols !== author.cols || mesh.deform.rows !== author.rows) {
+      const resized = resizeGrid(author, mesh.deform.cols, mesh.deform.rows);
+      authorMesh.current = { ...resized, points: [...resized.points] };
+      lastMesh.current = authorMesh.current;
+      if (!props.dragging) restoreMeshApi.current?.({ ...mesh, deform: resized }, object.id);
+      return;
+    }
+    // Жест ещё идёт: запись ждёт конца, а «прошлое» не трогаем.
+    //
+    // Раньше `lastMesh` обновлялся до этой проверки, поэтому к отпусканию
+    // кнопки он уже совпадал с текущей сеткой, разница выходила нулевой — и
+    // правка формы не попадала в ключ вовсе. Теперь порядок как у позы:
+    // во время жеста ничего не пишем и не запоминаем.
+    if (props.dragging) return;
     // Первый кадр вкладки и предпросмотр сетку не меняют — писать нечего.
     const previous = lastMesh.current;
     lastMesh.current = { ...mesh.deform, points: [...mesh.deform.points] };
-    if (!previous || props.dragging) return;
-    const delta = pointsFromGrids(author, mesh.deform);
-    if (samePoints(delta, pointsFromGrids(author, previous))) return;
+    const delta = gridRecordDelta(author, previous, mesh.deform);
+    if (!delta) return;
     // База возвращается на место — дальше двигает ключ.
     restoreMeshApi.current?.({ ...mesh, deform: author }, object.id);
     lastMesh.current = { ...author, points: [...author.points] };
@@ -588,7 +602,6 @@ export function StatesPanel(props: StatesPanelProps) {
     script: object.script,
   });
   const names = groups.flatMap((group) => group.items.map((item) => item.name));
-  const manual = manualInputOf(layer?.param ?? null);
   const span = Math.max(1e-9, range[1] - range[0]);
   const share = (value: number) => Math.min(1, Math.max(0, (value - range[0]) / span));
 
@@ -1144,29 +1157,10 @@ export function StatesPanel(props: StatesPanelProps) {
               {bound
                 ? "двиньте объект или узлы сетки на сцене — попадёт в ключ под точкой таймлайна"
                 : "двиньте объект или узлы сетки на сцене — попадёт в выбранную позу"}
-              {meshPoints ? ` · узлов в ключе: ${Object.keys(meshPoints).length}` : ""}
+              {meshPoints ? ` · сетка: ${Object.keys(meshPoints).length} узлов в ключе` : ""}
             </small>
           </div>
         </>
-      )}
-
-      {manual && bound && (
-        <div className="states-manual">
-          <span>вход {manual}</span>
-          <input
-            type="range"
-            min={range[0]}
-            max={range[1]}
-            step={0.01}
-            value={props.inputs.values[`manual.${manual}`] ?? range[0]}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              props.onManual?.(manual, value);
-              moveHead(value, true);
-            }}
-          />
-          <small>{props.inputs.values[`manual.${manual}`]?.toFixed(2) ?? "—"}</small>
-        </div>
       )}
 
       {menu && (

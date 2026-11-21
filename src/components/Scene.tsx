@@ -39,7 +39,7 @@ import {
   zoneGeometry, zoneOutline, zonePoint,
 } from "../render/mesh";
 import {
-  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, artFromGrid, artFromOutline, brushGrid, brushWeights,
+  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, applyOffsets, artFromGrid, artFromOutline, brushGrid, brushWeights,
   defaultMesh, flipArtEdge, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode, moveNodeMirrored,
   mergeArt, removeArtPoint, removeArtTriangle, smoothGrid, splitArtEdge, splitArtTriangle,
   symmetrizeGrid,
@@ -439,12 +439,13 @@ export function Scene(props: SceneProps) {
     // активной. Тянуть по-прежнему можно только то, что выбрано инструментом.
     const showGrid = current.tool === "warp";
     const showArt = current.tool === "deform";
+    const offsets = stateOffsets(current.primaryId ?? "");
     if (meshBothRef.current) {
-      if (!showGrid && (current.tool === "deform")) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", null, true);
-      if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true);
+      if (!showGrid && (current.tool === "deform")) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", null, true, offsets);
+      if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true, offsets);
     }
-    if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current);
-    if (showArt) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null);
+    if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets);
+    if (showArt) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
     if (current.tool === "deform" && polygon.current) {
       drawPolygonOverlay(ctx, previewed, frame, zoom, polygon.current);
     }
@@ -755,6 +756,18 @@ export function Scene(props: SceneProps) {
     : null;
   const brush = meshEditing?.brush ?? BRUSH_DEFAULT;
   const mirror = meshEditing?.mirror ?? MIRROR_DEFAULT;
+  /**
+   * Вклад состояний для объекта — то, что видно на сцене.
+   *
+   * Ручки сетки и нарезки рисуются и ловятся по **той же** форме, что и картинка:
+   * авторская сетка плюс смещения предпросмотра. Иначе записанный ключ гнул бы
+   * изображение, а узлы стояли бы на старой форме — и правка выглядела бы
+   * потерянной.
+   */
+  const stateOffsets = (objectId: string): Record<string, Vec2> | undefined => {
+    const preview = propsRef.current.preview;
+    return preview?.id === objectId ? preview.points : undefined;
+  };
   /** Настройка инструмента: в историю не пишется, это не правка формы. */
   const quietMeshTool = (patch: Partial<MeshSpec>) => {
     const current = propsRef.current;
@@ -780,7 +793,7 @@ export function Scene(props: SceneProps) {
    */
   const addPolygonPoint = (object: RigObject, content: Vec2) => {
     const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
-    const shown = { ...object, mesh: { ...editMesh(object), enabled: true } };
+    const shown = { ...object, mesh: { ...shownMesh(editMesh(object), stateOffsets(object.id)), enabled: true } };
     const radius = 9 / camera.current.zoom;
     const near = nearestPoint(artPointPoints(shown, values), content, radius);
     const point = near === null ? content : artPointPoints(shown, values)[near];
@@ -1156,7 +1169,7 @@ export function Scene(props: SceneProps) {
                 if (current.tool === "deform") {
                   // «Нарезка»: точки, рёбра и треугольники. Редактор работает и
                   // на выключенной сетке — первая правка включает её сама.
-                  const shown = { ...object, mesh: { ...mesh, enabled: true } };
+                  const shown = { ...object, mesh: { ...shownMesh(mesh, stateOffsets(object.id)), enabled: true } };
                   const points = artPointPoints(shown, values);
                   const edge = artEdgeHit(shown, content, radius, values);
                   const triangle = artTriangleHit(shown, content, values);
@@ -1225,7 +1238,7 @@ export function Scene(props: SceneProps) {
                   }
                   // «Сетка»: сначала узлы, потом зона — узел внутри зоны должен
                   // выигрывать, иначе его невозможно сдвинуть.
-                  const nodes = meshNodePoints({ ...object, mesh }, values);
+                  const nodes = meshNodePoints({ ...object, mesh: shownMesh(mesh, stateOffsets(object.id)) }, values);
                   const index = nearestPoint(nodes, content, radius);
                   if (index !== null) {
                     current.onDragStart();
@@ -1801,6 +1814,17 @@ const PEN_LINE_COLOR = "#e4bd7c";
 const WARP_COLOR = "#e0834a";
 const WARP_CORNER_COLOR = "#f0c36b";
 
+/**
+ * Форма, которую видно на сцене: авторская сетка плюс вклад состояний.
+ *
+ * Смещения приходят из предпросмотра вкладки «Состояния» (`StatePreview.points`),
+ * поэтому ручки стоят на согнутой картинке, а не на исходной.
+ */
+function shownMesh(mesh: MeshSpec, offsets?: Record<string, Vec2> | null): MeshSpec {
+  if (!offsets || !Object.keys(offsets).length) return mesh;
+  return { ...mesh, deform: applyOffsets(mesh.deform, offsets) };
+}
+
 /** Точки деформера из предпросмотра: одна карта на объект вкладки. */
 function previewPoints(preview: StatePreview | null | undefined): Map<string, Record<string, Vec2>> | undefined {
   if (!preview?.points || !Object.keys(preview.points).length) return undefined;
@@ -1843,6 +1867,8 @@ function drawMeshOverlay(
    * симметрии у неё не рисуются — она только для сравнения, тянуть её нельзя.
    */
   faint = false,
+  /** Смещения узлов от предпросмотра состояний: форма, которую видно. */
+  offsets?: Record<string, Vec2> | null,
 ) {
   if (!primaryId) return;
   const object = preset.objects.find((item) => item.id === primaryId);
@@ -1869,7 +1895,7 @@ function drawMeshOverlay(
   ctx.save();
   if (mode === "grid") {
     if (!faint) drawWarpOverlay(ctx, preset, frame, zoom, primaryId, "frame");
-    const nodes = meshNodePoints(object, values);
+    const nodes = meshNodePoints({ ...object, mesh: shownMesh(mesh, offsets) }, values);
     ctx.strokeStyle = MESH_GRID_COLOR;
     ctx.lineWidth = line;
     ctx.globalAlpha = 0.75 * fade;
@@ -1960,7 +1986,7 @@ function drawMeshOverlay(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  const points = artPointPoints({ ...object, mesh: { ...mesh, enabled: true } }, values);
+  const points = artPointPoints({ ...object, mesh: { ...shownMesh(mesh, offsets), enabled: true } }, values);
   ctx.strokeStyle = MESH_ART_COLOR;
   ctx.lineWidth = line;
   ctx.beginPath();

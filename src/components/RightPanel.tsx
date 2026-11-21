@@ -267,7 +267,6 @@ export function RightPanel(props: RightPanelProps) {
           onMesh={props.onMesh}
           onPreviewState={props.onPreviewState}
           dragging={props.dragging}
-          onManual={props.onManual}
         />
       ) : tab === "shape" ? (
         <ShapePanel

@@ -736,14 +736,6 @@ export function layerRange(layer: StateLayer, fallback: [number, number] | null 
   return fallback ?? [0, 1];
 }
 
-
-/** Имя входа модуля `manual.<имя>` — его можно двигать предпросмотром. */
-export function manualInputOf(param: string | null): string | null {
-  if (!param) return null;
-  const match = /^manual\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(param);
-  return match ? match[1] : null;
-}
-
 /**
  * Дельта позы из разницы базовых поз.
  *
@@ -1140,6 +1132,30 @@ export function pointsFromGrids(from: GridSpec, to: GridSpec): Record<string, Ve
     result[String(index)] = { x: dx, y: dy };
   });
   return result;
+}
+
+/**
+ * Что записать в ключ из правки сетки на сцене.
+ *
+ * Дельты считаются от **авторской** формы, снятой при открытии вкладки: руками
+ * человек двигает базу, а форму держит ключ. `null` — писать нечего или нельзя:
+ *
+ * - `previous` пуст — вкладка только открылась;
+ * - форма не изменилась с прошлого кадра;
+ * - **сменилась густота**: индексы узлов другие, дельт между ними не существует.
+ *   Это правка авторской сетки, а не поза; ключи пересчитывает `remapStatesPoints`,
+ *   который зовёт запись пресета.
+ */
+export function gridRecordDelta(
+  author: GridSpec,
+  previous: GridSpec | null,
+  current: GridSpec,
+): Record<string, Vec2> | null {
+  if (!previous) return null;
+  if (current.cols !== author.cols || current.rows !== author.rows) return null;
+  const delta = pointsFromGrids(author, current);
+  if (samePoints(delta, pointsFromGrids(author, previous))) return null;
+  return delta;
 }
 
 /** Прибавка одних точек к другим: правка на сцене складывается с позой ключа. */
