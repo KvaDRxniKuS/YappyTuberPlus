@@ -234,3 +234,45 @@ test("многократная вставка и переход точки че�
     for (const [a,b] of edges) for (const [c,d] of edges) expect(crosses(art,a,b,c,d)).toBe(false);
   }
 });
+
+test("после удаления внутренней точки покрытие восстанавливается сразу", async () => {
+  const { eraseArtPoint } = await import("../../src/engine/mesh");
+  const art=addArtPoint(artFromGrid(2,2),{x:0.5,y:0.5})!;
+  const next=eraseArtPoint(art,4);
+  expect(artArea(next)).toBeCloseTo(1,6);
+  expect(next.points).toHaveLength(4);
+});
+
+test("после удаления диагонали выбирается другая, не теряется покрытие", async () => {
+  const { eraseArtLine } = await import("../../src/engine/mesh");
+  const next=eraseArtLine(artFromGrid(2,2),0,3);
+  expect(artArea(next)).toBeCloseTo(1,6);
+  expect(hasLine(next,0,3)).toBe(false);
+  expect(hasLine(next,1,2)).toBe(true);
+});
+
+test("автоматическая диагональ выбирается более короткой", async () => {
+  const { rebuildArt } = await import("../../src/engine/mesh");
+  const art:ArtMesh={points:[{x:0,y:0},{x:2,y:0},{x:0,y:1},{x:1,y:1}],triangles:[0,1,2,1,3,2],auto:null};
+  const next=rebuildArt(art);
+  expect(hasLine(next,0,3)).toBe(true);
+  expect(hasLine(next,1,2)).toBe(false);
+  expect(artArea(next)).toBeCloseTo(1.5,6);
+});
+
+test("ручная цепочка строится целиком в порядке выбора, включая незамкнутые точки", async () => {
+  const { addArtChain } = await import("../../src/engine/mesh");
+  const art:ArtMesh={points:[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}],triangles:[],auto:null};
+  const next=addArtChain(art,[0,1,2,3])!;
+  expect(next).not.toBeNull();
+  expect(next.manual).toEqual([[0,1],[1,2],[2,3]]);
+  expect(addArtChain(next,[0,1,2])).not.toBeNull();
+});
+
+test("конфликт цепочки с ручной линией не оставляет частичный результат", async () => {
+  const { addArtChain } = await import("../../src/engine/mesh");
+  const art=addArtLine(artFromGrid(2,2),0,3)!;
+  const before=JSON.stringify(art);
+  expect(addArtChain(art,[0,1,2])).toBeNull();
+  expect(JSON.stringify(art)).toBe(before);
+});

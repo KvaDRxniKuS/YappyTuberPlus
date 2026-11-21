@@ -141,6 +141,19 @@ function zoneQuad(zone: ZoneGeometry): Vec2[] {
  * Нарисовать картинку сеткой. Возвращает `false`, если деформации нет и
  * вызывающий должен рисовать как обычно.
  */
+const sourceSurfaces = new WeakMap<object,{signature:string;geometry:MeshGeometry}>();
+function sourceSurface(object:RigObject,width:number,height:number,levels:number):MeshGeometry {
+  const mesh=meshOf(object)!;
+  const key=object.mesh?.art ?? object.warp ?? object;
+  const signature=`${width}:${height}:${levels}:${JSON.stringify(mesh.frame)}`;
+  const cached=sourceSurfaces.get(key);
+  if(cached?.signature===signature) return cached.geometry;
+  const source=meshGeometry({...object,mesh:{...mesh,deform:regularGrid(2,2)}},width,height)!;
+  const geometry=deformGeometry(source,p=>p,levels);
+  sourceSurfaces.set(key,{signature,geometry});
+  return geometry;
+}
+
 export function drawMeshImage(
   ctx: CanvasRenderingContext2D,
   image: CanvasImageSource,
@@ -151,11 +164,22 @@ export function drawMeshImage(
   keyOffsets?: Record<string, Vec2> | null,
   deform?: (point: Vec2) => Vec2,
 ): boolean {
+  const geometry=meshSurfaceGeometry(object,width,height,values,keyOffsets,deform);
+  if(!geometry) return false;
+  if(geometry.triangles.length) drawTriangles(ctx,image,width,height,geometry);
+  return true;
+}
+
+/** Same evaluated surface for rendering, clipping bounds and hit testing. */
+export function meshSurfaceGeometry(
+  object:RigObject,width=object.width,height=object.height,values?:ObjectFrame|null,
+  keyOffsets?:Record<string,Vec2>|null,deform?:(point:Vec2)=>Vec2,
+):MeshGeometry|null {
   const mesh = meshOf(object);
-  if (!mesh || !mesh.enabled) return false;
+  if (!mesh || !mesh.enabled) return null;
   let geometry = meshGeometry(object, width, height, values, keyOffsets);
-  if (!geometry) return false;
-  if (geometry.triangles.length < 3) return true;
+  if (!geometry) return null;
+  if (geometry.triangles.length < 3) return geometry;
   const grid = applyOffsets(mesh.deform, mergeGridOffsets(paramOffsets(mesh,values),keyOffsets));
   const rest = grid.rest ?? regularGrid(grid.cols,grid.rows).points;
   const strained = grid.points.some((p,i) => Math.hypot(p.x-rest[i].x,p.y-rest[i].y) > 1e-7);
@@ -163,18 +187,17 @@ export function drawMeshImage(
     // Tessellate the SOURCE surface, then sample its deformer. Subdividing
     // already deformed triangles would miss interior controls and stretch the
     // texture differently whenever an art vertex moved.
-    const source = meshGeometry({ ...object, mesh: { ...mesh, deform: regularGrid(2,2) } },width,height)!;
     const zone = zoneGeometry(object,width,height);
     const levels = Math.max(3,Math.ceil(Math.log2(Math.max(grid.cols,grid.rows)-1)));
-    geometry = deformGeometry(source,(p) => {
+    const source = sourceSurface(object,width,height,levels);
+    geometry = {...source,targets:source.targets.map((p) => {
       const uv = zone.toZone(p);
       const target = sampleDeform(grid,uv.x,uv.y);
       const point = zone.toObject(target.x,target.y);
       return deform ? deform(point) : point;
-    },levels);
-  } else if (deform) geometry = deformGeometry(geometry, deform);
-  drawTriangles(ctx, image, width, height, geometry);
-  return true;
+    })};
+  } else if (deform) { const source=sourceSurface(object,width,height,3); geometry={...source,targets:source.targets.map(deform)}; }
+  return geometry;
 }
 
 /** Картинка целиком, но с вырезанной зоной: под сетку она не попадает. */

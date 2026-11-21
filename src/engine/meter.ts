@@ -7,11 +7,13 @@
  */
 
 const counters = { draws: 0, frames: 0, arrivals: 0 };
+let drawTime=0,drawPeak=0;
 let since = typeof performance === "undefined" ? Date.now() : performance.now();
 
 /** Кадр отрисовки сцены (редактор или оверлей). */
-export function countDraw(): void {
+export function countDraw(milliseconds=0): void {
   counters.draws += 1;
+  drawTime+=milliseconds;drawPeak=Math.max(drawPeak,milliseconds);
 }
 
 /** Кадр, доехавший до окон: движок его посчитал и отдал. */
@@ -25,6 +27,8 @@ export function countArrival(): void {
 }
 
 export interface WorkRates {
+  drawMs: number;
+  drawPeak: number;
   /** Отрисовок сцены в секунду. */
   draws: number;
   /** Кадров движка в секунду. */
@@ -38,10 +42,13 @@ export function takeWork(): WorkRates {
   const now = typeof performance === "undefined" ? Date.now() : performance.now();
   const seconds = Math.max(0.2, (now - since) / 1000);
   const rates: WorkRates = {
+    drawMs:Math.round(drawTime/Math.max(1,counters.draws)*10)/10,
+    drawPeak:Math.round(drawPeak*10)/10,
     draws: Math.round(counters.draws / seconds),
     frames: Math.round(counters.frames / seconds),
     arrivals: Math.round(counters.arrivals / seconds),
   };
+  drawTime=0;drawPeak=0;
   counters.draws = 0;
   counters.frames = 0;
   counters.arrivals = 0;
@@ -69,6 +76,7 @@ export function readCapture(): { streams: number; state: string } {
 
 /** Мгновенный сброс метки времени: при смене состояния не мерить «старое» окно. */
 export function resetMeter(): void {
+  drawTime=0;drawPeak=0;
   counters.draws = 0;
   counters.frames = 0;
   counters.arrivals = 0;

@@ -1552,7 +1552,7 @@ export default function App() {
           actual={engine.actualFps}
           onChange={(runtime) => commit({ ...presetRef.current, runtime }, { label: "Лимит FPS", coalesce: "fps" })}
         />
-        <div className={`engine-status ${engine.status}`} title={engine.error || engine.backendLabel}>
+        <div className={`engine-status ${engine.status}`} title={engine.error || `${engine.backendLabel}: частота движка, не FPS интерфейса. Скорость сцены и время отрисовки — в счётчике работы.`}>
           <span /> <div><b>{engine.actualFps} FPS</b><small>{engine.backendLabel}</small></div>
         </div>
         <div className="topbar-actions">

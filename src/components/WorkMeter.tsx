@@ -24,7 +24,7 @@ interface Ambient {
 }
 
 const EMPTY: WorkRates & Ambient = {
-  draws: 0, frames: 0, arrivals: 0, animations: 0, playing: 0, longTasks: 0,
+  drawMs:0, drawPeak:0, draws: 0, frames: 0, arrivals: 0, animations: 0, playing: 0, longTasks: 0,
   canvases: 0, canvasMb: 0, mic: 0, memory: EMPTY_MEMORY, growth: null,
 };
 
@@ -125,9 +125,10 @@ export function WorkMeter() {
   return (
     <span
       className={`work-meter ${idle ? "idle" : "busy"}`}
-      title={memoryHint(memory, work.growth)}
+      title={`Сцена: ${work.draws} отрисовок/с, CPU ${work.drawMs} мс в среднем, пик ${work.drawPeak} мс. Частота движка не равна отзывчивости интерфейса.
+${memoryHint(memory, work.growth)}`}
     >
-      {work.draws} рис · {work.frames} кадр · {work.arrivals} вход · {work.animations} аним · {work.playing} медиа
+      {work.draws} рис · {work.drawMs} мс · {work.frames} кадр · {work.arrivals} вход · {work.animations} аним · {work.playing} медиа
       {work.mic > 0 ? ` · ${work.mic} мик` : ""}
       {memoryText(memory) ? ` · ${memoryText(memory)}` : ""}
       {growthMb !== null ? ` · ${growthMb > 0 ? "+" : ""}${growthMb} МБ/мин` : ""}

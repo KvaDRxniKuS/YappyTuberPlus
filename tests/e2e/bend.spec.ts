@@ -141,3 +141,40 @@ test("наследуемая поверхность гнётся и без жи�
   const deform = parentMeshTransform(presetOf([parent, child]), child, null)!;
   expect(deform({ x: 200, y: 200 }).x).toBeCloseTo(220, 6);
 });
+
+test("неподвижный родитель не создаёт лишний проход деформации ребёнка",async()=>{
+  const { defaultMesh }=await import("../../src/engine/mesh");
+  const parent=object({mesh:{...defaultMesh(),enabled:true}});
+  const child=object({id:"shape",kind:"shape",parentId:parent.id});
+  expect(parentMeshTransform(presetOf([parent,child]),child,frameOf([parent,child]))).toBeUndefined();
+});
+
+test("фигура и её маска используют одну деформированную поверхность, не меняя базу",async()=>{
+  const { defaultMesh }=await import("../../src/engine/mesh");
+  const { meshSurfaceGeometry }=await import("../../src/render/mesh");
+  const parent=object({mesh:meshOfShifted()});
+  const shape=object({id:"shape",kind:"shape",parentId:parent.id,mesh:{...defaultMesh(),enabled:true}});
+  const preset=presetOf([parent,shape]),frame=frameOf([parent,shape]),before=JSON.stringify(preset);
+  const mapper=parentMeshTransform(preset,shape,frame)!;
+  const surface=meshSurfaceGeometry(shape,shape.width,shape.height,frame.objects.shape,null,mapper)!;
+  expect(surface.targets.some(p=>p.x>shape.width)).toBe(true);
+  expect(surface.targets[3].x).toBeCloseTo(220,6);
+  expect(JSON.stringify(preset)).toBe(before);
+  const second=meshSurfaceGeometry({...shape},shape.width,shape.height,frame.objects.shape,null,mapper)!;
+  expect(second.targets).toEqual(surface.targets);
+});
+
+test("подготовленный деформер совпадает с прямым вычислением",async()=>{
+  const { prepareDeformOffset }=await import("../../src/render/bend");
+  const parent=object({mesh:meshOfShifted()}),values=staticValues(parent);
+  const positions=Array.from({length:2048},(_,i)=>({x:(i%64)/63*200-100,y:Math.floor(i/64)/31*200-100}));
+  const start=performance.now();
+  const direct=positions.map(p=>deformOffset(parent,values,p));
+  const directMs=performance.now()-start;
+  const compiled=prepareDeformOffset(parent,values)!;
+  const ready=performance.now();
+  const prepared=positions.map(compiled);
+  const preparedMs=performance.now()-ready;
+  expect(prepared).toEqual(direct);
+  console.log(`2048 вершин: прямая подготовка ${directMs.toFixed(2)} мс; подготовка один раз ${preparedMs.toFixed(2)} мс`);
+});

@@ -359,16 +359,30 @@ export function sampleGrid(grid: GridSpec, u: number, v: number): Vec2 {
   };
 }
 
+interface RestCell { i:number;j:number;points:Vec2[];minX:number;maxX:number;minY:number;maxY:number }
+const restCellCache=new WeakMap<Vec2[],{cols:number;rows:number;cells:RestCell[]}>();
+function restCells(grid:GridSpec):RestCell[] {
+  const rest=grid.rest!;
+  const cached=restCellCache.get(rest);
+  if(cached?.cols===grid.cols&&cached.rows===grid.rows) return cached.cells;
+  const cells:RestCell[]=[];
+  for(let j=0;j<grid.rows-1;j++) for(let i=0;i<grid.cols-1;i++) {
+    const points=[rest[j*grid.cols+i],rest[j*grid.cols+i+1],rest[(j+1)*grid.cols+i],rest[(j+1)*grid.cols+i+1]];
+    cells.push({i,j,points,minX:Math.min(...points.map(p=>p.x))-1e-7,maxX:Math.max(...points.map(p=>p.x))+1e-7,minY:Math.min(...points.map(p=>p.y))-1e-7,maxY:Math.max(...points.map(p=>p.y))+1e-7});
+  }
+  restCellCache.set(rest,{cols:grid.cols,rows:grid.rows,cells});return cells;
+}
+
 /** Evaluate a deformer in its rest domain. Outside it, points are unchanged. */
 export function sampleDeform(grid: GridSpec, u: number, v: number): Vec2 {
   if (!grid.rest) {
     if (u < 0 || u > 1 || v < 0 || v > 1) return { x: u, y: v };
     return sampleGrid(grid, u, v);
   }
-  const rest = { ...grid, points: grid.rest };
-  for (let j = 0; j < grid.rows - 1; j += 1) for (let i = 0; i < grid.cols - 1; i += 1) {
-    const ids = [j * grid.cols + i, j * grid.cols + i + 1, (j + 1) * grid.cols + i, (j + 1) * grid.cols + i + 1];
-    const [a, b, c, d] = ids.map((id) => rest.points[id]);
+  for (const cell of restCells(grid)) {
+    if(u<cell.minX||u>cell.maxX||v<cell.minY||v>cell.maxY) continue;
+    const {i,j}=cell;
+    const [a,b,c,d]=cell.points;
     let x = 0.5, y = 0.5;
     for (let n = 0; n < 12; n += 1) {
       const ex = a.x + (b.x - a.x) * x + (c.x - a.x) * y + (a.x - b.x - c.x + d.x) * x * y - u;
@@ -1060,7 +1074,7 @@ export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
       tri[1], tri[2], next,
       tri[2], tri[0], next,
     );
-    return { ...art, points, triangles, auto: null };
+    return shortenArt({ ...art, points, triangles, auto: null });
   }
 
   if (!best) {
@@ -1102,7 +1116,7 @@ export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
       triangles.push(a, b, next);
     }
     const links = points.slice(0, next).flatMap((_, id): Array<[number, number]> => visible(id) ? [[id, next]] : []);
-    return { ...art, points, triangles, edges: [...(art.edges ?? []), ...links], auto: null };
+    return shortenArt({ ...art, points, triangles, edges: [...(art.edges ?? []), ...links], auto: null });
   }
   const { a, b } = best;
   const points = [...art.points, at];
@@ -1215,7 +1229,7 @@ function cutArtLine(art: ArtMesh, a: number, b: number): ArtMesh | null {
     visited.add(current.triangles.join(","));
     current = candidates[0];
   }
-  if (!(edgeMap(current).get(key) ?? []).length) return null;
+  if (!(edgeMap(current).get(key) ?? []).length && crossingLines(current,a,b).length) return null;
   return markManual(current, a, b);
 }
 
@@ -1449,7 +1463,7 @@ export function moveNode(mesh: MeshSpec, index: number, du: number, dv: number):
 
 /** Сдвиг точки нарезки: сама нарезка правится, сетка не трогается. */
 export function moveArtPoint(mesh: MeshSpec, index: number, du: number, dv: number): MeshSpec {
-  if (index < 0 || index >= mesh.art.points.length) return mesh;
+  if (index < 0 || index >= mesh.art.points.length || Math.hypot(du,dv)<1e-7) return mesh;
   const art = mesh.art;
   const point = { x: round(art.points[index].x + du), y: round(art.points[index].y + dv) };
   let rest = deleteArtPoint(art, index);
@@ -1493,7 +1507,7 @@ export function moveArtPoint(mesh: MeshSpec, index: number, du: number, dv: numb
     if (!constrained) return mesh;
     next = constrained;
   }
-  return withMesh(mesh, { art: next });
+  return withMesh(mesh, { art: shortenArt(next) });
 }
 
 /** Разрезать ребро нарезки: между двумя точками появляется третья. */
@@ -1543,4 +1557,143 @@ export function splitArtTriangle(mesh: MeshSpec, index: number, at: Vec2): MeshS
   const triangles = [...mesh.art.triangles];
   triangles.splice(index * 3, 3, a, b, middle, b, c, middle, c, a, middle);
   return withMesh(mesh, { art: { points, triangles, auto: null } });
+}
+
+/** Rebuild a planar shortest-first graph. Constraints are inserted before auto
+ * edges; faces, not arbitrary triples, become triangles. Used after erasure. */
+export function rebuildArt(art: ArtMesh, excluded: Array<[number, number]> = []): ArtMesh {
+  const points = art.points;
+  const blocked = new Set(excluded.map(([a,b]) => edgeKey(a,b)));
+  const edges: Array<[number,number]> = [];
+  const keys = new Set<string>();
+  const allowed = (a: number,b: number) => {
+    if (a === b || !points[a] || !points[b] || blocked.has(edgeKey(a,b))) return false;
+    if (edges.some(([c,d]) => crossesInterior(points[a],points[b],points[c],points[d]))) return false;
+    const x0=Math.min(points[a].x,points[b].x)-1e-7,x1=Math.max(points[a].x,points[b].x)+1e-7;
+    const y0=Math.min(points[a].y,points[b].y)-1e-7,y1=Math.max(points[a].y,points[b].y)+1e-7;
+    return !points.some((p,i) => i !== a && i !== b && p.x>=x0&&p.x<=x1&&p.y>=y0&&p.y<=y1&&pointSegmentDistance(p,points[a],points[b]) < 1e-7);
+  };
+  const insert = (a: number,b: number) => {
+    const key = edgeKey(a,b);
+    if (keys.has(key)) return;
+    edges.push([a,b]); keys.add(key);
+  };
+  for (const [a,b] of art.manual ?? []) if (allowed(a,b)) insert(a,b);
+  const manual = [...edges];
+  const candidates: Array<{a:number;b:number;length:number}> = [];
+  for (let a=0;a<points.length;a++) {
+    const local = [];
+    for (let b=a+1;b<points.length;b++) local.push({a,b,length:(points[a].x-points[b].x)**2+(points[a].y-points[b].y)**2});
+    // Bound work for dense meshes. Existing edges keep long-range connectivity.
+    local.sort((x,y)=>x.length-y.length);
+    candidates.push(...(points.length > 128 ? local.slice(0,24) : local));
+  }
+  for (const [a,b] of [...artLines(art).auto]) candidates.push({a,b,length:(points[a].x-points[b].x)**2+(points[a].y-points[b].y)**2});
+  candidates.sort((x,y)=>x.length-y.length || x.a-y.a || x.b-y.b);
+  for (const {a,b} of candidates) if (!keys.has(edgeKey(a,b)) && allowed(a,b)) insert(a,b);
+  const neighbors = points.map(() => [] as number[]);
+  for (const [a,b] of edges) { neighbors[a].push(b); neighbors[b].push(a); }
+  neighbors.forEach((list,a)=>list.sort((b,c)=>Math.atan2(points[b].y-points[a].y,points[b].x-points[a].x)-Math.atan2(points[c].y-points[a].y,points[c].x-points[a].x)));
+  const visited = new Set<string>();
+  const triangles: number[] = [];
+  for (const [start,end] of edges.flatMap(([a,b])=>[[a,b],[b,a]])) {
+    if (visited.has(`${start}:${end}`)) continue;
+    let a=start,b=end;
+    const ring:number[]=[];
+    for (let guard=0;guard<=edges.length*2;guard++) {
+      const key=`${a}:${b}`;
+      if (visited.has(key)) break;
+      visited.add(key); ring.push(a);
+      const list=neighbors[b], at=list.indexOf(a);
+      const next=list[(at+list.length-1)%list.length];
+      a=b;b=next;
+      if (a===start && b===end) break;
+    }
+    if (ring.length===3 && triangleArea(points[ring[0]],points[ring[1]],points[ring[2]]) > 1e-9) triangles.push(...ring);
+  }
+  const faces = new Set<string>();
+  for(let i=0;i<triangles.length;i+=3) for(const [a,b] of [[triangles[i],triangles[i+1]],[triangles[i+1],triangles[i+2]],[triangles[i+2],triangles[i]]]) faces.add(edgeKey(a,b));
+  return {...art,triangles,manual,edges:edges.filter(([a,b])=>!faces.has(edgeKey(a,b))),auto:null};
+}
+
+/** Local edge flips decrease total auto-edge length without crossing constraints. */
+export function shortenArt(art: ArtMesh): ArtMesh {
+  let next=art;
+  const manual=new Set((art.manual ?? []).map(([a,b])=>edgeKey(a,b)));
+  for(let pass=0;pass<4;pass++) {
+    let changed=false;
+    let map=edgeMap(next);
+    for(const [key] of [...map]) {
+      const owners=map.get(key) ?? [];
+      if(owners.length!==2 || manual.has(key)) continue;
+      const [a,b]=key.split(":").map(Number);
+      const opposite=owners.map(i=>next.triangles.slice(i*3,i*3+3).find(id=>id!==a&&id!==b)!);
+      const [c,d]=opposite;
+      if(c===undefined||d===undefined) continue;
+      const distance=(x:number,y:number)=>(next.points[x].x-next.points[y].x)**2+(next.points[x].y-next.points[y].y)**2;
+      if(distance(c,d)>=distance(a,b)-1e-9) continue;
+      if((next.manual??[]).some(([x,y])=>crossesInterior(next.points[c],next.points[d],next.points[x],next.points[y]))) continue;
+      const flipped=flipDiagonal(next,a,b);
+      if(flipped) { next=flipped;map=edgeMap(next);changed=true; }
+    }
+    if(!changed) break;
+  }
+  return next;
+}
+
+export function eraseArtPoint(art: ArtMesh,index:number): ArtMesh { return rebuildArt(deleteArtPoint(art,index)); }
+export function eraseArtLine(art: ArtMesh,a:number,b:number): ArtMesh {
+  return rebuildArt({...art,manual:(art.manual??[]).filter(([x,y])=>edgeKey(x,y)!==edgeKey(a,b))},[[a,b]]);
+}
+
+/** Atomic ordered polyline: no silent skipped links. Existing links are valid. */
+export function addArtChain(art: ArtMesh,chain:number[]): ArtMesh | null {
+  let next=art;
+  for(let i=0;i+1<chain.length;i++) {
+    const a=chain[i],b=chain[i+1];
+    if(a===b) continue;
+    if((next.manual??[]).some(([x,y])=>edgeKey(x,y)===edgeKey(a,b))) continue;
+    const line=addArtLine(next,a,b);
+    if(line) { next=line;continue; }
+    if(!next.points[a] || !next.points[b]) return null;
+    if((next.manual??[]).some(([x,y])=>crossesInterior(next.points[a],next.points[b],next.points[x],next.points[y]))) return null;
+    const rebuilt=rebuildArt({...next,manual:[...(next.manual??[]),[a,b]]});
+    if(!(rebuilt.manual??[]).some(([x,y])=>edgeKey(x,y)===edgeKey(a,b))) return null;
+    next=rebuilt;
+  }
+  return rebuildArt(next);
+}
+
+/** Sweep a screen-space eraser capsule; one triangulation per pointer event. */
+export function eraseArtStroke(art:ArtMesh,shown:readonly Vec2[],from:Vec2,to:Vec2,radius:number):ArtMesh {
+  const victims=new Set<number>();
+  shown.forEach((p,i)=>{if(pointSegmentDistance(p,from,to)<=radius) victims.add(i);});
+  const touched=([...artLines(art).manual,...artLines(art).auto]).filter(([a,b])=>{
+    const p=shown[a],q=shown[b];
+    if(!p||!q) return false;
+    return crossesInterior(from,to,p,q) || Math.min(pointSegmentDistance(p,from,to),pointSegmentDistance(q,from,to),pointSegmentDistance(from,p,q),pointSegmentDistance(to,p,q))<=radius;
+  });
+  if(!victims.size && !touched.length) return art;
+  const remap=(id:number)=>id-[...victims].filter(i=>i<id).length;
+  let next=art;
+  for(const index of [...victims].sort((a,b)=>b-a)) next=deleteArtPoint(next,index);
+  const excluded=touched.filter(([a,b])=>!victims.has(a)&&!victims.has(b)).map(([a,b])=>[remap(a),remap(b)] as [number,number]);
+  const keys=new Set(excluded.map(([a,b])=>edgeKey(a,b)));
+  next={...next,manual:(next.manual??[]).filter(([a,b])=>!keys.has(edgeKey(a,b)))};
+  return rebuildArt(next,excluded);
+}
+
+export function meshPointsInBox(points:readonly Vec2[],start:Vec2,end:Vec2):number[] {
+  return points.flatMap((p,i)=>p.x>=Math.min(start.x,end.x)&&p.x<=Math.max(start.x,end.x)&&p.y>=Math.min(start.y,end.y)&&p.y<=Math.max(start.y,end.y)?[i]:[]);
+}
+
+/** Simultaneous group motion (sequential moves fail when controls swap places). */
+export function moveMeshGroup(mesh:MeshSpec,indices:readonly number[],delta:Vec2,mode:"warp"|"deform"):MeshSpec {
+  const picked=new Set(indices);
+  if(mode==="warp") return {...mesh,enabled:true,deform:{...mesh.deform,points:mesh.deform.points.map((p,i)=>picked.has(i)?{x:round(p.x+delta.x),y:round(p.y+delta.y)}:p)}};
+  const points=mesh.art.points.map((p,i)=>picked.has(i)?{x:round(p.x+delta.x),y:round(p.y+delta.y)}:p);
+  for(let a=0;a<points.length;a++) for(let b=a+1;b<points.length;b++) if(Math.hypot(points[a].x-points[b].x,points[a].y-points[b].y)<1e-6) return mesh;
+  const manual=mesh.art.manual??[];
+  if(manual.some(([a,b],i)=>manual.slice(i+1).some(([c,d])=>crossesInterior(points[a],points[b],points[c],points[d])))) return mesh;
+  return {...mesh,enabled:true,art:rebuildArt({...mesh.art,points,auto:null})};
 }

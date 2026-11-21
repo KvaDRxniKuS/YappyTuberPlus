@@ -31,5 +31,12 @@ test("счётчик работы окна считает частоты и об
   expect(rates.draws / rates.frames).toBeLessThan(4);
   // Второй замер без работы — честные нули: иначе «простое» врало бы.
   const idle = takeWork();
-  expect(idle).toEqual({ draws: 0, frames: 0, arrivals: 0 });
+  expect(idle).toEqual({ draws: 0, frames: 0, arrivals: 0, drawMs:0, drawPeak:0 });
+});
+
+
+test("замер сцены сообщает реальную стоимость CPU, а не частоту движка",()=>{
+  resetMeter();countDraw(10);countDraw(30);countFrame();
+  const rates=takeWork();
+  expect(rates.drawMs).toBe(20);expect(rates.drawPeak).toBe(30);
 });

@@ -1,5 +1,5 @@
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
-import { applyOffsets, meshOf, paramOffsets, sampleDeform } from "../engine/mesh";
+import { applyOffsets, meshOf, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
 import { invertAffine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 import { zoneGeometry } from "./mesh";
 
@@ -64,26 +64,23 @@ export function deformOffset(
   point: Vec2,
   points?: Record<string, Vec2>,
 ): Vec2 {
-  const mesh = meshOf(object);
-  if (!mesh || !mesh.enabled) return { x: 0, y: 0 };
-  // Смещения — это и авторская форма сетки (узел сдвинут от своего места), и
-  // правки параметрами `warp*`, и точки ключей. Поэтому пустая карта смещений
-  // ещё не значит «не гнётся»: считаем всегда.
-  const offsets = gridOffsets(object, values, points);
-  const matrix = objectMatrix(object, values);
-  const local = transformPoint(invertAffine(matrix), point.x, point.y);
-  const content = { x: local.x + object.pivot.x * object.width, y: local.y + object.pivot.y * object.height };
-  const zone = zoneGeometry(object);
-  const uv = zone.toZone(content);
-  // За зоной картинка не деформируется — там и изгиба нет.
+  return prepareDeformOffset(object,values,points)?.(point) ?? {x:0,y:0};
+}
 
-  const shifted = sampleDeform(applyOffsets(mesh.deform, offsets), uv.x, uv.y);
-  const target = zone.toObject(shifted.x, shifted.y);
-  const du = target.x - content.x;
-  const dv = target.y - content.y;
-  return {
-    x: matrix.a * du + matrix.c * dv,
-    y: matrix.b * du + matrix.d * dv,
+/** Prepare once per object/frame, never normalize or allocate grids per vertex. */
+export function prepareDeformOffset(object: RigObject,values: ObjectFrame,points?: Record<string,Vec2>): ((point:Vec2)=>Vec2) | undefined {
+  const mesh=meshOf(object);
+  if(!mesh?.enabled) return undefined;
+  const grid=applyOffsets(mesh.deform,gridOffsets(object,values,points));
+  const rest=grid.rest ?? regularGrid(grid.cols,grid.rows).points;
+  if(grid.points.every((p,i)=>Math.hypot(p.x-rest[i].x,p.y-rest[i].y)<1e-8)) return undefined;
+  const matrix=objectMatrix(object,values),inverse=invertAffine(matrix),zone=zoneGeometry(object);
+  return point=>{
+    const local=transformPoint(inverse,point.x,point.y);
+    const content={x:local.x+object.pivot.x*object.width,y:local.y+object.pivot.y*object.height};
+    const uv=zone.toZone(content),shifted=sampleDeform(grid,uv.x,uv.y),target=zone.toObject(shifted.x,shifted.y);
+    const dx=target.x-content.x,dy=target.y-content.y;
+    return {x:matrix.a*dx+matrix.c*dy,y:matrix.b*dx+matrix.d*dy};
   };
 }
 
@@ -145,16 +142,16 @@ export function parentMeshTransform(
   if (object.deformParent === false) return undefined;
   // Apply the nearest parent first, then its ancestors. Control grids always
   // remain in their own authored coordinate system.
-  const chain = ancestors(preset, object).reverse().filter((parent) => meshOf(parent)?.enabled);
+  const chain = ancestors(preset,object).reverse().map(parent => prepareDeformOffset(parent,frame?.objects[parent.id] ?? staticValues(parent),points?.get(parent.id)))
+    .filter((sampler): sampler is (point:Vec2)=>Vec2 => !!sampler);
   if (!chain.length) return undefined;
   const values = frame?.objects[object.id] ?? staticValues(object);
   const matrix = objectMatrix(object, values);
   const inverse = invertAffine(matrix);
   return (point) => {
     let world = transformPoint(matrix, point.x - object.pivot.x * object.width, point.y - object.pivot.y * object.height);
-    for (const parent of chain) {
-      const values = frame?.objects[parent.id] ?? staticValues(parent);
-      const delta = deformOffset(parent, values, world, points?.get(parent.id));
+    for (const sampler of chain) {
+      const delta=sampler(world);
       world = { x: world.x + delta.x, y: world.y + delta.y };
     }
     const local = transformPoint(inverse, world.x, world.y);

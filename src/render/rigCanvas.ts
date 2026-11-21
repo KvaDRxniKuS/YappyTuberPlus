@@ -9,7 +9,7 @@ import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
 import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
-import { drawMeshImage, meshQuad } from "./mesh";
+import { drawMeshImage, meshSurfaceGeometry, meshQuad } from "./mesh";
 import { meshEnabled } from "../engine/mesh";
 import { paintLight } from "./light";
 import { DEFAULT_LIGHT, lightHeight } from "../types";
@@ -460,9 +460,7 @@ function drawShaded(
   // Деформированный объект выходит за свою рамку: объём нужен по всей
   // картинке. У сетки границы считаются по треугольникам, у старого `warp` —
   // по четырём углам.
-  const quad = meshEnabled(object)
-    ? meshQuad(object, frame?.objects[object.id])
-    : warpEnabled(object) ? warpQuad(object, frame?.objects[object.id]) : null;
+  const quad = surfaceBounds(object,frame,options);
   const box = contentBox(view, matrix, object, canvas.width, canvas.height, left, top, feather, quad);
   if (!box) return false;
 
@@ -494,6 +492,13 @@ function drawShaded(
   ctx.drawImage(canvas, box.x, box.y, box.width, box.height, box.x, box.y, box.width, box.height);
   ctx.restore();
   return true;
+}
+
+function surfaceBounds(object:RigObject,frame:RigFrame|null,options:DrawRigOptions):Vec2[]|null {
+  const inherited=options.meshTransform?.(object);
+  const surface=inherited && !meshEnabled(object) ? {...object,mesh:{...defaultMesh(),enabled:true}} : object;
+  const geometry=meshSurfaceGeometry(surface,surface.width,surface.height,frame?.objects[surface.id],options.meshPoints?.get(surface.id),inherited);
+  return geometry?.targets.length ? geometry.targets : warpEnabled(object) ? warpQuad(object,frame?.objects[object.id]) : null;
 }
 
 /** Обычная отрисовка объекта: трансформа, содержимое, без маски. */
@@ -611,16 +616,24 @@ function drawObjectContent(
   }
 }
 
-const shapeSurfaces = new WeakMap<RigObject, HTMLCanvasElement>();
-function shapeSurface(object: RigObject): HTMLCanvasElement {
-  let canvas = shapeSurfaces.get(object);
+const shapeSurfaces = new WeakMap<object, Map<string,HTMLCanvasElement>>();
+function shapeSurface(object: RigObject, mask=false): HTMLCanvasElement {
+  const key=object.shape ?? object;
+  let sizes=shapeSurfaces.get(key);
+  if(!sizes) { sizes=new Map();shapeSurfaces.set(key,sizes); }
+  const size=`${object.width}:${object.height}:${mask}`;
+  let canvas = sizes.get(size);
   if (!canvas) {
     canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.ceil(object.width));
     canvas.height = Math.max(1, Math.ceil(object.height));
     const ctx = canvas.getContext("2d");
-    if (ctx) drawShapeObject(ctx, object);
-    shapeSurfaces.set(object, canvas);
+    if (ctx) {
+      if(mask) {ctx.fillStyle="#fff";ctx.beginPath();traceShape(ctx,object.shape ?? defaultShape(object.width,object.height));ctx.fill("evenodd");}
+      else drawShapeObject(ctx, object);
+    }
+    if(sizes.size>=4) sizes.clear();
+    sizes.set(size, canvas);
   }
   return canvas;
 }
@@ -706,7 +719,7 @@ function drawMasked(
   // большом холсте с несколькими масками это и было главной нагрузкой.
   // Содержимое рисуется только внутри рамки, поэтому снаружи её нечего ни
   // стирать, ни склеивать; запас нужен лишь на сглаживание и размытие края.
-  const box = contentBox(transform, matrix, object, canvas.width, canvas.height, left, top, feather);
+  const box = contentBox(transform, matrix, object, canvas.width, canvas.height, left, top, feather, surfaceBounds(object,frame,options));
   if (!box) return;
   layerCtx.setTransform(1, 0, 0, 1, 0, 0);
   layerCtx.clearRect(box.x, box.y, box.width, box.height);
@@ -799,6 +812,12 @@ function paintMask(
     // Фигура может быть скрыта и анимирована: маска берёт её текущее место.
     ctx.transform(shapeMatrix.a, shapeMatrix.b, shapeMatrix.c, shapeMatrix.d, shapeMatrix.e, shapeMatrix.f);
     ctx.translate(-shape.pivot.x * shape.width, -shape.pivot.y * shape.height);
+    const inherited=options.meshTransform?.(shape);
+    if(meshEnabled(shape) || inherited) {
+      const surface=meshEnabled(shape)?shape:{...shape,mesh:{...defaultMesh(),enabled:true}};
+      drawMeshImage(ctx,shapeSurface(shape,true),surface,shape.width,shape.height,values,options.meshPoints?.get(shape.id),inherited);
+      return;
+    }
     ctx.beginPath();
     traceShape(ctx, shape.shape ?? defaultShape(shape.width, shape.height));
     // evenodd: внутренний контур становится дыркой — так удобнее делать рамки.
