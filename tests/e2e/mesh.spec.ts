@@ -234,10 +234,10 @@ test("нарезка: добавить и удалить треугольник,
 test("нарезка: удаление точки перенумеровывает треугольники", () => {
   const art = artFromGrid(2, 2);
   // Точка 0 есть в обоих треугольниках: без неё не остаётся ни одного.
-  expect(deleteArtPoint(art, 0)).toBe(art);
-  // Меньше трёх точек не бывает: нарезка из трёх точку не отдаёт.
+  expect(deleteArtPoint(art, 0).triangles).toEqual([]);
+  // Последние точки также удаляемы.
   const single = { points: art.points.slice(0, 3), triangles: [0, 1, 2], auto: null };
-  expect(deleteArtPoint(single, 1)).toBe(single);
+  expect(deleteArtPoint(single, 1).points).toHaveLength(2);
   // 3×3: разрезали ребро, удалили добавленную точку — индексы снова в диапазоне.
   const dense = artFromGrid(3, 3);
   const split = splitEdge(dense, 0, 1)!;

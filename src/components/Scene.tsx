@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   BoxSelect, Brush, CircleDot, Crosshair, FlipHorizontal, Focus, Frame, Ghost, Grid3X3, Hand,
-  LassoSelect, LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, Waves, ZoomIn, ZoomOut,
+  LassoSelect, LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, Spline, Waves, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type {
   BasePose, GridSpec, GuideMode, MeshSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2, WarpCorner,
@@ -35,14 +35,13 @@ import {
   warpGrabAt, warpHandlesAt, warpQuad, warpEnabled,
 } from "../render/warp";
 import {
-  artEdgeHit, artPointPoints, artTriangleHit, meshNodePoints, meshQuad, nearestPoint, zoneDelta,
+  artPointPoints, meshNodePoints, meshQuad, nearestPoint, zoneDelta,
   zoneGeometry, zoneOutline, zonePoint,
 } from "../render/mesh";
 import {
-  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, applyOffsets, artFromGrid, artFromOutline, brushGrid, brushWeights,
-  defaultMesh, flipArtEdge, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode, moveNodeMirrored,
-  mergeArt, removeArtPoint, removeArtTriangle, smoothGrid, splitArtEdge, splitArtTriangle,
-  symmetrizeGrid,
+  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, addArtLine, addArtPoint, applyOffsets, artFromGrid, artLines,
+  brushGrid, brushWeights, defaultMesh, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode,
+  moveNodeMirrored, nearestArtLine, removeArtLine, removeArtPoint, smoothGrid, symmetrizeGrid,
 } from "../engine/mesh";
 
 export type SceneTool =
@@ -257,14 +256,15 @@ export function Scene(props: SceneProps) {
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
   /**
-   * Контур новой нарезки: клики по пустому месту в «Нарезке».
+   * Ручная линия: цепочка точек, выбранных на нарезке.
    *
-   * Точки копятся в пикселях картинки, поэтому перерисовка сцены контур не
-   * теряет. Замыкание — двойной клик или Enter: контур уходит в `earClip` и
-   * становится нарезкой, то есть полигон работает и как обрезка.
+   * Это не контур, а именно линия — линиями и строится триангуляция. Точки
+   * копятся кликами, подтверждение — Enter или кнопка инструмента, отмена — Esc.
    */
-  const polygon = useRef<{ objectId: string; points: Vec2[] } | null>(null);
-  const [polygonCount, setPolygonCount] = useState(0);
+  const line = useRef<{ objectId: string; points: number[] } | null>(null);
+  const [lineCount, setLineCount] = useState(0);
+  /** Инструмент «Ручная линия» включён: клики копят точки, а не ставят новые. */
+  const [lineMode, setLineMode] = useState(false);
   /**
    * Что видно в сцене: сетка, нарезка или обе. По умолчанию обе — без этого
    * сетка и артмеш ложатся друг на друга (у 2×2 они совпадают), и не видно,
@@ -446,8 +446,8 @@ export function Scene(props: SceneProps) {
     }
     if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets);
     if (showArt) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
-    if (current.tool === "deform" && polygon.current) {
-      drawPolygonOverlay(ctx, previewed, frame, zoom, polygon.current);
+    if (current.tool === "deform" && line.current) {
+      drawLineChain(ctx, previewed, frame, zoom, line.current, offsets);
     }
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
     if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
@@ -785,71 +785,76 @@ export function Scene(props: SceneProps) {
     current.onDragEnd?.();
   };
 
-  /**
-   * Точка контура: клик по пустому месту в «Нарезке».
-   *
-   * К существующей вершине контур прилипает — так удобно продолжать нарезку с
-   * уже поставленной точки, а не рядом с ней.
-   */
-  const addPolygonPoint = (object: RigObject, content: Vec2) => {
-    const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
-    const shown = { ...object, mesh: { ...shownMesh(editMesh(object), stateOffsets(object.id)), enabled: true } };
-    const radius = 9 / camera.current.zoom;
-    const near = nearestPoint(artPointPoints(shown, values), content, radius);
-    const point = near === null ? content : artPointPoints(shown, values)[near];
-    const current = polygon.current;
-    const points = current && current.objectId === object.id ? [...current.points, point] : [point];
-    polygon.current = { objectId: object.id, points };
-    setPolygonCount(points.length);
+  /** Выбрать точку нарезки в цепочку ручной линии. */
+  const pickLinePoint = (objectId: string, index: number) => {
+    const current = line.current;
+    const points = current && current.objectId === objectId ? [...current.points, index] : [index];
+    line.current = { objectId, points };
+    setLineCount(points.length);
     markDirty();
   };
 
-  /** Замкнуть контур: `earClip` превращает его в треугольники нарезки. */
-  const finishPolygon = (additive = false) => {
-    const current = polygon.current;
-    polygon.current = null;
-    setPolygonCount(0);
+  /**
+   * Построить ручные линии по цепочке.
+   *
+   * Каждая пара соседних точек — линия: она режет автоматические линии на своём
+   * пути, а они пересчитываются вокруг неё. Если пара упирается в другую ручную
+   * линию, она пропускается: ручные линии не пересекаются.
+   */
+  const finishLine = () => {
+    const current = line.current;
+    line.current = null;
+    setLineCount(0);
+    setLineMode(false);
     markDirty();
     const object = current && propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-    if (!current || !object || current.points.length < 3) return;
+    if (!current || !object || current.points.length < 2) return;
     const mesh = editMesh(object);
-    const art = artFromOutline(current.points.map((point) => zonePoint(object, point)));
-    if (!art) return;
-    const next = additive ? mergeArt(mesh.art, art) : art;
+    let art = mesh.art;
+    let made = 0;
+    for (let step = 0; step + 1 < current.points.length; step += 1) {
+      const next = addArtLine(art, current.points[step], current.points[step + 1]);
+      if (!next) continue;
+      art = next;
+      made += 1;
+    }
+    if (!made) return;
     const current2 = propsRef.current;
     current2.onDragStart();
-    current2.onMesh(object.id, { ...mesh, enabled: true, art: next });
+    current2.onMesh(object.id, { ...mesh, enabled: true, art });
     current2.onDragEnd?.();
   };
 
-  /** Отменить контур: недостроенные точки в нарезку не идут. */
-  const cancelPolygon = () => {
-    polygon.current = null;
-    setPolygonCount(0);
+  /** Отменить цепочку и выйти из инструмента: в нарезку ничего не идёт. */
+  const cancelLine = () => {
+    line.current = null;
+    setLineCount(0);
+    setLineMode(false);
     markDirty();
   };
 
-  // Esc и Enter работают, пока контур не замкнут: иначе их пришлось бы ловить
+  // Esc и Enter работают, пока цепочка собирается: иначе их пришлось бы ловить
   // на канве, а фокус в этот момент может быть где угодно.
   useEffect(() => {
-    if (!polygonCount) return;
+    if (!lineCount && !lineMode) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        cancelPolygon();
+        cancelLine();
       } else if (event.key === "Enter") {
         event.preventDefault();
-        finishPolygon(event.shiftKey);
+        finishLine();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Смена объекта или инструмента недостроенный контур не тащит за собой.
+  // Смена объекта или инструмента цепочку не тащит за собой.
   useEffect(() => {
-    polygon.current = null;
-    setPolygonCount(0);
+    line.current = null;
+    setLineCount(0);
+    setLineMode(false);
   }, [props.primaryId, props.tool]);
 
   return (
@@ -878,7 +883,7 @@ export function Scene(props: SceneProps) {
           ><Frame size={15} /></button>
           <button
             className={props.tool === "deform" ? "active" : ""}
-            title="Нарезка (R) · точки и треугольники: двойной клик по ребру, Alt и Ctrl — правки"
+            title="Нарезка (R) · ЛКМ — точка/перетаскивание, Alt+ЛКМ — удалить точку или линию"
             disabled={!props.primaryId}
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
@@ -925,6 +930,11 @@ export function Scene(props: SceneProps) {
           {props.tool === "deform" && meshEditing && (
             <>
               <span className="tool-separator" />
+              <button
+                className={lineMode ? "active" : ""}
+                title="Ручная линия: выберите точки, Enter или повторный клик — построить; Esc — отмена"
+                onClick={() => lineMode ? finishLine() : setLineMode(true)}
+              ><Spline size={15} /></button>
               <select
                 className="tool-select"
                 title="Автосетка: пересобрать нарезку регулярной сеткой"
@@ -978,16 +988,25 @@ export function Scene(props: SceneProps) {
       </div>
       {/* Полоска настроек появляется только у включённого инструмента: сами
           кисть и симметрия живут в общем ряду, а здесь — их числа. */}
-      {props.tool === "deform" && polygonCount > 0 && (
+      {/* Ручная линия: цепочка точек и её подтверждение. */}
+      {props.tool === "deform" && lineMode && (
         <div className="scene-tool-options">
-          <span className="tool-label">контур: {polygonCount} {polygonCount === 1 ? "точка" : polygonCount < 5 ? "точки" : "точек"}</span>
+          <span className="tool-label">
+            {lineCount
+              ? `линия: ${lineCount} ${lineCount === 1 ? "точка" : lineCount < 5 ? "точки" : "точек"}`
+              : "ручная линия"}
+          </span>
           <button
-            disabled={polygonCount < 3}
-            title="Замкнуть контур: точки разобьются на треугольники (Shift — добавить к текущей нарезке)"
-            onClick={(event) => finishPolygon(event.shiftKey)}
-          >Замкнуть</button>
-          <button title="Отменить контур (Esc)" onClick={cancelPolygon}>Отмена</button>
-          <span className="tool-label">двойной клик или Enter — замкнуть, Esc — отменить; Shift+Замкнуть добавит к нарезке</span>
+            disabled={lineCount < 2}
+            title="Построить ручные линии между выбранными точками (Enter)"
+            onClick={finishLine}
+          >Построить</button>
+          <button title="Отменить цепочку и выйти из инструмента (Esc)" onClick={cancelLine}>Отмена</button>
+          <span className="tool-label">
+            {lineCount < 2
+              ? "выберите на нарезке не меньше двух точек — ручные линии вырежут автоматические"
+              : "Enter или кнопка — построить; ручные линии автосетка не перерезает"}
+          </span>
         </div>
       )}
       {props.tool === "warp" && meshEditing && (brush.on || mirror.on) && (
@@ -1171,40 +1190,21 @@ export function Scene(props: SceneProps) {
                   // на выключенной сетке — первая правка включает её сама.
                   const shown = { ...object, mesh: { ...shownMesh(mesh, stateOffsets(object.id)), enabled: true } };
                   const points = artPointPoints(shown, values);
-                  const edge = artEdgeHit(shown, content, radius, values);
-                  const triangle = artTriangleHit(shown, content, values);
-                  if (event.detail >= 2) {
-                    if (edge) {
-                      if (commit(splitArtEdge(mesh, edge.a, edge.b))) return;
-                    }
-                    // Двойной клик по пустому месту замыкает контур: точки уже
-                    // стоят, осталось разбить их на треугольники.
-                    if (polygon.current && polygon.current.objectId === object.id) {
-                      finishPolygon(event.shiftKey);
-                      return;
-                    }
-                  }
+                  // Hit testing in scene coordinates keeps the target nine screen pixels
+                  // wide even when the object itself is scaled or rotated.
+                  const screenPoints = points.map((p) => transformPoint(matrix, left + p.x, top + p.y));
+                  const index = nearestPoint(screenPoints, point, radius);
+                  const edge = nearestArtLine(screenPoints, mesh.art, point, radius);
                   if (event.altKey) {
-                    // Alt по ребру — перевернуть диагональ, Alt по треугольнику —
-                    // поставить точку и разбить его на три.
-                    if (edge) {
-                      if (commit(flipArtEdge(mesh, edge.a, edge.b))) return;
-                    } else if (triangle !== null) {
-                      if (commit(splitArtTriangle(mesh, triangle, zonePoint(object, content)))) return;
-                    }
+                    cancelLine();
+                    if (index !== null) commit(removeArtPoint(mesh, index));
+                    else if (edge) commit({ ...mesh, enabled: true, art: removeArtLine(mesh.art, edge.a, edge.b) });
+                    return;
                   }
-                  if (event.ctrlKey || event.metaKey) {
-                    if (triangle !== null) {
-                      if (commit(removeArtTriangle(mesh, triangle))) return;
-                    }
+                  if (lineMode) {
+                    if (index !== null) pickLinePoint(object.id, index);
+                    return;
                   }
-                  if (event.shiftKey) {
-                    const victim = nearestPoint(points, content, radius);
-                    if (victim !== null) {
-                      if (commit(removeArtPoint(mesh, victim))) return;
-                    }
-                  }
-                  const index = nearestPoint(points, content, radius);
                   if (index !== null) {
                     current.onDragStart();
                     interaction.current = {
@@ -1213,17 +1213,9 @@ export function Scene(props: SceneProps) {
                     };
                     return;
                   }
-                  // Пустое место — вершина нового контура: нарезку можно не
-                  // только править, но и нарисовать руками. Shift при
-                  // замыкании добавит её к текущей нарезке. Клик мимо картинки
-                  // контур не начинает: там работает обычное выделение.
-                  const margin = 12 / camera.current.zoom;
-                  const inside = content.x >= -margin && content.y >= -margin
-                    && content.x <= object.width + margin && content.y <= object.height + margin;
-                  if (inside && !event.ctrlKey && !event.metaKey) {
-                    addPolygonPoint(object, content);
-                    return;
-                  }
+                  const art = addArtPoint(mesh.art, zonePoint(object, content));
+                  if (art) commit({ ...mesh, enabled: true, art });
+                  return;
                 } else {
                   // «Сетка»: кисть важнее узла — она и означает «тянуть пятно,
                   // а не узел». Дальше уже узлы и зона.
@@ -1275,7 +1267,7 @@ export function Scene(props: SceneProps) {
                 // для объектов, к которым сетку ещё не применяли.
                 const grab = warpGrabAt(
                   object, values, left, top, matrix, camera.current.zoom, point,
-                  current.tool === "deform" ? "corners" : "frame",
+                  "frame",
                 );
                 if (grab) {
                   const initial = { ...(object.warp ?? defaultWarp()), enabled: true };
@@ -1671,7 +1663,7 @@ const TOOL_HINT: Record<SceneTool, string> = {
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
   warp: "Сетка: узлы (Shift — по осям), кисть, симметрия и сглаживание — во второй строке панели; зона и поворот",
-  deform: "Нарезка: клик по пустому месту — контур будущих треугольников (двойной клик или Enter — замкнуть); двойной клик по ребру — разрезать; Alt — перевернуть диагональ или разбить треугольник; Ctrl — удалить треугольник; Shift — удалить точку",
+  deform: "Нарезка: ЛКМ — новая точка или перетаскивание; Alt+ЛКМ — удалить точку/линию; инструмент линии — выбрать точки, Enter или повторный клик по инструменту для построения, Esc — отмена",
   pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
 
@@ -1989,23 +1981,22 @@ function drawMeshOverlay(
   const points = artPointPoints({ ...object, mesh: { ...shownMesh(mesh, offsets), enabled: true } }, values);
   ctx.strokeStyle = MESH_ART_COLOR;
   ctx.lineWidth = line;
-  ctx.beginPath();
-  for (let index = 0; index < mesh.art.triangles.length; index += 3) {
-    const ids = [mesh.art.triangles[index], mesh.art.triangles[index + 1], mesh.art.triangles[index + 2]];
-    ids.forEach((id, at2) => {
-      const source = points[id];
-      if (!source) return;
-      const screen = at(source);
-      if (at2 === 0) ctx.moveTo(screen.x, screen.y);
-      else ctx.lineTo(screen.x, screen.y);
-    });
-    const first = points[ids[0]];
-    if (first) {
-      const screen = at(first);
-      ctx.lineTo(screen.x, screen.y);
+  const lines = artLines(mesh.art);
+  for (const manual of [false, true]) {
+    ctx.lineWidth = (manual ? 1.8 : 0.8) / zoom;
+    ctx.setLineDash(manual ? [] : [4 / zoom, 3 / zoom]);
+    ctx.beginPath();
+    for (const [a, b] of manual ? lines.manual : lines.auto) {
+      if (!points[a] || !points[b]) continue;
+      const from = at(points[a]);
+      const to = at(points[b]);
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
     }
+    ctx.stroke();
   }
-  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineWidth = line;
   ctx.fillStyle = "#1b2026";
   for (const point of points) {
     const screen = at(point);
@@ -2018,17 +2009,18 @@ function drawMeshOverlay(
 }
 
 /**
- * Контур новой нарезки: пунктир по точкам и кружки на них.
+ * Цепочка ручной линии: пунктир по выбранным точкам и кружки на них.
  *
- * Пока контур не замкнут, он живёт только здесь: в нарезку точки уходят
- * одним шагом, когда их разбивает `earClip`.
+ * Пока линия не построена, она живёт только здесь: в нарезку она уходит одним
+ * шагом, когда между точками появляются ручные линии.
  */
-function drawPolygonOverlay(
+function drawLineChain(
   ctx: CanvasRenderingContext2D,
   preset: RigPreset,
   frame: RigFrame | null,
   zoom: number,
-  shape: { objectId: string; points: Vec2[] },
+  shape: { objectId: string; points: number[] },
+  offsets?: Record<string, Vec2> | null,
 ) {
   const object = preset.objects.find((item) => item.id === shape.objectId);
   if (!object || object.kind === "group" || object.kind === "text") return;
@@ -2040,19 +2032,25 @@ function drawPolygonOverlay(
     x: matrix.a * (left + point.x) + matrix.c * (top + point.y) + matrix.e,
     y: matrix.b * (left + point.x) + matrix.d * (top + point.y) + matrix.f,
   });
-  const points = shape.points.map(at);
+  const mesh = meshOf(object);
+  if (!mesh) return;
+  const shown = { ...object, mesh: { ...shownMesh(mesh, offsets), enabled: true } };
+  const source = artPointPoints(shown, values);
+  const points = shape.points
+    .map((index) => source[index])
+    .filter((point): point is Vec2 => !!point)
+    .map(at);
+  if (!points.length) return;
   ctx.save();
-  ctx.strokeStyle = "rgba(224, 163, 74, 0.9)";
-  ctx.lineWidth = 1 / zoom;
+  ctx.strokeStyle = "rgba(224, 163, 74, 0.95)";
+  ctx.lineWidth = 1.4 / zoom;
   ctx.setLineDash([6 / zoom, 4 / zoom]);
   ctx.beginPath();
   points.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
-  // Контур на трёх точках уже замкнут — показываем, каким он станет.
-  if (points.length >= 3) ctx.closePath();
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = "#1b2026";
-  const size = 3 / zoom;
+  const size = 3.5 / zoom;
   for (const point of points) {
     ctx.beginPath();
     ctx.arc(point.x, point.y, size, 0, Math.PI * 2);

@@ -195,7 +195,7 @@ export function normalizeArt(raw: unknown): ArtMesh | undefined {
     if (!point) return undefined;
     points.push(point);
   }
-  if (points.length < 3) return undefined;
+  if (points.length < 3 && source.auto !== null) return undefined;
   const triangles: number[] = [];
   const seen = new Set<string>();
   const input = Array.isArray(source.triangles) ? source.triangles : [];
@@ -212,7 +212,7 @@ export function normalizeArt(raw: unknown): ArtMesh | undefined {
     if (Math.abs(triangleArea(points[a], points[b], points[c])) < 1e-6) continue;
     triangles.push(a, b, c);
   }
-  if (!triangles.length) return undefined;
+  if (!triangles.length && (!Array.isArray(source.triangles) || source.triangles.length > 0)) return undefined;
   const auto = source.auto && typeof source.auto === "object"
     ? { cols: clampGrid(source.auto.cols), rows: clampGrid(source.auto.rows) }
     : null;
@@ -223,7 +223,28 @@ export function normalizeArt(raw: unknown): ArtMesh | undefined {
       if (index >= 0 && index < points.length) outline.push(index);
     }
   }
-  return outline.length >= 3 ? { points, triangles, outline, auto } : { points, triangles, auto };
+  // Ручные линии: только существующие пары, без повторов и петель.
+  const manual: Array<[number, number]> = [];
+  const manualKeys = new Set<string>();
+  if (Array.isArray(source.manual)) {
+    for (const item of source.manual) {
+      if (!Array.isArray(item) || item.length < 2) continue;
+      const from = Math.round(numberOr(item[0], -1));
+      const to = Math.round(numberOr(item[1], -1));
+      if (from < 0 || to < 0 || from >= points.length || to >= points.length || from === to) continue;
+      const key = edgeKey(from, to);
+      if (manualKeys.has(key)) continue;
+      manualKeys.add(key);
+      manual.push([from, to]);
+    }
+  }
+  return {
+    points,
+    triangles,
+    ...(manual.length ? { manual } : {}),
+    ...(outline.length >= 3 ? { outline } : {}),
+    auto,
+  };
 }
 
 /**
@@ -796,7 +817,7 @@ export function deleteTriangle(art: ArtMesh, index: number): ArtMesh {
 
 /** Удалить точку: вместе с ней уходят все её треугольники, индексы сдвигаются. */
 export function deleteArtPoint(art: ArtMesh, index: number): ArtMesh {
-  if (index < 0 || index >= art.points.length || art.points.length <= 3) return art;
+  if (index < 0 || index >= art.points.length) return art;
   const points = art.points.filter((_, position) => position !== index);
   const triangles: number[] = [];
   for (let at = 0; at < art.triangles.length; at += 3) {
@@ -804,16 +825,382 @@ export function deleteArtPoint(art: ArtMesh, index: number): ArtMesh {
     if (triangle.includes(index)) continue;
     triangles.push(...triangle.map((value) => (value > index ? value - 1 : value)));
   }
-  if (triangles.length < 3) return art;
   const outline = art.outline
     ?.filter((value) => value !== index)
     .map((value) => (value > index ? value - 1 : value));
+  // Ручные линии уходят вместе с точкой, остальные переезжают по индексам.
+  const manual = (art.manual ?? [])
+    .filter(([from, to]) => from !== index && to !== index)
+    .map(([from, to]) => [from > index ? from - 1 : from, to > index ? to - 1 : to] as [number, number]);
   return {
     points,
     triangles,
+    ...(manual.length ? { manual } : {}),
     ...(outline && outline.length >= 3 ? { outline } : {}),
     auto: null,
   };
+}
+
+/* ── Линии нарезки: ручные и автоматические ───────────────────────────────
+ *
+ * Триангуляция — это точки и линии. Линии бывают двух видов:
+ *
+ * - **ручные** (`art.manual`) — их провёл человек инструментом «Линия».
+ *   Автосетка такую линию перерезать не может;
+ * - **автоматические** — всё остальное, что дают треугольники. После каждой
+ *   ручной линии они пересчитываются: треугольники, которые она резала,
+ *   заменяются новыми по обе стороны от неё.
+ *
+ * Видимая часть картинки — объединение треугольников, поэтому точки и линии
+ * меняют не только форму, но и покрытие: удалённая точка уносит с собой свои
+ * треугольники, удалённая внутренняя линия переворачивается на другую
+ * диагональ (или оставляет дырку, если четырёхугольник невыпуклый).
+ */
+
+/** Параметры пересечения двух отрезков: `t` по первому, `u` по второму. */
+function segmentParams(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): { t: number; u: number } | null {
+  const rx = p2.x - p1.x;
+  const ry = p2.y - p1.y;
+  const sx = q2.x - q1.x;
+  const sy = q2.y - q1.y;
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-12) return null;
+  const t = ((q1.x - p1.x) * sy - (q1.y - p1.y) * sx) / denom;
+  const u = ((q1.x - p1.x) * ry - (q1.y - p1.y) * rx) / denom;
+  return { t, u };
+}
+
+/** Отрезки пересекаются внутри друг друга: общие концы пересечением не считаются. */
+function crossesInterior(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): boolean {
+  const hit = segmentParams(p1, p2, q1, q2);
+  if (!hit) return false;
+  return hit.t > 1e-7 && hit.t < 1 - 1e-7 && hit.u > 1e-7 && hit.u < 1 - 1e-7;
+}
+
+/** Точка внутри треугольника: барицентрические координаты с допуском. */
+function triangleHolds(points: Vec2[], tri: readonly number[], point: Vec2, eps = 1e-9): boolean {
+  const a = points[tri[0]];
+  const b = points[tri[1]];
+  const c = points[tri[2]];
+  const area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+  if (Math.abs(area) < 1e-12) return false;
+  const s1 = ((b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)) / area;
+  const s2 = ((c.x - b.x) * (point.y - b.y) - (c.y - b.y) * (point.x - b.x)) / area;
+  const s3 = ((a.x - c.x) * (point.y - c.y) - (a.y - c.y) * (point.x - c.x)) / area;
+  return s1 >= -eps && s2 >= -eps && s3 >= -eps;
+}
+
+/** Рёбра нарезки двумя списками: ручные и автоматические. */
+export function artLines(art: ArtMesh): { manual: Array<[number, number]>; auto: Array<[number, number]> } {
+  const manual: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  for (const [from, to] of art.manual ?? []) {
+    if (from === to) continue;
+    if (from < 0 || to < 0 || from >= art.points.length || to >= art.points.length) continue;
+    const key = edgeKey(from, to);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    manual.push([from, to]);
+  }
+  const auto: Array<[number, number]> = [];
+  for (let index = 0; index < art.triangles.length; index += 3) {
+    const tri = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
+    for (const [from, to] of [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]) {
+      const key = edgeKey(from, to);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      auto.push([from, to]);
+    }
+  }
+  return { manual, auto };
+}
+
+/** Ближайшая линия к точке — по экранным координатам точек нарезки. */
+export function nearestArtLine(
+  points: readonly Vec2[],
+  art: ArtMesh,
+  at: Vec2,
+  limit = Number.POSITIVE_INFINITY,
+): { a: number; b: number; manual: boolean; distance: number } | null {
+  const lines = artLines(art);
+  let best: { a: number; b: number; manual: boolean; distance: number } | null = null;
+  const check = (pairs: Array<[number, number]>, manual: boolean) => {
+    for (const [a, b] of pairs) {
+      const start = points[a];
+      const end = points[b];
+      if (!start || !end) continue;
+      const distance = pointSegmentDistance(at, start, end);
+      if (distance > limit) continue;
+      if (best && distance >= best.distance) continue;
+      best = { a, b, manual, distance };
+    }
+  };
+  // Ручные линии ближе к «главным»: при равном расстоянии выбирается ручная.
+  check(lines.manual, true);
+  check(lines.auto, false);
+  return best;
+}
+
+/** Расстояние от точки до отрезка: для попадания мышью. */
+export function pointSegmentDistance(point: Vec2, start: Vec2, end: Vec2): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length2 = dx * dx + dy * dy;
+  if (length2 < 1e-12) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = Math.min(1, Math.max(0, ((point.x - start.x) * dx + (point.y - start.y) * dy) / length2));
+  return Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t));
+}
+
+/** Линия становится ручной: автосетка её больше не тронет. */
+function markManual(art: ArtMesh, a: number, b: number): ArtMesh {
+  const key = edgeKey(a, b);
+  const manual = (art.manual ?? []).filter(([from, to]) => edgeKey(from, to) !== key);
+  return { ...art, manual: [...manual, [a, b]], auto: null };
+}
+
+/**
+ * Новая точка нарезки.
+ *
+ * Как и базовая, она сразу участвует в триангуляции: попала внутрь
+ * треугольника — он делится на три, попала на линию — делятся оба
+ * треугольника по её сторонам. Линии к ближайшим вершинам получаются
+ * автоматическими: ручных здесь нет. Вне покрытия точка не появляется —
+ * иначе она была бы невидимой и ничего не гнула.
+ */
+export function addArtPoint(art: ArtMesh, point: Vec2): ArtMesh | null {
+  if (art.points.length >= 1024) return null;
+  const at = { x: round(point.x), y: round(point.y) };
+  if (art.points.some((existing) => Math.hypot(existing.x - at.x, existing.y - at.y) < 1e-3)) return null;
+
+  // 1. Внутри треугольника — три новых треугольника.
+  for (let index = 0; index < art.triangles.length; index += 3) {
+    const tri = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
+    if (!triangleHolds(art.points, tri, at, -1e-7)) continue;
+    const points = [...art.points, at];
+    const next = points.length - 1;
+    const triangles = [...art.triangles];
+    triangles.splice(
+      index, 3,
+      tri[0], tri[1], next,
+      tri[1], tri[2], next,
+      tri[2], tri[0], next,
+    );
+    return { ...art, points, triangles, auto: null };
+  }
+
+  // 2. На линии — делим её: треугольники по обе стороны распадаются на два.
+  const { manual, auto } = artLines(art);
+  let best: { a: number; b: number; distance: number } | null = null;
+  for (const [a, b] of [...manual, ...auto]) {
+    const distance = pointSegmentDistance(at, art.points[a], art.points[b]);
+    if (distance > 1e-3) continue;
+    if (best && distance >= best.distance) continue;
+    best = { a, b, distance };
+  }
+  if (!best) {
+    // Outside the current coverage (including a deleted patch): connect only
+    // visible boundary edges. Existing triangles and manual lines are barriers.
+    const points = [...art.points, at];
+    const next = art.points.length;
+    const triangles = [...art.triangles];
+    const edges = [...artLines(art).auto, ...artLines(art).manual];
+    const visible = (id: number) => !edges.some(([a, b]) =>
+      a !== id && b !== id && crossesInterior(at, points[id], points[a], points[b]));
+    const covered = (point: Vec2) => {
+      for (let i = 0; i < art.triangles.length; i += 3) {
+        if (triangleHolds(points, art.triangles.slice(i, i + 3), point)) return true;
+      }
+      return false;
+    };
+    const boundary = [...edgeMap(art)].filter(([, owners]) => owners.length === 1)
+      .map(([key]) => key.split(":").map(Number) as [number, number]);
+    // With no faces left, the first three non-collinear points seed a face.
+    if (!art.triangles.length) {
+      for (let a = 0; a < next; a += 1) for (let b = a + 1; b < next; b += 1) {
+        if (Math.abs(triangleArea(points[a], points[b], at)) > 1e-6) {
+          boundary.push([a, b]);
+          a = next;
+          break;
+        }
+      }
+    }
+    for (const [a, b] of boundary) {
+      if (!visible(a) || !visible(b)) continue;
+      if (Math.abs(triangleArea(points[a], points[b], at)) < 1e-6) continue;
+      const center = { x: (points[a].x + points[b].x + at.x) / 3, y: (points[a].y + points[b].y + at.y) / 3 };
+      if (covered(center)) continue;
+      triangles.push(a, b, next);
+    }
+    return { ...art, points, triangles, auto: null };
+  }
+  const { a, b } = best;
+  const points = [...art.points, at];
+  const next = points.length - 1;
+  const triangles: number[] = [];
+  const key = edgeKey(a, b);
+  for (let index = 0; index < art.triangles.length; index += 3) {
+    const tri = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
+    const has = tri.includes(a) && tri.includes(b);
+    if (!has) {
+      triangles.push(...tri);
+      continue;
+    }
+    const forward = nextInTriangle(tri, a) === b;
+    const [from, to] = forward ? [a, b] : [b, a];
+    const third = tri.find((value) => value !== a && value !== b)!;
+    triangles.push(from, next, third, next, to, third);
+  }
+  // Разрезанная ручная линия остаётся ручной — уже двумя половинами.
+  const manualNext: Array<[number, number]> = [];
+  let split = false;
+  for (const [from, to] of art.manual ?? []) {
+    if (edgeKey(from, to) !== key) {
+      manualNext.push([from, to]);
+      continue;
+    }
+    split = true;
+  }
+  if (split) manualNext.push([a, next], [next, b]);
+  return {
+    points,
+    triangles,
+    ...(manualNext.length ? { manual: manualNext } : {}),
+    ...(art.outline ? { outline: art.outline } : {}),
+    auto: null,
+  };
+}
+
+/**
+ * Ручная линия между двумя точками.
+ *
+ * Линия проходит по сетке и режет автоматические линии, которые встают на её
+ * пути: треугольники под ней заменяются новыми по обе стороны. Ручную линию
+ * перерезать нельзя — попытка вернуть `null`. Если на отрезке лежит вершина,
+ * линия делится на части через неё: узел внутри ребра сломал бы триангуляцию.
+ */
+export function addArtLine(art: ArtMesh, a: number, b: number): ArtMesh | null {
+  if (a === b) return null;
+  if (a < 0 || b < 0 || a >= art.points.length || b >= art.points.length) return null;
+  const start = art.points[a];
+  const end = art.points[b];
+  const { manual } = artLines(art);
+  for (const [from, to] of manual) {
+    if (edgeKey(from, to) === edgeKey(a, b)) return null;
+    if (crossesInterior(start, end, art.points[from], art.points[to])) return null;
+  }
+  // Вершины ровно на отрезке делят его на части.
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length2 = dx * dx + dy * dy;
+  if (length2 < 1e-12) return null;
+  const between: Array<{ index: number; t: number }> = [];
+  art.points.forEach((point, index) => {
+    if (index === a || index === b) return;
+    const t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / length2;
+    if (t <= 1e-6 || t >= 1 - 1e-6) return;
+    if (Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t)) > 1e-6) return;
+    between.push({ index, t });
+  });
+  between.sort((left, right) => left.t - right.t);
+  const chain = [a, ...between.map((item) => item.index), b];
+  let current = art;
+  for (let step = 0; step + 1 < chain.length; step += 1) {
+    const next = cutArtLine(current, chain[step], chain[step + 1]);
+    if (!next) return null;
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Одна ручная линия без вершин на отрезке.
+ *
+ * Классический приём: пока какая-нибудь линия сетки пересекает отрезок, она
+ * переворачивается на другую диагональ своей пары треугольников. Пересечения
+ * исчезают, и отрезок становится линией триангуляции — тогда он и объявляется
+ * ручным. Площадь при перевороте не меняется, поэтому покрытие остаётся.
+ *
+ * Ручные линии при этом не переворачиваются: конфликт отсеян в `addArtLine`,
+ * а здесь на всякий случай проверяется ещё раз.
+ */
+function cutArtLine(art: ArtMesh, a: number, b: number): ArtMesh | null {
+  const key = edgeKey(a, b);
+  if ((edgeMap(art).get(key) ?? []).length) return markManual(art, a, b);
+  const manualKeys = new Set((art.manual ?? []).map(([from, to]) => edgeKey(from, to)));
+  let current = art;
+  const limit = art.triangles.length * 4 + 32;
+  const visited = new Set<string>();
+  for (let guard = 0; guard < limit; guard += 1) {
+    const crossing = crossingLines(current, a, b);
+    if (!crossing.length) break;
+    const candidates = crossing
+      .filter(([from, to]) => !manualKeys.has(edgeKey(from, to)))
+      .map(([from, to]) => flipDiagonal(current, from, to))
+      .filter((next): next is ArtMesh => !!next)
+      .filter((next) => !visited.has(next.triangles.join(",")))
+      .sort((x, y) => crossingLines(x, a, b).length - crossingLines(y, a, b).length);
+    if (!candidates.length) return null;
+    visited.add(current.triangles.join(","));
+    current = candidates[0];
+  }
+  if (!(edgeMap(current).get(key) ?? []).length) return null;
+  return markManual(current, a, b);
+}
+
+/** Линии сетки, которые пересекают отрезок внутри (концы не считаются). */
+function crossingLines(art: ArtMesh, a: number, b: number): Array<[number, number]> {
+  const start = art.points[a];
+  const end = art.points[b];
+  const seen = new Set<string>();
+  const result: Array<[number, number]> = [];
+  for (let index = 0; index < art.triangles.length; index += 3) {
+    const tri = [art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]];
+    for (const [from, to] of [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]]) {
+      if (from === a || from === b || to === a || to === b) continue;
+      const key = edgeKey(from, to);
+      if (seen.has(key)) continue;
+      if (!crossesInterior(start, end, art.points[from], art.points[to])) continue;
+      seen.add(key);
+      result.push([from, to]);
+    }
+  }
+  return result;
+}
+
+/**
+ * Удалить линию.
+ *
+ * Внутренняя линия не оставляет дырку: её треугольники схлопываются в
+ * четырёхугольник и делятся заново по другой диагонали — картинка остаётся
+ * покрытой, а линии, которую удалили, больше нет. Крайняя линия (один
+ * треугольник) и невыпуклый четырёхугольник убирают покрытие: на их месте
+ * дырка, и это видно на спрайте.
+ */
+export function removeArtLine(art: ArtMesh, a: number, b: number): ArtMesh {
+  const key = edgeKey(a, b);
+  const owners = edgeMap(art).get(key) ?? [];
+  if (!owners.length) return art;
+  const manual = (art.manual ?? []).filter(([from, to]) => edgeKey(from, to) !== key);
+  const base: ArtMesh = { ...art, manual };
+  if (owners.length === 2) {
+    const first = [art.triangles[owners[0] * 3], art.triangles[owners[0] * 3 + 1], art.triangles[owners[0] * 3 + 2]];
+    const second = [art.triangles[owners[1] * 3], art.triangles[owners[1] * 3 + 1], art.triangles[owners[1] * 3 + 2]];
+    const left = first.find((value) => value !== a && value !== b);
+    const right = second.find((value) => value !== a && value !== b);
+    const busy = left !== undefined && right !== undefined
+      && manual.some(([from, to]) => edgeKey(from, to) === edgeKey(left, right));
+    if (!busy) {
+      const flipped = flipDiagonal(base, a, b);
+      if (flipped) return flipped;
+    }
+  }
+  const drop = new Set(owners);
+  const triangles: number[] = [];
+  for (let index = 0; index < art.triangles.length; index += 3) {
+    if (drop.has(index / 3)) continue;
+    triangles.push(art.triangles[index], art.triangles[index + 1], art.triangles[index + 2]);
+  }
+  return { ...base, triangles, auto: null };
 }
 
 /**

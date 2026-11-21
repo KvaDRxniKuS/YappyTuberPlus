@@ -153,7 +153,8 @@ export function drawMeshImage(
   const mesh = meshOf(object);
   if (!mesh || !mesh.enabled) return false;
   const geometry = meshGeometry(object, width, height, values, keyOffsets);
-  if (!geometry || geometry.triangles.length < 3) return false;
+  if (!geometry) return false;
+  if (geometry.triangles.length < 3) return true;
   // Нарезка, которая ровно повторяет зону: картинка вне зоны остаётся ровной,
   // как в старой деформации крайних точек. Если же артмеш правили руками, он
   // сам решает, что и где рисовать, — второй раз картинку не кладём.
