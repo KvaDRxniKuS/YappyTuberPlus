@@ -265,6 +265,15 @@ export function Scene(props: SceneProps) {
    */
   const polygon = useRef<{ objectId: string; points: Vec2[] } | null>(null);
   const [polygonCount, setPolygonCount] = useState(0);
+  /**
+   * Что видно в сцене: сетка, нарезка или обе. По умолчанию обе — без этого
+   * сетка и артмеш ложатся друг на друга (у 2×2 они совпадают), и не видно,
+   * что из них вы тянете. Активная накладка рисуется ярко, вторая — приглушённо.
+   */
+  const [meshBoth, setMeshBoth] = useState(true);
+  const meshBothRef = useRef(meshBoth);
+  meshBothRef.current = meshBoth;
+
   const spaceDown = useRef(false);
   const initialized = useRef(false);
   const marqueeRef = useRef<Marquee | null>(null);
@@ -426,8 +435,16 @@ export function Scene(props: SceneProps) {
     }
     drawGuides(ctx, previewed, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, previewed, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
-    if (current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current);
-    if (current.tool === "deform") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null);
+    // Переключатель вида: «оба» показывает вторую накладку приглушённо, под
+    // активной. Тянуть по-прежнему можно только то, что выбрано инструментом.
+    const showGrid = current.tool === "warp";
+    const showArt = current.tool === "deform";
+    if (meshBothRef.current) {
+      if (!showGrid && (current.tool === "deform")) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", null, true);
+      if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true);
+    }
+    if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current);
+    if (showArt) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null);
     if (current.tool === "deform" && polygon.current) {
       drawPolygonOverlay(ctx, previewed, frame, zoom, polygon.current);
     }
@@ -550,7 +567,7 @@ export function Scene(props: SceneProps) {
 
   useEffect(() => {
     markDirty();
-  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview]);
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview, meshBoth]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -852,6 +869,25 @@ export function Scene(props: SceneProps) {
             disabled={!props.primaryId}
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
+          {/* Вид деформации: сетка, нарезка или обе. Две накладки ложатся друг
+              на друга, поэтому одна из них всегда убирается или гаснет. */}
+          {(props.tool === "warp" || props.tool === "deform") && meshEditing && (
+            <select
+              className="tool-select"
+              title="Что показывать в сцене: сетка деформера (T), нарезка (R) или обе"
+              value={meshBoth ? "both" : props.tool === "deform" ? "art" : "grid"}
+              onChange={(event) => {
+                const value = event.target.value;
+                setMeshBoth(value === "both");
+                if (value === "grid") props.onTool("warp");
+                if (value === "art") props.onTool("deform");
+              }}
+            >
+              <option value="grid">сетка</option>
+              <option value="art">нарезка</option>
+              <option value="both">оба</option>
+            </select>
+          )}
           {/* Инструменты сетки — в том же ряду, но своей группой: ими работают
               на сцене, а не в параметрах объекта. */}
           {props.tool === "warp" && meshEditing && (
@@ -1802,12 +1838,19 @@ function drawMeshOverlay(
   mode: "grid" | "art",
   /** Курсор в мировых координатах: кисть рисует по нему свой радиус. */
   cursor: Point | null,
+  /**
+   * Приглушённая накладка: вторая сетка в режиме «оба». Ручки, кисть и ось
+   * симметрии у неё не рисуются — она только для сравнения, тянуть её нельзя.
+   */
+  faint = false,
 ) {
   if (!primaryId) return;
   const object = preset.objects.find((item) => item.id === primaryId);
   if (!object || object.kind === "group" || object.kind === "text") return;
+  const fade = faint ? 0.35 : 1;
   const mesh = meshOf(object);
   if (!mesh) {
+    if (faint) return;
     drawWarpOverlay(ctx, preset, frame, zoom, primaryId, mode === "grid" ? "frame" : "corners");
     return;
   }
@@ -1825,11 +1868,11 @@ function drawMeshOverlay(
 
   ctx.save();
   if (mode === "grid") {
-    drawWarpOverlay(ctx, preset, frame, zoom, primaryId, "frame");
+    if (!faint) drawWarpOverlay(ctx, preset, frame, zoom, primaryId, "frame");
     const nodes = meshNodePoints(object, values);
     ctx.strokeStyle = MESH_GRID_COLOR;
     ctx.lineWidth = line;
-    ctx.globalAlpha = 0.75;
+    ctx.globalAlpha = 0.75 * fade;
     ctx.beginPath();
     // Горизонтали, потом вертикали: по узлам сетки, а не по зоне — иначе линии
     // не совпадут с ручками, когда зону повернули.
@@ -1852,7 +1895,7 @@ function drawMeshOverlay(
       }
     }
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = faint ? 0.55 : 1;
     ctx.fillStyle = "#1b2026";
     ctx.strokeStyle = MESH_GRID_COLOR;
     for (const point of nodes) {
@@ -1863,7 +1906,7 @@ function drawMeshOverlay(
       ctx.stroke();
     }
     const mirror = mesh.mirror ?? MIRROR_DEFAULT;
-    if (mirror.on) {
+    if (mirror.on && !faint) {
       // Ось симметрии: точка и угол в долях зоны, поэтому через `toObject` —
       // она совпадает с той, по которой двигаются узлы.
       const zone = zoneGeometry(object);
@@ -1882,7 +1925,7 @@ function drawMeshOverlay(
       ctx.setLineDash([]);
     }
     const brush = mesh.brush ?? BRUSH_DEFAULT;
-    if (brush.on && cursor) {
+    if (brush.on && cursor && !faint) {
       // Радиус кисти — в пикселях картинки, поэтому переводим в мировые через
       // масштаб объекта: на экране пятно совпадает с тем, что тянется.
       const zone = zoneGeometry(object);
@@ -1907,6 +1950,7 @@ function drawMeshOverlay(
   }
 
   // Нарезка: зона пунктиром, треугольники и точки — цветом инструмента.
+  ctx.globalAlpha = fade;
   ctx.strokeStyle = "rgba(224, 163, 74, 0.45)";
   ctx.lineWidth = line;
   ctx.setLineDash([5 / zoom, 4 / zoom]);
