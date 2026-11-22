@@ -389,6 +389,7 @@ export function useRigEngine(
     }
     neutral.seq = nextFrameSeq();
     frameRef.current = neutral;
+    frameSinkRef?.current?.(neutral);
     setSnapshot(neutral);
     resetClockRef.current = true;
     setEpoch((value) => value + 1);

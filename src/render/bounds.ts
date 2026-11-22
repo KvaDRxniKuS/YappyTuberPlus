@@ -1,3 +1,4 @@
+import { shapeContentBounds } from "./shape";
 import type { ObjectFrame, RigObject, RigPreset } from "../types";
 import { type Affine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 import { warpEnabled, warpQuad } from "./warp";
@@ -8,13 +9,15 @@ export interface Point { x: number; y: number }
 
 /** Квадрат границ объекта в координатах сцены по его текущей матрице. */
 export function spriteBounds(object: RigObject, matrix: Affine): Point[] {
-  const left = -object.pivot.x * object.width;
-  const top = -object.pivot.y * object.height;
+  const box=object.kind==="shape"&&object.shape?shapeContentBounds(object.shape):null;
+  const left = -object.pivot.x * object.width+(box?.x??0);
+  const top = -object.pivot.y * object.height+(box?.y??0);
+  const width=box?.width??object.width,height=box?.height??object.height;
   return [
     transformPoint(matrix, left, top),
-    transformPoint(matrix, left + object.width, top),
-    transformPoint(matrix, left + object.width, top + object.height),
-    transformPoint(matrix, left, top + object.height),
+    transformPoint(matrix, left + width, top),
+    transformPoint(matrix, left + width, top + height),
+    transformPoint(matrix, left, top + height),
   ];
 }
 
@@ -26,6 +29,7 @@ export function spriteBounds(object: RigObject, matrix: Affine): Point[] {
  * мышь там, где картинки уже нет.
  */
 export function objectOutline(object: RigObject, values: ObjectFrame, matrix?: Affine): Point[] {
+  if(object.kind==="shape" && object.shape && !shapeContentBounds(object.shape)) return [];
   const deformed = object.kind !== "group" && object.kind !== "shape"
     && (meshEnabled(object) || warpEnabled(object));
   if (!deformed) {

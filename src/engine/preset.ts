@@ -160,7 +160,7 @@ export function makeShape(
   return {
     id, name, kind: "shape", enabled: true, image: null, parentId: null,
     pivot: { x: 0.5, y: 0.5 }, base: { ...DEFAULT_BASE, x, y }, width, height,
-    script: rootScript(), shape: { ...defaultShape(width, height), ...shape },
+    script: rootScript(), shape: { ...defaultShape(width, height), items: [], ...shape },
   };
 }
 

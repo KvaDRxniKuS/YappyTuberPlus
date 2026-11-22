@@ -105,7 +105,7 @@ export function normalizeShape(raw: unknown, width = 240, height = 160): ShapeSp
     ? source.items.map((item, index) => normalizeItem(item, index)).filter((item): item is ShapeItem => item !== null)
     : [];
   return {
-    items: items.length ? items : defaultShape(width, height).items,
+    items: Array.isArray(source.items) ? items : defaultShape(width, height).items,
     fill: typeof source.fill === "string" && source.fill ? source.fill : "#6bc0aa",
     stroke: typeof source.stroke === "string" ? source.stroke : "#e8eef4",
     strokeWidth: Math.max(0, readNumber(source.strokeWidth)),
@@ -344,4 +344,34 @@ export function makeItem(spec: ShapeSpec, kind: ShapeItemKind, width: number, he
     smoothPoints: [],
     closed: true,
   };
+}
+
+/** Content bounds are separate from the transform pivot: editing a contour
+ * can move its selection centre without moving/rotating the artwork. */
+export function shapeContentBounds(spec:ShapeSpec):{x:number;y:number;width:number;height:number}|null {
+  const points:Vec2[]=[];
+  let current:Vec2={x:0,y:0};
+  const add=(x:number,y:number)=>{current={x,y};points.push(current);};
+  const ctx={
+    rect(x:number,y:number,w:number,h:number){points.push({x,y},{x:x+w,y:y+h});},
+    ellipse(x:number,y:number,rx:number,ry:number){points.push({x:x-rx,y:y-ry},{x:x+rx,y:y+ry});},
+    moveTo:add,lineTo:add,
+    bezierCurveTo(x1:number,y1:number,x2:number,y2:number,x:number,y:number){
+      const start=current;
+      const value=(a:number,b:number,c:number,d:number,t:number)=>(1-t)**3*a+3*(1-t)**2*t*b+3*(1-t)*t*t*c+t**3*d;
+      const ts:number[]=[];
+      for(const [a,b,c,d] of [[start.x,x1,x2,x],[start.y,y1,y2,y]]) {
+        const qa=3*(-a+3*b-3*c+d),qb=6*(a-2*b+c),qc=3*(b-a);
+        if(Math.abs(qa)<1e-12) {if(Math.abs(qb)>1e-12) ts.push(-qc/qb);}
+        else {const disc=qb*qb-4*qa*qc;if(disc>=0) ts.push((-qb+Math.sqrt(disc))/(2*qa),(-qb-Math.sqrt(disc))/(2*qa));}
+      }
+      for(const t of ts) if(t>0&&t<1) points.push({x:value(start.x,x1,x2,x,t),y:value(start.y,y1,y2,y,t)});
+      add(x,y);
+    },closePath(){},
+  } as unknown as CanvasRenderingContext2D;
+  for(const item of spec.items) traceItem(ctx,item);
+  if(!points.length) return null;
+  const x=Math.min(...points.map(p=>p.x)),y=Math.min(...points.map(p=>p.y));
+  const pad=spec.strokeWidth/2;
+  return {x:x-pad,y:y-pad,width:Math.max(...points.map(p=>p.x))-x+pad*2,height:Math.max(...points.map(p=>p.y))-y+pad*2};
 }

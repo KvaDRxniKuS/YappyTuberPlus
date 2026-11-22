@@ -114,3 +114,18 @@ test("перезапуск редактора при открытом источ
     client.dispose();
   }
 });
+
+test("стоп сохраняет скрытые элементы живого кадра, в том числе для позднего OBS",async()=>{
+  const bus=link();
+  const host=new OverlayHost(bus as never,{hostName:"test"});
+  const preset=createDemoPreset();
+  const frame={seq:nextFrameSeq(),time:1,dt:0,globals:{},objects:Object.fromEntries(preset.objects.map((object,i)=>[object.id,{...NEUTRAL_PARAMS,visible:i===0?0:1}])),order:[],diagnostics:[]} as RigFrame;
+  const sent:WireMessage[]=[];
+  const off=bus.subscribe(message=>sent.push(message));
+  host.setPreset(preset);host.setFrozen(true,preset,frame);
+  await expect.poll(()=>sent.filter(message=>message.t==="frame").length).toBe(1);
+  const message=sent.filter(message=>message.t==="frame").at(-1);
+  expect(message?.t).toBe("frame");
+  if(message?.t==="frame") expect(message.frame.objects[preset.objects[0].id].visible).toBe(0);
+  off();host.dispose();
+});

@@ -1,3 +1,4 @@
+import { toolForCode } from "./engine/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box, Check, ChevronDown, ChevronLeft, ChevronRight, FilePlus2, FolderOpen, RefreshCw,
@@ -813,8 +814,8 @@ export default function App() {
     preset.overlay?.width, preset.overlay?.height]);
 
   useEffect(() => {
-    overlay.setFrozen(stopped, presetRef.current);
     if (stopped) engine.resetTimeline();
+    overlay.setFrozen(stopped, presetRef.current,engine.frameRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stopped]);
 
@@ -894,13 +895,7 @@ export default function App() {
         // Delete и Backspace удаляют выделение; в полях ввода до этого места не доходит.
         event.preventDefault();
         deleteRef.current();
-      } else if (!command && event.code === "KeyV") chooseTool("move");
-      else if (!command && event.code === "KeyM") chooseTool("marquee");
-      else if (!command && event.code === "KeyL") chooseTool("lasso");
-      else if (!command && event.code === "KeyP") chooseTool("pivot");
-      else if (!command && event.code === "KeyT") chooseTool("warp");
-      else if (!command && event.code === "KeyR") chooseTool("deform");
-      else if (!command && event.code === "KeyN") chooseTool("pen");
+      } else if (!command && toolForCode(event.code)) chooseTool(toolForCode(event.code)!);
       else if (!command && event.code === "KeyK") {
         event.preventDefault();
         if (event.shiftKey) stopTimeline(); else togglePause();

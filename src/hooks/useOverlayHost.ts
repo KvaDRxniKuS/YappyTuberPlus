@@ -19,7 +19,7 @@ export interface OverlayHostState {
   windowControl: boolean;
   setWindowControl: (enabled: boolean) => void;
   /** «Стоп»: оверлей показывает нейтральную позу вместо живых кадров. */
-  setFrozen: (frozen: boolean, preset?: RigPreset) => void;
+  setFrozen: (frozen: boolean, preset?: RigPreset, frame?:RigFrame|null) => void;
   /** Цвета из модулей: без них в OBS цвет застынет на первом кадре. */
   setColors: (colors: FrameColors) => void;
 }
@@ -61,6 +61,7 @@ export function useOverlayHost(
   const [transportStats, setTransportStats] = useState<TransportStats>({ ...EMPTY_STATS });
   const sinkRef = useRef<((frame: RigFrame) => void) | null>(null);
   const frozenRef = useRef(false);
+  const frozenFrameRef=useRef<RigFrame|null>(null);
   const windowControlRef = useRef(false);
   const onWindowSizeRef = useRef(onWindowSize);
   onWindowSizeRef.current = onWindowSize;
@@ -95,7 +96,7 @@ export function useOverlayHost(
       });
       host.start();
       host.setPreset(presetRef.current);
-      host.setFrozen(frozenRef.current, presetRef.current);
+      host.setFrozen(frozenRef.current, presetRef.current,frozenFrameRef.current);
       host.setWindowControl(windowControlRef.current);
       hostRef.current = host;
       sinkRef.current = (frame) => host.pushFrame(frame);
@@ -148,9 +149,10 @@ export function useOverlayHost(
     hostRef.current?.setWindowControl(enabled);
   }, []);
 
-  const setFrozen = useCallback((frozen: boolean, preset?: RigPreset) => {
+  const setFrozen = useCallback((frozen: boolean, preset?: RigPreset,frame?:RigFrame|null) => {
     frozenRef.current = frozen;
-    hostRef.current?.setFrozen(frozen, preset ?? presetRef.current);
+    frozenFrameRef.current=frame??null;
+    hostRef.current?.setFrozen(frozen, preset ?? presetRef.current,frame);
   }, []);
 
   return {

@@ -1,3 +1,4 @@
+import { ShortcutGuide } from "./ShortcutGuide";
 import { createParentMeshTransforms } from "../render/bend";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
@@ -30,7 +31,7 @@ import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/can
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
 import { countDraw } from "../engine/meter";
 
-import { penAction, smoothingOf, traceItem } from "../render/shape";
+import { penAction, shapeContentBounds, smoothingOf, traceItem } from "../render/shape";
 import {
   defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
   warpHandlesAt, warpQuad, warpEnabled,
@@ -706,8 +707,9 @@ export function Scene(props: SceneProps) {
     const selected = shown.objects.find((item) => item.id === current.primaryId);
     if (selected?.kind === "shape" && (!accept || accept(selected))) {
       const values = frame?.objects[selected.id] || staticValues(selected);
-      const center = transformPoint(objectMatrix(selected, values), 0, 0);
-      if (values.visible !== 0 && Math.hypot(point.x - center.x, point.y - center.y) <= 10 / camera.current.zoom) return selected;
+      const box=selected.shape?shapeContentBounds(selected.shape):null;
+      const center = transformPoint(objectMatrix(selected, values),box?box.x+box.width/2-selected.pivot.x*selected.width:0,box?box.y+box.height/2-selected.pivot.y*selected.height:0);
+      if (box && values.visible !== 0 && Math.hypot(point.x - center.x, point.y - center.y) <= 10 / camera.current.zoom) return selected;
     }
     const ordered = orderedObjects(shown, frame);
     for (let index = ordered.length - 1; index >= 0; index -= 1) {
@@ -745,7 +747,10 @@ export function Scene(props: SceneProps) {
         if (pointInQuad(content, quad)) return object;
         continue;
       }
-      if (local.x >= left && local.x <= left + object.width && local.y >= top && local.y <= top + object.height) return object;
+      const contentBounds=object.kind==="shape"&&object.shape?shapeContentBounds(object.shape):null;
+      if(object.kind==="shape" && !contentBounds) continue;
+      const hitLeft=left+(contentBounds?.x??0),hitTop=top+(contentBounds?.y??0);
+      if (local.x >= hitLeft && local.x <= hitLeft + (contentBounds?.width??object.width) && local.y >= hitTop && local.y <= hitTop + (contentBounds?.height??object.height)) return object;
     }
     return null;
   };
@@ -763,7 +768,7 @@ export function Scene(props: SceneProps) {
       const corners = object.kind !== "group"
         ? objectOutline(object, staticValues(object))
         : groupBounds(current.preset, object.id);
-      if (!corners) continue;
+      if (!corners?.length) continue;
       const screen = corners.map((point) => ({ x: x + point.x * zoom, y: y + point.y * zoom }));
       result.push({ id: object.id, corners: screen, box: boxFromCorners(screen) });
     }
@@ -930,7 +935,7 @@ export function Scene(props: SceneProps) {
   return (
     <section className="scene-panel panel-surface">
       <div className="scene-toolbar">
-        <div className="scene-title"><span className="eyebrow">ПРЕВЬЮ</span><h2>Сцена</h2></div>
+        <div className="scene-title"><ShortcutGuide /><span className="eyebrow">ПРЕВЬЮ</span><h2>Сцена</h2></div>
         <div className="scene-tools">
           <button className={props.tool === "move" ? "active" : ""} title="Выделение и перемещение (V) · Ctrl+клик — добавить, Shift+клик — тоже добавить" onClick={() => props.onTool("move")}><MousePointer2 size={15} /></button>
           <button className={props.tool === "marquee" ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => props.onTool("marquee")}><BoxSelect size={15} /></button>
@@ -2240,7 +2245,7 @@ function drawHiddenOutlines(ctx: CanvasRenderingContext2D, preset: RigPreset, zo
     const corners = object.kind !== "group"
       ? objectOutline(object, staticValues(object))
       : groupBounds(preset, object.id);
-    if (!corners) continue;
+    if (!corners?.length) continue;
     ctx.beginPath();
     corners.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
     ctx.closePath();
@@ -2273,7 +2278,7 @@ function drawGuides(
       const corners = object.kind !== "group"
         ? objectOutline(object, values)
         : groupBounds(preset, object.id);
-      if (!corners) continue;
+      if (!corners?.length) continue;
       ctx.strokeStyle = selected ? BOUNDS_SELECTED : BOUNDS_COLOR;
       ctx.globalAlpha = selected ? 0.9 : 0.45;
       ctx.setLineDash(object.kind === "group" ? [4 / zoom, 3 / zoom] : []);
@@ -2335,7 +2340,7 @@ function drawSelection(
     const corners = object.kind !== "group"
       ? objectOutline(object, values)
       : groupBounds(preset, object.id);
-    if (!corners) continue;
+    if (!corners?.length) continue;
     const primary = object.id === primaryId;
     ctx.globalAlpha = primary ? 1 : 0.7;
     ctx.lineWidth = (primary ? 1.5 : 1) / zoom;
@@ -2346,7 +2351,8 @@ function drawSelection(
     ctx.stroke();
     if (!primary) continue;
     ctx.setLineDash([]);
-    const pivot = transformPoint(objectMatrix(object, values), 0, 0);
+    const box=!pivotMode&&object.kind==="shape"&&object.shape?shapeContentBounds(object.shape):null;
+    const pivot = transformPoint(objectMatrix(object, values),box?box.x+box.width/2-object.pivot.x*object.width:0,box?box.y+box.height/2-object.pivot.y*object.height:0);
     const size = 7 / zoom;
     ctx.beginPath();
     ctx.moveTo(pivot.x - size, pivot.y); ctx.lineTo(pivot.x + size, pivot.y);

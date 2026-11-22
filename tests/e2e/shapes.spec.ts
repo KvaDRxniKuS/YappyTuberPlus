@@ -70,7 +70,7 @@ test("пресет сохраняет фигуру и маску, а не пре
   const loaded = normalizePreset(JSON.parse(JSON.stringify(preset))) as RigPreset;
   const shape = loaded.objects.find((object) => object.id === "mask_shape")!;
   expect(shape.kind).toBe("shape");
-  expect(shape.shape?.items[0].kind).toBe("rect");
+  expect(shape.shape?.items).toEqual([]);
   // Рамка фигуры — её размер: по нему считается пивот и попадание мышью.
   expect([shape.width, shape.height]).toEqual([320, 220]);
   const head = loaded.objects.find((object) => object.id === "head")!;
@@ -242,4 +242,31 @@ test("перо: Alt меняет тип точки, мимо точек — вс
   // Вставка в угол углом и остаётся.
   const corners = pathItem([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], false, [0, 0, 0]);
   expect(penAction(corners, { x: 104, y: 50 }, 12)).toEqual({ type: "insert", index: 2, smoothing: 0 });
+});
+
+test("пустой список контуров не восстанавливает базовый прямоугольник",()=>{
+  const shape=normalizeShape({items:[],strokeWidth:5});
+  expect(shape.items).toEqual([]);
+  expect(normalizeShape(JSON.parse(JSON.stringify(shape))).items).toEqual([]);
+});
+
+test("центр выделения идёт за содержимым, а матрица и меш не плывут",async()=>{
+  const {shapeContentBounds}=await import("../../src/render/shape");
+  const {makeShape}=await import("../../src/engine/preset");
+  const {objectOutline}=await import("../../src/render/bounds");
+  const {objectMatrix,staticValues}=await import("../../src/render/rigCanvas");
+  const object=makeShape("shape","shape",200,100,300,200);
+  const matrix=objectMatrix(object,staticValues(object));
+  expect(object.shape!.items).toEqual([]);
+  expect(objectOutline(object,staticValues(object))).toEqual([]);
+  const item={...defaultShape(20,10).items[0],x:80,y:30};
+  object.shape={...object.shape!,items:[item]};
+  expect(shapeContentBounds(object.shape)).toEqual({x:80,y:30,width:20,height:10});
+  expect(objectMatrix(object,staticValues(object))).toEqual(matrix);
+  const outline=objectOutline(object,staticValues(object));
+  expect((outline[0].x+outline[2].x)/2).toBeCloseTo(290);
+  object.shape={...object.shape,items:[{...item,width:60}]};
+  expect(objectMatrix(object,staticValues(object))).toEqual(matrix);
+  const changed=objectOutline(object,staticValues(object));
+  expect((changed[0].x+changed[2].x)/2).toBeCloseTo(310);
 });

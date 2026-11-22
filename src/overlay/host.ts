@@ -90,6 +90,7 @@ export class OverlayHost {
   private colors: FrameColors = {};
   private bases: Record<string, BasePose> | null = null;
   private frozen = false;
+  private lastFrame:RigFrame|null=null;
   private structures = "";
   private poses = "";
   private configs = "";
@@ -175,7 +176,8 @@ export class OverlayHost {
    * «Стоп» в редакторе: симуляция не идёт, оверлей получает статичную базовую
    * позу вместо последнего живого кадра.
    */
-  setFrozen(frozen: boolean, preset?: RigPreset): void {
+  setFrozen(frozen: boolean, preset?: RigPreset, frame?:RigFrame|null): void {
+    if(frame) this.lastFrame=frame;
     if (this.frozen === frozen) {
       if (frozen && preset) this.publishNeutral(preset);
       return;
@@ -191,6 +193,13 @@ export class OverlayHost {
     // хоста мог совпасть с номером следующего живого кадра, и оверлей отбросил
     // бы его как повтор — источник замирал бы ровно после «Стопа».
     const frame=neutralFrame(preset,nextFrameSeq());
+    if(this.lastFrame) {
+      for(const object of preset.objects) {
+        const live=this.lastFrame.objects[object.id],target=frame.objects[object.id];
+        if(live&&target&&target.visible!==0) target.visible=live.visible;
+      }
+      frame.texts={...this.lastFrame.texts};
+    }
     this.bus.post({
       t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
       frame, meshes:prepareRigMeshes(preset,frame),
@@ -212,7 +221,10 @@ export class OverlayHost {
 
   /** Called by the engine loop after every produced frame. */
   pushFrame(frame: RigFrame): void {
-    if (this.disposed || this.frozen || this.viewers.size === 0 || !this.scene) return;
+    if(this.disposed) return;
+    if(this.frozen && frame.dt!==0) return;
+    this.lastFrame=frame;
+    if (this.viewers.size === 0 || !this.scene) return;
     // Номер приходит от редактора и не откатывается при пересоздании движка:
     // оверлей отбрасывает всё, что не новее прошлого кадра.
     this.bus.post({
