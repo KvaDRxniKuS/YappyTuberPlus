@@ -6,23 +6,30 @@
  * инкременту на событие, без таймеров и без состояния React.
  */
 
+const totals={draws:0,frames:0,arrivals:0,drawMs:0,deliveryMs:0,deliveries:0};
+/** Non-destructive counters: status polling/reset cannot disturb a diagnostic run. */
+export function readWorkTotals(){return {...totals};}
+export function countDelivery(ms:number){totals.deliveryMs+=ms;totals.deliveries++;}
 const counters = { draws: 0, frames: 0, arrivals: 0 };
 let drawTime=0,drawPeak=0;
 let since = typeof performance === "undefined" ? Date.now() : performance.now();
 
 /** Кадр отрисовки сцены (редактор или оверлей). */
 export function countDraw(milliseconds=0): void {
+  totals.draws++;totals.drawMs+=milliseconds;
   counters.draws += 1;
   drawTime+=milliseconds;drawPeak=Math.max(drawPeak,milliseconds);
 }
 
 /** Кадр, доехавший до окон: движок его посчитал и отдал. */
 export function countFrame(): void {
+  totals.frames++;
   counters.frames += 1;
 }
 
 /** Кадр, пришедший в окно от планировщика, — даже если он потом отброшен. */
 export function countArrival(): void {
+  totals.arrivals++;
   counters.arrivals += 1;
 }
 

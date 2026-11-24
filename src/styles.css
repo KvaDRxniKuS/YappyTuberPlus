@@ -2269,3 +2269,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .shortcut-guide-row { display:grid; grid-template-columns:minmax(120px,42%) 1fr; gap:12px; padding:8px 0; border-bottom:1px solid #ffffff12; font-size:12px; text-transform:none; letter-spacing:normal; }
 .shortcut-guide-row kbd { font:inherit; color:#f0d77a; white-space:normal; }
 .shortcut-guide-popup small { display:block; margin-top:12px; font-size:11px; color:#a9b6c6; }
+
+.performance-dialog { width: min(850px, 94vw); max-height: 90vh; }
+.performance-dialog textarea { width: 100%; height: 45vh; resize: vertical; font: 12px/1.5 monospace; user-select: text; }
+.performance-dialog p { white-space: normal; line-height: 1.5; }

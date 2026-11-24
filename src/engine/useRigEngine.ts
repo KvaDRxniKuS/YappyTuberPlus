@@ -8,7 +8,7 @@ import type { ScriptScope } from "./scripts";
 import { neutralFrame, prepareFrame } from "./frame";
 import { moduleConstants, presetGlobals } from "../modules/presets";
 import { frameProduced } from "./frameSignal";
-import { countArrival, countFrame } from "./meter";
+import { countArrival, countFrame, countDelivery } from "./meter";
 import { nextFrameSeq } from "./frameSeq";
 import type { TextChannel } from "../render/text";
 
@@ -265,6 +265,7 @@ export function useRigEngine(
       setError(response.error || "Ошибка кадра");
       return;
     }
+    const deliveryStarted=performance.now();
     countFrame();
     // Номер кадра сквозной: движок мог пересоздаться и начать с единицы, а
     // оверлей отбрасывает «старые» номера и замер бы навсегда.
@@ -289,8 +290,11 @@ export function useRigEngine(
     // Окна рисуют не по вечному rAF, а по этому сигналу: новый кадр — новый
     // кадр отрисовки, тишина — ни одного.
     frameProduced();
+    countDelivery(performance.now()-deliveryStarted);
     framesRef.current += 1;
-    if (nowMs - lastSnapshotRef.current > 120 || gated.diagnostics.length > 0) {
+    // Repeated diagnostics must not force the entire editor UI to update at
+    // engine FPS; the same 120ms snapshot cadence is enough to show errors.
+    if (nowMs - lastSnapshotRef.current > 120) {
       lastSnapshotRef.current = nowMs;
       setSnapshot(gated);
     }

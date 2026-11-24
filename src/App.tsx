@@ -1,3 +1,4 @@
+import { PerformanceTest } from "./components/PerformanceTest";
 import { toolForCode } from "./engine/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1787,6 +1788,16 @@ export default function App() {
             {engine.status === "error" ? engine.error : engine.status === "ready" ? `Кадр #${engine.snapshot?.seq || 0} · ${engine.snapshot?.time.toFixed(1) || "0.0"} c` : "Компиляция Rust-ядра…"}
           </span>
           <WorkMeter />
+          <PerformanceTest context={()=>({
+            version:versionString(),build:{commit:buildInfo?.commit??null,builtAt:buildInfo?.builtAt??null},
+            backend:engine.backendLabel,engineStatus:engine.status,
+            mode:stopped?"stopped":paused?"paused":"playing",runtime:preset.runtime,
+            modules:preset.modules.length,diagnostics:engine.snapshot?.diagnostics.length??0,
+            scene:{canvas:preset.canvas,objects:preset.objects.length,
+              kinds:preset.objects.reduce<Record<string,number>>((counts,o)=>{counts[o.kind]=(counts[o.kind]??0)+1;return counts;},{}),
+              meshes:preset.objects.filter(o=>o.mesh?.enabled).length,masks:preset.objects.filter(o=>o.mask).length},
+            overlayViewers:overlay.viewers.length,tool,ghosts,bounds:layout.showBounds,pivots:layout.showPivots,
+          })} />
         </div>
         <div className="status-right">
           <button onClick={() => setOverlayOpen(true)} className={overlay.viewers.length ? "overlay-live" : undefined}><MonitorPlay size={12} /> Оверлей{overlay.viewers.length ? ` · ${overlay.viewers.length}` : ""}</button>
