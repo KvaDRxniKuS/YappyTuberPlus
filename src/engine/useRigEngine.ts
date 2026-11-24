@@ -285,12 +285,14 @@ export function useRigEngine(
       ...prepareFrame(presetRef.current, response.frame, textsRef?.current, visibility),
       seq: nextFrameSeq(),
     };
+    const preparedAt=performance.now();
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
+    const sinkAt=performance.now();
     // Окна рисуют не по вечному rAF, а по этому сигналу: новый кадр — новый
     // кадр отрисовки, тишина — ни одного.
     frameProduced();
-    countDelivery(performance.now()-deliveryStarted);
+    countDelivery(performance.now()-deliveryStarted,preparedAt-deliveryStarted,sinkAt-preparedAt);
     framesRef.current += 1;
     // Repeated diagnostics must not force the entire editor UI to update at
     // engine FPS; the same 120ms snapshot cadence is enough to show errors.

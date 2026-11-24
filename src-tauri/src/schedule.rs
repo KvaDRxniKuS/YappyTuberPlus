@@ -247,13 +247,19 @@ fn run(app: AppHandle, shared: Arc<Shared>) {
                 Ok(value) => value,
                 Err(_) => break,
             };
-            store.call_json(&request.to_string())
+            let started=Instant::now();
+            let response=store.call_json(&request.to_string());
+            crate::diagnostics::record_call(started);
+            response
         };
         let ok = response.contains("\"ok\":true");
         if ok {
             shared.ticks.fetch_add(1, Ordering::Relaxed);
         }
+        let emitted=Instant::now();
+        let bytes=response.len();
         let _ = app.emit(FRAME_EVENT, response);
+        crate::diagnostics::record_emit(emitted,bytes);
         if !ok {
             // Ошибку тоже отдали во фронтенд, но крутиться в ней не будем.
             thread::sleep(Duration::from_millis(50));

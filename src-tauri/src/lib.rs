@@ -2,6 +2,7 @@
 mod pointer;
 mod overlay_server;
 mod schedule;
+mod diagnostics;
 mod sources;
 mod trackers;
 
@@ -15,7 +16,12 @@ use tauri::{Manager, State};
 #[tauri::command]
 fn rig_call(state: State<'_, Arc<schedule::Shared>>, request: &str) -> String {
     match state.store.lock() {
-        Ok(mut store) => store.call_json(request),
+        Ok(mut store) => {
+            let started=std::time::Instant::now();
+            let response=store.call_json(request);
+            diagnostics::record_call(started);
+            response
+        },
         Err(_) => "{\"ok\":false,\"error\":\"Rust runtime lock is poisoned\"}".into(),
     }
 }
@@ -516,6 +522,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             rig_call,
+            diagnostics::performance_snapshot,
             open_external,
             preset_default_dir,
             preset_write,

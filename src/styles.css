@@ -2273,3 +2273,8 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .performance-dialog { width: min(850px, 94vw); max-height: 90vh; }
 .performance-dialog textarea { width: 100%; height: 45vh; resize: vertical; font: 12px/1.5 monospace; user-select: text; }
 .performance-dialog p { white-space: normal; line-height: 1.5; }
+.performance-dialog .dialog-body { overflow: auto; }
+.performance-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0; }
+.performance-history { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.performance-history td, .performance-history th { padding: 5px 10px; border-bottom: 1px solid var(--border-soft); }
+.performance-history button[aria-pressed="true"] { color: var(--accent); }

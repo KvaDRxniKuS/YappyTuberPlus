@@ -1,3 +1,4 @@
+import {countAppCommit} from "./engine/meter";
 import { PerformanceTest } from "./components/PerformanceTest";
 import { toolForCode } from "./engine/shortcuts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -162,6 +163,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export default function App() {
+  useEffect(()=>{countAppCommit();});
   const [preset, setPreset] = useState<RigPreset>(loadPreset);
   useEffect(() => {
     const closeOutputs = () => {
