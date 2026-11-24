@@ -246,6 +246,12 @@ export class OverlayHost {
     this.activeAssetRequests.clear();
     this.viewers.clear();
     this.stale.clear();
+    this.lastFrame = null;
+    this.presetRef = null;
+    this.scene = null;
+    this.bases = null;
+    this.config = null;
+    this.colors = {};
   }
 
   private receive(message: WireMessage): void {

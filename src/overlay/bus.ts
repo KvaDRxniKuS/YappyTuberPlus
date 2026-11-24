@@ -93,7 +93,10 @@ export class TauriEventBus implements OverlayBus {
   private disposed = false;
   ready = false;
 
-  constructor(private readonly emit: (event: string, payload: WireMessage) => void) {}
+  private frameBusy = false;
+  private pendingFrame: WireMessage | null = null;
+
+  constructor(private readonly emit: (event: string, payload: WireMessage) => void | Promise<void>) {}
 
   async start(): Promise<void> {
     const { listen } = await import("@tauri-apps/api/event");
@@ -108,7 +111,30 @@ export class TauriEventBus implements OverlayBus {
   }
 
   post(message: WireMessage) {
-    void this.emit(OVERLAY_EVENT, message);
+    if (this.disposed) return;
+    if (message.t === "frame") {
+      if (this.frameBusy) { this.pendingFrame = message; return; }
+      this.sendFrame(message);
+      return;
+    }
+    // A queued frame belongs to the old scene/pose. Never send it after an
+    // authoritative update (especially a host shutdown).
+    if (["scene", "pose", "config", "bye"].includes(message.t)) this.pendingFrame = null;
+    try { void Promise.resolve(this.emit(OVERLAY_EVENT, message)).catch(() => undefined); }
+    catch { /* transport unavailable */ }
+  }
+
+  private sendFrame(message: WireMessage): void {
+    this.frameBusy = true;
+    let sent: void | Promise<void>;
+    try { sent = this.emit(OVERLAY_EVENT, message); }
+    catch { sent = undefined; }
+    void Promise.resolve(sent).catch(() => undefined).finally(() => {
+      this.frameBusy = false;
+      const next = this.pendingFrame;
+      this.pendingFrame = null;
+      if (!this.disposed && next) this.sendFrame(next);
+    });
   }
 
   subscribe(listener: Listener) {
@@ -118,6 +144,8 @@ export class TauriEventBus implements OverlayBus {
 
   close() {
     this.disposed = true;
+    this.pendingFrame = null;
+    this.ready = false;
     this.listeners.clear();
     this.unlisten?.();
     this.unlisten = null;
@@ -170,9 +198,14 @@ export class WebSocketBus implements OverlayBus {
   });
 
   post(message: WireMessage) {
+    if (this.disposed) return;
     if (message.t === "frame") {
       this.postFrame(message);
       return;
+    }
+    if (["scene", "pose", "config", "bye"].includes(message.t)) {
+      this.pending = null;
+      this.stopDrain();
     }
     if (this.socket && this.ready) this.send(message);
     else this.enqueue(message);
@@ -194,6 +227,8 @@ export class WebSocketBus implements OverlayBus {
       this.startDrain();
       return;
     }
+    this.pending = null;
+    this.stopDrain();
     this.send(message);
   }
 
@@ -305,6 +340,8 @@ export class WebSocketBus implements OverlayBus {
     };
     socket.onerror = () => { this.lastError = "мост недоступен"; };
     socket.onclose = () => {
+      this.pending = null;
+      this.stopDrain();
       this.ready = false;
       this.socket = null;
       this.scheduleRetry();
@@ -382,11 +419,16 @@ export class CompositeBus implements OverlayBus {
   subscribe(listener: Listener) {
     let closed = false;
     const wrapped: Listener = (message, source) => { if (!closed) listener(message, source); };
-    for (const bus of this.buses) this.unsubscribers.push(bus.subscribe(wrapped));
-    return () => {
+    const offs = this.buses.map(bus => bus.subscribe(wrapped));
+    const unsubscribe = () => {
+      if (closed) return;
       closed = true;
-      for (const off of this.unsubscribers.splice(0)) off();
+      for (const off of offs) off();
+      const index = this.unsubscribers.indexOf(unsubscribe);
+      if (index >= 0) this.unsubscribers.splice(index, 1);
     };
+    this.unsubscribers.push(unsubscribe);
+    return unsubscribe;
   }
 
   close() {
