@@ -1,5 +1,5 @@
 import {nativeProbeAvailable,nativePerformanceSnapshot,summarizeNative,type NativePoint} from "./nativePerformance";
-import {readWorkTotals,readCapture,readResources} from "./meter";
+import {readWorkTotals,readCapture,readResources,readSceneWakes} from "./meter";
 import {readMemory} from "./memory";
 import {meshRenderBackend} from "../render/mesh";
 
@@ -19,10 +19,11 @@ export function summarizeDelays(samples:number[]) {
 /** Passive 15s observation, not a synthetic stress test. Timer only while running. */
 export async function collectPerformanceReport(context:()=>object,signal:AbortSignal,duration=15000):Promise<string> {
   const startContext=context(),start=readWorkTotals(),memoryStart=readMemory(),began=performance.now();
+  const wakeStart=readSceneWakes();
   const delays:number[]=[];
   const nativePoints:NativePoint[]=[];
   const nativeErrors:string[]=[];
-  const workTimeline:Array<{atMs:number;work:ReturnType<typeof readWorkTotals>}>=[];
+  const workTimeline:Array<{atMs:number;heapUsed:number|null;work:ReturnType<typeof readWorkTotals>}>=[];
   let nativeBusy=false,nativePending:Promise<void>|undefined;
   let collecting=true;
   const sampleNative=()=>{
@@ -34,7 +35,9 @@ export async function collectPerformanceReport(context:()=>object,signal:AbortSi
   };
   sampleNative();
   const nativeTimer=window.setInterval(()=>{
-    workTimeline.push({atMs:performance.now()-began,work:readWorkTotals()});
+    workTimeline.push({atMs:performance.now()-began,
+      heapUsed:(performance as unknown as {memory?:{usedJSHeapSize:number}}).memory?.usedJSHeapSize??null,
+      work:readWorkTotals()});
     sampleNative();
   },1000);
   let hidden=document.hidden,visibilityChanges=0,longTasks=0,longTaskMs=0;
@@ -69,6 +72,7 @@ export async function collectPerformanceReport(context:()=>object,signal:AbortSi
       native:{available:nativeProbeAvailable(),
         status:!nativeProbeAvailable()?"browser-unavailable":nativeErrors.length?"unavailable":nativePoints.length<2?"insufficient-samples":"measured",
         errors:nativeErrors,...summarizeNative(nativePoints)},
+      sceneWakeRequests:Object.fromEntries(Object.entries(readSceneWakes()).map(([reason,count])=>[reason,count-(wakeStart[reason]??0)])),
       workTimeline,work:workDelta(start,readWorkTotals(),seconds),mainThreadTimerDelay:summarizeDelays(delays),
       longTasks:{supported:!!longTasksSupported,count:longTasks,totalMs:longTaskMs},
       validity:{hiddenDuringTest:hidden,visibilityChanges},

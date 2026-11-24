@@ -30,7 +30,7 @@ import {
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
 import { sameVisualFrame } from "../render/frameChanges";
-import { countDraw } from "../engine/meter";
+import { countDraw, countSceneWake } from "../engine/meter";
 
 import { penAction, shapeContentBounds, smoothingOf, traceItem } from "../render/shape";
 import {
@@ -296,7 +296,8 @@ export function Scene(props: SceneProps) {
   // процессор в простое), но любая правка или новый кадр планирует ровно один
   // кадр отрисовки.
   const loop = useRef<{ request: () => void; stop: () => void } | null>(null);
-  const markDirty = () => {
+  const markDirty = (reason="interaction") => {
+    countSceneWake(reason);
     dirty.current = true;
     loop.current?.request();
   };
@@ -558,7 +559,7 @@ export function Scene(props: SceneProps) {
   // Цвет из модуля меняется по времени (30 раз в секунду), поэтому каждый его
   // новый набор — это новый кадр. Правка самого пресета перерисовку уже зовёт.
   useEffect(() => {
-    markDirty();
+    markDirty("colors");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.colors]);
 
@@ -569,10 +570,10 @@ export function Scene(props: SceneProps) {
     markDirty();
   }, [imageKey, props.preset, props.preset.objects]);
 
-  useEffect(() => assets.current.onChange(() => { markDirty(); }), []);
+  useEffect(() => assets.current.onChange(() => { markDirty("assets"); }), []);
   // Замер для ambient нужен и в простое (стоп, расстановка), когда кадров нет:
   // просьба о замере сама будит отрисовку, иначе свет замирал бы до движения мыши.
-  useEffect(() => sceneSampler.onRequest(() => { markDirty(); }), []);
+  useEffect(() => sceneSampler.onRequest(() => { markDirty("sampler"); }), []);
   // Файлы из хранилища читаются асинхронно: когда картинка появилась,
   // спрайт нужно поставить в очередь декодирования и перерисовать сцену.
   useEffect(() => onAssetsChanged(() => {
@@ -593,7 +594,7 @@ export function Scene(props: SceneProps) {
   }, []);
 
   useEffect(() => {
-    markDirty();
+    markDirty("scene-props");
   }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview, meshBoth]);
 
   useEffect(() => {
@@ -634,7 +635,9 @@ export function Scene(props: SceneProps) {
       // window repaint identical pixels. Video/mask playback must still advance.
       const changed = !sameVisualFrame(previousFrame, frame);
       previousFrame = frame;
-      if (changed || mediaAssets.current.active() || maskMedia.current.active()) render.request();
+      if (changed || mediaAssets.current.active() || maskMedia.current.active()) {
+        countSceneWake(changed?"frame-changed":"media");render.request();
+      }
     });
     if (dirty.current) render.request();
     return () => {

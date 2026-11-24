@@ -49,7 +49,7 @@ import {
   retainAssetUrls,
 } from "./engine/assets";
 import { textChannel } from "./render/text";
-import { resolvedColors } from "./render/color";
+import { createColorResolver } from "./render/color";
 import { History, type HistorySnapshot } from "./engine/history";
 import { rangeIds, selectionRoots, subtreeIds, toggleId } from "./engine/selection";
 import { propagateBase, repivot, reorderNeighbor, reorderObjects, withBases } from "./engine/structure";
@@ -460,8 +460,9 @@ export default function App() {
    * и уходят в отрисовку — в редакторе и в оверлей. Пока привязок нет, словарь
    * пустой и сцена рисуется своими цветами.
    */
+  const resolveColors=useMemo(()=>createColorResolver(),[]);
   const engineColors = useMemo(
-    () => resolvedColors(preset, moduleInputs.inputs.values),
+    () => resolveColors(preset, moduleInputs.inputs.values),
     [preset, moduleInputs.inputs],
   );
   // Оверлей живёт отдельной страницей и цветов не считает — ему их отдают

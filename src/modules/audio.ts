@@ -124,6 +124,19 @@ export class AudioInputEngine {
    * нельзя — иначе выбор снова выглядит потерянным.
    */
   private notice: string | null = null;
+  private generation=0;
+  private suspending:Promise<void>|null=null;
+  private async resumeContext():Promise<void> {
+    await this.suspending;
+    if(this.context?.state === "suspended") await this.context.resume();
+  }
+  private suspendIdle():void {
+    const context=this.context;
+    if(!context || this.streams.size || context.state!=="running" || this.suspending)return;
+    this.suspending=context.suspend().catch(()=>undefined).finally(()=>{
+      this.suspending=null;this.report();
+    });
+  }
 
   get state(): AudioContextState | "closed" {
     return this.context?.state ?? "closed";
@@ -147,13 +160,14 @@ export class AudioInputEngine {
 
   async start(onValues: (values: Record<string, AudioFrame>) => void): Promise<void> {
     this.onValues = onValues;
+    const generation=this.generation;
     if (!this.context) {
       const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctor) throw new Error("WebView не поддерживает Web Audio");
       this.context = new Ctor();
     }
-    if (this.context.state === "suspended") await this.context.resume();
-    this.startTimer();
+    await this.resumeContext();
+    if(generation===this.generation)this.startTimer();
   }
 
   /** Список микрофонов. До первого разрешения подписи устройств пустые. */
@@ -171,6 +185,9 @@ export class AudioInputEngine {
   async attach(name: string, settings: ModuleConfig, bands = false): Promise<void> {
     // Отчёт после подключения: строка статуса покажет живой захват.
     if (!this.context) throw new Error("Сначала включите звук");
+    const generation=this.generation;
+    await this.resumeContext();
+    if(generation!==this.generation)return;
     const streamKey = settings.deviceId || "default";
     const entry = await this.acquireStream(streamKey, settings);
     const analyser = this.context.createAnalyser();
@@ -208,13 +225,15 @@ export class AudioInputEngine {
     settings: ModuleConfig,
     options: { durationMs?: number; onFrame?: (frame: CalibrationFrame) => void } = {},
   ): Promise<number[] | null> {
+    const generation=this.generation;
     const duration = clamp(options.durationMs ?? 3000, 500, 10000);
     if (!this.context) {
       const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctor) throw new Error("WebView не поддерживает Web Audio");
       this.context = new Ctor();
     }
-    if (this.context.state === "suspended") await this.context.resume();
+    await this.resumeContext();
+    if(generation!==this.generation)return null;
     const streamKey = settings.deviceId || "default";
     const entry = await this.acquireStream(streamKey, { ...settings, processing: settings.processing ?? true });
     const token = ++this.calibration;
@@ -237,7 +256,8 @@ export class AudioInputEngine {
       }
     } finally {
       analyser.disconnect();
-      this.releaseStream(streamKey);
+      if(this.streams.get(streamKey)===entry)this.releaseStream(streamKey);
+      this.suspendIdle();
     }
     if (this.calibration !== token) return null;
     return averageLevelSpectrum(frames);
@@ -270,12 +290,15 @@ export class AudioInputEngine {
 
   /** Полная остановка: закрывает потоки, микрофон гаснет в системе. */
   stop(): void {
+    this.generation++;
     for (const name of [...this.analysers.keys()]) this.detach(name);
     for (const [key, entry] of [...this.streams.entries()]) {
       entry.stream.getTracks().forEach((track) => track.stop());
       this.streams.delete(key);
     }
     this.stopTimer();
+    this.cancelCalibration();
+    this.suspendIdle();
     this.report();
   }
 
@@ -294,6 +317,7 @@ export class AudioInputEngine {
       existing.refs += 1;
       return existing;
     }
+    const generation=this.generation;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia(streamConstraints(streamKey, settings));
@@ -305,6 +329,10 @@ export class AudioInputEngine {
       if (streamKey === "default") throw reason;
       stream = await navigator.mediaDevices.getUserMedia(streamConstraints("default", settings));
       this.notice = "Микрофон из пресета недоступен — взят системный по умолчанию.";
+    }
+    if(generation!==this.generation || !this.context) {
+      stream.getTracks().forEach(track=>track.stop());
+      throw new Error("Захват отменён");
     }
     const entry: StreamEntry = {
       stream,
@@ -336,6 +364,7 @@ export class AudioInputEngine {
     // умолчанию в списке против имени открытого потока. Она же делает вызов
     // безопасным на каждое возвращение в окно.
     if (!(await this.defaultChanged())) return false;
+    const generation=this.generation;
     const settings = targets[0].settings;
     const previous = this.streams.get("default");
     const previousId = previous?.stream.getAudioTracks()[0]?.getSettings().deviceId;
@@ -345,6 +374,9 @@ export class AudioInputEngine {
     } catch {
       // Микрофон мог не открыться: старое соединение лучше тишины.
       return false;
+    }
+    if(generation!==this.generation || !this.context) {
+      stream.getTracks().forEach(track=>track.stop());return false;
     }
     const nextId = stream.getAudioTracks()[0]?.getSettings().deviceId;
     if (previous && previousId && nextId && previousId === nextId) {

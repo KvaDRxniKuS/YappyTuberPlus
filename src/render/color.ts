@@ -224,3 +224,25 @@ export function colorModuleNames(preset: RigPreset): string[] {
     .filter((module) => module.type === "color")
     .map((module) => module.name);
 }
+
+
+export type ResolvedColors=ReturnType<typeof resolvedColors>;
+/** Keep a single previous palette, never a history of live inputs/frames. */
+export function createColorResolver() {
+  let previous:ResolvedColors={};
+  return (preset:RigPreset,values:Record<string,number>):ResolvedColors=>{
+    const next=resolvedColors(preset,values);
+    const ids=Object.keys(next);
+    const same=ids.length===Object.keys(previous).length && ids.every(id=>{
+      const a=next[id],b=previous[id];
+      if(!b)return false;
+      const fields=Object.keys(a) as ColorField[];
+      return fields.length===Object.keys(b).length && fields.every(field=>{
+        const x=a[field]!,y=b[field];
+        return y&&x.r===y.r&&x.g===y.g&&x.b===y.b&&x.a===y.a;
+      });
+    });
+    if(!same)previous=next;
+    return previous;
+  };
+}

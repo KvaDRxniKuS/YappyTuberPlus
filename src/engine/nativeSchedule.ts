@@ -146,9 +146,14 @@ export async function startNativeSchedule(options: NativeScheduleOptions): Promi
     return null;
   }
 
+  let inputsInFlight=false;
   const push = () => {
-    if (disposed) return;
-    void invoke("rig_schedule_inputs", { inputs: snapshot() }).catch(() => undefined);
+    if (disposed || inputsInFlight) return;
+    inputsInFlight=true;
+    // At most one retained input snapshot while native IPC is stalled. The
+    // next timer reads the latest values, not a queue of obsolete snapshots.
+    void invoke("rig_schedule_inputs", { inputs: snapshot() }).catch(() => undefined)
+      .finally(()=>{inputsInFlight=false;});
   };
   // Кадров нет — входы никому не нужны: таймер заводится на продолжении.
   if (!paused) timer = setInterval(push, INPUT_INTERVAL_MS);

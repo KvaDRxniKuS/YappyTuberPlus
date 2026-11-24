@@ -137,3 +137,9 @@ export function readResources(): ResourceEstimate {
   }
   return total;
 }
+
+
+const sceneWakes:Record<string,number>={};
+/** Requests can coalesce into one paint; these are reasons, not paint counts. */
+export function countSceneWake(reason:string):void {sceneWakes[reason]=(sceneWakes[reason]??0)+1;}
+export function readSceneWakes():Record<string,number>{return {...sceneWakes};}

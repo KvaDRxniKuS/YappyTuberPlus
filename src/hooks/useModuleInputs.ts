@@ -168,13 +168,13 @@ export function useModuleInputs(
 
   // Звук поднимается сам: модуль микрофона включён — значит, он нужен.
   useEffect(() => {
-    if (!needsAudio) {
-      if (active) stop();
+    if (!needsAudio || !capture) {
+      if (active && !needsAudio) stop();
       return;
     }
     if (!active && !starting.current) void start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsAudio]);
+  }, [needsAudio, capture]);
 
   // Первый жест пользователя в приложении — повод разбудить AudioContext,
   // если браузер не дал создать его «молча». Контекст может остаться
@@ -182,7 +182,7 @@ export function useModuleInputs(
   // а не только флаг active.
   useEffect(() => {
     const wake = () => {
-      if (!needsAudio) return;
+      if (!needsAudio || !capture) return;
       const current = engineRef.current;
       if (!current || current.state === "suspended") void start();
     };
@@ -192,7 +192,7 @@ export function useModuleInputs(
       window.removeEventListener("pointerdown", wake);
       window.removeEventListener("keydown", wake);
     };
-  }, [needsAudio, active, start]);
+  }, [needsAudio, active, start, capture]);
 
   /** Пересобирает подключения к микрофонам при смене модулей или устройств. */
   useEffect(() => {
