@@ -1,3 +1,4 @@
+import {startFrameRetentionProbe} from "./frameRetention";
 import {nativeProbeAvailable,nativePerformanceSnapshot,summarizeNative,type NativePoint} from "./nativePerformance";
 import {readWorkTotals,readCapture,readResources,readSceneWakes} from "./meter";
 import {readMemory} from "./memory";
@@ -51,6 +52,7 @@ export async function collectPerformanceReport(context:()=>object,signal:AbortSi
   }
   let due=performance.now()+100;
   const timer=window.setInterval(()=>{const now=performance.now();delays.push(Math.max(0,now-due));due=now+100;},100);
+  const retention=startFrameRetentionProbe();
   try {
     await new Promise<void>((resolve,reject)=>{
       const abort=()=>{clearTimeout(timeout);reject(new DOMException("Отменено","AbortError"));};
@@ -76,6 +78,7 @@ export async function collectPerformanceReport(context:()=>object,signal:AbortSi
       workTimeline,work:workDelta(start,readWorkTotals(),seconds),mainThreadTimerDelay:summarizeDelays(delays),
       longTasks:{supported:!!longTasksSupported,count:longTasks,totalMs:longTaskMs},
       validity:{hiddenDuringTest:hidden,visibilityChanges},
+      frameRetention:retention.snapshot(),
       capture:readCapture(),memoryStart,memoryEnd:readMemory(),resources:readResources(),
       animations:document.getAnimations?.().filter(a=>a.playState==="running").length??null,
       playingMedia:Array.from(document.querySelectorAll("audio,video")).filter(e=>!(e as HTMLMediaElement).paused).length,
@@ -85,7 +88,8 @@ export async function collectPerformanceReport(context:()=>object,signal:AbortSi
         "Короткоживущие/завершённые между пробами процессы и процессы вне дерева не включены. Доступ и частота семплов ограничивают точность.",
         "drawMs — CPU-время отправки команд сцены, не GPU-время; deliveryMs — JS-подготовка и синхронная доставка, не Rust/IPC.",
         "Память — доступная JS-куча и оценки ресурсов, не вся память процесса. 0 heapLimit означает недоступность счётчика.",
+        "frameRetention — слабые ссылки на выборку кадров только за этот тест, не объём памяти. Живой кадр не доказывает утечку: GC мог ещё не запускаться; collected подтверждает освобождение выбранного объекта. Canvas/GPU и объекты до теста не охвачены.",
         "Таймер 100 мс создаёт небольшую нагрузку только во время теста. Замер не меняет режим воспроизведения."]
     },(_key,value:unknown)=>typeof value==="number"?Math.round(value*100)/100:value,2);
-  } finally {collecting=false;clearInterval(nativeTimer);clearInterval(timer);observer?.disconnect();document.removeEventListener("visibilitychange",visibility);}
+  } finally {retention.stop();collecting=false;clearInterval(nativeTimer);clearInterval(timer);observer?.disconnect();document.removeEventListener("visibilitychange",visibility);}
 }

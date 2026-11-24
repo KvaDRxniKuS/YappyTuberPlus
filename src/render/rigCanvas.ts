@@ -1,3 +1,4 @@
+import {observeFrameRetention} from "../engine/frameRetention";
 import { createParentMeshTransforms } from "./bend";
 import { defaultMesh } from "../engine/mesh";
 import type { EnvironmentSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
@@ -205,7 +206,9 @@ const preparedFrames=new WeakMap<RigFrame,WeakMap<RigPreset,PreparedMeshes>>();
 /** A serializable evaluated surface, shared by the editor and all viewers. */
 export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Map<string,Record<string,Vec2>>):PreparedMeshes {
   let cache=frame && !points ? preparedFrames.get(frame):undefined;
-  if(cache?.has(preset)) return cache.get(preset)!;
+  if(cache?.has(preset)) {
+    const cached=cache.get(preset)!;observeFrameRetention("meshes",cached);return cached;
+  }
   const result:PreparedMeshes={};
   const inheritedFor=createParentMeshTransforms(preset,frame,points);
   for(const object of preset.objects) {
@@ -220,6 +223,7 @@ export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Ma
     if(!cache) {cache=new WeakMap();preparedFrames.set(frame,cache);}
     cache.set(preset,result);
   }
+  observeFrameRetention("meshes",result);
   return result;
 }
 

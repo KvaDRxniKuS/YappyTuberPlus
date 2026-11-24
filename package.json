@@ -13,6 +13,7 @@
     "test:e2e": "playwright test",
     "overlay:bridge": "node scripts/overlay-bridge.mjs",
     "test:engine": "node scripts/smoke-engine.mjs",
+    "test:memory": "node --expose-gc scripts/profile-frame-memory.mjs",
     "version:report": "node scripts/version-report.mjs",
     "build:info": "node scripts/build-version.mjs",
     "build:check": "node scripts/build-version.mjs --check",

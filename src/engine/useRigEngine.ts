@@ -1,3 +1,4 @@
+import {observeFrameRetention} from "./frameRetention";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { InputMark, InputValues, RigFrame, RigPreset } from "../types";
 import { baseStructure, baseUpdates, engineStructure } from "./preset";
@@ -266,6 +267,7 @@ export function useRigEngine(
       return;
     }
     const deliveryStarted=performance.now();
+    observeFrameRetention("received",response.frame);
     countFrame();
     // Номер кадра сквозной: движок мог пересоздаться и начать с единицы, а
     // оверлей отбрасывает «старые» номера и замер бы навсегда.
@@ -286,6 +288,7 @@ export function useRigEngine(
       seq: nextFrameSeq(),
     };
     const preparedAt=performance.now();
+    observeFrameRetention("prepared",gated);
     frameRef.current = gated;
     frameSinkRef?.current?.(gated);
     const sinkAt=performance.now();
