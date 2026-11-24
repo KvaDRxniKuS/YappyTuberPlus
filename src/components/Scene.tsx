@@ -29,6 +29,7 @@ import {
 } from "../engine/selection";
 import { formatCanvasSize, parseCanvasSize, sameCanvasSize } from "../engine/canvasSize";
 import { createOnDemandLoop, onFrameProduced } from "../engine/frameSignal";
+import { sameVisualFrame } from "../render/frameChanges";
 import { countDraw } from "../engine/meter";
 
 import { penAction, shapeContentBounds, smoothingOf, traceItem } from "../render/shape";
@@ -626,7 +627,15 @@ export function Scene(props: SceneProps) {
     });
     loop.current = render;
     // Новый кадр от движка — повод перерисовать; нет кадров — цикл спит.
-    const unsubscribe = onFrameProduced(() => { render.request(); });
+    let previousFrame: RigFrame | null = null;
+    const unsubscribe = onFrameProduced(() => {
+      const frame = propsRef.current.frameRef.current;
+      // The engine can keep ticking (audio, scripts, OBS) without making this
+      // window repaint identical pixels. Video/mask playback must still advance.
+      const changed = !sameVisualFrame(previousFrame, frame);
+      previousFrame = frame;
+      if (changed || mediaAssets.current.active() || maskMedia.current.active()) render.request();
+    });
     if (dirty.current) render.request();
     return () => {
       unsubscribe();

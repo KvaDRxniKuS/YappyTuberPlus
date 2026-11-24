@@ -194,8 +194,9 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
 export function orderedObjects(preset: RigPreset, frame: RigFrame | null): RigObject[] {
   const sprites = preset.objects.filter((object) => object.kind !== "group");
   const paths = structurePaths(preset.objects);
-  const layerOf = (object: RigObject) => resolveLayer(preset.objects, frame, object);
-  return [...sprites].sort((a, b) => (layerOf(a) - layerOf(b))
+  // Resolve inheritance/formulas once per object, not twice per comparator.
+  const layers = new Map(sprites.map(object => [object,resolveLayer(preset.objects,frame,object)]));
+  return sprites.sort((a, b) => (layers.get(a)! - layers.get(b)!)
     || frontness(paths.get(a.id), paths.get(b.id)));
 }
 
@@ -667,21 +668,35 @@ function shapeSurface(object: RigObject, mask=false): HTMLCanvasElement {
   return canvas;
 }
 
+// Paths depend on geometry only, not transform, fill or stroke. Weak keys let
+// removed/edited contours be collected, with no growing raster texture cache.
+const shapePaths = new WeakMap<ShapeSpec["items"][number],Path2D>();
+function cachedShapePath(item:ShapeSpec["items"][number]):Path2D|undefined {
+  if(typeof Path2D === "undefined") return undefined;
+  let path=shapePaths.get(item);
+  if(!path) {
+    path=new Path2D();
+    traceItem(path as unknown as CanvasRenderingContext2D,item);
+    shapePaths.set(item,path);
+  }
+  return path;
+}
+
 /** Фигура: заливка и обводка каждого контура. */
 export function drawShapeObject(ctx: CanvasRenderingContext2D, object: RigObject): void {
   const spec: ShapeSpec = object.shape ?? defaultShape(object.width, object.height);
   if (!spec.draw) return;
   for (const item of spec.items) {
-    ctx.beginPath();
-    traceItem(ctx, item);
+    const path=cachedShapePath(item);
+    if(!path) {ctx.beginPath();traceItem(ctx,item);}
     if (spec.fill) {
       ctx.fillStyle = spec.fill;
-      ctx.fill();
+      if(path) ctx.fill(path); else ctx.fill();
     }
     if (spec.strokeWidth > 0 && spec.stroke) {
       ctx.strokeStyle = spec.stroke;
       ctx.lineWidth = spec.strokeWidth;
-      ctx.stroke();
+      if(path) ctx.stroke(path); else ctx.stroke();
     }
   }
 }

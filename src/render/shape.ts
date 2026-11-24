@@ -348,7 +348,17 @@ export function makeItem(spec: ShapeSpec, kind: ShapeItemKind, width: number, he
 
 /** Content bounds are separate from the transform pivot: editing a contour
  * can move its selection centre without moving/rotating the artwork. */
-export function shapeContentBounds(spec:ShapeSpec):{x:number;y:number;width:number;height:number}|null {
+type ContentBounds={x:number;y:number;width:number;height:number};
+const contentBoundsCache=new WeakMap<ShapeSpec["items"],{strokeWidth:number;bounds:ContentBounds|null}>();
+/** Immutable contour arrays are shared across transform/color edits. */
+export function shapeContentBounds(spec:ShapeSpec):ContentBounds|null {
+  const cached=contentBoundsCache.get(spec.items);
+  if(cached && cached.strokeWidth===spec.strokeWidth) return cached.bounds;
+  const bounds=computeContentBounds(spec);
+  contentBoundsCache.set(spec.items,{strokeWidth:spec.strokeWidth,bounds});
+  return bounds;
+}
+function computeContentBounds(spec:ShapeSpec):ContentBounds|null {
   const points:Vec2[]=[];
   let current:Vec2={x:0,y:0};
   const add=(x:number,y:number)=>{current={x,y};points.push(current);};
