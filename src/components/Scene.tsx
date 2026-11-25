@@ -44,9 +44,11 @@ import {
 } from "../render/mesh";
 import {
   BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, addArtChain, eraseArtStroke, meshPointsInBox, moveMeshGroup, shortenArt, addArtLine, addArtPoint, applyOffsets, artFromGrid, artLines,
-  brushGrid, brushWeights, defaultMesh, editGridRest, inverseDeform, paramOffsets, resizeRestControl, regularGrid, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode,
+  brushGrid, brushWeights, defaultMesh, editGridRest, inverseDeform, paramOffsets, resizeRestControl, resizeGrid, regularGrid, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode,
   moveNodeMirrored, nearestArtLine, removeArtLine, removeArtPoint, smoothGrid, symmetrizeGrid,
 } from "../engine/mesh";
+
+const DEFORM_GRID_SIZES = Array.from({length:31}, (_, index) => index + 2);
 
 export type SceneTool =
   | "move" | "pivot" | "pan" | "marquee" | "lasso"
@@ -1002,6 +1004,29 @@ export function Scene(props: SceneProps) {
           {props.tool === "warp" && meshEditing && (
             <>
               <span className="tool-separator" />
+              <select
+                className="tool-select"
+                aria-label="Столбцов сетки деформации"
+                title="Столбцов сетки деформации (2–32). Форма сохраняется"
+                value={meshEditing.deform.cols}
+                onChange={(event) => actMeshTool({
+                  deform: resizeGrid(meshEditing.deform, Number(event.target.value), meshEditing.deform.rows),
+                })}
+              >
+                {DEFORM_GRID_SIZES.map((size) => <option key={size} value={size}>{size} ст.</option>)}
+              </select>
+              <span aria-hidden="true">×</span>
+              <select
+                className="tool-select"
+                aria-label="Строк сетки деформации"
+                title="Строк сетки деформации (2–32). Форма сохраняется"
+                value={meshEditing.deform.rows}
+                onChange={(event) => actMeshTool({
+                  deform: resizeGrid(meshEditing.deform, meshEditing.deform.cols, Number(event.target.value)),
+                })}
+              >
+                {DEFORM_GRID_SIZES.map((size) => <option key={size} value={size}>{size} стр.</option>)}
+              </select>
               <button
                 className={brush.on ? "active" : ""}
                 title={`Кисть · ${brush.on ? "вкл" : "выкл"}: тянет пятно узлов, а не один узел`}
