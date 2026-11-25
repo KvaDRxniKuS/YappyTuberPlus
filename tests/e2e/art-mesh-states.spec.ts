@@ -35,3 +35,21 @@ test("regeneration clears only vertex channels; offset recording is independent 
  expect(artRecordDelta(mesh(),{},{v3:{x:2,y:3}})).toEqual({v3:{x:2,y:3}});
  expect(()=>artRecordDelta(mesh(),{},{v999:{x:2,y:3}})).toThrow();
 });
+
+test("recording uses authored offset baseline, not rest or normalized grid units",async()=>{
+ const {artRecordFromBase}=await import("../../src/engine/artMeshStates");
+ const mesh=generateRegularArt(2,2,200,50);
+ const author={v0:{x:10,y:-2}};
+ expect(artRecordFromBase(mesh,author,author,{v0:{x:17,y:3}})).toEqual({v0:{x:7,y:5}});
+ expect(artRecordFromBase(mesh,author,author,{...author})).toBeNull();
+ const restEdited={...mesh,vertices:mesh.vertices.map(v=>({...v,rest:{x:v.rest.x+20,y:v.rest.y}}))};
+ expect(artRecordFromBase(restEdited,author,author,author)).toBeNull();
+ expect(artRecordFromBase(mesh,author,{v0:{x:17,y:3}},author)).toEqual({});
+});
+
+test("local-unit state vectors reflect without width/height distortion",async()=>{
+ const {mirrorLayer}=await import("../../src/engine/states");
+ const layer={...makeLayer(0),poses:[{pose:{},points:{v0:[12,4] as [number,number]}}]};
+ const reflected=mirrorLayer(layer,{x:0,y:0,angle:45},{x:0,y:0,width:1,height:1});
+ expect(reflected.poses[0].points?.v0).toEqual([4,12]);
+});

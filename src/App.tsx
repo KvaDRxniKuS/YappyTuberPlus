@@ -1744,6 +1744,7 @@ export default function App() {
           onStatesQuiet={normalizeStateScripts}
           onBase={(base, id) => restoreBase(base, id)}
           onMesh={(mesh, id) => restoreMesh(mesh, id)}
+          onArtPose={(artPose,id)=>setPreset(current=>({...current,objects:current.objects.map(o=>o.id===id?{...o,artPose}:o)}))}
           onPreviewState={(preview, id) => previewState(preview, id)}
           dragging={dragging}
           onText={updateTextObjects}

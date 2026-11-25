@@ -1,3 +1,5 @@
+import type {ArtOffsets,ArtDeformation} from "../engine/artDeformation";
+import {artRecordFromBase} from "../engine/artMeshStates";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, RotateCcw, Trash2, Undo2 } from "lucide-react";
 import type { BasePose, GridSpec, InputValues, MeshSpec, ModuleInstance, RigFrame, RigObject, Vec2 } from "../types";
@@ -92,6 +94,7 @@ interface StatesPanelProps {
    * истории — жест уже записан его началом.
    */
   onMesh?: (mesh: MeshSpec, objectId: string) => void;
+  onArtPose?: (pose:ArtOffsets,objectId:string)=>void;
 }
 
 export function StatesPanel(props: StatesPanelProps) {
@@ -149,6 +152,7 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   const authorMesh = useRef<GridSpec | null>(null);
   const lastMesh = useRef<GridSpec | null>(null);
+  const artCapture=useRef<{id:string;mesh:ArtDeformation;author:ArtOffsets;previous:ArtOffsets}|null>(null);
   /** Перетаскивание: ключ или точка таймлайна. */
   const drag = useRef<
     | { kind: "key"; index: number; scale: [number, number] }
@@ -176,6 +180,7 @@ export function StatesPanel(props: StatesPanelProps) {
   useEffect(() => {
     if (objectRef.current === objectId) return;
     objectRef.current = objectId;
+    artCapture.current=null;
     const base = object ? { ...object.base } : null;
     setAuthorBase(base);
     lastBase.current = base;
@@ -492,37 +497,53 @@ export function StatesPanel(props: StatesPanelProps) {
     if (!object || !layer) return;
     const mesh = meshOf(object);
     const author = authorMesh.current;
-    if (!mesh || !author) return;
-    // Густота — авторская настройка, а не поза: индексы узлов другие. Базу
-    // пересобираем из авторской формы в новый размер (ключи уже пересчитаны
-    // записью пресета), иначе дельты считались бы между разными сетками.
-    if (mesh.deform.cols !== author.cols || mesh.deform.rows !== author.rows) {
-      const resized = resizeGrid(author, mesh.deform.cols, mesh.deform.rows);
-      authorMesh.current = { ...resized, points: [...resized.points] };
-      lastMesh.current = authorMesh.current;
-      if (!props.dragging) restoreMeshApi.current?.({ ...mesh, deform: resized }, object.id);
-      return;
+    let delta:Record<string,Vec2>|null=null;
+    if(object.artMesh){
+      if(!props.onArtPose)return;
+      const current=object.artPose??{},capture=artCapture.current;
+      const ids=object.artMesh.vertices.map(v=>v.id).join(",");
+      if(!capture||capture.id!==object.id||capture.mesh.vertices.map(v=>v.id).join(",")!==ids){
+        artCapture.current={id:object.id,mesh:object.artMesh,author:current,previous:current};return;
+      }
+      if(props.dragging)return;
+      delta=artRecordFromBase(object.artMesh,capture.author,capture.previous,current);
+      capture.mesh=object.artMesh;capture.previous=current;
+      if(!delta)return;
+      props.onArtPose?.(capture.author,object.id);capture.previous=capture.author;
+    }else{
+      artCapture.current=null;
+      if (!mesh || !author) return;
+      // Густота — авторская настройка, а не поза: индексы узлов другие. Базу
+      // пересобираем из авторской формы в новый размер (ключи уже пересчитаны
+      // записью пресета), иначе дельты считались бы между разными сетками.
+      if (mesh.deform.cols !== author.cols || mesh.deform.rows !== author.rows) {
+        const resized = resizeGrid(author, mesh.deform.cols, mesh.deform.rows);
+        authorMesh.current = { ...resized, points: [...resized.points] };
+        lastMesh.current = authorMesh.current;
+        if (!props.dragging) restoreMeshApi.current?.({ ...mesh, deform: resized }, object.id);
+        return;
+      }
+      // Жест ещё идёт: запись ждёт конца, а «прошлое» не трогаем.
+      //
+      // Раньше `lastMesh` обновлялся до этой проверки, поэтому к отпусканию
+      // кнопки он уже совпадал с текущей сеткой, разница выходила нулевой — и
+      // правка формы не попадала в ключ вовсе. Теперь порядок как у позы:
+      // во время жеста ничего не пишем и не запоминаем.
+      if (props.dragging) return;
+      // Первый кадр вкладки и предпросмотр сетку не меняют — писать нечего.
+      const previous = lastMesh.current;
+      if (JSON.stringify(author.rest) !== JSON.stringify(mesh.deform.rest)) {
+        authorMesh.current = editGridRest(author, (p,i) => mesh.deform.rest?.[i] ?? p);
+        lastMesh.current = mesh.deform;
+        return;
+      }
+      lastMesh.current = { ...mesh.deform, points: [...mesh.deform.points] };
+      delta = gridRecordDelta(author, previous, mesh.deform);
+      if (!delta) return;
+      // База возвращается на место — дальше двигает ключ.
+      restoreMeshApi.current?.({ ...mesh, deform: author }, object.id);
+      lastMesh.current = { ...author, points: [...author.points] };
     }
-    // Жест ещё идёт: запись ждёт конца, а «прошлое» не трогаем.
-    //
-    // Раньше `lastMesh` обновлялся до этой проверки, поэтому к отпусканию
-    // кнопки он уже совпадал с текущей сеткой, разница выходила нулевой — и
-    // правка формы не попадала в ключ вовсе. Теперь порядок как у позы:
-    // во время жеста ничего не пишем и не запоминаем.
-    if (props.dragging) return;
-    // Первый кадр вкладки и предпросмотр сетку не меняют — писать нечего.
-    const previous = lastMesh.current;
-    if (JSON.stringify(author.rest) !== JSON.stringify(mesh.deform.rest)) {
-      authorMesh.current = editGridRest(author, (p,i) => mesh.deform.rest?.[i] ?? p);
-      lastMesh.current = mesh.deform;
-      return;
-    }
-    lastMesh.current = { ...mesh.deform, points: [...mesh.deform.points] };
-    const delta = gridRecordDelta(author, previous, mesh.deform);
-    if (!delta) return;
-    // База возвращается на место — дальше двигает ключ.
-    restoreMeshApi.current?.({ ...mesh, deform: author }, object.id);
-    lastMesh.current = { ...author, points: [...author.points] };
     if (noPoints(delta)) return;
     const point = round3(at ?? range[0]);
     const index = layer.param
@@ -1288,8 +1309,8 @@ export function StatesPanel(props: StatesPanelProps) {
                   each(targets, (source) => mirrorLayer(source, axis, {
                     x: object.base.x,
                     y: object.base.y,
-                    width: object.width,
-                    height: object.height,
+                    width: object.artMesh ? 1 : object.width,
+                    height: object.artMesh ? 1 : object.height,
                   }));
                   setMirrorFor(null);
                 }}

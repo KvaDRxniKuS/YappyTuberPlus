@@ -46,3 +46,13 @@ export function artRecordDelta(mesh:ArtDeformation,previous:ArtOffsets|null,curr
   }
   return changed?result:null;
 }
+
+/** Capture only explicit pose changes, relative to the authored offset baseline.
+ * Rest edits are deliberately absent from this calculation. */
+export function artRecordFromBase(mesh:ArtDeformation,author:ArtOffsets,previous:ArtOffsets|null,current:ArtOffsets):ArtOffsets|null {
+  if(!artRecordDelta(mesh,previous,current))return null;
+  const result:ArtOffsets={};
+  for(const {id} of mesh.vertices){const a=author[id]??{x:0,y:0},b=current[id]??{x:0,y:0};
+    const x=b.x-a.x,y=b.y-a.y;if(Math.abs(x)>1e-6||Math.abs(y)>1e-6)result[id]={x,y};}
+  return result;
+}
