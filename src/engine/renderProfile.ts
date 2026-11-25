@@ -1,6 +1,6 @@
 /** Report-scoped, exclusive wall timings. Only numeric aggregates, never scene refs. */
-export type RenderStage = "scene" | "rig" | "plain" | "mask" | "shaded" | "sprite" | "text" | "light" | "shape" | "media" | "group";
-const stages: RenderStage[] = ["scene", "rig", "plain", "mask", "shaded", "sprite", "text", "light", "shape", "media", "group"];
+export type RenderStage = "scene" | "rig" | "plain" | "mask" | "shaded" | "sprite" | "text" | "light" | "shape" | "media" | "group" | "image" | "warp" | "mesh";
+const stages: RenderStage[] = ["scene", "rig", "plain", "mask", "shaded", "sprite", "text", "light", "shape", "media", "group", "image", "warp", "mesh"];
 interface Counter { calls:number; totalMs:number; maxMs:number }
 interface Span { stage:RenderStage; start:number; children:number }
 export function createRenderProfile(clock:()=>number=()=>performance.now()) {

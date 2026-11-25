@@ -663,7 +663,9 @@ function drawObjectContent(
       drawWarpedImage(ctx, image, object, object.width, object.height, frame?.objects[object.id]);
       ctx.restore();
     } else {
-      ctx.drawImage(image, left, top, object.width, object.height);
+      const endImageProfile=enterRenderStage("image");
+      try { ctx.drawImage(image, left, top, object.width, object.height); }
+      finally { endImageProfile?.(); }
     }
   } else if (options.placeholders) {
     ctx.fillStyle = "#505965";

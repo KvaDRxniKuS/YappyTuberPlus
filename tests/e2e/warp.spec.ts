@@ -225,3 +225,20 @@ test("деформация: «Зона» и «Углы» — разные инс
   expect(grab({ x: 100, y: -18 }, "frame")?.kind).toBe("rotation");
   expect(grab({ x: 100, y: -18 }, "corners")).toBeNull();
 });
+
+test("neutral warp draws once; live offsets and cancellation choose correct path",async()=>{
+  const {drawWarpedImage}=await import("../../src/render/warp");
+  const {NEUTRAL_PARAMS}=await import("../../src/engine/frame");
+  const warp=defaultWarp();warp.enabled=true;
+  warp.frame={x:.2,y:.1,width:.5,height:.8,rotation:37};
+  const object=sprite({warp});let draws=0,clips=0;
+  const ctx={drawImage(){draws++;},save(){},restore(){},beginPath(){},rect(){},
+    moveTo(){},lineTo(){},closePath(){},clip(){clips++;},transform(){}} as unknown as CanvasRenderingContext2D;
+  drawWarpedImage(ctx,{} as CanvasImageSource,object,200,100,NEUTRAL_PARAMS);
+  expect(draws).toBe(1);expect(clips).toBe(0);
+  draws=0;drawWarpedImage(ctx,{} as CanvasImageSource,object,200,100,{...NEUTRAL_PARAMS,warpTLx:10});
+  expect(draws).toBe(3);expect(clips).toBe(3);
+  draws=0;clips=0;warp.corners.tl.x=10;
+  drawWarpedImage(ctx,{} as CanvasImageSource,object,200,100,{...NEUTRAL_PARAMS,warpTLx:-10});
+  expect(draws).toBe(1);expect(clips).toBe(0);
+});

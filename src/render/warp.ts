@@ -1,3 +1,4 @@
+import {enterRenderStage} from "../engine/renderProfile";
 import type { Affine } from "./rigCanvas";
 import type { ObjectFrame, ParamName, RigObject, Vec2, WarpCorner, WarpFrame, WarpSpec } from "../types";
 
@@ -19,6 +20,7 @@ import type { ObjectFrame, ParamName, RigObject, Vec2, WarpCorner, WarpFrame, Wa
  */
 
 /** Порядок углов один на весь код: по часовой стрелке от левого верхнего. */
+const WARP_AXES = ["x", "y"] as const;
 export const WARP_CORNERS: WarpCorner[] = ["tl", "tr", "br", "bl"];
 
 /** Подписи углов: коротко в таблице инспектора, полностью в подсказках. */
@@ -158,8 +160,13 @@ export function warpQuad(object: RigObject, values?: ObjectFrame | null): Vec2[]
 /** Есть ли что деформировать: включено и хотя бы один угол сдвинут. */
 export function warpMoved(object: RigObject, values?: ObjectFrame | null): boolean {
   if (!warpEnabled(object)) return false;
-  const offsets = warpOffsets(object, values);
-  return WARP_CORNERS.some((corner) => offsets[corner].x !== 0 || offsets[corner].y !== 0);
+  const spec=object.warp!;
+  for (const corner of WARP_CORNERS) for (const axis of WARP_AXES) {
+    const live=values?.[paramName(corner,axis)];
+    const offset=spec.corners[corner][axis]+(Number.isFinite(live as number)?live as number:0);
+    if(offset!==0)return true;
+  }
+  return false;
 }
 
 /** Точка внутри четырёхугольника: для кликов, рамок и лассо. */
@@ -236,6 +243,15 @@ export function drawWarpedImage(
   height: number,
   values?: ObjectFrame | null,
 ): void {
+  const endPathProfile=enterRenderStage("warp");
+  try {
+
+  // An unchanged quad is the original image, regardless of zone rotation.
+  // Avoid three full image draws, clip paths and triangle allocations.
+  if (!warpMoved(object, values)) {
+    ctx.drawImage(image, 0, 0, width, height);
+    return;
+  }
   const zone = warpFrameQuad(object);
   const quad = warpQuad(object, values);
   ctx.save();
@@ -259,6 +275,7 @@ export function drawWarpedImage(
     ctx.drawImage(image, 0, 0, width, height);
     ctx.restore();
   }
+  } finally { endPathProfile?.(); }
 }
 
 /**

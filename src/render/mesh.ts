@@ -1,3 +1,4 @@
+import {enterRenderStage} from "../engine/renderProfile";
 import type { ObjectFrame, RigObject, Vec2 } from "../types";
 import { applyOffsets, meshEnabled, meshOf, meshVertices, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
 import { affineFromTriangles } from "./warp";
@@ -166,10 +167,14 @@ export function drawMeshImage(
   deform?: (point: Vec2) => Vec2,
   prepared?: MeshGeometry,
 ): boolean {
+  const endPathProfile=enterRenderStage("mesh");
+  try {
+
   const geometry=prepared ?? meshSurfaceGeometry(object,width,height,values,keyOffsets,deform);
   if(!geometry) return false;
   if(geometry.triangles.length) drawTriangles(ctx,image,width,height,geometry);
   return true;
+  } finally { endPathProfile?.(); }
 }
 
 /** Same evaluated surface for rendering, clipping bounds and hit testing. */
