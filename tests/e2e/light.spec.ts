@@ -401,7 +401,7 @@ test("объём: карта нормалей пишется в буфер св�
  */
 test("объём: считается по объекту, а не по готовой сцене", () => {
   const rig = readFileSync(join(process.cwd(), "src", "render", "rigCanvas.ts"), "utf8");
-  const loop = rig.slice(rig.indexOf("for (const { object, values, ghost, opacity, drawn, matrix } of objects)"));
+  const loop = rig.slice(rig.indexOf("for (const object of objects) {"));
   expect(loop.length).toBeGreaterThan(0);
   // Сэмпл нормалей и объём — внутри цикла отрисовки, до следующего объекта.
   expect(loop.indexOf("shadeSample(view, object")).toBeGreaterThan(0);

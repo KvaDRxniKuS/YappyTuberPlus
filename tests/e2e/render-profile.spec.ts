@@ -5,7 +5,7 @@ test("nested render timings are exclusive, including recursive masks",()=>{
   const scene=probe.enter("scene");now=1;const rig=probe.enter("rig");
   now=3;const shade=probe.enter("shaded");now=6;const mask=probe.enter("mask");
   now=10;mask?.();now=11;shade?.();now=13;rig?.();now=15;scene?.();
-  expect(probe.snapshot()).toEqual({
+  expect(probe.snapshot()).toMatchObject({
     scene:{calls:1,totalMs:3,maxMs:3},rig:{calls:1,totalMs:4,maxMs:4},
     shaded:{calls:1,totalMs:4,maxMs:4},mask:{calls:1,totalMs:4,maxMs:4},
     plain:{calls:0,totalMs:0,maxMs:0},
@@ -21,4 +21,12 @@ test("stopping an older report cannot disable a newer report",()=>{
   const old=startRenderProfile(),current=startRenderProfile();old.stop();
   const end=enterRenderStage("plain");end?.();expect(current.snapshot().plain.calls).toBe(1);
   current.stop();expect(enterRenderStage("plain")).toBeUndefined();
+});
+
+test("content categories subtract from parent passes rather than double-count",()=>{
+  let now=0;const probe=createRenderProfile(()=>now);
+  const plain=probe.enter("plain");now=1;const sprite=probe.enter("sprite");
+  now=6;sprite?.();now=8;plain?.();
+  expect(probe.snapshot().sprite).toEqual({calls:1,totalMs:5,maxMs:5});
+  expect(probe.snapshot().plain).toEqual({calls:1,totalMs:3,maxMs:3});
 });

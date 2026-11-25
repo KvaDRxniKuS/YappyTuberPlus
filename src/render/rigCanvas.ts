@@ -174,14 +174,16 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
   const radians = (object.base.rotation + values.rotation) * Math.PI / 180;
   const skewX = Math.tan((object.base.skewX + values.skewX) * Math.PI / 180);
   const skewY = Math.tan((object.base.skewY + values.skewY) * Math.PI / 180);
-  const translate: Affine = { a: 1, b: 0, c: 0, d: 1, e: object.base.x + values.x, f: object.base.y + values.y };
-  const rotate: Affine = { a: Math.cos(radians), b: Math.sin(radians), c: -Math.sin(radians), d: Math.cos(radians), e: 0, f: 0 };
-  const skew: Affine = { a: 1, b: skewY, c: skewX, d: 1, e: 0, f: 0 };
-  const scale: Affine = {
-    a: object.base.sizeX * values.sizeX, b: 0, c: 0,
-    d: object.base.sizeY * values.sizeY, e: 0, f: 0,
+  const cos = Math.cos(radians), sin = Math.sin(radians);
+  const sx = object.base.sizeX * values.sizeX, sy = object.base.sizeY * values.sizeY;
+  const a = cos * sx, b = sin * sx, c = -sin * sy, d = cos * sy;
+  // Expanded T·R·S·K: one result instead of four operand matrices and
+  // three multiplication results per object. No shared mutable scratch state.
+  return {
+    a: a + c * skewY, b: b + d * skewY,
+    c: a * skewX + c, d: b * skewX + d,
+    e: object.base.x + values.x, f: object.base.y + values.y,
   };
-  return multiplyAffine(multiplyAffine(multiplyAffine(translate, rotate), scale), skew);
 }
 
 /**
@@ -300,17 +302,23 @@ export function drawRig(
   // его собственной отрисовки (см. drawShaded), поэтому объект, нарисованный
   // раньше светильника, всё равно должен получить от него объём. Условия те же,
   // что были у прохода по кадру: скрытое, прозрачное и нулевое света не даёт.
-  const objects = orderedObjects(preset, frame).map((object) => {
+  const objects = orderedObjects(preset, frame);
+  // Collect lights before drawing without allocating a wrapper record and
+  // matrix for every object on every frame. Only lights contribute here.
+  if (view) for (const object of objects) {
+    if (object.kind !== "light") continue;
+    const values = frame?.objects[object.id] || staticValues(object);
+    const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
+    if (values.visible !== 0 && opacity !== 0 && values.sizeX !== 0 && values.sizeY !== 0) {
+      collect(options.lighting!, view, object, values, objectMatrix(object, values));
+    }
+  }
+  for (const object of objects) {
     const values = frame?.objects[object.id] || staticValues(object);
     const ghost = values.visible === 0 && options.ghosts === true && scriptHidden(object, values);
     const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
-    const drawn = (values.visible !== 0 || ghost) && opacity !== 0 && values.sizeX !== 0 && values.sizeY !== 0;
+    if ((values.visible === 0 && !ghost) || opacity === 0 || values.sizeX === 0 || values.sizeY === 0) continue;
     const matrix = objectMatrix(object, values);
-    if (drawn && view && !ghost) collect(options.lighting!, view, object, values, matrix);
-    return { object, values, ghost, opacity, drawn, matrix };
-  });
-  for (const { object, values, ghost, opacity, drawn, matrix } of objects) {
-    if (!drawn) continue;
     const left = -object.pivot.x * object.width;
     const top = -object.pivot.y * object.height;
     const alpha = ghost ? opacity * ghostAlpha : opacity;
@@ -575,6 +583,9 @@ function drawObjectContent(
   options: DrawRigOptions,
   zoom: number,
 ): void {
+  const endContentProfile=enterRenderStage(object.kind ?? "sprite");
+  try {
+
   const prepared=options.preparedMeshes?.[object.id];
   const deform = options.preparedMeshes ? undefined : options.meshTransform?.(object);
   // A child without its own enabled deformer still has a triangulated surface.
@@ -661,6 +672,7 @@ function drawObjectContent(
     ctx.lineWidth = 1 / zoom;
     ctx.strokeRect(left, top, object.width, object.height);
   }
+  } finally { endContentProfile?.(); }
 }
 
 const shapeSurfaces = new WeakMap<object, Map<string,HTMLCanvasElement>>();
