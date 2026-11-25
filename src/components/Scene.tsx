@@ -1,3 +1,6 @@
+import {ArtMeshGenerator} from "./ArtMeshGenerator";
+import {artEditorPoint,editArtVertex,drawArtEditor} from "../render/artMeshEditor";
+import {artPosition,type ArtDeformation,type ArtOffsets} from "../engine/artDeformation";
 import {enterRenderStage} from "../engine/renderProfile";
 import { ShortcutGuide } from "./ShortcutGuide";
 import { createParentMeshTransforms } from "../render/bend";
@@ -142,6 +145,7 @@ interface SceneProps {
   onWarp: (id: string, warp: WarpSpec) => void;
   /** Сетка и нарезка из спецрежима: узлы, точки, рёбра, треугольники. */
   onMesh: (id: string, mesh: MeshSpec) => void;
+  onArtMesh:(id:string,mesh:ArtDeformation,pose:ArtOffsets,regenerate?:boolean)=>void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
@@ -253,6 +257,8 @@ export function Scene(props: SceneProps) {
   const maskMedia = useRef(new MaskMedia());
   const dirty = useRef(true);
   const interaction = useRef<Interaction>(null);
+  const [artGenerator,setArtGenerator]=useState(false);
+  const artDrag=useRef<{object:RigObject;id:string;start:Vec2;matrix:Affine;mode:"rest"|"pose"}|null>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
   /**
@@ -294,6 +300,11 @@ export function Scene(props: SceneProps) {
   // раньше не переключалась сетка и залипало выделение).
   const propsRef = useRef(props);
   propsRef.current = props;
+  useEffect(()=>{
+    const finish=()=>{if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}};
+    window.addEventListener("blur",finish);
+    return ()=>{window.removeEventListener("blur",finish);finish();};
+  },[]);
 
   // Отрисовка по требованию: постоянного rAF-цикла больше нет (он грузил
   // процессор в простое), но любая правка или новый кадр планирует ровно один
@@ -442,12 +453,14 @@ export function Scene(props: SceneProps) {
     const showGrid = current.tool === "warp";
     const showArt = current.tool === "deform";
     const offsets = stateOffsets(current.primaryId ?? "");
-    if (meshBothRef.current) {
+    if (meshBothRef.current && !previewed.objects.find(o=>o.id===current.primaryId)?.artMesh) {
       if (!showGrid && (current.tool === "deform")) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", null, true, offsets);
       if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true, offsets);
     }
-    if (showGrid) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets, setupGrid.current);
-    if (showArt) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
+    const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
+    if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,artTarget,frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt);
+    if (showGrid && !artTarget?.artMesh) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets, setupGrid.current);
+    if (showArt && !artTarget?.artMesh) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
     if (current.tool === "deform" && line.current) {
       drawLineChain(ctx, previewed, frame, zoom, line.current, offsets);
     }
@@ -818,7 +831,7 @@ export function Scene(props: SceneProps) {
    * галками в инспекторе значит искать ручку не там, где ею машут.
    */
   const meshTarget = props.preset.objects.find((item) => item.id === props.primaryId);
-  const meshEditing = meshTarget && meshTarget.kind !== "group" && meshTarget.kind !== "text"
+  const meshEditing = meshTarget && !meshTarget.artMesh && meshTarget.kind !== "group" && meshTarget.kind !== "text"
     ? editMesh(meshTarget)
     : null;
   const brush = meshEditing?.brush ?? BRUSH_DEFAULT;
@@ -980,6 +993,12 @@ export function Scene(props: SceneProps) {
             disabled={!props.primaryId}
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
+          {(props.tool==="warp"||props.tool==="deform")&&meshTarget&&["sprite","media","shape","group"].includes(meshTarget.kind??"sprite")&&<>
+            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator(true)}><Grid3X3 size={15}/></button>
+            {meshTarget.artMesh&&<select className="tool-select" aria-label="Режим артмеша" value={props.tool==="deform"?"rest":"pose"} onChange={e=>props.onTool(e.target.value==="rest"?"deform":"warp")}>
+              <option value="rest">Правка сетки</option><option value="pose">Деформация</option>
+            </select>}
+          </>}
           {/* Вид деформации: сетка, нарезка или обе. Две накладки ложатся друг
               на друга, поэтому одна из них всегда убирается или гаснет. */}
           {(props.tool === "warp" || props.tool === "deform") && meshEditing && (
@@ -1181,6 +1200,8 @@ export function Scene(props: SceneProps) {
           )}
         </div>
       )}
+      {artGenerator&&meshTarget&&<ArtMeshGenerator key={meshTarget.id} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
+        onClose={()=>setArtGenerator(false)} onApply={mesh=>{props.onArtMesh(meshTarget.id,mesh,{},true);setArtGenerator(false);props.onTool("deform");}}/>}
       <div
         className={`scene-viewport tool-${props.tool}`}
         ref={viewport}
@@ -1213,6 +1234,17 @@ export function Scene(props: SceneProps) {
             // чужие объекты, иначе перо «переключает фокус» вместо рисования.
             if (current.tool === "pen" && !current.pen) return;
             const point = scenePoint(event);
+            const artObject=current.preset.objects.find(o=>o.id===current.primaryId);
+            if(artObject?.artMesh&&(current.tool==="warp"||current.tool==="deform")){
+              const values=liveFrame(current.preset)?.objects[artObject.id]??staticValues(artObject);
+              const matrix=objectMatrix(artObject,values),rest=current.tool==="deform";
+              let nearest:string|null=null,distance=10/camera.current.zoom;
+              for(const v of artObject.artMesh.vertices){const p=rest?v.rest:artPosition(v,artObject.artPose);
+                const world=transformPoint(matrix,p.x-artObject.pivot.x*artObject.width,p.y-artObject.pivot.y*artObject.height);
+                const d=Math.hypot(world.x-point.x,world.y-point.y);if(d<distance){distance=d;nearest=v.id;}}
+              if(nearest){current.onDragStart();artDrag.current={object:artObject,id:nearest,start:artEditorPoint(artObject,point,matrix),matrix,mode:rest?"rest":"pose"};}
+              return;
+            }
             if (current.pen) {
               const object = current.preset.objects.find((item) => item.id === current.pen!.objectId);
               const item = object?.shape?.items.find((entry) => entry.id === current.pen!.itemId);
@@ -1467,6 +1499,11 @@ export function Scene(props: SceneProps) {
             interaction.current = { type: "drag", ids: [targetObject.id], start: point, initial, pending: null, moved: false };
           }}
           onPointerMove={(event) => {
+            const drag=artDrag.current;
+            if(drag){
+              const next=editArtVertex(drag.object.artMesh!,drag.object.artPose??{},drag.id,drag.start,artEditorPoint(drag.object,scenePoint(event),drag.matrix),drag.mode);
+              propsRef.current.onArtMesh(drag.object.id,next.mesh,next.pose);return;
+            }
             // Курсор помним всегда: кисть показывает свой радиус, даже когда не
             // ведёт, а ось симметрии видно сразу. Перерисовка — только когда
             // курсор действительно сдвинулся, иначе мышь с высоким поллингом
@@ -1699,6 +1736,8 @@ export function Scene(props: SceneProps) {
             queueLive(() => propsRef.current.onDragObjects(ids, initial, delta));
           }}
           onPointerUp={(event) => {
+            if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();markDirty();
+              if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);return;}
             const current = interaction.current;
             interaction.current = null;
             // Отложенная правка могла ещё не примениться: применяем до того,
@@ -1731,6 +1770,7 @@ export function Scene(props: SceneProps) {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}
             const current = interaction.current;
             interaction.current = null;
             marqueeRef.current = null;

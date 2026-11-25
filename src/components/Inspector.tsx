@@ -372,7 +372,7 @@ export function Inspector(props: InspectorProps) {
           />
         )}
 
-        {(object.kind === "sprite" || object.kind === "media") && (
+        {(object.kind === "sprite" || object.kind === "media" || !!object.artMesh) && (
           <MeshSection object={object} onChange={onChange} />
         )}
 
@@ -547,6 +547,12 @@ function MeshSection({ object, onChange }: {
     setPasted(null);
     update({ deform: next.deform, mirror: next.mirror });
   };
+
+  if(object.artMesh)return <Fold className="property-section compact-section" id="Деформация" title="Артмеш" note={`${object.artMesh.vertices.length} ВЕРШИН`}>
+    <p className="behaviour-hint">Правка сетки и деформация — в инструментах сцены. Генерация заменяет геометрию целиком.</p>
+    {object.parentId&&<label className="check-line"><input type="checkbox" checked={object.deformParent===true} onChange={e=>onChange({...object,deformParent:e.target.checked})}/><span>Наследовать деформацию</span></label>}
+    <button className="button secondary" onClick={()=>onChange({...object,artPose:{}})}>Сбросить деформацию</button>
+  </Fold>;
 
   return (
     <Fold className="property-section compact-section" id="Деформация" title="Деформация" note={<>{mesh.enabled ? `СЕТКА ${mesh.deform.cols}×${mesh.deform.rows}` : "ВЫКЛ"}</>}>

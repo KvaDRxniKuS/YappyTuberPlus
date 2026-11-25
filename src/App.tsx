@@ -1,3 +1,5 @@
+import type {ArtDeformation,ArtOffsets} from "./engine/artDeformation";
+import {replaceArtStateMesh} from "./engine/artMeshStates";
 import {countAppCommit} from "./engine/meter";
 import { PerformanceTest } from "./components/PerformanceTest";
 import { toolForCode } from "./engine/shortcuts";
@@ -1036,6 +1038,17 @@ export default function App() {
    * Сетка и нарезка из сцены. Как и `warpObject`, шага истории не создаёт:
    * снимок кладёт начало жеста, поэтому весь жест откатывается одним Ctrl+Z.
    */
+  const artMeshObject=useCallback((id:string,artMesh:ArtDeformation,artPose:ArtOffsets,regenerate=false)=>{
+    const update=(current:RigPreset)=>({...current,objects:current.objects.map(object=>{
+      if(object.id!==id)return object;
+      const next={...object,artMesh,artPose,mesh:undefined,warp:undefined};
+      if(regenerate){const states=replaceArtStateMesh(artMesh,readStates(object.script)).states;
+        return {...next,script:writeStates(object.script,states,next).script};}
+      return next;
+    })});
+    if(regenerate)commit(update,{label:"Генерация артмеша"});else setPreset(update);
+  },[commit,setPreset]);
+
   const meshObject = useCallback((id: string, mesh: MeshSpec) => {
     setPreset((current) => ({
       ...current,
@@ -1693,6 +1706,7 @@ export default function App() {
             onPivot={pivotObject}
             onWarp={warpObject}
             onMesh={meshObject}
+            onArtMesh={artMeshObject}
             pen={pen}
             onPenPoints={penPoints}
             onPenDragEnd={endLiveEdit}
