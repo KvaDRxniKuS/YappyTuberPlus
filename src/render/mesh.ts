@@ -1,3 +1,5 @@
+import {evaluateArtMesh, type CompiledArtMesh} from "../engine/artMeshRuntime";
+import type {ArtOffsets} from "../engine/artDeformation";
 import {TextureCache} from "./textureCache";
 import {reportResources} from "../engine/meter";
 import {enterRenderStage} from "../engine/renderProfile";
@@ -156,6 +158,20 @@ function sourceSurface(object:RigObject,width:number,height:number,levels:number
   const geometry=deformGeometry(source,p=>p,levels);
   sourceSurfaces.set(key,{signature,geometry});
   return geometry;
+}
+
+/** Unified art mesh rendering: no GridSpec, zone cage or implicit geometry.
+ * Caller supplies the object's transform and local-coordinate compiled mesh.
+ * Empty topology intentionally draws nothing, not an undeformed fallback. */
+export function drawArtMesh(
+  ctx:CanvasRenderingContext2D,image:CanvasImageSource,
+  mesh:CompiledArtMesh,offsets:ArtOffsets={},
+):void {
+  if(!mesh.triangles.length)return;
+  const geometry=evaluateArtMesh(mesh,offsets);
+  const source=imageSize(image);
+  if(source.width<=0||source.height<=0)return;
+  drawTriangles(ctx,image,source.width,source.height,geometry);
 }
 
 export function drawMeshImage(
