@@ -148,7 +148,7 @@ function readPoints(raw: unknown): Record<string, PosePoint> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const result: Record<string, PosePoint> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!/^\d+$/.test(key) || !Array.isArray(value)) continue;
+    if (!/^(?:\d+|v(?:0|[1-9]\d*))$/.test(key) || !Array.isArray(value)) continue;
     const x = finite(value[0]);
     const y = finite(value[1]);
     if (x === null || y === null) continue;
