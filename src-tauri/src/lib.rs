@@ -500,6 +500,16 @@ fn write_error(path: &Path, reason: &str) -> String {
     format!("{}: {}", path.display(), reason)
 }
 
+/// Explicit local diagnostic action. Never expose debugging on the OBS relay.
+#[tauri::command]
+fn open_diagnostics_devtools(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("DevTools доступны только в редакторе".into());
+    }
+    window.open_devtools();
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shared = Arc::new(schedule::Shared::new());
@@ -523,6 +533,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             rig_call,
             diagnostics::performance_snapshot,
+            open_diagnostics_devtools,
             open_external,
             preset_default_dir,
             preset_write,

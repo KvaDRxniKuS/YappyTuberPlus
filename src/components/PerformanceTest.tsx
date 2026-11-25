@@ -13,6 +13,19 @@ export function PerformanceTest({context}:{context:()=>object}) {
   const [duration,setDuration]=useState(15),[remaining,setRemaining]=useState(0);
   const [reports,setReports]=useState<Report[]>([]),[selected,setSelected]=useState(0);
   const [message,setMessage]=useState("");
+  const openDevtools=async()=>{
+    if (!(window as unknown as {__TAURI_INTERNALS__?:unknown}).__TAURI_INTERNALS__) {
+      setMessage("В браузере откройте инструменты разработчика через меню браузера → Дополнительные инструменты.");
+      return;
+    }
+    try {
+      const {invoke}=await import("@tauri-apps/api/core");
+      await invoke("open_diagnostics_devtools");
+      setMessage("DevTools: Memory → Heap snapshot → Take snapshot. Снимок содержит данные проекта — не публикуйте его открыто.");
+    } catch {
+      setMessage("Не удалось открыть DevTools. Требуется новая нативная сборка приложения, а не только обновление dist.");
+    }
+  };
   useEffect(()=>()=>{controller.current?.abort();},[]);
   useEffect(()=>{
     if(!running)return;
@@ -66,6 +79,14 @@ export function PerformanceTest({context}:{context:()=>object}) {
           </div>
           </section>
           <p className="performance-note">CPU и память дерева процессов доступны в новой нативной сборке Windows/Linux. В браузере или старой оболочке будет частичный отчёт. GPU utilization/time, чистое IPC-время и полный профиль React не измеряются.</p>
+          <section className="performance-section"><h4>Снимок памяти</h4>
+            <button className="performance-button" disabled={running} onClick={()=>void openDevtools()}>Открыть DevTools редактора</button>
+            <p>Нужна новая нативная сборка. Во вкладке Memory выберите Heap snapshot и Take snapshot.
+            Снимите первый после прогрева сцены, второй через 2–3 минуты без редактирования, третий после остановки.
+            Сохраняйте через Save рядом со снимком. Это отдельный эксперимент: снимок может вызвать сборку мусора
+            и приостановить приложение; не снимайте его во время минутного замера.
+            Снимок содержит данные проекта — не публикуйте его открыто.</p>
+          </section>
           {reports.length>0&&<>
             <section className="performance-section"><h4>Последние замеры <small>До 5 · в памяти окна</small></h4>
             <table className="performance-history"><thead><tr><th>Замер</th><th>CPU дерева</th><th>Рисований/с</th><th>Кадров/с</th></tr></thead>
