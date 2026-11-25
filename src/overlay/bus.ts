@@ -412,8 +412,8 @@ export class CompositeBus implements OverlayBus {
     }), { ...EMPTY_STATS });
   }
 
-  post(message: WireMessage) {
-    for (const bus of this.buses) bus.post(message);
+  post(message: WireMessage, kinds?: ReadonlySet<BusKind>) {
+    for (const bus of this.buses) if (!kinds || kinds.has(bus.kind)) bus.post(message);
   }
 
   subscribe(listener: Listener) {

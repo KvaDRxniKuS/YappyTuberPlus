@@ -3,7 +3,7 @@ import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
 import { neutralFrame } from "../engine/frame";
 import { nextFrameSeq } from "../engine/frameSeq";
 import { readAssetBlob, assetRef, inlineSource } from "../engine/assets";
-import type { CompositeBus, TransportStats } from "./bus";
+import type { BusKind, CompositeBus, TransportStats } from "./bus";
 import {
   basesOf, configSignature, OVERLAY_PROTOCOL, poseSignature, structureSignature,
   toOverlayScene, type FrameColors, type HelloMessage, type OverlayScene, type WireMessage,
@@ -68,6 +68,7 @@ function requestKey(viewerId: string, requestId: string): string {
 export class OverlayHost {
   readonly id = `host-${Math.random().toString(36).slice(2, 10)}`;
   private viewers = new Map<string, number>();
+  private viewerRoutes = new Map<string, Map<BusKind, number>>();
   private assetTransfers = new Map<string, AssetTransfer>();
   private activeAssetRequests = new Map<string, string | null>();
   private windowControl = false;
@@ -134,7 +135,7 @@ export class OverlayHost {
 
   start(): void {
     if (this.disposed || this.unsubscribe) return;
-    this.unsubscribe = this.bus.subscribe((message) => this.receive(message));
+    this.unsubscribe = this.bus.subscribe((message, source) => this.receive(message, source));
     this.timer = setInterval(() => this.sweep(), this.announceIntervalMs);
   }
 
@@ -204,7 +205,7 @@ export class OverlayHost {
       t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
       frame, meshes:prepareRigMeshes(preset,frame),
       colors: Object.keys(this.colors).length ? this.colors : undefined,
-    });
+    }, this.frameRoutes());
   }
 
   /** Готовые цвета из модулей: их отдаём вместе со следующим кадром. */
@@ -231,7 +232,20 @@ export class OverlayHost {
       t: "frame", sender: this.id, frame, sceneVersion: this.sceneVersion,
       meshes:this.presetRef ? prepareRigMeshes(this.presetRef,frame) : undefined,
       colors: Object.keys(this.colors).length ? this.colors : undefined,
-    });
+    }, this.frameRoutes());
+  }
+
+  /** Heartbeats discover transports; do not serialize OBS frames into unused
+   * native event/BroadcastChannel transports as well. Mixed viewers keep all
+   * currently observed routes, so this is not a preferred-transport guess. */
+  private frameRoutes(): ReadonlySet<BusKind> {
+    const routes = new Set<BusKind>();
+    const now = this.now();
+    for (const [id, seen] of this.viewerRoutes) {
+      if (!this.viewers.has(id)) continue;
+      for (const [kind, at] of seen) if (now - at <= this.viewerTimeoutMs) routes.add(kind);
+    }
+    return routes;
   }
 
   dispose(): void {
@@ -245,6 +259,7 @@ export class OverlayHost {
     for (const transfer of [...this.assetTransfers.values()]) this.cancelTransfer(transfer);
     this.activeAssetRequests.clear();
     this.viewers.clear();
+    this.viewerRoutes.clear();
     this.stale.clear();
     this.lastFrame = null;
     this.presetRef = null;
@@ -254,7 +269,7 @@ export class OverlayHost {
     this.colors = {};
   }
 
-  private receive(message: WireMessage): void {
+  private receive(message: WireMessage, source: BusKind): void {
     if (this.disposed || message.sender === this.id) return;
     if (message.t === "hello") {
       const hello = message as HelloMessage;
@@ -263,7 +278,7 @@ export class OverlayHost {
       const stale = Number(hello.protocol) !== OVERLAY_PROTOCOL;
       if (stale) this.stale.add(hello.sender);
       else this.stale.delete(hello.sender);
-      this.registerViewer(hello.sender);
+      this.registerViewer(hello.sender, source);
       // Оверлей мог обновиться и заговорить на нашем протоколе (или наоборот):
       // об этом надо сказать один раз, а не на каждом hello.
       if (known && stale !== wasStale) this.notifyViewers();
@@ -276,7 +291,7 @@ export class OverlayHost {
       return;
     }
     if (message.t === "asset-request") {
-      this.registerViewer(message.sender);
+      this.registerViewer(message.sender, source);
       // v1-потребитель без requestId получает совместимый ответ одним сообщением.
       if (!message.requestId) {
         void inlineSource(assetRef(message.id)).then((data) => {
@@ -311,7 +326,7 @@ export class OverlayHost {
       return;
     }
     if (message.t === "window-size") {
-      this.registerViewer(message.sender);
+      this.registerViewer(message.sender, source);
       const width = Math.round(Number(message.width));
       const height = Math.round(Number(message.height));
       if (this.windowControl && Number.isFinite(width) && Number.isFinite(height)) {
@@ -324,13 +339,17 @@ export class OverlayHost {
     }
     if (message.t === "bye" && message.role === "viewer") {
       this.stale.delete(message.sender);
+      this.viewerRoutes.delete(message.sender);
       this.cancelViewerTransfers(message.sender);
       if (this.viewers.delete(message.sender)) this.notifyViewers();
       return;
     }
   }
 
-  private registerViewer(id: string): void {
+  private registerViewer(id: string, source: BusKind): void {
+    let routes = this.viewerRoutes.get(id);
+    if (!routes) { routes = new Map(); this.viewerRoutes.set(id, routes); }
+    routes.set(source, this.now());
     const known = this.viewers.has(id);
     this.viewers.set(id, this.now());
     if (!known) this.notifyViewers();
@@ -356,6 +375,7 @@ export class OverlayHost {
     for (const [id, seen] of this.viewers) {
       if (now - seen > this.viewerTimeoutMs) {
         this.viewers.delete(id);
+        this.viewerRoutes.delete(id);
         this.stale.delete(id);
         changed = true;
       }

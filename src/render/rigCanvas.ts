@@ -228,6 +228,8 @@ export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Ma
 }
 
 export interface DrawRigOptions {
+  /** Original destination dimensions for screen-sized lights in cropped layers. */
+  lightCanvas?: {width:number;height:number};
   /** Presence (even empty) means geometry has already been evaluated by the host. */
   preparedMeshes?:PreparedMeshes;
   /** Draw a wireframe box for sprites whose image has not decoded yet. */
@@ -584,7 +586,8 @@ function drawObjectContent(
     // Свет рисуется от пивота: пятно — это градиент в форме, поэтому объект с
     // тёмным цветом работает тенью, со светлым — лампой. Маска и прозрачность
     // применяются снаружи, как у любого другого содержимого.
-    paintLight(ctx, object, { width: ctx.canvas.width / zoom, height: ctx.canvas.height / zoom }, 1);
+    const canvas=options.lightCanvas ?? ctx.canvas;
+    paintLight(ctx, object, { width: canvas.width / zoom, height: canvas.height / zoom }, 1);
     return;
   }
   if (object.kind === "text") {
@@ -730,13 +733,22 @@ function maskReady(
 /** Отдельный холст для маски: переиспользуется между кадрами и объектами. */
 let maskCanvas: HTMLCanvasElement | null = null;
 
-function maskLayer(main: HTMLCanvasElement): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+/** Grow in buckets, reuse across objects, shrink when the viewport shrinks. */
+export function maskBufferSize(current:number, required:number, limit:number):number {
+  return Math.min(limit, Math.max(current, Math.ceil(required / 64) * 64));
+}
+const maskResources = {};
+function maskLayer(main: HTMLCanvasElement, width:number, height:number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
   if (typeof document === "undefined") return null;
-  if (!maskCanvas) maskCanvas = document.createElement("canvas");
-  if (maskCanvas.width !== main.width || maskCanvas.height !== main.height) {
-    maskCanvas.width = main.width;
-    maskCanvas.height = main.height;
+  if (!maskCanvas) {
+    maskCanvas = document.createElement("canvas");
+    maskCanvas.width = maskCanvas.height = 1;
   }
+  const w=maskBufferSize(maskCanvas.width,width,main.width);
+  const h=maskBufferSize(maskCanvas.height,height,main.height);
+  if(maskCanvas.width!==w)maskCanvas.width=w;
+  if(maskCanvas.height!==h)maskCanvas.height=h;
+  reportResources(maskResources,{offscreenCanvases:1,offscreenCanvasBytes:w*h*4});
   const ctx = maskCanvas.getContext("2d");
   return ctx ? { canvas: maskCanvas, ctx } : null;
 }
@@ -754,9 +766,6 @@ function drawMasked(
   top: number,
   alpha: number,
 ): void {
-  const layer = maskLayer(ctx.canvas);
-  if (!layer) return;
-  const { canvas, ctx: layerCtx } = layer;
   // Трансформация главного холста включает камеру и масштаб экрана: у
   // отдельного холста она должна быть точно такой же, иначе маска не совпадёт
   // с объектом.
@@ -767,19 +776,24 @@ function drawMasked(
   // большом холсте с несколькими масками это и было главной нагрузкой.
   // Содержимое рисуется только внутри рамки, поэтому снаружи её нечего ни
   // стирать, ни склеивать; запас нужен лишь на сглаживание и размытие края.
-  const box = contentBox(transform, matrix, object, canvas.width, canvas.height, left, top, feather, surfaceBounds(object,frame,options));
+  const box = contentBox(transform, matrix, object, ctx.canvas.width, ctx.canvas.height, left, top, feather, surfaceBounds(object,frame,options));
   if (!box) return;
+  const layer = maskLayer(ctx.canvas, box.width, box.height);
+  if (!layer) return;
+  const { canvas, ctx: layerCtx } = layer;
   layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-  layerCtx.clearRect(box.x, box.y, box.width, box.height);
-  layerCtx.setTransform(transform);
+  layerCtx.clearRect(0, 0, canvas.width, canvas.height);
+  // Work in crop-local pixels. Object/mask world transforms remain identical.
+  const local = () => layerCtx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e-box.x, transform.f-box.y);
+  local();
   layerCtx.save();
   layerCtx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
   layerCtx.globalAlpha = alpha;
-  drawObjectContent(layerCtx, object, frame, assets, options, options.lineScale ?? 1);
+  drawObjectContent(layerCtx, object, frame, assets, {...options,lightCanvas:options.lightCanvas??ctx.canvas}, options.lineScale ?? 1);
   layerCtx.restore();
 
   layerCtx.save();
-  layerCtx.setTransform(transform);
+  local();
   layerCtx.globalCompositeOperation = object.mask?.invert ? "destination-out" : "destination-in";
   if (feather > 0) layerCtx.filter = `blur(${feather}px)`;
   paintMask(layerCtx, preset, frame, assets, object, object.mask!, matrix, left, top, options);
@@ -787,8 +801,8 @@ function drawMasked(
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // Пиксели переносятся один к одному: источник и приёмник — та же область.
-  ctx.drawImage(canvas, box.x, box.y, box.width, box.height, box.x, box.y, box.width, box.height);
+  // Crop-local pixels are copied one-to-one to their original destination.
+  ctx.drawImage(canvas, 0, 0, box.width, box.height, box.x, box.y, box.width, box.height);
   ctx.restore();
 }
 
