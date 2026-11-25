@@ -172,7 +172,10 @@ export function drawMeshImage(
   const endPathProfile=enterRenderStage("mesh");
   try {
 
-  const geometry=prepared ?? meshSurfaceGeometry(object,width,height,values,keyOffsets,deform);
+  const endGeometry=enterRenderStage("mesh-geometry");
+  let geometry:MeshGeometry|null|undefined;
+  try { geometry=prepared ?? meshSurfaceGeometry(object,width,height,values,keyOffsets,deform); }
+  finally {endGeometry?.();}
   if(!geometry) return false;
   if(geometry.triangles.length) drawTriangles(ctx,image,width,height,geometry);
   return true;
@@ -354,6 +357,7 @@ let glFailed = false;
 function createGlState(): GlState | null {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
+  canvas.width=canvas.height=1;
   const gl = canvas.getContext("webgl2", {
     alpha: true,
     premultipliedAlpha: true,
@@ -480,6 +484,11 @@ export function meshRenderBackend():string {
   return `WebGL2 · ${String(renderer)}`;
 }
 
+/** Bounded high-water storage: avoid resize thrashing between mesh objects. */
+export function meshBufferSize(current:number,required:number,limit:number):number {
+  return Math.min(limit,Math.max(current,Math.ceil(required/64)*64));
+}
+
 function drawWithWebgl(
   ctx: CanvasRenderingContext2D,
   image: CanvasImageSource,
@@ -496,9 +505,12 @@ function drawWithWebgl(
   }
   const state = glState;
   const { gl, canvas } = state;
+  const endSurface=enterRenderStage("mesh-surface");
+  let left:number,top:number,boxWidth:number,boxHeight:number;
+  try {
   const transform = ctx.getTransform();
-  let left = Infinity;
-  let top = Infinity;
+  left = Infinity;
+  top = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
   // Bounds need scalars, not a fresh transformed Vec2 for every mesh vertex.
@@ -514,21 +526,25 @@ function drawWithWebgl(
   top = Math.max(0, Math.floor(top) - 1);
   right = Math.min(canvasSize(ctx).width, Math.ceil(right) + 1);
   bottom = Math.min(canvasSize(ctx).height, Math.ceil(bottom) + 1);
-  const boxWidth = Math.max(1, Math.ceil(right - left));
-  const boxHeight = Math.max(1, Math.ceil(bottom - top));
-  if (canvas.width !== boxWidth || canvas.height !== boxHeight) {
-    canvas.width = boxWidth;
-    canvas.height = boxHeight;
-  }
-  gl.viewport(0, 0, boxWidth, boxHeight);
+  if(right<=left || bottom<=top)return true;
+  boxWidth = Math.max(1, Math.ceil(right - left));
+  boxHeight = Math.max(1, Math.ceil(bottom - top));
+  const nextWidth=meshBufferSize(canvas.width,boxWidth,ctx.canvas.width);
+  const nextHeight=meshBufferSize(canvas.height,boxHeight,ctx.canvas.height);
+  // Resize only the changed axis: assigning either dimension resets storage.
+  if(canvas.width!==nextWidth)canvas.width=nextWidth;
+  if(canvas.height!==nextHeight)canvas.height=nextHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
+  } finally {endSurface?.();}
+  const transform=ctx.getTransform();
   gl.activeTexture(gl.TEXTURE0);
   if (!uploadTexture(state, image, width, height)) return false;
 
   const endSubmit=enterRenderStage("mesh-submit");
   try {
-  const matrix = meshMatrix(transform, { left, top, width: boxWidth, height: boxHeight });
+  const matrix = meshMatrix(transform, { left, top, width: canvas.width, height: canvas.height });
   const positions = new Float32Array(geometry.targets.length * 2);
   const uvs = new Float32Array(geometry.targets.length * 2);
   geometry.targets.forEach((point, index) => {
@@ -565,7 +581,8 @@ function drawWithWebgl(
   try {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(canvas, left, top);
+  // Matrix/viewport use full storage; copy only the active top-left crop.
+  ctx.drawImage(canvas, 0, 0, boxWidth, boxHeight, left, top, boxWidth, boxHeight);
   ctx.restore();
   } finally {endComposite?.();}
   return true;
