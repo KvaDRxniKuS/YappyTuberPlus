@@ -1,3 +1,5 @@
+import {TextureCache} from "./textureCache";
+import {reportResources} from "../engine/meter";
 import {enterRenderStage} from "../engine/renderProfile";
 import type { ObjectFrame, RigObject, Vec2 } from "../types";
 import { applyOffsets, meshEnabled, meshOf, meshVertices, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
@@ -335,6 +337,7 @@ interface GlState {
   buffer: WebGLBuffer;
   indices: WebGLBuffer;
   texture: WebGLTexture;
+  textures: TextureCache<CanvasImageSource,{texture:WebGLTexture;url:string;width:number;height:number}>;
   position: number;
   uv: number;
   matrix: WebGLUniformLocation | null;
@@ -342,6 +345,7 @@ interface GlState {
   source: CanvasImageSource | null;
   /** Размер картинки, загруженной в текстуру: видео меняется каждый кадр. */
   size: { width: number; height: number };
+  fallbackBytes: number;
 }
 
 let glState: GlState | null = null;
@@ -400,12 +404,14 @@ function createGlState(): GlState | null {
     buffer,
     indices,
     texture,
+    textures: new TextureCache(entry=>gl.deleteTexture(entry.texture)),
     position: gl.getAttribLocation(program, "a_pos"),
     uv: gl.getAttribLocation(program, "a_uv"),
     matrix: gl.getUniformLocation(program, "u_matrix"),
     sampler: gl.getUniformLocation(program, "u_image"),
     source: null,
     size: { width: 0, height: 0 },
+    fallbackBytes: 0,
   };
 }
 
@@ -423,19 +429,39 @@ function imageSize(image: CanvasImageSource): { width: number; height: number } 
 function uploadTexture(state: GlState, image: CanvasImageSource, width: number, height: number): boolean {
   const { gl } = state;
   const size = imageSize(image);
-  const same = state.source === image && state.size.width === size.width && state.size.height === size.height;
-  // Видео меняется каждый кадр — его текстуру приходится обновлять.
-  const isVideo = (image as HTMLVideoElement).readyState !== undefined;
-  if (same && !isVideo) return true;
-  gl.bindTexture(gl.TEXTURE_2D, state.texture);
+  const endUpload=enterRenderStage("mesh-upload");
   try {
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image as TexImageSource);
+  const source=image as HTMLImageElement;
+  const url=source.currentSrc || source.src || "";
+  // Only immutable image elements are cached. Canvas/video must refresh.
+  const immutable=typeof source.naturalWidth === "number";
+  const cached=immutable?state.textures.get(image):undefined;
+  if(cached && cached.url===url && cached.width===size.width && cached.height===size.height) {
+    gl.bindTexture(gl.TEXTURE_2D,cached.texture);return true;
+  }
+  if(cached)state.textures.delete(image);
+  const bytes=size.width*size.height*4;
+  const cacheable=immutable && bytes>0 && bytes<=32*1024*1024;
+  const texture=cacheable?gl.createTexture():state.texture;
+  if(!texture)return false;
+  gl.bindTexture(gl.TEXTURE_2D,texture);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  try {
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
   } catch {
+    if(cacheable)gl.deleteTexture(texture);
     return false;
   }
-  state.source = image;
+  if(cacheable)state.textures.set(image,{texture,url,width:size.width,height:size.height},bytes);
+  if(!cacheable)state.fallbackBytes=bytes;
+  state.source = null;
   state.size = { width: size.width || width, height: size.height || height };
   return true;
+  } finally {endUpload?.();}
+
 }
 
 /**
@@ -471,20 +497,16 @@ function drawWithWebgl(
   const state = glState;
   const { gl, canvas } = state;
   const transform = ctx.getTransform();
-  const toCanvas = (point: Vec2): Vec2 => ({
-    x: transform.a * point.x + transform.c * point.y + transform.e,
-    y: transform.b * point.x + transform.d * point.y + transform.f,
-  });
-  const corners = geometry.targets.map(toCanvas);
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
-  for (const point of corners) {
-    left = Math.min(left, point.x);
-    top = Math.min(top, point.y);
-    right = Math.max(right, point.x);
-    bottom = Math.max(bottom, point.y);
+  // Bounds need scalars, not a fresh transformed Vec2 for every mesh vertex.
+  for (const point of geometry.targets) {
+    const x=transform.a*point.x+transform.c*point.y+transform.e;
+    const y=transform.b*point.x+transform.d*point.y+transform.f;
+    left = Math.min(left, x); top = Math.min(top, y);
+    right = Math.max(right, x); bottom = Math.max(bottom, y);
   }
   if (!Number.isFinite(left) || right - left < 1e-3 || bottom - top < 1e-3) return true;
   // Один пиксель запаса: сглаживание по краю треугольника не должно обрезаться.
@@ -501,8 +523,11 @@ function drawWithWebgl(
   gl.viewport(0, 0, boxWidth, boxHeight);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.activeTexture(gl.TEXTURE0);
   if (!uploadTexture(state, image, width, height)) return false;
 
+  const endSubmit=enterRenderStage("mesh-submit");
+  try {
   const matrix = meshMatrix(transform, { left, top, width: boxWidth, height: boxHeight });
   const positions = new Float32Array(geometry.targets.length * 2);
   const uvs = new Float32Array(geometry.targets.length * 2);
@@ -531,14 +556,18 @@ function drawWithWebgl(
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.DYNAMIC_DRAW);
   gl.uniformMatrix3fv(state.matrix, false, matrix);
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, state.texture);
   gl.uniform1i(state.sampler, 0);
   gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, 0);
-
+  } finally {endSubmit?.();}
+  reportResources(state,{textures:state.textures.size+1,textureBytes:state.textures.bytes+state.fallbackBytes,
+    offscreenCanvases:1,offscreenCanvasBytes:canvas.width*canvas.height*4});
+  const endComposite=enterRenderStage("mesh-composite");
+  try {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(canvas, left, top);
   ctx.restore();
+  } finally {endComposite?.();}
   return true;
 }
 

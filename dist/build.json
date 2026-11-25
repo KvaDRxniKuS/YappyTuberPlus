@@ -11,14 +11,14 @@
   "version": "1.1.26.7.2.5.21",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-25T22:19:23.982Z",
-  "commit": "1ea2b4f",
+  "builtAt": "2026-11-25T22:32:57.868Z",
+  "commit": "37ea359",
   "schema": 1,
   "files": [
     {
-      "path": "assets/bus-DA9xnohM.js",
-      "size": 523694,
-      "sha256": "2561b140729807e0bdd1343cca816bf367526ed75b7f337041059872c95b24cc"
+      "path": "assets/bus-CL2V5v3B.js",
+      "size": 525315,
+      "sha256": "b16692664ff77991058f09286eed5b701251c15ce09072b9ee7c8af6083de577"
     },
     {
       "path": "assets/core-BUhCcD2K.js",
@@ -81,14 +81,14 @@
       "sha256": "c3e2e840a4471974f263e6af8b0b067bbc2caeed80c71b0b0d09959b1f173018"
     },
     {
-      "path": "assets/overlay-DNgr0Eq7.js",
+      "path": "assets/overlay-Dpvs3_7H.js",
       "size": 18634,
-      "sha256": "2417450440f82b83570d761958fd497317cf46c44bcdf4b3849b28a100c70159"
+      "sha256": "b917d9bc175037b3df60d3fcff7b0ddb729d81f926c94c179c00f867a5a031a7"
     },
     {
-      "path": "assets/studio-BetP7gyi.js",
-      "size": 936492,
-      "sha256": "2ebdfa236bbb574069f20a1a1ea1f399b7de46f0c41b63571d4baa71cc58f352"
+      "path": "assets/studio-BKi1xuw-.js",
+      "size": 936612,
+      "sha256": "20ff5230f7fbb7c65af4837d2d93fb27a4be45a94468c167be81614d7c042c52"
     },
     {
       "path": "assets/studio-BowyQjad.css",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "0f2fb8c6d363161680a6c4c4aa33a61e89241ad0b3c04069b304002e21b7e878"
+      "sha256": "edccf2c74550dc3298df5622fc3c95f5a7f2de1477d3d44391bf67875e78f096"
     },
     {
       "path": "modules/ambient.json",
@@ -198,7 +198,7 @@
     {
       "path": "overlay.html",
       "size": 671,
-      "sha256": "a2ea9bee9925f108ec2016976496f90c76651b24776937c0bf5efdee8ae2a90c"
+      "sha256": "4a2ba17ef314603d1628bfcaf89387003e7c8543d2c7c5877a589460b9c5ddc4"
     },
     {
       "path": "rig_core.wasm",
