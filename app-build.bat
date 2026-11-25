@@ -142,6 +142,12 @@ if not exist "%CARGO_BIN%\rustup.exe" goto wasm_done
 if errorlevel 1 echo Не удалось добавить wasm32 - используется public\rig_core.wasm.
 :wasm_done
 
+rem --- close the running app before replacing its locked executable ----------
+echo.
+echo == Закрываю YappyTuberPlus перед сборкой. Несохранённые правки будут потеряны. ==
+powershell -NoProfile -Command "try { $apps = @(Get-Process -Name 'yappytuberplus' -ErrorAction SilentlyContinue); foreach ($app in $apps) { Stop-Process -Id $app.Id -Force -ErrorAction Stop; $app.WaitForExit() }; exit 0 } catch { Write-Error $_; exit 1 }"
+if errorlevel 1 goto close_failed
+
 rem --- сборка ----------------------------------------------------------------
 echo.
 echo == Сборка приложения ==
@@ -219,3 +225,9 @@ echo При успехе папка с результатом открывает
 pause
 popd
 exit /b 0
+
+:close_failed
+echo Не удалось закрыть YappyTuberPlus. Закройте приложение вручную и повторите сборку.
+pause
+popd
+exit /b 1

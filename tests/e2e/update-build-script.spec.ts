@@ -8,3 +8,12 @@ test("combined Windows launcher stops on update failure and preserves build exit
   expect(update).toContain('if "%STRICT%"=="1" goto npm_failed');
   expect(update).toContain('if "%STRICT%"=="1" goto fail');
 });
+
+test("native build closes running application before compilation and aborts on failure",()=>{
+  const script=readFileSync("app-build.bat","utf8");
+  const stop=script.indexOf("Stop-Process -Id $app.Id -Force -ErrorAction Stop");
+  expect(stop).toBeGreaterThan(0);
+  expect(stop).toBeLessThan(script.indexOf("call npm run tauri build"));
+  expect(script).toContain("$app.WaitForExit()");
+  expect(script).toContain("if errorlevel 1 goto close_failed");
+});

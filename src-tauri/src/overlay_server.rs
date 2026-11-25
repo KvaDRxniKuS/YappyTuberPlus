@@ -340,9 +340,12 @@ fn websocket(mut stream: TcpStream, state: &Arc<OverlayServer>, headers: &HashMa
             }
         }).ok());
 
+    let mut fragments = MessageFragments::default();
     loop {
-        match read_frame(&mut stream) {
-            Ok((opcode, payload)) => match opcode {
+        let received = read_frame(&mut stream).and_then(|(fin, opcode, payload)| fragments.accept(fin, opcode, payload));
+        match received {
+            Ok(None) => continue,
+            Ok(Some((opcode, payload))) => match opcode {
                 0x1 => {
                     if let Ok(text) = String::from_utf8(payload) {
                         state.broadcast(id, text);
@@ -392,9 +395,38 @@ fn write_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> io::Result
     stream.flush()
 }
 
-fn read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> {
+/// One bounded logical message per connection; control frames may interleave.
+#[derive(Default)]
+struct MessageFragments {
+    pending: Option<(u8, Vec<u8>)>,
+}
+impl MessageFragments {
+    fn accept(&mut self, fin: bool, opcode: u8, payload: Vec<u8>) -> io::Result<Option<(u8, Vec<u8>)>> {
+        let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid websocket fragments");
+        if opcode & 0x08 != 0 {
+            if !fin || payload.len() > 125 || !matches!(opcode, 0x8 | 0x9 | 0xA) { return Err(invalid()); }
+            return Ok(Some((opcode, payload)));
+        }
+        if opcode == 0 {
+            let Some((_, data)) = self.pending.as_mut() else { return Err(invalid()); };
+            if payload.len() > MAX_PAYLOAD.saturating_sub(data.len()) { return Err(invalid()); }
+            data.extend_from_slice(&payload);
+            return if fin { Ok(self.pending.take()) } else { Ok(None) };
+        }
+        if !matches!(opcode, 0x1 | 0x2) || self.pending.is_some() || payload.len() > MAX_PAYLOAD { return Err(invalid()); }
+        if fin { return Ok(Some((opcode, payload))); }
+        self.pending = Some((opcode, payload));
+        Ok(None)
+    }
+}
+
+fn read_frame(stream: &mut impl Read) -> io::Result<(bool, u8, Vec<u8>)> {
     let mut head = [0u8; 2];
     stream.read_exact(&mut head)?;
+    if head[0] & 0x70 != 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported websocket extension"));
+    }
+    let fin = head[0] & 0x80 != 0;
     let opcode = head[0] & 0x0f;
     let masked = head[1] & 0x80 != 0;
     let mut length = (head[1] & 0x7f) as usize;
@@ -423,7 +455,7 @@ fn read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> {
             *byte ^= mask[index % 4];
         }
     }
-    Ok((opcode, payload))
+    Ok((fin, opcode, payload))
 }
 
 // ── мини-SHA1 и base64 для рукопожатия ─────────────────────────────────────
@@ -528,6 +560,37 @@ pub fn overlay_server_status(state: State<'_, Arc<OverlayServer>>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fragmented_json_and_interleaved_ping() {
+        let mut fragments = MessageFragments::default();
+        assert!(fragments.accept(false, 1, b"{\"frame\":".to_vec()).unwrap().is_none());
+        assert_eq!(fragments.accept(true, 9, b"ping".to_vec()).unwrap(), Some((9, b"ping".to_vec())));
+        assert!(fragments.accept(false, 0, vec![b' '; 200_000]).unwrap().is_none());
+        let (opcode, bytes) = fragments.accept(true, 0, b"123}".to_vec()).unwrap().unwrap();
+        assert_eq!(opcode, 1);
+        assert!(serde_json::from_slice::<serde_json::Value>(&bytes).is_ok());
+        assert!(fragments.pending.is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_or_oversized_fragments() {
+        let mut fragments = MessageFragments::default();
+        assert!(fragments.accept(true, 0, vec![]).is_err());
+        assert!(fragments.accept(false, 9, vec![]).is_err());
+        fragments.accept(false, 1, vec![0; MAX_PAYLOAD]).unwrap();
+        assert!(fragments.accept(true, 1, vec![]).is_err());
+        assert!(fragments.accept(true, 0, vec![0]).is_err());
+    }
+
+    #[test]
+    fn masked_frame_preserves_fin_and_decodes_payload() {
+        let mut bytes = &b"\x01\x83\x01\x02\x03\x04```"[..];
+        let (fin, opcode, payload) = read_frame(&mut bytes).unwrap();
+        assert!(!fin);
+        assert_eq!(opcode, 1);
+        assert_eq!(payload, b"abc");
+    }
 
     #[test]
     fn handshake_matches_rfc_vector() {
