@@ -19,11 +19,13 @@ set "REPO_URL=https://github.com/KvaDRxniKuS/YappyTuberPlus.git"
 set "BRANCH=arena/e287965b-yappytuberplus"
 set "FALLBACK_BRANCH=main"
 set "WASM=1"
+set "STRICT=0"
 set "APP_DIR="
 
 :parse
 if "%~1"=="" goto parsed
 set "ARG=%~1"
+if /i "%ARG%"=="--strict" ( set "STRICT=1" & goto next )
 if /i "%ARG%"=="--no-wasm" ( set "WASM=0" & goto next )
 if /i "%ARG%"=="--help" goto usage
 if /i "%ARG%"=="-h" goto usage
@@ -148,6 +150,7 @@ echo == Автообновление включено: ветка %ATTACH%.
 goto update
 
 :attach_failed
+if "%STRICT%"=="1" goto fail
 rem Откат: убираем полуподключённый .git, файлы пользователя не трогаем.
 if exist "%APP_DIR%\.git" rmdir /s /q "%APP_DIR%\.git"
 echo ** Не удалось подключить репозиторий - обновляю только зависимости и ядро.
@@ -165,7 +168,10 @@ rem Вся работа с git - в scripts/sync-repo.mjs: он забирает
 rem правки исходников в git stash и сохраняет свою папку сборки, чтобы
 rem обновление не заменило её версией из репозитория.
 node scripts\sync-repo.mjs --branch "%BRANCH%" --fallback "%FALLBACK_BRANCH%"
-if errorlevel 1 echo ** Обновление не удалось - работаю с текущими файлами.
+if errorlevel 1 (
+  if "%STRICT%"=="1" goto fail
+  echo ** Обновление не удалось - работаю с текущими файлами.
+)
 goto deps
 
 rem --- зависимости -----------------------------------------------------------
@@ -180,7 +186,10 @@ goto wasm
 :deps_sync
 echo == Проверка зависимостей
 call npm install --no-audit --no-fund --prefer-offline >nul 2>&1
-if errorlevel 1 echo ** npm install не удался, использую текущие node_modules.
+if errorlevel 1 (
+  if "%STRICT%"=="1" goto npm_failed
+  echo ** npm install не удался, использую текущие node_modules.
+)
 
 rem --- WASM-ядро -------------------------------------------------------------
 :wasm
@@ -223,6 +232,7 @@ echo YappyTuberPlus - обновление и сборка
 echo.
 echo   app-update.bat [параметры]
 echo.
+echo   --strict       остановиться при ошибке обновления или зависимостей
 echo   --no-wasm      не пересобирать WASM-ядро
 echo   --branch NAME  другая ветка
 echo   --dir PATH     папка проекта
