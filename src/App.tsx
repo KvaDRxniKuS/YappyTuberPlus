@@ -16,7 +16,7 @@ import {
 } from "./engine/presetCheck";
 import { buildInfoLine, buildInfoMessage, loadBuildInfo, type BuildInfo } from "./engine/buildInfo";
 import {
-  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, manifestBaseUrl, planUpdate, skipKey,
+  applyUpdateApp, applyUpdateWithAgent, fetchUpdateManifest, installableUpdate, manifestBaseUrl, planUpdate, skipKey,
   skippedUpdate, skipUpdate, updateChannel,
   updateIssues, type UpdateChannel, type FilesDiff, type UpdateManifest, type UpdatePlanKind,
 } from "./engine/update";
@@ -552,6 +552,10 @@ export default function App() {
     }
     if (!manual && skippedUpdate() === skipKey(manifest)) return;
     const channel = await updateChannel();
+    if (!await installableUpdate(channel, local, manifest, manifestBaseUrl(url))) {
+      if (manual) notify("Нет доступных обновлений для установки", 6000);
+      return;
+    }
     setUpdateOffer({
       manifest,
       base: manifestBaseUrl(url),

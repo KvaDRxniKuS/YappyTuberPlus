@@ -342,6 +342,39 @@ export async function downloadUpdate(
   return result;
 }
 
+/** Native offers require a real downloadable binary, not just newer sources.
+ * HEAD avoids downloading the application during a background check. Fail
+ * closed on unavailable/unsupported checks; installation verifies bytes/hash. */
+export async function installableUpdate(
+  channel: UpdateChannel,
+  local: BuildInfo | null,
+  remote: UpdateManifest,
+  base = manifestBaseUrl(),
+  timeoutMs = 8000,
+): Promise<boolean> {
+  if (channel !== "app") return true;
+  const app = remote.app;
+  if (!app || typeof app.path !== "string" || !app.path.trim()
+    || !Number.isFinite(app.size) || app.size <= 0
+    || typeof app.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(app.sha256)) return false;
+  // A newer frontend manifest may still carry the previously published binary.
+  if (local?.app?.sha256?.toLowerCase() === app.sha256.toLowerCase()) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(new URL(app.path, base).href, {
+      method: "HEAD", cache: "no-store", signal: controller.signal,
+    });
+    if (!response.ok) return false;
+    const length = response.headers.get("content-length");
+    return length === null || Number(length) === app.size;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Есть ли рядом локальный агент: он умеет заменять файлы собранной папки. */
 export async function updateAgentReady(): Promise<boolean> {
   try {

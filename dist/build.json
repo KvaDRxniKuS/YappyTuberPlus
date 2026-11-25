@@ -11,8 +11,8 @@
   "version": "1.1.26.7.2.5.21",
   "acceptsFrom": 16,
   "packaging": "1.1.0",
-  "builtAt": "2026-11-25T22:00:15.767Z",
-  "commit": "4d09391",
+  "builtAt": "2026-11-25T22:19:23.982Z",
+  "commit": "1ea2b4f",
   "schema": 1,
   "files": [
     {
@@ -86,14 +86,14 @@
       "sha256": "2417450440f82b83570d761958fd497317cf46c44bcdf4b3849b28a100c70159"
     },
     {
+      "path": "assets/studio-BetP7gyi.js",
+      "size": 936492,
+      "sha256": "2ebdfa236bbb574069f20a1a1ea1f399b7de46f0c41b63571d4baa71cc58f352"
+    },
+    {
       "path": "assets/studio-BowyQjad.css",
       "size": 93619,
       "sha256": "ab23ce8665968c43186f7c6f8b7c38924231e1a5846d12e35d631388736ee61d"
-    },
-    {
-      "path": "assets/studio-BusqAWR9.js",
-      "size": 935796,
-      "sha256": "5ad371f28813623f17083fe02ac676336cd651db2a0bef44b765756f697b2cc1"
     },
     {
       "path": "assets/webviewWindow-BL5u9mQC.js",
@@ -108,7 +108,7 @@
     {
       "path": "index.html",
       "size": 615,
-      "sha256": "262677eae39f78ed6b9a9fec4adf7d6ee0bc86e0e84b7615a3737ea433abdca8"
+      "sha256": "0f2fb8c6d363161680a6c4c4aa33a61e89241ad0b3c04069b304002e21b7e878"
     },
     {
       "path": "modules/ambient.json",
