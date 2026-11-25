@@ -1,3 +1,4 @@
+import {enterRenderStage} from "../engine/renderProfile";
 import {observeFrameRetention} from "../engine/frameRetention";
 import { createParentMeshTransforms } from "./bend";
 import { defaultMesh } from "../engine/mesh";
@@ -286,6 +287,8 @@ export function drawRig(
   assets: SpriteAssets,
   options: DrawRigOptions = {},
 ): void {
+  const endProfile=enterRenderStage("rig");
+  try {
   const meshTransform=options.preparedMeshes ? undefined : options.meshTransform ?? createParentMeshTransforms(preset,frame,options.meshPoints);
   if(meshTransform) options={...options,meshTransform};
   const zoom = options.lineScale ?? 1;
@@ -344,6 +347,7 @@ export function drawRig(
     }
     drawPlain(ctx, object, frame, assets, options, zoom, matrix, left, top, alpha);
   }
+  } finally { endProfile?.(); }
 }
 
 /**
@@ -483,6 +487,8 @@ function drawShaded(
   strength: number,
   sample: ShadeSample,
 ): boolean {
+  const endProfile=enterRenderStage("shaded");
+  try {
   const layer = volumeLayer(ctx.canvas);
   if (!layer) return false;
   const { canvas, ctx: layerCtx } = layer;
@@ -525,6 +531,7 @@ function drawShaded(
   ctx.drawImage(canvas, box.x, box.y, box.width, box.height, box.x, box.y, box.width, box.height);
   ctx.restore();
   return true;
+  } finally { endProfile?.(); }
 }
 
 function surfaceBounds(object:RigObject,frame:RigFrame|null,options:DrawRigOptions):Vec2[]|null {
@@ -549,11 +556,14 @@ function drawPlain(
   top: number,
   alpha: number,
 ): void {
+  const endProfile=enterRenderStage("plain");
+  try {
   ctx.save();
   ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
   ctx.globalAlpha = alpha;
   drawObjectContent(ctx, object, frame, assets, options, zoom);
   ctx.restore();
+  } finally { endProfile?.(); }
 }
 
 /** Содержимое объекта: картинка, медиа или текст. Трансформа уже применена. */
@@ -766,6 +776,8 @@ function drawMasked(
   top: number,
   alpha: number,
 ): void {
+  const endProfile=enterRenderStage("mask");
+  try {
   // Трансформация главного холста включает камеру и масштаб экрана: у
   // отдельного холста она должна быть точно такой же, иначе маска не совпадёт
   // с объектом.
@@ -804,6 +816,7 @@ function drawMasked(
   // Crop-local pixels are copied one-to-one to their original destination.
   ctx.drawImage(canvas, 0, 0, box.width, box.height, box.x, box.y, box.width, box.height);
   ctx.restore();
+  } finally { endProfile?.(); }
 }
 
 /** Прямоугольник маски в пикселях холста: рамка объекта плюс запас на край. */

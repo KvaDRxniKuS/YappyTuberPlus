@@ -46,6 +46,7 @@ test("collector produces copyable report, detects visibility, excludes project d
     expect(report.longTasks.supported).toBe(false);
     expect(report.frameRetention).toMatchObject({supported:true,maxSamplesPerStage:120,sampleIntervalMs:1000});
     expect(report.frameRetention.stages.received.sampled).toBe(0);
+    expect(report.renderStages.mask).toEqual({calls:0,totalMs:0,maxMs:0});
     expect(text).not.toContain("presetPath");expect(report.limitations.length).toBeGreaterThan(0);
   });
 });

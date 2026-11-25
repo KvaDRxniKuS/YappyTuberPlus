@@ -1,3 +1,4 @@
+import {enterRenderStage} from "../engine/renderProfile";
 import { ShortcutGuide } from "./ShortcutGuide";
 import { createParentMeshTransforms } from "../render/bend";
 import { useEffect, useRef, useState, type RefObject } from "react";
@@ -356,6 +357,8 @@ export function Scene(props: SceneProps) {
       dirty.current = true;
       return;
     }
+    const endRenderProfile=enterRenderStage("scene");
+    try {
     const drawStarted=performance.now();
     const element = canvas.current;
     const host = viewport.current;
@@ -482,6 +485,7 @@ export function Scene(props: SceneProps) {
     // Видео меняется само по себе: пока оно играет, просим следующий кадр.
     // Видео-маска тоже живая — иначе «окно» застыло бы на первом кадре.
     if (mediaAssets.current.active() || maskMedia.current.active()) markDirty();
+    } finally { endRenderProfile?.(); }
   };
 
   /** Артборд с тенью, нарисованный один раз на изменение размера сцены. */
