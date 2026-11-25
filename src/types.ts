@@ -1,3 +1,4 @@
+import type {ArtDeformation,ArtOffsets} from "./engine/artDeformation";
 import { PRESET_FORMAT } from "./version";
 
 export type ParamName =
@@ -468,6 +469,10 @@ export interface RigObject {
   warp?: WarpSpec;
   /** Деформация сеткой: спрайт и медиа-картинка. */
   mesh?: MeshSpec;
+  /** Unified art topology. When present it is authoritative; no grid fallback. */
+  artMesh?: ArtDeformation;
+  /** Authored local-unit displacement of stable art vertex IDs. */
+  artPose?: ArtOffsets;
 }
 
 /**

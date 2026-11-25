@@ -1,3 +1,4 @@
+import {readArtMesh,readArtOffsets} from "./artMeshRuntime";
 import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules, instanceInputs } from "../modules/values";
 import { selectionRoots } from "./selection";
@@ -326,6 +327,13 @@ export function normalizePreset(value: unknown): RigPreset | null {
   // потерял бы при сохранении то, чего не понял.
   if (!PRESET_FORMATS_READABLE.includes(Number(preset.version))
     || !Array.isArray(preset.objects) || !preset.canvas) return null;
+  // Reject malformed new payloads instead of silently losing topology/poses.
+  try {
+    for(const object of preset.objects)if(object.artMesh){
+      const art=readArtMesh(object.artMesh);
+      if(object.artPose)readArtOffsets(object.artPose,art);
+    }
+  } catch {return null;}
   return ensureModules({
     version: PRESET_FORMAT,
     // Штамп сборки переезжает как есть: по нему видно, чем файл записан.
@@ -343,8 +351,12 @@ export function normalizePreset(value: unknown): RigPreset | null {
         || object.kind === "shape" || object.kind === "light"
         ? object.kind
         : "sprite";
+      const supportsArt=kind==="sprite"||kind==="media"||kind==="shape"||kind==="group";
+      const artMesh=supportsArt&&object.artMesh ? readArtMesh(object.artMesh) : undefined;
+      const artPose=artMesh&&object.artPose ? readArtOffsets(object.artPose,artMesh) : undefined;
       return {
         ...object,
+        artMesh, artPose,
         kind,
         enabled: object.enabled !== false,
         base: { ...DEFAULT_BASE, ...object.base },
@@ -373,8 +385,8 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // Новый формат — сетка (`mesh`); старый `warp` остаётся в пресете как
         // есть и мигрирует при первом обращении (`meshOf`), поэтому открытие
         // файла ничего в нём не меняет.
-        warp: normalizeWarp(object.warp),
-        mesh: kind === "sprite" || kind === "media" ? normalizeMesh(object.mesh) : undefined,
+        warp: artMesh ? undefined : normalizeWarp(object.warp),
+        mesh: !artMesh && (kind === "sprite" || kind === "media") ? normalizeMesh(object.mesh) : undefined,
       };
     }).map((object) => normalizeMaskBlock(object)),
     globals: preset.globals || "",

@@ -1,3 +1,4 @@
+import {compiledArtMesh,evaluateArtMesh,addArtOffsets,bindArtVertices,applyArtBindings} from "../engine/artMeshRuntime";
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { applyOffsets, meshEnabled, meshOf, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
 import { invertAffine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
@@ -69,6 +70,21 @@ export function deformOffset(
 
 /** Prepare once per object/frame, never normalize or allocate grids per vertex. */
 export function prepareDeformOffset(object: RigObject,values: ObjectFrame,points?: Record<string,Vec2>): ((point:Vec2)=>Vec2) | undefined {
+  if(object.artMesh){
+    const compiled=compiledArtMesh(object.artMesh);
+    const offsets=addArtOffsets(object.artPose,points);
+    if(!Object.values(offsets).some(p=>p.x!==0||p.y!==0))return undefined;
+    const targets=evaluateArtMesh(compiled,offsets).targets;
+    const matrix=objectMatrix(object,values),inverse=invertAffine(matrix);
+    return point=>{
+      const local=transformPoint(inverse,point.x,point.y);
+      const content={x:local.x+object.pivot.x*object.width,y:local.y+object.pivot.y*object.height};
+      const binding=bindArtVertices(compiled,[content]);
+      const target=applyArtBindings(compiled,targets,[content],binding)[0];
+      const dx=target.x-content.x,dy=target.y-content.y;
+      return {x:matrix.a*dx+matrix.c*dy,y:matrix.b*dx+matrix.d*dy};
+    };
+  }
   if(!meshEnabled(object)) return undefined;
   const mesh=meshOf(object);
   if(!mesh?.enabled) return undefined;
@@ -160,7 +176,7 @@ export function createParentMeshTransforms(
     let parent=byId.get(object.parentId);
     for(let depth=0;parent&&depth<MAX_DEPTH&&!seen.has(parent.id);depth++) {
       seen.add(parent.id);
-      if(meshEnabled(parent)) {
+      if(meshEnabled(parent) && (!parent.artMesh || (!!object.artMesh && object.deformParent===true))) {
         if(!samplers.has(parent.id)) samplers.set(parent.id,prepareDeformOffset(parent,frame?.objects[parent.id]??staticValues(parent),points?.get(parent.id)));
         const sampler=samplers.get(parent.id);
         if(sampler) chain.push(sampler);

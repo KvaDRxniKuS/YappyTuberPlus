@@ -1,4 +1,4 @@
-import {evaluateArtMesh, type CompiledArtMesh} from "../engine/artMeshRuntime";
+import {evaluateArtMesh, compiledArtMesh, addArtOffsets, type CompiledArtMesh} from "../engine/artMeshRuntime";
 import type {ArtOffsets} from "../engine/artDeformation";
 import {TextureCache} from "./textureCache";
 import {reportResources} from "../engine/meter";
@@ -86,6 +86,7 @@ export function meshGeometry(
   values?: ObjectFrame | null,
   keyOffsets?: Record<string, Vec2> | null,
 ): MeshGeometry | null {
+  if(object.artMesh) return evaluateArtMesh(compiledArtMesh(object.artMesh),addArtOffsets(object.artPose,keyOffsets));
   if(!meshEnabled(object)) return null;
   const mesh = meshOf(object);
   if (!mesh || !mesh.enabled) return null;
@@ -203,6 +204,10 @@ export function meshSurfaceGeometry(
   object:RigObject,width=object.width,height=object.height,values?:ObjectFrame|null,
   keyOffsets?:Record<string,Vec2>|null,deform?:(point:Vec2)=>Vec2,
 ):MeshGeometry|null {
+  if(object.artMesh){
+    const geometry=evaluateArtMesh(compiledArtMesh(object.artMesh),addArtOffsets(object.artPose,keyOffsets));
+    return deform?{...geometry,targets:geometry.targets.map(deform)}:geometry;
+  }
   if(!meshEnabled(object)) return null;
   const mesh = meshOf(object);
   if (!mesh || !mesh.enabled) return null;

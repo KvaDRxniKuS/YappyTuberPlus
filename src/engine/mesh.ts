@@ -327,6 +327,7 @@ export function normalizeMesh(raw: unknown): MeshSpec | undefined {
  * изменив.
  */
 export function meshOf(object: RigObject): MeshSpec | undefined {
+  if(object.artMesh)return undefined;
   if (object.mesh) return normalizeMesh(object.mesh);
   if (object.warp) return migrateWarp(object.warp);
   return undefined;
@@ -336,6 +337,7 @@ export function meshOf(object: RigObject): MeshSpec | undefined {
 export function meshEnabled(object: RigObject): boolean {
   // The enabled flag needs no migration or normalization. Old projects often
   // carry a disabled warp on every sprite; inspecting it must stay allocation-free.
+  if(object.artMesh)return true;
   return object.mesh ? object.mesh.enabled === true : object.warp?.enabled === true;
 }
 

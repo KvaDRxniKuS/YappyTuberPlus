@@ -83,3 +83,18 @@ export function applyArtBindings(parent:CompiledArtMesh,targets:readonly Vec2[],
     return result;
   });
 }
+
+const compiledMeshes=new WeakMap<ArtDeformation,CompiledArtMesh>();
+/** Immutable topology identity owns the cache; old projects are not retained. */
+export function compiledArtMesh(mesh:ArtDeformation):CompiledArtMesh {
+  let compiled=compiledMeshes.get(mesh);
+  if(!compiled){compiled=compileArtMesh(mesh);compiledMeshes.set(mesh,compiled);}
+  return compiled;
+}
+export function addArtOffsets(base:ArtOffsets|undefined,live:ArtOffsets|null|undefined):ArtOffsets {
+  const result:ArtOffsets={...base};
+  for(const [id,p] of Object.entries(live??{})){
+    const a=result[id];result[id]={x:(a?.x??0)+p.x,y:(a?.y??0)+p.y};
+  }
+  return result;
+}
