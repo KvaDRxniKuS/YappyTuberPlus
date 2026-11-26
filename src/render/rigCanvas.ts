@@ -1,3 +1,4 @@
+import {artFramePoints} from "../engine/artMeshPlayback";
 import {enterRenderStage} from "../engine/renderProfile";
 import {observeFrameRetention} from "../engine/frameRetention";
 import { createParentMeshTransforms } from "./bend";
@@ -208,10 +209,12 @@ export type PreparedMeshes = Record<string,MeshGeometry>;
 const preparedFrames=new WeakMap<RigFrame,WeakMap<RigPreset,PreparedMeshes>>();
 /** A serializable evaluated surface, shared by the editor and all viewers. */
 export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Map<string,Record<string,Vec2>>):PreparedMeshes {
-  let cache=frame && !points ? preparedFrames.get(frame):undefined;
+  const cacheable=!points;
+  let cache=frame && cacheable ? preparedFrames.get(frame):undefined;
   if(cache?.has(preset)) {
     const cached=cache.get(preset)!;observeFrameRetention("meshes",cached);return cached;
   }
+  points=artFramePoints(preset,frame,points);
   const result:PreparedMeshes={};
   const inheritedFor=createParentMeshTransforms(preset,frame,points);
   for(const object of preset.objects) {
@@ -222,7 +225,7 @@ export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Ma
     const geometry=meshSurfaceGeometry(surface,object.width,object.height,frame?.objects[object.id],points?.get(object.id),inherited);
     if(geometry) result[object.id]=geometry;
   }
-  if(frame && !points) {
+  if(frame && cacheable) {
     if(!cache) {cache=new WeakMap();preparedFrames.set(frame,cache);}
     cache.set(preset,result);
   }
@@ -289,6 +292,7 @@ export function drawRig(
   assets: SpriteAssets,
   options: DrawRigOptions = {},
 ): void {
+  if(!options.preparedMeshes)options={...options,meshPoints:artFramePoints(preset,frame,options.meshPoints)};
   const endProfile=enterRenderStage("rig");
   try {
   const meshTransform=options.preparedMeshes ? undefined : options.meshTransform ?? createParentMeshTransforms(preset,frame,options.meshPoints);

@@ -1,3 +1,4 @@
+import {artFramePoints} from "../engine/artMeshPlayback";
 import {compiledArtMesh,evaluateArtMesh,addArtOffsets,bindArtVertices,applyArtBindings} from "../engine/artMeshRuntime";
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { applyOffsets, meshEnabled, meshOf, paramOffsets, regularGrid, sampleDeform } from "../engine/mesh";
@@ -164,6 +165,7 @@ export function createParentMeshTransforms(
   preset:RigPreset,frame:RigFrame|null,points?:Map<string,Record<string,Vec2>>,
 ):((object:RigObject)=>((point:Vec2)=>Vec2)|undefined)|undefined {
   if(!preset.objects.some(meshEnabled)) return undefined;
+  points=artFramePoints(preset,frame,points);
   const byId=new Map(preset.objects.map(object=>[object.id,object]));
   type Sampler=(point:Vec2)=>Vec2;
   const samplers=new Map<string,Sampler|undefined>();

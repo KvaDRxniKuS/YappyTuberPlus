@@ -428,13 +428,14 @@ export function StatesPanel(props: StatesPanelProps) {
     const pose = previewPose();
     const live = previewLive();
     const points = previewPoints();
-    const stamp = JSON.stringify({ pose, live, points });
+    const pointLayer=states.layers.slice(0,layerIndex).filter(l=>l.poses.length>0).length;
+    const stamp = JSON.stringify({ pose, live, points, pointLayer });
     if (sent.current === stamp) return;
     sent.current = stamp;
     // Id передаём явно: предпросмотр — про объект вкладки, а не про последний
     // в выделении. Иначе при мультивыделении поза уезжала чужому объекту.
     props.onPreviewState(
-      { id: object.id, pose, live, points: noPoints(points) ? undefined : points },
+      { id: object.id, pose, live, points: noPoints(points) ? undefined : points, pointLayer },
       object.id,
     );
   });

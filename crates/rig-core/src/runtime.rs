@@ -1033,6 +1033,15 @@ impl Rig {
                 self.eval_node(&NodeKey::Param(id.clone(), param));
             }
         }
+        // Vertex-only states may have no scalar channel reading their weights.
+        // Evaluate requested, defined locals before frame assembly, not merely
+        // those that happened to be cached by a transform expression.
+        let watched: Vec<NodeKey> = self.preset.objects.iter()
+            .flat_map(|object| object.watch.iter().map(move |name|
+                NodeKey::Local(object.id.clone(), name.clone())))
+            .filter(|key| self.expressions.contains_key(key))
+            .collect();
+        for key in watched { self.eval_node(&key); }
         let cycle_nodes = self.cycle_nodes.clone();
         for key in cycle_nodes {
             let previous = self.previous_value(&key);
@@ -4491,6 +4500,18 @@ mod tests {
         let mut rig = Rig::new(preset(vec![owner], "")).unwrap();
         let frame = tick_with(&mut rig, 0.0, &[("mouse.x", 1.0)]);
         assert_eq!(frame.vars["o"]["eye_target"], 2.0);
+    }
+
+    #[test]
+    fn watch_evaluates_vertex_only_state_weights() {
+        let mut owner = object("o", None,
+            "states_art_w0_0 = limit(mouse.x, 0, 1)\nstates_art_w1_0 = mouse.y * 2");
+        owner.watch = vec!["states_art_w0_0".into(), "states_art_w1_0".into()];
+        let mut rig = Rig::new(preset(vec![owner], "")).unwrap();
+        let frame = tick_with(&mut rig, 0.0, &[("mouse.x", 0.25), ("mouse.y", 0.5)]);
+        assert_eq!(frame.vars["o"]["states_art_w0_0"], 0.25);
+        assert_eq!(frame.vars["o"]["states_art_w1_0"], 1.0);
+        assert!(frame.diagnostics.is_empty());
     }
 
     #[test]

@@ -56,6 +56,8 @@ export interface StatePreview {
    * приходят отсюда, вместе с позой предпросмотра.
    */
   points?: Record<string, Vec2>;
+  /** Stable layer identity for replacing only its live vertex contribution. */
+  pointLayer?: number;
 }
 
 /**
@@ -281,6 +283,10 @@ export function watchNames(states: States): string[] {
   // `<поле>_states` в переменные `states_<поле>`, и ядро отдаёт их в `vars`.
   // Без этого редактор считал бы вклад заново по входам — а кадр на тик старше.
   for (const field of fields) names.add(liveName(field));
+  states.layers.filter(layer=>layer.poses.length>0).forEach((layer,i)=>{
+    if(layer.poses.some(p=>p.points&&Object.keys(p.points).some(id=>/^v[0-9]+$/.test(id))))
+      layer.poses.forEach((_,j)=>names.add(artWeightName(i,j)));
+  });
   return [...names].sort();
 }
 
@@ -393,6 +399,8 @@ export function statesBlock(states: States, object: RigObject): string {
     body.push(...temps);
     // Свободный слой сам объявляет свои веса: у привязанного они выражения.
     body.push(...defs);
+    if(layer.poses.some(p=>p.points&&Object.keys(p.points).some(id=>/^v[0-9]+$/.test(id))))
+      weights.forEach((weight,j)=>body.push(`${artWeightName(index,j)} = ${weight}`));
     parts.push({ layer, weights });
   });
   const channels: string[] = [];
@@ -1261,3 +1269,6 @@ export function samePoints(a?: Record<string, Vec2> | null, b?: Record<string, V
   }
   return true;
 }
+
+/** Reserved local variable names evaluated by runtime watch in the same frame. */
+export function artWeightName(layer:number,pose:number):string{return `states_art_w${layer}_${pose}`;}

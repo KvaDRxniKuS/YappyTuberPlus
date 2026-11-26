@@ -1,3 +1,5 @@
+import {artFramePoints,artStateOffsets} from "../engine/artMeshPlayback";
+import {addArtOffsets} from "../engine/artMeshRuntime";
 import {ArtMeshGenerator} from "./ArtMeshGenerator";
 import {artEditorPoint,editArtVertex,drawArtEditor} from "../render/artMeshEditor";
 import {artPosition,type ArtDeformation,type ArtOffsets} from "../engine/artDeformation";
@@ -401,7 +403,10 @@ export function Scene(props: SceneProps) {
     const previewed = preset;
     // Точки деформера из предпросмотра состояний: рендереру они приходят из
     // вкладки, а не из кадра — ядро про артмеш не знает.
-    const meshPoints = previewPoints(current.preview);
+    const meshPoints = artFramePoints(preset,current.frameRef.current,undefined,current.preview);
+    const legacyPreview=previewPoints(current.preview);
+    if(legacyPreview&&!preset.objects.find(o=>o.id===current.preview?.id)?.artMesh)
+      for(const [id,points] of legacyPreview)meshPoints.set(id,points);
     // Кадр с изгибом детей: сетка родителя двигает и то, что на ней висит.
     const frame = previewFrame(current.frameRef.current, preset.objects, current.preview);
     const colors = current.colors;
@@ -458,7 +463,7 @@ export function Scene(props: SceneProps) {
       if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true, offsets);
     }
     const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
-    if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,artTarget,frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt);
+    if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt);
     if (showGrid && !artTarget?.artMesh) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets, setupGrid.current);
     if (showArt && !artTarget?.artMesh) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
     if (current.tool === "deform" && line.current) {
@@ -1239,7 +1244,7 @@ export function Scene(props: SceneProps) {
               const values=liveFrame(current.preset)?.objects[artObject.id]??staticValues(artObject);
               const matrix=objectMatrix(artObject,values),rest=current.tool==="deform";
               let nearest:string|null=null,distance=10/camera.current.zoom;
-              for(const v of artObject.artMesh.vertices){const p=rest?v.rest:artPosition(v,artObject.artPose);
+              for(const v of artObject.artMesh.vertices){const p=rest?v.rest:artPosition(v,addArtOffsets(artObject.artPose,artStateOffsets(artObject,current.frameRef.current,current.preview)));
                 const world=transformPoint(matrix,p.x-artObject.pivot.x*artObject.width,p.y-artObject.pivot.y*artObject.height);
                 const d=Math.hypot(world.x-point.x,world.y-point.y);if(d<distance){distance=d;nearest=v.id;}}
               if(nearest){current.onDragStart();artDrag.current={object:artObject,id:nearest,start:artEditorPoint(artObject,point,matrix),matrix,mode:rest?"rest":"pose"};}
