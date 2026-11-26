@@ -1,3 +1,4 @@
+import {pasteArtMesh,type ArtMeshClip,type ArtMeshPasteScale} from "./engine/artMeshClipboard";
 import {replaceArtMeshes,type ArtMeshReplacement} from "./engine/artMeshBatch";
 import {editArtTopology,type ArtTopologyCommand} from "./engine/artMeshTopology";
 import type {ArtDeformation,ArtOffsets} from "./engine/artDeformation";
@@ -1040,6 +1041,10 @@ export default function App() {
    * Сетка и нарезка из сцены. Как и `warpObject`, шага истории не создаёт:
    * снимок кладёт начало жеста, поэтому весь жест откатывается одним Ctrl+Z.
    */
+  const artPasteObject=useCallback((id:string,clip:ArtMeshClip,scale:ArtMeshPasteScale,pose:boolean)=>{
+    commit(current=>({...current,objects:current.objects.map(o=>o.id===id?pasteArtMesh(o,clip,scale,pose):o)}),{label:"Вставка артмеша"});
+  },[commit]);
+
   const artBatchObjects=useCallback((meshes:ArtMeshReplacement[],inherit:boolean)=>{
     if(!meshes.length)return;
     commit(current=>replaceArtMeshes(current,meshes,inherit),{label:"Подготовка потомков к деформации"});
@@ -1720,6 +1725,7 @@ export default function App() {
             onArtMesh={artMeshObject}
             onArtTopology={artTopologyObject}
             onArtBatch={artBatchObjects}
+            onArtPaste={artPasteObject}
             pen={pen}
             onPenPoints={penPoints}
             onPenDragEnd={endLiveEdit}

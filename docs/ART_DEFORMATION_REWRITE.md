@@ -431,3 +431,26 @@ Chromium executable отсутствует (browserType.launch), до assertions
 используют canvas mock, остальные — core/batch math. WASM/dist не обновлены, Cargo
 по-прежнему нет. Следом: полноценная проверка UI/undo, group bounds/alpha policy,
 clipboard/format/needs, удаление старой системы, Rust+Windows build.
+
+## Этап 18: clipboard нового артмеша
+
+В Scene добавлены «Копировать артмеш»/«Вставить артмеш…», включая вставку в
+поддерживаемый объект без artMesh. Буфер in-memory хранит owned strict copies
+mesh/UV/artPose/размеров, не состояния источника; чтение тоже возвращает копию.
+Отдельный ArtMeshPasteDialog требует подтверждение замены, предлагает fit/local
+и выключенный по умолчанию перенос авторской деформации. Fit масштабирует rest
+и выбранные pose offsets, UV остаются нормированными исходными. Local сохраняет
+единицы источника. Новые IDs выдаются от target.nextId, старые не переиспользуются.
+
+pasteArtMesh — полная object transaction; App делает один commit. Смещения
+вершин всех target keys очищаются, остальные state properties/слои сохраняются,
+inheritance и размеры объекта не меняются. Битый payload/нечисловое масштабирование
+отвергаются. Cancel не меняет проект, смена объекта закрывает draft. Старый
+numeric grid clipboard ещё существует только для не переведённых объектов/UI;
+это не преобразователь между форматами и он должен уйти при удалении legacy.
+
+12 targeted tests + tsc + Vite bundling (.cache/clipboard-build) + diff-check
+прошли: owned copies, fit/local/pose, stable IDs, state preservation, failures.
+DOM dialog/undo не проверены — Chromium по-прежнему отсутствует. Rust toolchain
+и согласованные WASM/dist всё ещё не собраны. Осталось решить group bounds,
+format/needs, завершить удаление старой системы и полноценную UI/native проверку.

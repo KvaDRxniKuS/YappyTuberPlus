@@ -1,3 +1,5 @@
+import {ArtMeshPasteDialog} from "./ArtMeshPasteDialog";
+import {holdArtMesh,heldArtMesh,type ArtMeshClip,type ArtMeshPasteScale} from "../engine/artMeshClipboard";
 import {captureArtAlpha} from "../render/artMeshAlphaSource";
 import type {ArtMeshReplacement} from "../engine/artMeshBatch";
 import {addArtFace,removeArtFace} from "../engine/artMeshFaces";
@@ -153,6 +155,7 @@ interface SceneProps {
   onWarp: (id: string, warp: WarpSpec) => void;
   /** Сетка и нарезка из спецрежима: узлы, точки, рёбра, треугольники. */
   onMesh: (id: string, mesh: MeshSpec) => void;
+  onArtPaste:(id:string,clip:ArtMeshClip,scale:ArtMeshPasteScale,pose:boolean)=>void;
   onArtBatch:(meshes:ArtMeshReplacement[],inherit:boolean)=>void;
   onArtTopology:(id:string,command:ArtTopologyCommand)=>void;
   onArtMesh:(id:string,mesh:ArtDeformation,pose:ArtOffsets,regenerate?:boolean)=>void;
@@ -269,6 +272,8 @@ export function Scene(props: SceneProps) {
   const interaction = useRef<Interaction>(null);
   const [artGenerator,setArtGenerator]=useState<false|"single"|"descendants">(false);
   const [artTopologyError,setArtTopologyError]=useState("");
+  const [artPaste,setArtPaste]=useState<ArtMeshClip|null>(null);
+  useEffect(()=>setArtPaste(null),[props.primaryId]);
   const [artBrush,setArtBrush]=useState(false);
   const [artPickMode,setArtPickMode]=useState<"move"|"rect"|"lasso"|"insert">("move");
   const artArea=useRef<{objectId:string;shape:"rect"|"lasso";path:Vec2[];points:ArtSelectionPoint[];previous:Set<string>;mode:"replace"|"add"|"subtract"}|null>(null);
@@ -1048,6 +1053,13 @@ export function Scene(props: SceneProps) {
           {(props.tool==="warp"||props.tool==="deform")&&meshTarget&&["sprite","media","shape","group"].includes(meshTarget.kind??"sprite")&&<>
             <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/></button>
             <button title="Подготовить потомков к деформации…" onClick={()=>setArtGenerator("descendants")}>Подготовить потомков…</button>
+            <button disabled={!meshTarget.artMesh} title="Скопировать новый артмеш и авторскую деформацию" onClick={()=>{
+              try{holdArtMesh(meshTarget);setArtTopologyError("");}catch(error){setArtTopologyError(error instanceof Error?error.message:"Ошибка копирования.");}
+            }}>Копировать артмеш</button>
+            <button title="Вставить новый артмеш с подтверждением замены" onClick={()=>{
+              const clip=heldArtMesh();if(clip)setArtPaste(clip);else setArtTopologyError("Буфер артмеша пуст.");
+            }}>Вставить артмеш…</button>
+            {!meshTarget.artMesh&&artTopologyError&&<span role="status">{artTopologyError}</span>}
             {meshTarget.artMesh&&<select className="tool-select" aria-label="Режим артмеша" value={props.tool==="deform"?"rest":"pose"} onChange={e=>props.onTool(e.target.value==="rest"?"deform":"warp")}>
               <option value="rest">Правка сетки</option><option value="pose">Деформация</option>
             </select>}
@@ -1283,6 +1295,9 @@ export function Scene(props: SceneProps) {
           )}
         </div>
       )}
+      {artPaste&&meshTarget&&<ArtMeshPasteDialog object={meshTarget} clip={artPaste} onClose={()=>setArtPaste(null)} onApply={(scale,pose)=>{
+        props.onArtPaste(meshTarget.id,artPaste,scale,pose);setArtPaste(null);artSelection.current={objectId:meshTarget.id,ids:new Set()};
+      }}/>}
       {artGenerator&&meshTarget&&<ArtMeshGenerator key={`${meshTarget.id}-${artGenerator}`}
         object={meshTarget} captureAlpha={object=>captureArtAlpha(object,object.kind==="media"?(mediaAssets.current.video(object.id)??mediaAssets.current.image(object.id)):assets.current.get(object.image))}
         batch={artGenerator==="descendants"?{root:meshTarget.id,objects:props.preset.objects,onApply:(meshes,inherit)=>{props.onArtBatch(meshes,inherit);setArtGenerator(false);}}:undefined} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
