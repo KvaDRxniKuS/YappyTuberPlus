@@ -16,7 +16,8 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
  const descendants=useMemo(()=>batch?artDescendants(batch.objects,batch.root,scope):[],[batch?.objects,batch?.root,scope]);
  const targets=descendants.filter(o=>artGenerationSupported(o)&&(!onlyMissing||!o.artMesh));
  const [mode,setMode]=useState<"regular"|"alpha">("regular");
- const [threshold,setThreshold]=useState(128),[padding,setPadding]=useState(0),[contourSpacing,setContourSpacing]=useState(20),[interiorSpacing,setInteriorSpacing]=useState(30),[simplification,setSimplification]=useState(1),[refresh,setRefresh]=useState(0);
+ const [alphaLayout,setAlphaLayout]=useState<"grid"|"radial">("grid");
+ const [threshold,setThreshold]=useState(128),[padding,setPadding]=useState(0),[contourSpacing,setContourSpacing]=useState(20),[interiorSpacing,setInteriorSpacing]=useState(30),[simplification,setSimplification]=useState(4),[refresh,setRefresh]=useState(0);
  const sourceTargets=batch?targets:object?[object]:[];
  const sourceKey=JSON.stringify([refresh,sourceTargets.map(o=>[o.id,o.width,o.height,o.kind,o.image,o.media?.src,o.shape])]);
  const captureRef=useRef(captureAlpha);captureRef.current=captureAlpha;
@@ -45,14 +46,14 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
   const generate=(o?:RigObject)=>{
    if(mode==="regular")return generateRegularArt(cols,rows,!batch?width:o?.width??width,!batch?height:o?.height??height,inset,o?(o.artMesh?.nextId??0):nextId);
    const raster=o?snapshot.rasters.get(o.id):undefined;if(!raster)throw new Error("Нет alpha-маски объекта.");
-   return generateAlphaArt(raster,{threshold,padding,contourSpacing,interiorSpacing,simplification,nextId:o?(o.artMesh?.nextId??0):nextId});
+   return generateAlphaArt(raster,{threshold,padding,contourSpacing,interiorSpacing,simplification,layout:alphaLayout,nextId:o?(o.artMesh?.nextId??0):nextId});
   };
   if(batch){
    const meshes=targets.map(o=>{try{return {id:o.id,mesh:generate(o)};}catch(error){throw new Error(`${o.name||o.id}: ${error instanceof Error?error.message:"Ошибка генерации"}`);}});
    return {mesh:meshes.find(m=>m.id===previewId)?.mesh??meshes[0]?.mesh??null,meshes,error:meshes.length?"":"Нет подходящих потомков в выбранной области."};
   }
   return {mesh:generate(object),meshes:[],error:""};
- }catch(error){return {mesh:null,meshes:[],error:mode==="alpha"?(error instanceof Error?error.message:"Ошибка alpha-генерации."):"Проверьте размеры: 2–32 узла; отступ меньше половины меньшей стороны каждого объекта."};}},[cols,rows,width,height,inset,nextId,batch?.objects,batch?.root,scope,onlyMissing,previewId,mode,snapshot,sourceKey,threshold,padding,contourSpacing,interiorSpacing,simplification,object]);
+ }catch(error){return {mesh:null,meshes:[],error:mode==="alpha"?(error instanceof Error?error.message:"Ошибка alpha-генерации."):"Проверьте размеры: 2–32 узла; отступ меньше половины меньшей стороны каждого объекта."};}},[cols,rows,width,height,inset,nextId,batch?.objects,batch?.root,scope,onlyMissing,previewId,mode,snapshot,sourceKey,threshold,padding,contourSpacing,interiorSpacing,simplification,alphaLayout,object]);
  const mesh=result.mesh;
  const previewTarget=targets.find(o=>o.id===previewId)??targets[0];
  const previewWidth=batch?previewTarget?.width??width:width,previewHeight=batch?previewTarget?.height??height:height;
@@ -90,6 +91,8 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
     <label>Способ <select aria-label="Способ генерации" value={mode} onChange={e=>setMode(e.target.value as "regular"|"alpha")}><option value="regular">Регулярная N×M</option><option value="alpha" disabled={explicitGroup}>По alpha-форме</option></select></label>
     {mode==="alpha"&&<>
      <p>Форма исходного содержимого без деформации, масок и кадровой прозрачности. Видео — снимок текущего кадра; группы не имеют собственного alpha-источника. Растр до 256×256, отступ приближённый.</p>
+     <label>Внутренняя раскладка<select aria-label="Раскладка альфа-сетки" value={alphaLayout} onChange={e=>setAlphaLayout(e.target.value as "grid"|"radial")}><option value="grid">Ровная сетка рядами</option><option value="radial">Центрическая паутинка</option></select></label>
+     <p>Шаг контура задаёт плотность границы, а не добавляет точки к каждому пиксельному излому. Упрощение автоматически ограничивается, если повреждает контур.</p>
      <div className="property-grid two-columns">
       <label>Порог alpha (0–255)<input type="number" min={0} max={255} value={threshold} onChange={e=>setThreshold(Number(e.target.value))}/></label>
       <label>Внешний отступ, px<input type="number" min={0} value={padding} onChange={e=>setPadding(Number(e.target.value))}/></label>

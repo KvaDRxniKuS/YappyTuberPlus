@@ -235,8 +235,8 @@ export function Scene(props: SceneProps) {
   },[]);
 
   useEffect(()=>{
-    const cancel=(event:KeyboardEvent)=>{if(event.key==="Escape"&&artArea.current){artArea.current=null;markDirty();}};
-    window.addEventListener("keydown",cancel);return ()=>window.removeEventListener("keydown",cancel);
+    const cancel=(event:KeyboardEvent)=>{if(event.key==="Escape"&&artArea.current){artArea.current=null;markDirty();event.preventDefault();event.stopImmediatePropagation();}};
+    window.addEventListener("keydown",cancel,true);return ()=>window.removeEventListener("keydown",cancel,true);
   },[]);
 
   useEffect(()=>{
@@ -513,7 +513,7 @@ export function Scene(props: SceneProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(()=>{if(initialized.current)fit();},[artPanelOpen,props.tool==="warp"||props.tool==="deform"]);
+
 
   // Цвет из модуля меняется по времени (30 раз в секунду), поэтому каждый его
   // новый набор — это новый кадр. Правка самого пресета перерисовку уже зовёт.
@@ -848,7 +848,7 @@ export function Scene(props: SceneProps) {
       {artGenerator&&meshTarget&&<ArtMeshGenerator key={`${meshTarget.id}-${artGenerator}`}
         object={meshTarget} captureAlpha={object=>captureArtAlpha(object,object.kind==="media"?(mediaAssets.current.video(object.id)??mediaAssets.current.image(object.id)):assets.current.get(object.image))}
         batch={artGenerator==="descendants"?{root:meshTarget.id,objects:props.preset.objects,onApply:(meshes,inherit)=>{props.onArtBatch(meshes,inherit);setArtGenerator(false);}}:undefined} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
-        onClose={()=>setArtGenerator(false)} onApply={(mesh,dimensions)=>{props.onArtMesh(meshTarget.id,mesh,{},true,dimensions);setArtGenerator(false);props.onTool("deform");}}/>}
+        onClose={()=>setArtGenerator(false)} onApply={(mesh,dimensions)=>{props.onArtMesh(meshTarget.id,mesh,{},true,dimensions);setArtGenerator(false);if(props.tool!=="deform")props.onTool("deform");}}/>}
       <div className="scene-workarea">
       <div
         className={`scene-viewport tool-${props.tool}`}
@@ -1264,8 +1264,8 @@ export function Scene(props: SceneProps) {
           )}
         </div>
       </div>
-      {artPanelOpen&&(props.tool==="warp"||props.tool==="deform")&&meshTarget&&["sprite","media","shape","group"].includes(meshTarget.kind??"sprite")&&<ArtMeshToolsPanel name={meshTarget.name||meshTarget.id} onClose={()=>setArtPanelOpen(false)} tools={<>
-{!meshTarget.artMesh&&<div className="artmesh-empty"><p>У объекта пока нет артмеша. Начните с точек вручную или сгенерируйте сетку во вкладке «Сетка».</p><button className="primary" onClick={()=>{props.onArtTopology(meshTarget.id,{type:"start"});props.onTool("deform");}}>Создать вручную</button></div>}
+      {artPanelOpen&&(props.tool==="warp"||props.tool==="deform")&&meshTarget&&["sprite","media","shape","group"].includes(meshTarget.kind??"sprite")&&<ArtMeshToolsPanel name={meshTarget.name||meshTarget.id} onClose={()=>setArtPanelOpen(false)} tools={<><button onClick={()=>props.onTool(props.tool)}>Выйти из артмеша (Esc)</button>
+{!meshTarget.artMesh&&<div className="artmesh-empty"><p>У объекта пока нет артмеша. Начните с точек вручную или сгенерируйте сетку во вкладке «Сетка».</p><button className="primary" onClick={()=>{props.onArtTopology(meshTarget.id,{type:"start"});if(props.tool!=="deform")props.onTool("deform");}}>Создать вручную</button></div>}
             {meshTarget.artMesh&&<>
               {props.tool==="warp"&&<button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>{setArtBrush(v=>!v);}}><Brush size={15}/>Кисть перемещения</button>}
               {artBrush&&<label title="Радиус кисти в пикселях сцены">Радиус <input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius}  onChange={e=>setArtRadius(Math.min(1000,Math.max(1,Number(e.target.value)||1)))}/></label>}

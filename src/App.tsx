@@ -230,7 +230,7 @@ export default function App() {
       const active=toolRef.current;
       if(active==="deform"||active==="warp"){setArtSelectionTool(next);return;}
     }
-    setTool(next);
+    setTool((next==="deform"||next==="warp")&&toolRef.current===next?"move":next);
     // Ушли с пера — рисование закончилось: иначе клики продолжали бы ставить
     // точки в невидимом режиме.
     if (next !== "pen") { setPen(null); return; }
@@ -879,6 +879,9 @@ export default function App() {
         return;
       }
       if (editing) return;
+      if(event.key==="Escape"&&(toolRef.current==="deform"||toolRef.current==="warp")){
+        event.preventDefault();setTool("move");return;
+      }
       if (command && event.code === "KeyZ") {
         event.preventDefault();
         if (event.shiftKey) redo(); else undo();

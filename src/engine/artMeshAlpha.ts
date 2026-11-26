@@ -1,10 +1,9 @@
-import {improveArtTriangles} from "./artMeshQuality";
-import earcut,{deviation} from "earcut";
+import cdt2d from "cdt2d";
 import type {Vec2} from "../types";
-import {emptyArtDeformation,insertArtVertex,bindArtPoint,type ArtDeformation} from "./artDeformation";
+import {emptyArtDeformation,type ArtDeformation} from "./artDeformation";
 import {pointInPolygon} from "./selection";
 export interface AlphaRaster {width:number;height:number;alpha:Uint8Array;objectWidth:number;objectHeight:number}
-export interface AlphaMeshOptions {threshold:number;padding:number;contourSpacing:number;interiorSpacing:number;simplification:number;nextId?:number}
+export interface AlphaMeshOptions {threshold:number;padding:number;contourSpacing:number;interiorSpacing:number;simplification:number;layout?:"grid"|"radial";nextId?:number}
 const MAX_POINTS=8192;
 const area=(loop:Vec2[])=>loop.reduce((sum,p,i)=>{const q=loop[(i+1)%loop.length];return sum+p.x*q.y-q.x*p.y;},0)/2;
 function distance(p:Vec2,a:Vec2,b:Vec2){const dx=b.x-a.x,dy=b.y-a.y,l=dx*dx+dy*dy,t=l?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/l)):0;return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);}
@@ -31,6 +30,34 @@ function validateContourCrossings(loops:Vec2[][]){
   if(Math.max(a.a.x,a.b.x)<Math.min(b.a.x,b.b.x)||Math.max(b.a.x,b.b.x)<Math.min(a.a.x,a.b.x)||Math.max(a.a.y,a.b.y)<Math.min(b.a.y,b.b.y)||Math.max(b.a.y,b.b.y)<Math.min(a.a.y,a.b.y))continue;
   if(cross(a.a,a.b,b.a)*cross(a.a,a.b,b.b)<-1e-12&&cross(b.a,b.b,a.a)*cross(b.a,b.b,a.b)<-1e-12)throw new Error("Simplified alpha contours intersect; reduce simplification");
  }
+}
+/** Uniform arc-length sampling makes contour spacing a density control, rather
+ * than subdividing every raster stair-step while keeping all its corners. */
+function sampleLoop(loop:Vec2[],spacing:number):Vec2[]{
+ const lengths=loop.map((p,i)=>Math.hypot(p.x-loop[(i+1)%loop.length].x,p.y-loop[(i+1)%loop.length].y));
+ const perimeter=lengths.reduce((a,b)=>a+b,0),count=Math.max(4,Math.ceil(perimeter/spacing));
+ if(count>MAX_POINTS)throw new Error("Alpha contour exceeds vertex budget; increase contour spacing");
+ let edge=0,offset=0;return Array.from({length:count},(_,i)=>{
+  const target=perimeter*i/count;while(edge<loop.length-1&&offset+lengths[edge]<target){offset+=lengths[edge++];}
+  const a=loop[edge],b=loop[(edge+1)%loop.length],t=lengths[edge]?(target-offset)/lengths[edge]:0;
+  return {x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};
+ });
+}
+function safeContours(raw:Vec2[][],epsilon:number,spacing:number):Vec2[][]{
+ // Simplification and resampling may cross narrow strands or neighbouring
+ // components. Back off automatically instead of making a valid alpha fail.
+ for(let attempt=0;attempt<10;attempt++){
+  const epsilonScale=2**Math.min(attempt,6),spacingScale=2**Math.max(0,attempt-6);
+  try{
+   const candidate=raw.map(loop=>sampleLoop(simplifyLoop(loop,epsilon/epsilonScale),spacing/spacingScale));
+   validateContourCrossings(candidate);
+   if(candidate.some((loop,i)=>area(loop)*area(raw[i])<=0))continue;
+   // Preserve nesting of holes/islands, not only absence of edge crossings.
+   if(raw.some((loop,i)=>raw.some((other,j)=>i!==j&&pointInPolygon(loop[0],other)!==pointInPolygon(candidate[i][0],candidate[j]))))continue;
+   return candidate;
+  }catch(error){if(attempt===9)break;}
+ }
+ const fallback=raw.map(loop=>simplifyLoop(loop,0));validateContourCrossings(fallback);return fallback;
 }
 /** Trace clockwise occupied cell boundaries; holes have opposite winding.
  * Right turns split diagonally touching pixels into separate components. */
@@ -62,7 +89,7 @@ export function generateAlphaArt(raster:AlphaRaster,options:AlphaMeshOptions):Ar
  const {width:w,height:h,objectWidth:ow,objectHeight:oh,alpha}=raster;
  const {threshold,padding,contourSpacing,interiorSpacing,simplification}=options;
  const nextId=options.nextId??0;
- if(!Number.isInteger(w)||!Number.isInteger(h)||w<1||h<1||w>512||h>512||alpha.length!==w*h||![ow,oh,threshold,padding,contourSpacing,interiorSpacing,simplification].every(Number.isFinite)||ow<=0||oh<=0||threshold<0||threshold>255||padding<0||contourSpacing<=0||interiorSpacing<=0||simplification<0||!Number.isSafeInteger(nextId)||nextId<0)throw new Error("Invalid alpha generation parameters");
+ if(!Number.isInteger(w)||!Number.isInteger(h)||w<1||h<1||w>512||h>512||alpha.length!==w*h||![ow,oh,threshold,padding,contourSpacing,interiorSpacing,simplification].every(Number.isFinite)||ow<=0||oh<=0||threshold<0||threshold>255||padding<0||contourSpacing<=0||interiorSpacing<=0||simplification<0||!Number.isSafeInteger(nextId)||nextId<0||(options.layout!==undefined&&options.layout!=="grid"&&options.layout!=="radial"))throw new Error("Invalid alpha generation parameters");
  const sx=ow/w,sy=oh/h,px=Math.ceil(padding/sx),py=Math.ceil(padding/sy),width=w+2*px,height=h+2*py;
  if(width>1024||height>1024)throw new Error("Alpha padding exceeds raster budget");
  const dist=new Float64Array(width*height);dist.fill(Infinity);
@@ -74,7 +101,8 @@ export function generateAlphaArt(raster:AlphaRaster,options:AlphaMeshOptions):Ar
   for(const [dx,dy,cost] of neighbors){const nx=x+dx,ny=y+dy;if(nx>=0&&ny>=0&&nx<width&&ny<height)dist[index]=Math.min(dist[index],dist[ny*width+nx]+cost);}
  }};pass(false);pass(true);
  const mask=Uint8Array.from(dist,d=>d<=padding?1:0);
- const loops=traceAlphaContours(mask,width,height).map(loop=>simplifyLoop(loop.map(p=>({x:(p.x-px)*sx,y:(p.y-py)*sy})),simplification));
+ const raw=traceAlphaContours(mask,width,height).map(loop=>simplifyLoop(loop.map(p=>({x:(p.x-px)*sx,y:(p.y-py)*sy})),0));
+ const loops=safeContours(raw,simplification,contourSpacing);
  if(!loops.length)throw new Error("Alpha mask has no opaque area");
  validateContourCrossings(loops);
  const outers=loops.filter(l=>area(l)>0).map(loop=>({loop,holes:[] as Vec2[][]}));
@@ -84,40 +112,63 @@ export function generateAlphaArt(raster:AlphaRaster,options:AlphaMeshOptions):Ar
  }
  let mesh=emptyArtDeformation();mesh.nextId=nextId;
  for(const outer of outers){
-  const points:Vec2[]=[],holes:number[]=[];
-  for(const [index,loop] of [outer.loop,...outer.holes].entries()){
-   if(index)holes.push(points.length);
-   loop.forEach((p,i)=>{const q=loop[(i+1)%loop.length],steps=Math.max(1,Math.ceil(Math.hypot(q.x-p.x,q.y-p.y)/contourSpacing));
-    if(points.length+steps+mesh.vertices.length>MAX_POINTS)throw new Error("Alpha contour exceeds vertex budget");
-    for(let j=0;j<steps;j++)points.push({x:p.x+(q.x-p.x)*j/steps,y:p.y+(q.y-p.y)*j/steps});
-   });
+  const points:Vec2[]=[],edges:Array<[number,number]>=[];
+  for(const loop of [outer.loop,...outer.holes]){
+   const base=points.length;points.push(...loop);
+   loop.forEach((_,i)=>edges.push([base+i,base+(i+1)%loop.length]));
   }
-  const coordinates=points.flatMap(p=>[p.x,p.y]);
-  const base=mesh.vertices.length,indices=earcut(coordinates,holes);
-  const error=deviation(coordinates,holes,2,indices);
-  if(!Number.isFinite(error)||error>1e-6)throw new Error("Alpha contour cannot be triangulated safely; reduce simplification");
-  for(const rest of points){if(!Number.isSafeInteger(mesh.nextId+1))throw new Error("Unsafe alpha vertex ID");mesh.vertices.push({id:`v${mesh.nextId++}`,rest,uv:{x:rest.x/ow,y:rest.y/oh}});}
-  for(let i=0;i<indices.length;i+=3)mesh.triangles.push(indices.slice(i,i+3).map(n=>mesh.vertices[base+n].id) as [string,string,string]);
- }
- // Earcut may discard collinear contour samples. Reinsert them as edge splits
- // so contourSpacing actually controls the deformable boundary, not orphan IDs.
- const referenced=new Set(mesh.triangles.flat());
- const omitted=mesh.vertices.filter(v=>!referenced.has(v.id));
- mesh={...mesh,vertices:mesh.vertices.filter(v=>referenced.has(v.id))};
- for(const vertex of omitted){
-  if(mesh.vertices.some(v=>Math.hypot(v.rest.x-vertex.rest.x,v.rest.y-vertex.rest.y)<1e-7))continue;
-  mesh=insertArtVertex(mesh,vertex.rest,[]).mesh;
- }
- // Staggered triangular lattice, with clearance from boundary samples. Unlike
- // repeated face-fan insertion alone, a final constrained edge-flip pass removes
- // long spokes and improves the minimum angles without filling holes.
- const dy=interiorSpacing*Math.sqrt(3)/2;
- if(Math.ceil(ow/interiorSpacing)*Math.ceil(oh/dy)>MAX_POINTS)throw new Error("Alpha interior spacing exceeds sampling budget");
- for(let row=0,y=dy/2;y<oh;y+=dy,row++)for(let x=interiorSpacing*(row%2?.75:.25);x<ow;x+=interiorSpacing){
-  const p={x,y},clearance=Math.min(contourSpacing,interiorSpacing)*.55;
-  if(mesh.vertices.some(v=>Math.hypot(v.rest.x-x,v.rest.y-y)<clearance)||!bindArtPoint(mesh,p))continue;
-  if(mesh.vertices.length>=MAX_POINTS)throw new Error("Alpha mesh exceeds vertex budget");mesh=insertArtVertex(mesh,p,[]).mesh;
+  const inside=(p:Vec2)=>pointInPolygon(p,outer.loop)&&!outer.holes.some(hole=>pointInPolygon(p,hole));
+  const clearance=(p:Vec2)=>Math.min(...edges.map(([a,b])=>distance(p,points[a],points[b])));
+  const add=(p:Vec2)=>{
+   if(!inside(p)||clearance(p)<Math.min(contourSpacing,interiorSpacing)*.25||points.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<1e-7))return;
+   if(points.length+mesh.vertices.length>=MAX_POINTS)throw new Error("Alpha mesh exceeds vertex budget");points.push(p);
+  };
+  const xs=outer.loop.map(p=>p.x),ys=outer.loop.map(p=>p.y),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  if(Math.ceil((maxX-minX)/interiorSpacing)*Math.ceil((maxY-minY)/interiorSpacing)>MAX_POINTS)throw new Error("Alpha interior spacing exceeds sampling budget");
+  if(options.layout==="radial"){
+   // Pick a center inside each connected component, away from its boundary.
+   // A ring's geometric center is a hole, so use the best occupied sample.
+   let center={x:(minX+maxX)/2,y:(minY+maxY)/2},best=inside(center)?clearance(center):-1;
+   const step=Math.max(interiorSpacing,(maxX-minX)/24,(maxY-minY)/24);
+   for(let y=minY+step/2;y<maxY;y+=step)for(let x=minX+step/2;x<maxX;x+=step){const p={x,y};if(inside(p)){const d=clearance(p);if(d>best){center=p;best=d;}}}
+   add(center);
+   const radius=Math.max(...outer.loop.map(p=>Math.hypot(p.x-center.x,p.y-center.y)));
+   for(let r=interiorSpacing;r<radius;r+=interiorSpacing){
+    const count=Math.max(6,Math.round(2*Math.PI*r/interiorSpacing));
+    for(let i=0;i<count;i++){const angle=2*Math.PI*i/count;add({x:center.x+r*Math.cos(angle),y:center.y+r*Math.sin(angle)});}
+   }
+  }else{
+   for(let y=minY+interiorSpacing/2;y<maxY;y+=interiorSpacing)for(let x=minX+interiorSpacing/2;x<maxX;x+=interiorSpacing)add({x,y});
+  }
+  // All interior points enter one constrained Delaunay triangulation. Earcut
+  // bridge diagonals are NOT constraints: only contour edges are protected.
+  let indices=cdt2d(points.map(p=>[p.x,p.y]),edges,{exterior:false});
+  // A coarse lattice may miss a thin lock/limb completely. Refine only long
+  // unconstrained interior edges so it cannot retain a contour-to-contour
+  // diagonal merely because no row happened to pass through that feature.
+  const protectedEdges=new Set(edges.map(([a,b])=>a<b?`${a}:${b}`:`${b}:${a}`));
+  for(let pass=0;pass<8;pass++){
+   const additions:Vec2[]=[],visited=new Set<string>();
+   for(const face of indices)for(let i=0;i<3;i++){
+    const a=face[i],b=face[(i+1)%3],key=a<b?`${a}:${b}`:`${b}:${a}`;
+    if(protectedEdges.has(key)||visited.has(key))continue;visited.add(key);
+    const p=points[a],q=points[b];if(Math.hypot(p.x-q.x,p.y-q.y)<=interiorSpacing*1.8)continue;
+    const midpoint={x:(p.x+q.x)/2,y:(p.y+q.y)/2};
+    if(!inside(midpoint)||clearance(midpoint)<1e-7||points.some(p=>Math.hypot(p.x-midpoint.x,p.y-midpoint.y)<1e-7))continue;
+    if(points.length+additions.length+mesh.vertices.length>=MAX_POINTS)throw new Error("Alpha mesh exceeds vertex budget; increase interior spacing");
+    additions.push(midpoint);
+   }
+   if(!additions.length)break;
+   points.push(...additions);indices=cdt2d(points.map(p=>[p.x,p.y]),edges,{exterior:false});
+  }
+  const referenced=new Set(indices.flat());
+  const ids=new Map<number,string>();
+  for(const [i,rest] of points.entries())if(referenced.has(i)){
+   if(!Number.isSafeInteger(mesh.nextId+1))throw new Error("Unsafe alpha vertex ID");
+   const id=`v${mesh.nextId++}`;ids.set(i,id);mesh.vertices.push({id,rest,uv:{x:rest.x/ow,y:rest.y/oh}});
+  }
+  for(const face of indices)mesh.triangles.push(face.map(i=>ids.get(i)!) as [string,string,string]);
  }
  if(!mesh.triangles.length)throw new Error("Alpha mesh contains no triangles");
- return improveArtTriangles(mesh);
+ return mesh;
 }

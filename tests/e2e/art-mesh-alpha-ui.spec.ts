@@ -15,6 +15,8 @@ test("alpha generator captures authored shape, previews and applies only on expl
  await dialog.getByLabel("Способ генерации").selectOption("alpha");
  await expect(dialog.getByRole("img",{name:"Предпросмотр сетки"})).toBeVisible();
  await expect(dialog.getByRole("button",{name:"Заменить сетку"})).toBeEnabled();
+ await dialog.getByLabel("Раскладка альфа-сетки").selectOption("radial");
+ await expect(dialog.getByRole("button",{name:"Заменить сетку"})).toBeEnabled();
  expect(await page.evaluate(()=>(window as any).artApplied)).toBeNull();
  await dialog.getByRole("button",{name:"Заменить сетку"}).click();
  const mesh=await page.evaluate(()=>(window as any).artApplied);

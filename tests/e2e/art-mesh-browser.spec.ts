@@ -16,6 +16,7 @@ async function open(page:Page,preset:RigPreset){
  await page.goto("/");await expect(page.locator(".tree-row")).toHaveCount(preset.objects.length);
  await page.locator(".tree-row").first().click();
  await page.getByTitle("Деформация артмеша (T)",{exact:true}).click();
+ await page.getByTitle("Вписать сцену",{exact:true}).click();
 }
 const stored=(page:Page)=>page.evaluate(()=>JSON.parse(localStorage.getItem("yappytuberplus.preset.v2")!));
 async function undo(page:Page){await page.locator(".scene-title").click();await page.keyboard.press("Control+z");}
@@ -207,4 +208,29 @@ test("Alt edge deletion rebuilds faces instead of leaving floating vertices",asy
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles).not.toEqual(preset.objects[0].artMesh!.triangles);
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(2);
  const mesh=(await stored(page)).objects[0].artMesh;expect(mesh.vertices).toHaveLength(4);expect(new Set(mesh.triangles.flat()).size).toBe(4);
+});
+test("mesh panel preserves panned zoomed camera and mesh modes can be exited",async({page})=>{
+ await open(page,project());
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.wheel(0,150);
+ await page.mouse.move(box.x+80,box.y+80);await page.mouse.down({button:"middle"});await page.mouse.move(box.x+105,box.y+100,{steps:4});await page.mouse.up({button:"middle"});
+ const zoom=await page.locator(".zoom-control b").innerText();
+ const whiteOrigin=()=>canvas.evaluate(el=>{
+  const c=el as HTMLCanvasElement,ctx=c.getContext("2d")!,data=ctx.getImageData(0,0,c.width,c.height).data;
+  let x=c.width,y=c.height;
+  for(let row=0;row<c.height;row++)for(let col=0;col<c.width;col++){const i=(row*c.width+col)*4;if(data[i]===255&&data[i+1]===255&&data[i+2]===255){x=Math.min(x,col);y=Math.min(y,row);}}
+  return {x,y};
+ });
+ const before=await whiteOrigin();
+ await page.getByRole("button",{name:"Панель артмеша",exact:true}).click();
+ await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
+ await expect.poll(whiteOrigin).toEqual(before);await expect(page.locator(".zoom-control b")).toHaveText(zoom);
+ await page.getByRole("button",{name:"Панель артмеша",exact:true}).click();
+ await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toBeVisible();
+ await expect.poll(whiteOrigin).toEqual(before);await expect(page.locator(".zoom-control b")).toHaveText(zoom);
+ await page.keyboard.press("Escape");await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
+ await page.keyboard.press("KeyR");await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toBeVisible();
+ await page.keyboard.press("KeyR");await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
+ await page.keyboard.press("KeyT");await page.getByRole("button",{name:"Выйти из артмеша (Esc)",exact:true}).click();
+ await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
 });

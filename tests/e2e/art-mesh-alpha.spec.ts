@@ -48,3 +48,46 @@ test("circle uses local triangles, all vertices and complete interior coverage",
  expect(longest).toBeLessThan(25);
  for(let y=15;y<86;y+=5)for(let x=15;x<86;x+=5)if(Math.hypot(x-50,y-50)<39)expect(bindArtPoint(mesh,{x,y})).not.toBeNull();
 });
+test("grid and concentric layouts use all points without contour-to-contour interior bridges",()=>{
+ const size=100,alpha=new Uint8Array(size*size);
+ for(let y=0;y<size;y++)for(let x=0;x<size;x++)if(Math.hypot(x+.5-50,y+.5-50)<44)alpha[y*size+x]=255;
+ for(const layout of ["grid","radial"] as const){
+  const mesh=generateAlphaArt({width:size,height:size,alpha,objectWidth:size,objectHeight:size},{...options,layout,contourSpacing:8,interiorSpacing:10,simplification:4});
+  expect(new Set(mesh.triangles.flat()).size).toBe(mesh.vertices.length);
+  const vertices=new Map(mesh.vertices.map(v=>[v.id,v.rest]));
+  for(const face of mesh.triangles)for(let i=0;i<3;i++){const a=vertices.get(face[i])!,b=vertices.get(face[(i+1)%3])!;expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(30);}
+  if(layout==="radial")expect(mesh.vertices.some(v=>Math.hypot(v.rest.x-50,v.rest.y-50)<1)).toBe(true);
+ }
+});
+test("hairy alpha contour is density-controlled and high simplification backs off safely",()=>{
+ const size=128,alpha=new Uint8Array(size*size);
+ for(let y=10;y<118;y++)for(let x=10;x<118;x++){
+  const body=x>=30&&x<=95&&y>=30&&y<=100;
+  const hair=y>=10&&y<70&&x>=20&&x<108&&((x-20)%8<3);
+  if(body||hair)alpha[y*size+x]=255;
+ }
+ const raster={width:size,height:size,alpha,objectWidth:size,objectHeight:size};
+ const fine=generateAlphaArt(raster,{...options,contourSpacing:2,interiorSpacing:30,simplification:0});
+ for(const simplification of [4,7,8,20]){
+  const mesh=generateAlphaArt(raster,{...options,contourSpacing:20,interiorSpacing:30,simplification});
+  expect(mesh.vertices.length).toBeLessThan(fine.vertices.length*.6);
+  expect(new Set(mesh.triangles.flat()).size).toBe(mesh.vertices.length);
+ }
+});
+test("both alpha layouts preserve holes with aggressive simplification",()=>{
+ const size=64,alpha=new Uint8Array(size*size);
+ for(let y=0;y<size;y++)for(let x=0;x<size;x++){const r=Math.hypot(x+.5-32,y+.5-32);if(r<29&&r>13)alpha[y*size+x]=255;}
+ for(const layout of ["grid","radial"] as const)for(const simplification of [4,8,20]){
+  const mesh=generateAlphaArt({width:size,height:size,objectWidth:size,objectHeight:size,alpha},{...options,layout,contourSpacing:8,interiorSpacing:8,simplification});
+  expect(bindArtPoint(mesh,{x:32,y:32})).toBeNull();
+  expect(new Set(mesh.triangles.flat()).size).toBe(mesh.vertices.length);
+ }
+});
+test("thin alpha strip receives local refinement even when grid rows miss it",()=>{
+ const width=120,height=10,alpha=new Uint8Array(width*height);
+ for(let y=4;y<6;y++)for(let x=1;x<119;x++)alpha[y*width+x]=255;
+ const mesh=generateAlphaArt({width,height,objectWidth:width,objectHeight:height,alpha},{...options,contourSpacing:12,interiorSpacing:10,simplification:4});
+ const byId=new Map(mesh.vertices.map(v=>[v.id,v.rest]));
+ for(const face of mesh.triangles)for(let i=0;i<3;i++){const p=byId.get(face[i])!,q=byId.get(face[(i+1)%3])!;expect(Math.hypot(p.x-q.x,p.y-q.y)).toBeLessThan(19);}
+ expect(new Set(mesh.triangles.flat()).size).toBe(mesh.vertices.length);
+});
