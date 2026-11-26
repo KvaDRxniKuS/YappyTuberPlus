@@ -260,3 +260,23 @@ sampler, совпадение ручек с prepared child vertices, отклю�
 не браузерная проверка pointer gestures. Cargo/WASM/dist — прежнее ограничение.
 Далее: multi-selection/brush/symmetry и topology UI, alpha/batch generation,
 окончательный format/needs, удаление legacy и полная Rust/Windows проверка.
+
+## Этап 10: multi-selection и move-brush нового меша
+
+Shift+клик добавляет/убирает stable ID в выделении, обычный drag выбранной
+вершины двигает всю выборку. Есть «Все вершины»/«Снять», выбранные ручки белые.
+Клик по пустому месту снимает выборку; Shift-клик не начинает undo-жест.
+Кнопка кисти включает soft move: радиус 1–1000 scene units, круг предпросмотра,
+влияние smoothstep от центра до нуля на краю. Область/веса фиксируются на начале
+жеста — это move-brush, не накопительный paint/smear stroke. Кисть работает со
+всеми вершинами в радиусе независимо от выборки. В rest и pose режимах используется
+одна атомарная immutable операция editArtVertices без накопления delta между
+pointermove. Для каждой вершины отдельно обращается parent sampler; при отказе
+inverse сохраняется последняя успешная позиция этой вершины. История по-прежнему
+открывается один раз на весь жест.
+
+20 targeted tests + tsc + diff-check прошли. Math tests покрывают multi-update,
+сохранение rest/UV/pose/topology, отсутствие накопления и soft-falloff; реальный
+браузерный pointer workflow ещё не подтверждён. Симметрия, рамка/лассо и topology
+UI пока НЕ перенесены; существующие старые инструменты скрыты для artMesh.
+WASM/dist не обновлены: Rust toolchain по-прежнему отсутствует.

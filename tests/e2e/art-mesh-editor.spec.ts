@@ -60,3 +60,29 @@ test("singular or invalid parent surfaces reject drag without nonfinite pose dat
  expect(inverseArtEditorPoint({x:3,y:4},{x:0,y:0},()=>({x:NaN,y:1}))).toBeNull();
  expect(inverseArtEditorPoint({x:3,y:4},{x:0,y:0})).toEqual({x:3,y:4});
 });
+
+test("multi-vertex edits preserve stable topology UV and non-selected pose",async()=>{
+ const {editArtVertices}=await import("../../src/render/artMeshEditor");
+ const mesh=generateRegularArt(2,2,100,100),pose={v0:{x:2,y:3},v3:{x:7,y:9}},deltas={v0:{x:5,y:-2},v1:{x:1,y:4}};
+ const rest=editArtVertices(mesh,pose,deltas,"rest");
+ expect(rest.pose).toBe(pose);expect(rest.mesh.triangles).toBe(mesh.triangles);
+ expect(rest.mesh.vertices[0].rest).toEqual({x:5,y:-2});
+ expect(rest.mesh.vertices[0].uv).toBe(mesh.vertices[0].uv);
+ expect(rest.mesh.vertices[2]).toBe(mesh.vertices[2]);
+ const moved=editArtVertices(mesh,pose,deltas,"pose");
+ expect(moved.mesh).toBe(mesh);expect(moved.pose).toEqual({v0:{x:7,y:1},v1:{x:1,y:4},v3:{x:7,y:9}});
+ expect(editArtVertices(mesh,pose,deltas,"pose")).toEqual(moved);
+ expect(pose.v0).toEqual({x:2,y:3});
+ expect(()=>editArtVertices(mesh,pose,{v0:{x:Infinity,y:0}},"pose")).toThrow();
+});
+
+test("soft move brush has smooth bounded influence and ignores invalid radius",async()=>{
+ const {artBrushWeight,editArtVertices}=await import("../../src/render/artMeshEditor");
+ expect(artBrushWeight(0,100)).toBe(1);expect(artBrushWeight(50,100)).toBe(.5);
+ expect(artBrushWeight(100,100)).toBe(0);expect(artBrushWeight(150,100)).toBe(0);
+ expect(artBrushWeight(0,0)).toBe(0);expect(artBrushWeight(NaN,100)).toBe(0);
+ const mesh=generateRegularArt(2,2,100,100);
+ const next=editArtVertices(mesh,{},Object.fromEntries([0,1].map((index)=>[`v${index}`,{x:20*artBrushWeight(index*50,100),y:0}])),"pose");
+ expect(next.pose.v0.x).toBe(20);expect(next.pose.v1.x).toBe(10);
+ expect(next.pose.v2).toBeUndefined();
+});

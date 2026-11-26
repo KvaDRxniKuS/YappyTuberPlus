@@ -13,13 +13,13 @@ export function editArtVertex(mesh:ArtDeformation,pose:ArtOffsets,id:string,star
  if(mode==="rest")return {mesh:moveArtRest(mesh,id,{x:vertex.rest.x+delta.x,y:vertex.rest.y+delta.y}),pose};
  const before=pose[id]??{x:0,y:0};return {mesh,pose:{...pose,[id]:{x:before.x+delta.x,y:before.y+delta.y}}};
 }
-export function drawArtEditor(ctx:CanvasRenderingContext2D,object:RigObject,values:Parameters<typeof objectMatrix>[1],zoom:number,rest:boolean,deform?:ArtEditorDeform){
+export function drawArtEditor(ctx:CanvasRenderingContext2D,object:RigObject,values:Parameters<typeof objectMatrix>[1],zoom:number,rest:boolean,deform?:ArtEditorDeform,selected?:ReadonlySet<string>){
  const mesh=object.artMesh;if(!mesh)return;
  const matrix=objectMatrix(object,values);
  const points=new Map(mesh.vertices.map(v=>{const source=rest?v.rest:artPosition(v,object.artPose);const p=deform?deform(source):source;return [v.id,transformPoint(matrix,p.x-object.pivot.x*object.width,p.y-object.pivot.y*object.height)] as const;}));
  ctx.save();ctx.lineWidth=1/zoom;ctx.strokeStyle=rest?"#82d5c1":"#f0d77a";ctx.fillStyle=ctx.strokeStyle;
  for(const face of mesh.triangles){ctx.beginPath();face.forEach((id,i)=>{const p=points.get(id)!;if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});ctx.closePath();ctx.stroke();}
- for(const p of points.values()){ctx.beginPath();ctx.arc(p.x,p.y,3/zoom,0,Math.PI*2);ctx.fill();}ctx.restore();
+ for(const [id,p] of points){ctx.fillStyle=selected?.has(id)?"#ffffff":ctx.strokeStyle;ctx.beginPath();ctx.arc(p.x,p.y,(selected?.has(id)?4.5:3)/zoom,0,Math.PI*2);ctx.fill();}ctx.restore();
 }
 
 export type ArtEditorDeform=(point:Vec2)=>Vec2;
@@ -49,4 +49,20 @@ export function inverseArtEditorPoint(target:Vec2,seed:Vec2,deform?:ArtEditorDef
   if(!accepted)return null;
  }
  return null;
+}
+
+/** One immutable update for a multi-vertex gesture. All deltas refer to the
+ * gesture's original mesh/pose, so repeated pointer events never accumulate. */
+export function editArtVertices(mesh:ArtDeformation,pose:ArtOffsets,deltas:ArtOffsets,mode:"rest"|"pose"){
+ for(const delta of Object.values(deltas))if(!Number.isFinite(delta.x)||!Number.isFinite(delta.y))throw new Error("Invalid art edit delta");
+ if(mode==="rest")return {mesh:{...mesh,vertices:mesh.vertices.map(v=>{
+  const d=deltas[v.id];return d?{...v,rest:{x:v.rest.x+d.x,y:v.rest.y+d.y}}:v;
+ })},pose};
+ const next={...pose};for(const v of mesh.vertices){const d=deltas[v.id];if(!d)continue;
+  const p=pose[v.id]??{x:0,y:0};next[v.id]={x:p.x+d.x,y:p.y+d.y};}
+ return {mesh,pose:next};
+}
+export function artBrushWeight(distance:number,radius:number):number {
+ if(!Number.isFinite(distance)||!Number.isFinite(radius)||radius<=0||distance>=radius)return 0;
+ const t=Math.max(0,1-distance/radius);return t*t*(3-2*t);
 }
