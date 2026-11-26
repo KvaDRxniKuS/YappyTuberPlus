@@ -635,3 +635,12 @@ Renderer/hit-test дополнительно исключают выключен
 2 browser pixel tests реального App (hide/show в стопе и паузе; скрытие/возврат
 группы с потомком); overlay transport regression для frozen hide/show.
 Windows WebView2 и OBS нативно здесь не проверялись.
+
+### Artmesh authoring workspace (2026-10-24)
+
+- Scene toolbar now opens a docked, scrollable artmesh panel. Tools/brushes/radius/symmetry and mesh generation/descendants/copy/paste have separate tabs; shortcut help no longer shares the title's text flow.
+- Manual start creates an explicit empty artmesh. In rest mode, Create point inserts/interpolates within an existing triangle or creates a loose vertex outside. Loose vertices can be selected/moved and joined with explicit three-point faces. Connect points is restricted to meshes without faces: convex hull plus interior insertion, preserving IDs, UV, poses and undo. Concave outlines/holes require manual faces, not automatic hull filling.
+- Rest editor can display a translucent source for tracing, editor-only (not overlay or ambient sampling). Empty meshes remain actual empty authored meshes, not an implicit fallback geometry.
+- Generation dialog has separate parameter/preview columns, styled numeric/select controls, alpha silhouette preview, vertex markers and counts, responsive scrolling and explicit Apply/Cancel.
+- Alpha generation uses staggered triangular interior samples and constrained local edge flips improving minimum angles without moving vertices/UV or changing contour/hole edges. Circle regression checks local edge lengths, nonzero faces, vertex participation and interior coverage; existing hole/island tests retained. No claim of a concentric radial mesher or universal optimal triangulation.
+- Validation: TypeScript + Vite-only bundle, 575 browser-free tests; browser generator test and all 9 App artmesh scenarios passed (7 in initial run, remaining 2 after test navigation/debounced-save assertion corrections). Native Rust/WASM/Windows/OBS gates remain external; no binaries rebuilt here.

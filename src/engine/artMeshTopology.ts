@@ -1,19 +1,42 @@
+import {artPointHull,improveArtTriangles} from "./artMeshQuality";
 import {addArtFace,removeArtFace} from "./artMeshFaces";
 import type {RigObject,Vec2} from "../types";
-import {insertArtVertex} from "./artDeformation";
+import {emptyArtDeformation,bindArtPoint,insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
 import {readStates,writeStates} from "./states";
-export type ArtTopologyCommand={type:"insert";point:Vec2}|{type:"remove";ids:string[]}|{type:"addFace"|"removeFace";ids:string[]};
+export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2}|{type:"insert";point:Vec2}|{type:"remove";ids:string[]}|{type:"addFace"|"removeFace";ids:string[]};
 /** Full object transaction: geometry, authored pose and every state key are
  * committed by the caller together. Failure leaves the source untouched. */
 export function editArtTopology(object:RigObject,command:ArtTopologyCommand):RigObject {
+ if(command.type==="start"){
+  if(object.artMesh)return object;
+  return {...object,artMesh:emptyArtDeformation(),artPose:{}};
+ }
  if(!object.artMesh)throw new Error("Object has no art mesh");
  let mesh=object.artMesh,states=readStates(object.script),pose=object.artPose??{};
+ if(command.type==="triangulate"){
+  if(mesh.triangles.length)throw new Error("Автосоединение доступно только для свободных точек без граней.");
+  const hull=artPointHull(mesh);if(hull.length<3)throw new Error("Нужны три точки не на одной прямой.");
+  const hullIds=new Set(hull);
+  let built={...mesh,vertices:mesh.vertices.filter(v=>hullIds.has(v.id)),triangles:hull.slice(1,-1).map((id,i)=>[hull[0],id,hull[i+2]] as [string,string,string])};
+  for(const vertex of mesh.vertices.filter(v=>!hullIds.has(v.id))){
+   const result=insertArtVertex(built,vertex.rest,[]).mesh,newId=`v${built.nextId}`;
+   built={...built,vertices:[...built.vertices,vertex],triangles:result.triangles.map(t=>t.map(id=>id===newId?vertex.id:id) as [string,string,string])};
+  }
+  return {...object,artMesh:improveArtTriangles({...mesh,triangles:built.triangles})};
+ }
  if(command.type==="addFace"||command.type==="removeFace"){
   const artMesh=command.type==="addFace"?addArtFace(mesh,command.ids):removeArtFace(mesh,command.ids);
   return {...object,artMesh};
  }
- if(command.type==="insert"){
+ if(command.type==="create"&&!bindArtPoint(mesh,command.point)){
+  const p=command.point;
+  if(!Number.isFinite(p.x)||!Number.isFinite(p.y)||object.width<=0||object.height<=0||!Number.isSafeInteger(mesh.nextId+1)||mesh.vertices.length>=65535)throw new Error("Некорректная точка или размер объекта.");
+  if(mesh.vertices.some(v=>Math.hypot(v.rest.x-p.x,v.rest.y-p.y)<1e-7))throw new Error("Вершина уже существует.");
+  const id=`v${mesh.nextId}`;
+  return {...object,artMesh:{...mesh,nextId:mesh.nextId+1,vertices:[...mesh.vertices,{id,rest:{...p},uv:{x:p.x/object.width,y:p.y/object.height}}]}};
+ }
+ if(command.type==="insert"||command.type==="create"){
   const result=insertArtStateVertex(mesh,states,command.point);
   const authored=insertArtVertex(mesh,command.point,[pose]);
   mesh=result.mesh;states=result.states;pose=authored.poses[0];

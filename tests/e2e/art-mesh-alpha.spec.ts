@@ -37,3 +37,14 @@ test("contour spacing creates used boundary vertices and interior spacing adds r
  expect(fine.vertices.every(v=>used.has(v.id))).toBe(true);
  expect(fine.vertices.some(v=>v.rest.x>0&&v.rest.x<20&&v.rest.y>0&&v.rest.y<20)).toBe(true);
 });
+test("circle uses local triangles, all vertices and complete interior coverage",()=>{
+ const size=100,alpha=new Uint8Array(size*size);
+ for(let y=0;y<size;y++)for(let x=0;x<size;x++)if(Math.hypot(x+.5-50,y+.5-50)<43)alpha[y*size+x]=255;
+ const mesh=generateAlphaArt({width:size,height:size,alpha,objectWidth:size,objectHeight:size},{...options,contourSpacing:7,interiorSpacing:8,simplification:1});
+ const vertices=new Map(mesh.vertices.map(v=>[v.id,v.rest])),used=new Set(mesh.triangles.flat());
+ expect(used.size).toBe(mesh.vertices.length);
+ let longest=0;
+ for(const t of mesh.triangles){const [a,b,c]=t.map(id=>vertices.get(id)!);expect(Math.abs((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x))).toBeGreaterThan(1e-8);for(let i=0;i<3;i++){const p=vertices.get(t[i])!,q=vertices.get(t[(i+1)%3])!;longest=Math.max(longest,Math.hypot(p.x-q.x,p.y-q.y));}}
+ expect(longest).toBeLessThan(25);
+ for(let y=15;y<86;y+=5)for(let x=15;x<86;x+=5)if(Math.hypot(x-50,y-50)<39)expect(bindArtPoint(mesh,{x,y})).not.toBeNull();
+});

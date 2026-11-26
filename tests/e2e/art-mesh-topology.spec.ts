@@ -29,3 +29,14 @@ test("topology transaction updates authored pose and all state keys without renu
  expect(object.artMesh.vertices).toHaveLength(4);
  expect(()=>editArtTopology(object,{type:"insert",point:{x:-20,y:-20}})).toThrow();
 });
+test("manual empty mesh supports loose points, hull triangulation and stable IDs",()=>{
+ let object=editArtTopology({...createDemoPreset().objects[0],width:100,height:100,artMesh:undefined},{type:"start"});
+ for(const point of [{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:0,y:100},{x:50,y:50},{x:25,y:25},{x:50,y:0}])object=editArtTopology(object,{type:"create",point});
+ const before=object.artMesh!;expect(before.triangles).toHaveLength(0);
+ object=editArtTopology(object,{type:"triangulate"});
+ expect(object.artMesh!.vertices).toEqual(before.vertices);expect(object.artMesh!.nextId).toBe(before.nextId);
+ const used=new Set(object.artMesh!.triangles.flat());expect(used.size).toBe(before.vertices.length);
+ for(const t of object.artMesh!.triangles)expect(new Set(t).size).toBe(3);
+ expect(()=>editArtTopology(object,{type:"triangulate"})).toThrow();
+ expect(before.triangles).toHaveLength(0);
+});

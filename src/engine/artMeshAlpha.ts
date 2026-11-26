@@ -1,3 +1,4 @@
+import {improveArtTriangles} from "./artMeshQuality";
 import earcut,{deviation} from "earcut";
 import type {Vec2} from "../types";
 import {emptyArtDeformation,insertArtVertex,bindArtPoint,type ArtDeformation} from "./artDeformation";
@@ -107,11 +108,16 @@ export function generateAlphaArt(raster:AlphaRaster,options:AlphaMeshOptions):Ar
   if(mesh.vertices.some(v=>Math.hypot(v.rest.x-vertex.rest.x,v.rest.y-vertex.rest.y)<1e-7))continue;
   mesh=insertArtVertex(mesh,vertex.rest,[]).mesh;
  }
- if(Math.ceil(ow/interiorSpacing)*Math.ceil(oh/interiorSpacing)>MAX_POINTS)throw new Error("Alpha interior spacing exceeds sampling budget");
- for(let y=interiorSpacing/2;y<oh;y+=interiorSpacing)for(let x=interiorSpacing/2;x<ow;x+=interiorSpacing){
-  const p={x,y};if(mesh.vertices.some(v=>Math.hypot(v.rest.x-x,v.rest.y-y)<1e-7)||!bindArtPoint(mesh,p))continue;
+ // Staggered triangular lattice, with clearance from boundary samples. Unlike
+ // repeated face-fan insertion alone, a final constrained edge-flip pass removes
+ // long spokes and improves the minimum angles without filling holes.
+ const dy=interiorSpacing*Math.sqrt(3)/2;
+ if(Math.ceil(ow/interiorSpacing)*Math.ceil(oh/dy)>MAX_POINTS)throw new Error("Alpha interior spacing exceeds sampling budget");
+ for(let row=0,y=dy/2;y<oh;y+=dy,row++)for(let x=interiorSpacing*(row%2?.75:.25);x<ow;x+=interiorSpacing){
+  const p={x,y},clearance=Math.min(contourSpacing,interiorSpacing)*.55;
+  if(mesh.vertices.some(v=>Math.hypot(v.rest.x-x,v.rest.y-y)<clearance)||!bindArtPoint(mesh,p))continue;
   if(mesh.vertices.length>=MAX_POINTS)throw new Error("Alpha mesh exceeds vertex budget");mesh=insertArtVertex(mesh,p,[]).mesh;
  }
  if(!mesh.triangles.length)throw new Error("Alpha mesh contains no triangles");
- return mesh;
+ return improveArtTriangles(mesh);
 }

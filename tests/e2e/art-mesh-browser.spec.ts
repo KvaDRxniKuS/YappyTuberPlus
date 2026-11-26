@@ -22,11 +22,13 @@ async function undo(page:Page){await page.locator(".scene-title").click();await 
 
 test("App generation Cancel is inert; Apply replaces once and Ctrl+Z restores the mesh",async({page})=>{
  const preset=project();await open(page,preset);
+ await page.getByRole("tab",{name:"Сетка",exact:true}).click();
  await page.getByRole("button",{name:"Сгенерировать артмеш",exact:true}).click();
  let dialog=page.getByRole("dialog",{name:"Генерация артмеша"});
  await dialog.getByLabel("Столбцов").fill("3");
  await dialog.getByRole("button",{name:"Отмена",exact:true}).click();
  expect((await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
+ await page.getByRole("tab",{name:"Сетка",exact:true}).click();
  await page.getByRole("button",{name:"Сгенерировать артмеш",exact:true}).click();
  dialog=page.getByRole("dialog",{name:"Генерация артмеша"});
  await dialog.getByLabel("Столбцов").fill("3");await dialog.getByRole("button",{name:"Заменить сетку",exact:true}).click();
@@ -54,6 +56,7 @@ test("App pose and rest drags use distinct data and each gesture is one undo",as
 
 test("App copy/paste requires confirmation and replacement is undoable",async({page})=>{
  const preset=project();await open(page,preset);
+ await page.getByRole("tab",{name:"Сетка",exact:true}).click();
  await page.getByRole("button",{name:"Копировать артмеш",exact:true}).click();
  await page.getByRole("button",{name:"Вставить артмеш…",exact:true}).click();
  const dialog=page.getByRole("dialog",{name:"Вставить артмеш",exact:true});
@@ -71,6 +74,7 @@ test("App descendant preparation applies explicit scope and inheritance in one u
   {...base,id:"child",name:"Прямой",parentId:"root",artMesh:undefined,deformParent:false},
   {...base,id:"grandchild",name:"Вложенный",parentId:"child",artMesh:undefined,deformParent:false}];
  await open(page,preset);
+ await page.getByRole("tab",{name:"Сетка",exact:true}).click();
  await page.getByRole("button",{name:"Подготовить потомков…",exact:true}).click();
  const dialog=page.getByRole("dialog",{name:"Генерация артмеша"});
  await dialog.getByLabel("Область подготовки").selectOption("direct");
@@ -94,7 +98,7 @@ test("App topology insertion is explicit and undo restores IDs UV and triangles"
  const viewport=await canvas.evaluate(el=>({width:el.clientWidth,height:el.clientHeight}));
  const zoom=Math.max(.05,Math.min((viewport.width-70)/400,(viewport.height-70)/300,2));
  await page.mouse.click(box.x+(viewport.width-400*zoom)/2+140*zoom,box.y+(viewport.height-300*zoom)/2+110*zoom);
- await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(5);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh?.vertices.length).toBe(5);
  expect((await stored(page)).objects[0].artMesh.vertices.at(-1).id).toBe("v4");
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
 });
@@ -143,4 +147,18 @@ test("hidden group children stay fully hidden rather than becoming stop ghosts",
  const eye=page.locator(".tree-row").first().locator(".tree-eye");
  await eye.click();await expect.poll(async()=>(await surfacePixel(page))[0]).toBeLessThan(70);
  await eye.click();await expect.poll(()=>surfacePixel(page)).toEqual([255,255,255]);
+});
+test("manual tracing starts empty, creates points and connects without losing vertices",async({page})=>{
+ await open(page,project(false));
+ await page.getByRole("button",{name:"Создать вручную",exact:true}).click();
+ await expect(page.getByLabel("Выделение вершин артмеша")).toHaveValue("create");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ for(const [x,y] of [[.4,.4],[.6,.4],[.6,.6],[.4,.6],[.5,.5]])await page.mouse.click(box.x+box.width*x,box.y+box.height*y);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh?.vertices.length).toBe(5);
+ await page.getByRole("button",{name:"Соединить точки",exact:true}).click();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(4);
+ const mesh=(await stored(page)).objects[0].artMesh;expect(new Set(mesh.triangles.flat()).size).toBe(5);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(0);
+ await page.getByRole("button",{name:"Закрыть панель артмеша"}).click();await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
+ await page.getByRole("button",{name:"Панель артмеша",exact:true}).click();await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toBeVisible();
 });
