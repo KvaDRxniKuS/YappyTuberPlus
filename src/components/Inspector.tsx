@@ -1,22 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  ChevronLeft, ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, PenTool,
-  ClipboardPaste, Copy, Lightbulb, RotateCcw, Shapes, Trash2, Type, Waves, X,
-} from "lucide-react";
-import type {
-  BasePose, EnvironmentSpec, MaskKind, MaskSpec, MediaRepeat, MediaSpec, MeshSpec, RigFrame, RigObject, ShapeItem,
-  ShapeItemKind, ShapeSpec, TextSpec, WarpFrame, WarpSpec,
-} from "../types";
+import { useRef, useState, type ReactNode } from "react";
+import { ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, Lightbulb, RotateCcw, Shapes, Type } from "lucide-react";
+import type { BasePose, EnvironmentSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, TextSpec } from "../types";
 import { MEDIA_REPEAT_LABEL } from "../render/media";
-import { mediaTypeOf, normalizeMedia, normalizeText } from "../engine/preset";
+import { normalizeMedia, normalizeText } from "../engine/preset";
 import { normalizeLight } from "../render/light";
-import {
-  defaultMask, defaultShape, formatPoints, makeItem, parsePoints, uniqueItemId,
-} from "../render/shape";
+
 import { setScriptValue } from "../engine/preset";
-import {
-  askPasteMode, heldMesh, holdMesh, pasteMesh, type PasteMode,
-} from "../engine/meshClipboard";
 import { groupBounds } from "../render/bounds";
 
 /**
@@ -63,9 +52,6 @@ function Fold({ title, note, className, id, children }: {
     </div>
   );
 }
-import {
-  clampGrid, defaultMesh, meshOf, regularGrid, resetArt, resetGrid, resizeGrid,
-} from "../engine/mesh";
 import { pivotBaseShift } from "../engine/structure";
 import { useAssetUrl } from "../hooks/useAssets";
 import { assetUrl, blobToDataUrl, storeFile } from "../engine/assets";
@@ -372,7 +358,7 @@ export function Inspector(props: InspectorProps) {
           />
         )}
 
-        {(object.kind === "sprite" || object.kind === "media" || !!object.artMesh) && (
+        {(object.kind === "sprite" || object.kind === "media" || object.kind === "group" || object.kind === "shape") && (
           <MeshSection object={object} onChange={onChange} />
         )}
 
@@ -515,184 +501,14 @@ function MediaSection({ object, media, onChange }: {
  * Смена густоты форму не сбрасывает: узлы новой сетки берутся билинейно из
  * старой. Поэтому «стало мало» лечится одним полем.
  */
-function MeshSection({ object, onChange }: {
-  object: RigObject;
-  onChange: (object: RigObject) => void;
-}) {
-  const mesh = meshOf(object) ?? defaultMesh();
-  // Правка пишет новый формат и убирает старый: иначе в пресете остались бы
-  // два источника формы, и рендер выбирал бы один из них молча.
-  const update = (patch: Partial<typeof mesh>) => onChange({ ...object, mesh: { ...mesh, ...patch }, warp: undefined });
-  const setFrame = (patch: Partial<WarpFrame>) => update({ frame: { ...mesh.frame, ...patch } });
-  // Доли картинки показываем процентами: так числа читаются без калькулятора.
-  const percent = (value: number) => Math.round(value * 1000) / 10;
-  const fromPercent = (value: number) => Math.round((value / 100) * 10000) / 10000;
-  const setGrid = (cols: number, rows: number) => update({ deform: resizeGrid(mesh.deform, clampGrid(cols), clampGrid(rows)) });
-  // Вставка чужой сетки: если густота или нарезка другие, спрашиваем режим —
-  // молча портить форму нельзя (§10.6 плана).
-  const [pasted, setPasted] = useState<MeshSpec | null>(null);
-  const copyMesh = () => holdMesh(mesh);
-  const pasteMeshNow = () => {
-    const source = heldMesh();
-    if (!source) return;
-    if (askPasteMode(mesh, source)) {
-      setPasted(source);
-      return;
-    }
-    update({ deform: pasteMesh(mesh, source, "transfer").deform });
-  };
-  const applyPaste = (mode: PasteMode) => {
-    if (!pasted) return;
-    const next = pasteMesh(mesh, pasted, mode);
-    setPasted(null);
-    update({ deform: next.deform, mirror: next.mirror });
-  };
-
-  if(object.artMesh)return <Fold className="property-section compact-section" id="Деформация" title="Артмеш" note={`${object.artMesh.vertices.length} ВЕРШИН`}>
-    <p className="behaviour-hint">Правка сетки и деформация — в инструментах сцены. Генерация заменяет геометрию целиком.</p>
-    {object.parentId&&<label className="check-line"><input type="checkbox" checked={object.deformParent===true} onChange={e=>onChange({...object,deformParent:e.target.checked})}/><span>Наследовать деформацию</span></label>}
-    <button className="button secondary" onClick={()=>onChange({...object,artPose:{}})}>Сбросить деформацию</button>
+function MeshSection({object,onChange}:{object:RigObject;onChange:(object:RigObject)=>void}){
+  return <Fold className="property-section compact-section" id="Деформация" title="Артмеш" note={object.artMesh?`${object.artMesh.vertices.length} ВЕРШИН`:"НЕТ СЕТКИ"}>
+    <p className="behaviour-hint">{object.artMesh?"Правка базы и деформация вершин — в инструментах сцены T/R.":"Создайте артмеш кнопкой «Сгенерировать артмеш» в инструментах сцены T/R. Без меша объект не наследует деформацию поверхности."}</p>
+    {object.artMesh&&<>
+      {object.parentId&&<label className="check-line"><input type="checkbox" checked={object.deformParent===true} onChange={e=>onChange({...object,deformParent:e.target.checked})}/><span>Наследовать деформацию</span></label>}
+      <button className="button secondary" onClick={()=>onChange({...object,artPose:{}})}>Сбросить деформацию</button>
+    </>}
   </Fold>;
-
-  return (
-    <Fold className="property-section compact-section" id="Деформация" title="Деформация" note={<>{mesh.enabled ? `СЕТКА ${mesh.deform.cols}×${mesh.deform.rows}` : "ВЫКЛ"}</>}>
-      <label className="check-line">
-        <input type="checkbox" checked={mesh.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
-        <span>Гнуть картинку сеткой</span>
-      </label>
-      {object.parentId && (
-        <label className="check-line" title="Включено — место объекта берётся с деформированной поверхности родителя">
-          <input
-            type="checkbox"
-            checked={object.deformParent !== false}
-            onChange={(event) => onChange({ ...object, deformParent: event.target.checked })}
-          />
-          <span>Деформируется родителем</span>
-        </label>
-      )}
-
-      {mesh.enabled && (
-        <>
-          <Fold title="Размер сетки" note={`УЗЛОВ ${mesh.deform.points.length}`}>
-            <div className="property-grid two-columns">
-              <NumberField
-                label="Столбцов"
-                value={mesh.deform.cols}
-                step={1}
-                onCommit={(cols) => setGrid(cols, mesh.deform.rows)}
-              />
-              <NumberField
-                label="Строк"
-                value={mesh.deform.rows}
-                step={1}
-                onCommit={(rows) => setGrid(mesh.deform.cols, rows)}
-              />
-            </div>
-            <p className="behaviour-hint">
-              Столбцы и строки — число узлов, 2…32. Смена размера форму не сбрасывает:
-              узлы новой сетки считаются из старой, а смещения в ключах состояний
-              переезжают на новые индексы. Форму правят узлами в сцене инструментом
-              «Сетка» (T) — там же кисть и симметрия. Пока открыта вкладка
-              «Состояния», правка узлов уходит в ключ под точкой таймлайна.
-            </p>
-            <div className="image-actions">
-              <button className="button secondary" onClick={() => update({ deform: resetGrid(mesh.deform) })}>
-                <RotateCcw size={14} /> Сбросить форму
-              </button>
-            </div>
-          </Fold>
-
-          <Fold title="Сетка между объектами" note="БУФЕР">
-            <div className="image-actions">
-              <button className="button secondary" onClick={copyMesh} title="Скопировать форму сетки этого объекта">
-                <Copy size={14} /> Копировать сетку
-              </button>
-              <button
-                className="button secondary"
-                onClick={pasteMeshNow}
-                disabled={!heldMesh()}
-                title="Вставить форму сетки другого объекта; нарезка останется своя"
-              >
-                <ClipboardPaste size={14} /> Вставить сетку
-              </button>
-            </div>
-            <p className="behaviour-hint">
-              Переносится форма: размер сетки, узлы и ось симметрии. Нарезка и зона
-              остаются своими — они принадлежат картинке. Если размер другой, редактор
-              спросит, что делать.
-            </p>
-          </Fold>
-
-          <Fold title="Зона деформации" note="% КАРТИНКИ">
-            <div className="property-grid two-columns">
-              <NumberField label="Зона X" value={percent(mesh.frame.x)} step={1} suffix="%" onCommit={(value) => setFrame({ x: fromPercent(value) })} />
-              <NumberField label="Зона Y" value={percent(mesh.frame.y)} step={1} suffix="%" onCommit={(value) => setFrame({ y: fromPercent(value) })} />
-              <NumberField label="Ширина" value={percent(mesh.frame.width)} step={1} suffix="%" onCommit={(value) => setFrame({ width: Math.max(0.01, fromPercent(value)) })} />
-              <NumberField label="Высота" value={percent(mesh.frame.height)} step={1} suffix="%" onCommit={(value) => setFrame({ height: Math.max(0.01, fromPercent(value)) })} />
-              <NumberField label="Поворот" value={Math.round(mesh.frame.rotation * 10) / 10} step={1} suffix="°" onCommit={(rotation) => setFrame({ rotation })} />
-            </div>
-            <p className="behaviour-hint">
-              Зона — часть картинки, которую гнём: остальное остаётся ровным.
-              Границы удобнее править в сцене: инструмент «Сетка» (T).
-            </p>
-          </Fold>
-
-          <Fold
-            title="Нарезка"
-            note={`${mesh.art.points.length} ТОЧЕК · ${mesh.art.triangles.length / 3} ТРЕУГОЛЬНИКОВ`}
-          >
-            <p className="behaviour-hint">
-              Нарезка задаёт, из каких треугольников состоит картинка. Её правит инструмент
-              «Нарезка» (R), а автосетка включается там же — в панели сцены.
-            </p>
-            <div className="image-actions">
-              <button className="button secondary" onClick={() => update({ art: resetArt(mesh.art), deform: regularGrid(mesh.deform.cols, mesh.deform.rows) })}>
-                <RotateCcw size={14} /> Сбросить нарезку
-              </button>
-            </div>
-          </Fold>
-        </>
-      )}
-
-      {pasted && (
-        <div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setPasted(null); }}>
-          <div className="overlay-dialog" role="dialog" aria-label="Вставить сетку">
-            <header className="dialog-head">
-              <div className="dialog-title">
-                <div className="dialog-icon"><ClipboardPaste size={17} /></div>
-                <div>
-                  <span className="eyebrow">СЕТКА ИЗ БУФЕРА</span>
-                  <h2>Вставить сетку</h2>
-                </div>
-              </div>
-              <button className="icon-button" title="Закрыть" onClick={() => setPasted(null)}>
-                <X size={15} />
-              </button>
-            </header>
-            <div className="dialog-body">
-              <p className="dialog-note">
-                В буфере сетка {pasted.deform.cols}×{pasted.deform.rows}, у объекта —
-                {" "}{mesh.deform.cols}×{mesh.deform.rows}. Нарезка не переносится: она остаётся
-                своя.
-              </p>
-              <div className="dialog-actions">
-                <button className="button primary" onClick={() => applyPaste("transfer")}>
-                  Перенести сетку
-                </button>
-                <button className="button secondary" onClick={() => applyPaste("resample")}>
-                  Пересчитать на текущую
-                </button>
-                <button className="button secondary" onClick={() => applyPaste("reset")}>
-                  Сбросить
-                </button>
-                <button className="button ghost" onClick={() => setPasted(null)}>Отмена</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </Fold>
-  );
 }
 
 /** Текстовый объект: шаблон, шрифт и подстановки из чата. */

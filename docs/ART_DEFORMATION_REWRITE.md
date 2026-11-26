@@ -498,3 +498,25 @@ WASM probe успешного ядра пока проверить нельзя;
 `npm run build` теперь тоже будет блокироваться до полноценной Rust/WASM сборки.
 Dist/public WASM не обновлены. Следующий шаг — удалить старые NxN-пути, но не
 объявлять миграцию готовой до Rust/browser/Windows проверок.
+
+## Этап 21: удаление старого authoring UI
+
+Удалены старые NxN/warp панели Inspector, Scene grid/art/manual selectors,
+line-chain toolbar, zone/control-node/warp drag handlers, overlay helpers и их
+локальное состояние. Убраны Scene onMesh/onWarp callbacks и соответствующие
+App setters. Более 1200 строк старого UI/controller кода удалено, а не оставлено
+за feature flag. У неподготовленного объекта T/R ничего не создают неявно:
+доступны генератор/clipboard; Inspector явно показывает «НЕТ СЕТКИ».
+T/R titles и справочник клавиш описывают новый артмеш, без Ctrl-зоны и ручных
+цепочек. Scene больше не подмешивает numeric-grid preview; hit-test нового меша
+получает те же frame/preview vertex offsets.
+
+124 targeted math/protocol/source tests (все art-*, кроме недоступного browser UI,
+плюс states/shortcuts), tsc, Vite bundling и diff-check прошли. Добавлен static
+regression test отсутствия legacy authoring API/панелей. Это не DOM доказательство:
+Chromium и Cargo всё ещё отсутствуют, public WASM/dist не обновлены.
+
+Осталось удалить собственно legacy render/bend/runtime, GridSpec recording/remap
+в App/StatesPanel/states, старые типы/fixtures/clipboard modules и согласовать
+поведение старых demo presets без compatibility engine. Этот этап НЕ объявляет
+старый runtime удалённым: он пока ещё используется при чтении старых объектов.

@@ -1029,17 +1029,6 @@ export default function App() {
    * отмены кладёт начало перетаскивания (`onDragStart`), и весь жест целиком
    * откатывается одним Ctrl+Z.
    */
-  const warpObject = useCallback((id: string, warp: WarpSpec) => {
-    setPreset((current) => ({
-      ...current,
-      objects: current.objects.map((object) => (object.id === id ? { ...object, warp } : object)),
-    }));
-  }, [setPreset]);
-
-  /**
-   * Сетка и нарезка из сцены. Как и `warpObject`, шага истории не создаёт:
-   * снимок кладёт начало жеста, поэтому весь жест откатывается одним Ctrl+Z.
-   */
   const artPasteObject=useCallback((id:string,clip:ArtMeshClip,scale:ArtMeshPasteScale,pose:boolean)=>{
     commit(current=>({...current,objects:current.objects.map(o=>o.id===id?pasteArtMesh(o,clip,scale,pose):o)}),{label:"Вставка артмеша"});
   },[commit]);
@@ -1062,22 +1051,6 @@ export default function App() {
     })});
     if(regenerate)commit(update,{label:"Генерация артмеша"});else setPreset(update);
   },[commit,setPreset]);
-
-  const meshObject = useCallback((id: string, mesh: MeshSpec) => {
-    setPreset((current) => ({
-      ...current,
-      objects: current.objects.map((object) => {
-        if (object.id !== id) return object;
-        // Густота изменилась — точки ключей переезжают на новые индексы узлов:
-        // иначе состояние гнуло бы не те места картинки.
-        const before = meshOf(object)?.deform;
-        const moved = before && (before.cols !== mesh.deform.cols || before.rows !== mesh.deform.rows)
-          ? remapObjectPoints(object, before, mesh.deform)
-          : object;
-        return { ...moved, mesh, warp: undefined };
-      }),
-    }));
-  }, [setPreset]);
 
   /**
    * Вернуть сетку объекта после записи точек в ключ.
@@ -1718,8 +1691,6 @@ export default function App() {
               }));
             }}
             onPivot={pivotObject}
-            onWarp={warpObject}
-            onMesh={meshObject}
             onArtMesh={artMeshObject}
             onArtTopology={artTopologyObject}
             onArtBatch={artBatchObjects}

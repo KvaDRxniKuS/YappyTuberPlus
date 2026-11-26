@@ -6,7 +6,7 @@ import {addArtFace,removeArtFace} from "../engine/artMeshFaces";
 import type {ArtTopologyCommand} from "../engine/artMeshTopology";
 import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
 import {artSymmetryPairs,mirrorArtDeltas} from "../engine/artMeshSymmetry";
-import {artFramePoints,artStateOffsets} from "../engine/artMeshPlayback";
+import { artFramePoints, artStateOffsets } from "../engine/artMeshPlayback";
 import {addArtOffsets} from "../engine/artMeshRuntime";
 import {ArtMeshGenerator} from "./ArtMeshGenerator";
 import {artEditorPoint,editArtVertices,artBrushWeight,drawArtEditor,inverseArtEditorPoint} from "../render/artMeshEditor";
@@ -15,14 +15,8 @@ import {enterRenderStage} from "../engine/renderProfile";
 import { ShortcutGuide } from "./ShortcutGuide";
 import { createParentMeshTransforms } from "../render/bend";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import {
-  BoxSelect, Brush, CircleDot, Crosshair, FlipHorizontal, Focus, Frame, Ghost, Grid3X3, Hand,
-  LassoSelect, LocateFixed, MousePointer2, Move3D, PenTool, RotateCw, Scan, Spline, Waves, ZoomIn, ZoomOut,
-} from "lucide-react";
-import type {
-  BasePose, GridSpec, GuideMode, MeshSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2, WarpCorner,
-  WarpSpec,
-} from "../types";
+import { BoxSelect, Brush, CircleDot, Crosshair, Focus, Frame, Ghost, Grid3X3, Hand, LassoSelect, LocateFixed, MousePointer2, Move3D, PenTool, Scan, ZoomIn, ZoomOut } from "lucide-react";
+import type { BasePose, GuideMode, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { GUIDE_LABEL } from "../types";
 import { groupBounds, objectOutline } from "../render/bounds";
 import { createCollector, disposeLighting, resetCollector, retainLightingSources } from "../render/lighting";
@@ -47,27 +41,16 @@ import { sameVisualFrame } from "../render/frameChanges";
 import { countDraw, countSceneWake } from "../engine/meter";
 
 import { penAction, shapeContentBounds, smoothingOf, traceItem } from "../render/shape";
-import {
-  defaultWarp, moveWarpCorner, moveWarpFrame, pointInQuad, resizeWarpFrame, rotateWarpFrame,
-  warpHandlesAt, warpQuad, warpEnabled,
-} from "../render/warp";
-import {
-  artPointPoints, meshSurfaceGeometry, deformGeometry, meshGeometry, meshNodePoints, meshQuad, nearestPoint, zoneDelta,
-  zoneGeometry, zoneOutline, zonePoint,
-} from "../render/mesh";
-import {
-  BRUSH_DEFAULT, GRID_STEPS, MIRROR_DEFAULT, addArtChain, eraseArtStroke, meshPointsInBox, moveMeshGroup, shortenArt, addArtLine, addArtPoint, applyOffsets, artFromGrid, artLines,
-  brushGrid, brushWeights, defaultMesh, editGridRest, inverseDeform, paramOffsets, resizeRestControl, resizeGrid, regularGrid, meshEnabled, meshOf, mirrorAcross, moveArtPoint, moveNode,
-  moveNodeMirrored, nearestArtLine, removeArtLine, removeArtPoint, smoothGrid, symmetrizeGrid,
-} from "../engine/mesh";
+import { pointInQuad, warpQuad, warpEnabled } from "../render/warp";
+import { meshSurfaceGeometry, meshQuad } from "../render/mesh";
+import { defaultMesh, meshEnabled } from "../engine/mesh";
 
-const DEFORM_GRID_SIZES = Array.from({length:31}, (_, index) => index + 2);
 
 export type SceneTool =
   | "move" | "pivot" | "pan" | "marquee" | "lasso"
-  /** Зона деформации: прямоугольник, его стороны и поворот. */
+  /** Деформация существующих вершин артмеша. */
   | "warp"
-  /** Углы деформации: только четыре точки картинки. */
+  /** Базовая геометрия и топология того же артмеша. */
   | "deform"
   /** Перо: точки контура фигуры. */
   | "pen";
@@ -151,10 +134,6 @@ interface SceneProps {
    * координатах (пивот объекта и есть его `base`), картинка при этом не едет.
    */
   onPivot: (id: string, base: { x: number; y: number }, pivot: { x: number; y: number }) => void;
-  /** Деформация из спецрежима: углы и зона правятся прямо в сцене. */
-  onWarp: (id: string, warp: WarpSpec) => void;
-  /** Сетка и нарезка из спецрежима: узлы, точки, рёбра, треугольники. */
-  onMesh: (id: string, mesh: MeshSpec) => void;
   onArtPaste:(id:string,clip:ArtMeshClip,scale:ArtMeshPasteScale,pose:boolean)=>void;
   onArtBatch:(meshes:ArtMeshReplacement[],inherit:boolean)=>void;
   onArtTopology:(id:string,command:ArtTopologyCommand)=>void;
@@ -179,66 +158,7 @@ type Interaction =
   | { type: "marquee"; shape: "rect" | "lasso"; start: Point; points: Point[]; additive: boolean }
   /** Перо: тянем точку контура с номером `index`. */
   | { type: "pen"; objectId: string; itemId: string; index: number }
-  /** Деформация: тянем ручку зоны (`tl`, `top`, `move`…) или угол картинки. */
-  | { type: "warpFrame"; objectId: string; handle: string; start: Point; initial: WarpSpec }
-  | { type: "warpCorner"; objectId: string; corner: WarpCorner; start: Point; initial: WarpSpec }
-  | { type: "warpRotate"; objectId: string; center: Point; start: number; initial: WarpSpec }
-  /** Сетка: тянем узел деформера (`index` — `j·cols + i`). */
-  | {
-      type: "meshNode";
-      indices?: number[];
-      setup?: boolean;
-      objectId: string;
-      index: number;
-      start: Point;
-      initial: MeshSpec;
-      /** Ось, выбранная Shift: фиксируется один раз за жест. */
-      axis?: "x" | "y" | null;
-    }
-  /**
-   * Кисть сетки: ведём пятно по картинке.
-   *
-   * `grid` — сетка жеста: мазок накапливается сам, а пресет остаётся
-   * единственным местом, куда уходит результат. `last` — прошлая точка в
-   * координатах картинки, `dx`/`dy` — накопленное с прошлого кадра смещение.
-   */
-  | {
-      type: "meshBrush";
-      objectId: string;
-      start: Point;
-      initial: MeshSpec;
-      grid: GridSpec;
-      last: Point;
-    }
-  /** Нарезка: тянем точку артмеша. */
-  | {
-      type: "meshArtPoint";
-      indices?: number[];
-      objectId: string;
-      index: number;
-      start: Point;
-      initial: MeshSpec;
-      axis?: "x" | "y" | null;
-    }
-  | { type: "meshRestRotate"; objectId: string; initial: MeshSpec; center: Vec2; start: number }
-  | { type: "meshErase"; objectId: string; mesh: MeshSpec; last: Vec2 }
-  | { type: "meshSelect"; objectId: string; tool: "warp" | "deform"; start: Vec2; end: Vec2 }
   | null;
-
-function restMesh(mesh: MeshSpec): MeshSpec {
-  return { ...mesh, deform: { ...mesh.deform, points: mesh.deform.rest ?? regularGrid(mesh.deform.cols,mesh.deform.rows).points } };
-}
-function gridRotationHandle(points: Vec2[], cols: number, zoom: number) {
-  const base = { x: (points[0].x+points[cols-1].x)/2, y: (points[0].y+points[cols-1].y)/2 };
-  const center = { x: points.reduce((sum,p) => sum+p.x,0)/points.length, y: points.reduce((sum,p) => sum+p.y,0)/points.length };
-  const length = Math.hypot(base.x-center.x,base.y-center.y) || 1;
-  return { base, tip: { x: base.x+(base.x-center.x)*26/zoom/length, y: base.y+(base.y-center.y)*26/zoom/length } };
-}
-
-/** Сетка объекта для редактора: без неё редактор начинает с чистой. */
-function editMesh(object: RigObject): MeshSpec {
-  return meshOf(object) ?? defaultMesh();
-}
 
 /** Мировые координаты → координаты рамки объекта: там живут контуры фигуры. */
 function shapePoint(object: RigObject, frame: RigFrame | null, point: Point): Point {
@@ -285,28 +205,6 @@ export function Scene(props: SceneProps) {
   const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number}>;cursor:Vec2;symmetry?:{axis:"x"|"y";pairs:Map<string,string>}}|null>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
-  /**
-   * Ручная линия: цепочка точек, выбранных на нарезке.
-   *
-   * Это не контур, а именно линия — линиями и строится триангуляция. Точки
-   * копятся кликами, подтверждение — Enter или кнопка инструмента, отмена — Esc.
-   */
-  const pickedNodes = useRef<{objectId:string;tool:string;ids:number[]}|null>(null);
-  const [lineError,setLineError] = useState("");
-  const line = useRef<{ objectId: string; points: number[] } | null>(null);
-  const [lineCount, setLineCount] = useState(0);
-  /** Инструмент «Ручная линия» включён: клики копят точки, а не ставят новые. */
-  const [lineMode, setLineMode] = useState(false);
-  const setupGrid = useRef(false);
-  /**
-   * Что видно в сцене: сетка, нарезка или обе. По умолчанию обе — без этого
-   * сетка и артмеш ложатся друг на друга (у 2×2 они совпадают), и не видно,
-   * что из них вы тянете. Активная накладка рисуется ярко, вторая — приглушённо.
-   */
-  const [meshBoth, setMeshBoth] = useState(true);
-  const meshBothRef = useRef(meshBoth);
-  meshBothRef.current = meshBoth;
-
   const spaceDown = useRef(false);
   const initialized = useRef(false);
   const marqueeRef = useRef<Marquee | null>(null);
@@ -430,12 +328,8 @@ export function Scene(props: SceneProps) {
     // Предпросмотр состояний живёт только в кадре: пресет не меняется, поэтому
     // сцена и вкладка не спорят, а объект остаётся на своём месте в данных.
     const previewed = preset;
-    // Точки деформера из предпросмотра состояний: рендереру они приходят из
-    // вкладки, а не из кадра — ядро про артмеш не знает.
+    // Веса из кадра плюс замена только выбранного слоя предпросмотра.
     const meshPoints = artFramePoints(preset,current.frameRef.current,undefined,current.preview);
-    const legacyPreview=previewPoints(current.preview);
-    if(legacyPreview&&!preset.objects.find(o=>o.id===current.preview?.id)?.artMesh)
-      for(const [id,points] of legacyPreview)meshPoints.set(id,points);
     // Кадр с изгибом детей: сетка родителя двигает и то, что на ней висит.
     const frame = previewFrame(current.frameRef.current, preset.objects, current.preview);
     const colors = current.colors;
@@ -486,11 +380,6 @@ export function Scene(props: SceneProps) {
     // активной. Тянуть по-прежнему можно только то, что выбрано инструментом.
     const showGrid = current.tool === "warp";
     const showArt = current.tool === "deform";
-    const offsets = stateOffsets(current.primaryId ?? "");
-    if (meshBothRef.current && !previewed.objects.find(o=>o.id===current.primaryId)?.artMesh) {
-      if (!showGrid && (current.tool === "deform")) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", null, true, offsets);
-      if (!showArt && current.tool === "warp") drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, true, offsets);
-    }
     const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
     if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt,createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget),artSelection.current.objectId===artTarget.id?artSelection.current.ids:undefined);
     const area=artArea.current;
@@ -515,28 +404,6 @@ export function Scene(props: SceneProps) {
     }
     if(artTarget?.artMesh&&(showGrid||showArt)&&artToolRef.current.brush&&hover.current){
       ctx.save();ctx.strokeStyle="#b3e5db";ctx.lineWidth=1/zoom;ctx.beginPath();ctx.arc(hover.current.x,hover.current.y,artToolRef.current.radius,0,Math.PI*2);ctx.stroke();ctx.restore();
-    }
-    if (showGrid && !artTarget?.artMesh) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "grid", hover.current, false, offsets, setupGrid.current);
-    if (showArt && !artTarget?.artMesh) drawMeshOverlay(ctx, previewed, frame, zoom, current.primaryId, "art", null, false, offsets);
-    if (current.tool === "deform" && line.current) {
-      drawLineChain(ctx, previewed, frame, zoom, line.current, offsets);
-    }
-    const selection=pickedNodes.current;
-    if(selection && selection.objectId===current.primaryId && selection.tool===current.tool) {
-      const object=previewed.objects.find(item=>item.id===selection.objectId);
-      if(object) {
-        const values=frame?.objects[object.id]||staticValues(object),matrix=objectMatrix(object,values);
-        const shown={...object,mesh:shownMesh(editMesh(object),offsets)};
-        const points=selection.tool==="warp"?meshNodePoints(shown,values):artPointPoints(shown,values);
-        ctx.fillStyle="#f0d77a";
-        for(const id of selection.ids) if(points[id]) {const p=transformPoint(matrix,points[id].x-object.pivot.x*object.width,points[id].y-object.pivot.y*object.height);ctx.beginPath();ctx.arc(p.x,p.y,4.5/zoom,0,Math.PI*2);ctx.fill();}
-      }
-    }
-    const gesture=interaction.current;
-    if(gesture?.type==="meshSelect") {
-      const box=boxFromPoints(gesture.start,gesture.end);
-      ctx.strokeStyle="#f0d77a";ctx.lineWidth=1/zoom;
-      ctx.strokeRect(box.minX,box.minY,box.maxX-box.minX,box.maxY-box.minY);
     }
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
     if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
@@ -602,17 +469,6 @@ export function Scene(props: SceneProps) {
     propsRef.current.onCanvasSize(size.width, size.height);
   };
 
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      const next = event.ctrlKey;
-      if (setupGrid.current !== next) { setupGrid.current = next; markDirty(); }
-    };
-    const blur = () => { setupGrid.current = false; markDirty(); };
-    window.addEventListener("keydown", key);
-    window.addEventListener("keyup", key);
-    window.addEventListener("blur", blur);
-    return () => { window.removeEventListener("keydown", key); window.removeEventListener("keyup", key); window.removeEventListener("blur", blur); };
-  }, []);
 
   useEffect(() => {
     const element = viewport.current;
@@ -671,7 +527,7 @@ export function Scene(props: SceneProps) {
 
   useEffect(() => {
     markDirty("scene-props");
-  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview, meshBoth, artBrush, artRadius, artSymmetry]);
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview, artBrush, artRadius, artSymmetry]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -791,7 +647,7 @@ export function Scene(props: SceneProps) {
     const current = propsRef.current;
     const frame = previewFrame(current.frameRef.current, current.preset.objects, current.preview);
     const shown = current.preset;
-    const inheritedFor=createParentMeshTransforms(shown,frame,previewPoints(current.preview));
+    const inheritedFor=createParentMeshTransforms(shown,frame,artFramePoints(shown,frame,undefined,current.preview));
     const selected = shown.objects.find((item) => item.id === current.primaryId);
     if (selected?.kind === "shape" && (!accept || accept(selected))) {
       const values = frame?.objects[selected.id] || staticValues(selected);
@@ -888,11 +744,6 @@ export function Scene(props: SceneProps) {
    * галками в инспекторе значит искать ручку не там, где ею машут.
    */
   const meshTarget = props.preset.objects.find((item) => item.id === props.primaryId);
-  const meshEditing = meshTarget && !meshTarget.artMesh && meshTarget.kind !== "group" && meshTarget.kind !== "text"
-    ? editMesh(meshTarget)
-    : null;
-  const brush = meshEditing?.brush ?? BRUSH_DEFAULT;
-  const mirror = meshEditing?.mirror ?? MIRROR_DEFAULT;
   /**
    * Вклад состояний для объекта — то, что видно на сцене.
    *
@@ -903,119 +754,9 @@ export function Scene(props: SceneProps) {
    */
   const stateOffsets = (objectId: string): Record<string, Vec2> | undefined => {
     const preview = propsRef.current.preview;
-    return preview?.id === objectId ? preview.points : undefined;
+    const object=propsRef.current.preset.objects.find(o=>o.id===objectId);
+    return object?.artMesh?artStateOffsets(object,propsRef.current.frameRef.current,preview):undefined;
   };
-  /** Настройка инструмента: в историю не пишется, это не правка формы. */
-  const quietMeshTool = (patch: Partial<MeshSpec>) => {
-    const current = propsRef.current;
-    const object = current.preset.objects.find((item) => item.id === current.primaryId);
-    if (!object) return;
-    current.onMesh(object.id, { ...editMesh(object), ...patch });
-  };
-  /** Действие над формой: один шаг истории, как у жеста. */
-  const actMeshTool = (patch: Partial<MeshSpec>) => {
-    const current = propsRef.current;
-    const object = current.preset.objects.find((item) => item.id === current.primaryId);
-    if (!object) return;
-    current.onDragStart();
-    current.onMesh(object.id, { ...editMesh(object), enabled: true, ...patch });
-    current.onDragEnd?.();
-  };
-
-  /** Выбрать точку нарезки в цепочку ручной линии. */
-  const pickLinePoint = (objectId: string, index: number) => {
-    const current = line.current;
-    if (current?.objectId === objectId && current.points.at(-1) === index) return;
-    setLineError("");
-    const points = current && current.objectId === objectId ? [...current.points, index] : [index];
-    line.current = { objectId, points };
-    setLineCount(points.length);
-    markDirty();
-  };
-
-  /**
-   * Построить ручные линии по цепочке.
-   *
-   * Каждая пара соседних точек — линия: она режет автоматические линии на своём
-   * пути, а они пересчитываются вокруг неё. Если пара упирается в другую ручную
-   * линию, она пропускается: ручные линии не пересекаются.
-   */
-  const finishLine = () => {
-    const current = line.current;
-    const object = current && propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-    if (!current || !object || current.points.length < 2) return;
-    const mesh = editMesh(object);
-    const art = addArtChain(mesh.art,current.points);
-    if (!art) {
-      setLineError("Цепочка пересекает ручную линию. Измените выбор или нажмите Esc.");
-      return;
-    }
-    line.current = null;
-    setLineCount(0); setLineMode(false); setLineError(""); markDirty();
-    propsRef.current.onDragStart();
-    propsRef.current.onMesh(object.id,{...mesh,enabled:true,art});
-    propsRef.current.onDragEnd?.();
-  };
-
-  const dragNodeSelection=(objectId:string,tool:string,index:number):number[]=>{
-    const picked=pickedNodes.current;
-    if(picked?.objectId===objectId && picked.tool===tool && picked.ids.includes(index)) return picked.ids;
-    pickedNodes.current={objectId,tool,ids:[index]};markDirty();return [index];
-  };
-
-  const eraseStroke = (gesture: Extract<NonNullable<Interaction>,{type:"meshErase"}>, to: Vec2) => {
-    const current = propsRef.current;
-    const object = current.preset.objects.find((item)=>item.id===gesture.objectId);
-    if (!object) return;
-    const values = liveFrame(current.preset)?.objects[object.id] || staticValues(object);
-    const matrix=objectMatrix(object,values), radius=9/camera.current.zoom;
-    const mesh=gesture.mesh;
-    const shown={...object,mesh:{...shownMesh(mesh,stateOffsets(object.id)),enabled:true}};
-    const points=artPointPoints(shown,values).map(p=>transformPoint(matrix,p.x-object.pivot.x*object.width,p.y-object.pivot.y*object.height));
-    const art=eraseArtStroke(mesh.art,points,gesture.last,to,radius);
-    const nextMesh=art===mesh.art?mesh:{...mesh,enabled:true,art};
-    gesture.last=to;
-    if(nextMesh!==gesture.mesh) {
-      gesture.mesh=nextMesh;
-      const next=nextMesh;
-      queueLive(()=>propsRef.current.onMesh(object.id,next));
-    }
-  };
-
-  /** Отменить цепочку и выйти из инструмента: в нарезку ничего не идёт. */
-  const cancelLine = () => {
-    setLineError("");
-    line.current = null;
-    setLineCount(0);
-    setLineMode(false);
-    markDirty();
-  };
-
-  // Esc и Enter работают, пока цепочка собирается: иначе их пришлось бы ловить
-  // на канве, а фокус в этот момент может быть где угодно.
-  useEffect(() => {
-    if (!lineCount && !lineMode) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cancelLine();
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        finishLine();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  // Смена объекта или инструмента цепочку не тащит за собой.
-  useEffect(() => {
-    line.current = null;
-    pickedNodes.current = null;
-    setLineCount(0);
-    setLineMode(false);
-  }, [props.primaryId, props.tool]);
-
   useEffect(() => {
     if (props.tool === "pen" && props.preset.objects.find((item) => item.id === props.primaryId)?.kind !== "shape") props.onTool("move");
   }, [props.primaryId, props.tool, props.preset.objects]);
@@ -1040,13 +781,13 @@ export function Scene(props: SceneProps) {
           <span className="tool-separator" />
           <button
             className={props.tool === "warp" ? "active" : ""}
-            title="Сетка (T) · узлы — деформация; Ctrl — база, углы — размер, верхняя ручка — поворот"
+            title="Деформация артмеша (T)"
             disabled={!props.primaryId}
             onClick={() => props.onTool("warp")}
           ><Frame size={15} /></button>
           <button
             className={props.tool === "deform" ? "active" : ""}
-            title="Нарезка (R) · ЛКМ — точка/перетаскивание, Alt+ЛКМ — удалить точку или линию"
+            title="Правка базы и топологии артмеша (R)"
             disabled={!props.primaryId}
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
@@ -1094,98 +835,6 @@ export function Scene(props: SceneProps) {
               <button title="Снять выделение вершин" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}
           </>}
-          {/* Вид деформации: сетка, нарезка или обе. Две накладки ложатся друг
-              на друга, поэтому одна из них всегда убирается или гаснет. */}
-          {(props.tool === "warp" || props.tool === "deform") && meshEditing && (
-            <select
-              className="tool-select"
-              title="Что показывать в сцене: сетка деформера (T), нарезка (R) или обе"
-              value={meshBoth ? "both" : props.tool === "deform" ? "art" : "grid"}
-              onChange={(event) => {
-                const value = event.target.value;
-                setMeshBoth(value === "both");
-                if (value === "grid") props.onTool("warp");
-                if (value === "art") props.onTool("deform");
-              }}
-            >
-              <option value="grid">сетка</option>
-              <option value="art">нарезка</option>
-              <option value="both">оба</option>
-            </select>
-          )}
-          {/* Инструменты сетки — в том же ряду, но своей группой: ими работают
-              на сцене, а не в параметрах объекта. */}
-          {props.tool === "warp" && meshEditing && (
-            <>
-              <span className="tool-separator" />
-              <select
-                className="tool-select"
-                aria-label="Столбцов сетки деформации"
-                title="Столбцов сетки деформации (2–32). Форма сохраняется"
-                value={meshEditing.deform.cols}
-                onChange={(event) => actMeshTool({
-                  deform: resizeGrid(meshEditing.deform, Number(event.target.value), meshEditing.deform.rows),
-                })}
-              >
-                {DEFORM_GRID_SIZES.map((size) => <option key={size} value={size}>{size} ст.</option>)}
-              </select>
-              <span aria-hidden="true">×</span>
-              <select
-                className="tool-select"
-                aria-label="Строк сетки деформации"
-                title="Строк сетки деформации (2–32). Форма сохраняется"
-                value={meshEditing.deform.rows}
-                onChange={(event) => actMeshTool({
-                  deform: resizeGrid(meshEditing.deform, meshEditing.deform.cols, Number(event.target.value)),
-                })}
-              >
-                {DEFORM_GRID_SIZES.map((size) => <option key={size} value={size}>{size} стр.</option>)}
-              </select>
-              <button
-                className={brush.on ? "active" : ""}
-                title={`Кисть · ${brush.on ? "вкл" : "выкл"}: тянет пятно узлов, а не один узел`}
-                onClick={() => quietMeshTool({ enabled: true, brush: { ...brush, on: !brush.on } })}
-              ><Brush size={15} /></button>
-              <button
-                className={mirror.on ? "active" : ""}
-                title={`Симметрия · ${mirror.on ? `ось ${Math.round(mirror.angle)}°` : "выкл"}: пара узлов двигается зеркально`}
-                onClick={() => quietMeshTool({ enabled: true, mirror: { ...mirror, on: !mirror.on } })}
-              ><FlipHorizontal size={15} /></button>
-              <button
-                title="Сглаживание: внутренние узлы тянутся к середине соседей, крайние стоят"
-                onClick={() => actMeshTool({ deform: smoothGrid(meshEditing.deform) })}
-              ><Waves size={15} /></button>
-            </>
-          )}
-          {props.tool === "deform" && meshEditing && (
-            <>
-              <span className="tool-separator" />
-              <button
-                className={lineMode ? "active" : ""}
-                title="Ручная линия: выберите точки, Enter или повторный клик — построить; Esc — отмена"
-                onClick={() => lineMode ? finishLine() : setLineMode(true)}
-              ><Spline size={15} /></button>
-              <select
-                className="tool-select"
-                title="Автосетка: пересобрать нарезку регулярной сеткой"
-                value={meshEditing.art.auto ? String(meshEditing.art.auto.cols) : "manual"}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === "manual") {
-                    // Ручная нарезка — та, которую собрали руками: точки
-                    // остаются, пометка автосетки снимается.
-                    actMeshTool({ art: { ...meshEditing.art, auto: null } });
-                    return;
-                  }
-                  const step = Number(value);
-                  if (Number.isFinite(step)) actMeshTool({ art: artFromGrid(step, step) });
-                }}
-              >
-                {GRID_STEPS.map((step) => <option key={step} value={step}>{step}×{step}</option>)}
-                <option value="manual">ручная</option>
-              </select>
-            </>
-          )}
           <span className="tool-separator" />
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
           <button
@@ -1216,85 +865,6 @@ export function Scene(props: SceneProps) {
           <button title="Вписать сцену" onClick={fit}><Focus size={15} /></button>
         </div>
       </div>
-      {/* Полоска настроек появляется только у включённого инструмента: сами
-          кисть и симметрия живут в общем ряду, а здесь — их числа. */}
-      {/* Ручная линия: цепочка точек и её подтверждение. */}
-      {props.tool === "deform" && lineMode && (
-        <div className="scene-tool-options">
-          {lineError && <span role="alert" className="tool-label">{lineError}</span>}
-          <span className="tool-label">
-            {lineCount
-              ? `линия: ${lineCount} ${lineCount === 1 ? "точка" : lineCount < 5 ? "точки" : "точек"}`
-              : "ручная линия"}
-          </span>
-          <button
-            disabled={lineCount < 2}
-            title="Построить ручные линии между выбранными точками (Enter)"
-            onClick={finishLine}
-          >Построить</button>
-          <button title="Отменить цепочку и выйти из инструмента (Esc)" onClick={cancelLine}>Отмена</button>
-          <span className="tool-label">
-            {lineCount < 2
-              ? "выберите на нарезке не меньше двух точек — ручные линии вырежут автоматические"
-              : "Enter или кнопка — построить; ручные линии автосетка не перерезает"}
-          </span>
-        </div>
-      )}
-      {props.tool === "warp" && meshEditing && (brush.on || mirror.on) && (
-        <div className="scene-tool-options">
-          {brush.on && (
-            <>
-              <label className="tool-range" title="Радиус кисти — в долях меньшей стороны зоны">
-                <span>кисть</span>
-                <input
-                  type="range" min={2} max={100} step={1}
-                  value={Math.round(brush.radius * 100)}
-                  onChange={(event) => quietMeshTool({ brush: { ...brush, radius: Number(event.target.value) / 100 } })}
-                />
-                <b>{Math.round(brush.radius * 100)}%</b>
-              </label>
-              <label className="tool-range" title="Жёсткость: какая часть радиуса тянется целиком, дальше вес гаснет">
-                <span>жёсткость</span>
-                <input
-                  type="range" min={0} max={100} step={5}
-                  value={Math.round(brush.hardness * 100)}
-                  onChange={(event) => quietMeshTool({ brush: { ...brush, hardness: Number(event.target.value) / 100 } })}
-                />
-                <b>{Math.round(brush.hardness * 100)}%</b>
-              </label>
-            </>
-          )}
-          {brush.on && mirror.on && <span className="tool-separator" />}
-          {mirror.on && (
-            <>
-              <span className="tool-label">симметрия</span>
-              <button
-                className={Math.abs(mirror.angle - 90) < 1e-6 ? "active" : ""}
-                title="Вертикальная ось через центр зоны"
-                onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 90 } })}
-              >верт.</button>
-              <button
-                className={Math.abs(mirror.angle) < 1e-6 ? "active" : ""}
-                title="Горизонтальная ось через центр зоны"
-                onClick={() => quietMeshTool({ mirror: { ...mirror, on: true, angle: 0 } })}
-              >гор.</button>
-              <label className="tool-range" title="Угол оси в градусах">
-                <span>угол</span>
-                <input
-                  type="range" min={-90} max={90} step={5}
-                  value={Math.round(mirror.angle)}
-                  onChange={(event) => quietMeshTool({ mirror: { ...mirror, angle: Number(event.target.value) } })}
-                />
-                <b>{Math.round(mirror.angle)}°</b>
-              </label>
-              <button
-                title="Свести пары узлов к середине: каждая половина проходит полпути"
-                onClick={() => actMeshTool({ deform: symmetrizeGrid(meshEditing.deform, mirror) })}
-              >Симметризовать</button>
-            </>
-          )}
-        </div>
-      )}
       {artPaste&&meshTarget&&<ArtMeshPasteDialog object={meshTarget} clip={artPaste} onClose={()=>setArtPaste(null)} onApply={(scale,pose)=>{
         props.onArtPaste(meshTarget.id,artPaste,scale,pose);setArtPaste(null);artSelection.current={objectId:meshTarget.id,ids:new Set()};
       }}/>}
@@ -1389,6 +959,7 @@ export function Scene(props: SceneProps) {
                 current.onDragStart();artDrag.current={object:artObject,matrix,mode:rest?"rest":"pose",deform,vertices,cursor:artEditorPoint(artObject,point,matrix),symmetry};markDirty();}
               return;
             }
+            if(current.tool==="warp"||current.tool==="deform")return;
             if (current.pen) {
               const object = current.preset.objects.find((item) => item.id === current.pen!.objectId);
               const item = object?.shape?.items.find((entry) => entry.id === current.pen!.itemId);
@@ -1453,127 +1024,6 @@ export function Scene(props: SceneProps) {
                   })();
                 current.onPivot(object.id, { x: point.x, y: point.y }, pivot);
                 return;
-              }
-            }
-            if ((current.tool === "warp" || current.tool === "deform") && current.primaryId) {
-              const object = current.preset.objects.find((item) => item.id === current.primaryId);
-              if (object && object.kind !== "group" && object.kind !== "text") {
-                const values = liveFrame(current.preset)?.objects[object.id] || staticValues(object);
-                const matrix = objectMatrix(object, values);
-                const left = -object.pivot.x * object.width;
-                const top = -object.pivot.y * object.height;
-                const mesh = editMesh(object);
-                const local = transformPoint(invertAffine(matrix), point.x, point.y);
-                const content = { x: local.x - left, y: local.y - top };
-                // Радиус захвата — в экранных пикселях: у мелкого спрайта ручка
-                // не должна требовать пиксельного попадания.
-                const radius = 9 / camera.current.zoom;
-                // Правка одним движением: разрезать, перевернуть, удалить.
-                // Снимок истории кладёт `onDragStart`, закрывает `onDragEnd`.
-                const commit = (next: MeshSpec | null): boolean => {
-                  if (!next || next === mesh) return false;
-                  current.onDragStart();
-                  propsRef.current.onMesh(object.id, next);
-                  current.onDragEnd?.();
-                  return true;
-                };
-
-                if (current.tool === "deform") {
-                  // «Нарезка»: точки, рёбра и треугольники. Редактор работает и
-                  // на выключенной сетке — первая правка включает её сама.
-                  const shown = { ...object, mesh: { ...shownMesh(mesh, stateOffsets(object.id)), enabled: true } };
-                  const points = artPointPoints(shown, values);
-                  // Hit testing in scene coordinates keeps the target nine screen pixels
-                  // wide even when the object itself is scaled or rotated.
-                  const screenPoints = points.map((p) => transformPoint(matrix, left + p.x, top + p.y));
-                  const index = nearestPoint(screenPoints, point, radius);
-                  const edge = nearestArtLine(screenPoints, mesh.art, point, radius);
-                  if (event.altKey) {
-                    cancelLine(); pickedNodes.current=null;
-                    current.onDragStart();
-                    const gesture: Extract<NonNullable<Interaction>,{type:"meshErase"}>={type:"meshErase",objectId:object.id,mesh,last:point};
-                    interaction.current=gesture;
-                    eraseStroke(gesture,point);
-                    return;
-                  }
-                  if(event.shiftKey && !lineMode) {
-                    if(index!==null) {
-                      const picked=pickedNodes.current;
-                      const ids=picked?.objectId===object.id && picked.tool==="deform" ? picked.ids : [];
-                      pickedNodes.current={objectId:object.id,tool:"deform",ids:ids.includes(index)?ids.filter(id=>id!==index):[...ids,index]}; markDirty();
-                    } else { interaction.current={type:"meshSelect",objectId:object.id,tool:"deform",start:point,end:point}; }
-                    return;
-                  }
-                  if (lineMode) {
-                    if (index !== null) pickLinePoint(object.id, index);
-                    return;
-                  }
-                  if (index !== null) {
-                    current.onDragStart();
-                    interaction.current = {
-                      type: "meshArtPoint", indices: dragNodeSelection(object.id,"deform",index), objectId: object.id, index, start: point,
-                      initial: { ...mesh, enabled: true },
-                    };
-                    return;
-                  }
-                  const displayGrid = applyOffsets(shown.mesh.deform, paramOffsets(mesh,values));
-                  const art = addArtPoint(mesh.art, inverseDeform(displayGrid, zonePoint(object, content)));
-                  if (art) commit({ ...mesh, enabled: true, art: shortenArt(art) });
-                  return;
-                } else {
-                  // «Сетка»: кисть важнее узла — она и означает «тянуть пятно,
-                  // а не узел». Дальше уже узлы и зона.
-                  const brush = mesh.brush ?? BRUSH_DEFAULT;
-                  const selected=pickedNodes.current;
-                  const selectedHit=brush.on && selected?.objectId===object.id && selected.tool==="warp"
-                    && meshNodePoints({...object,mesh:shownMesh(mesh,stateOffsets(object.id))},values).some((p,i)=>selected.ids.includes(i)&&Math.hypot(transformPoint(matrix,left+p.x,top+p.y).x-point.x,transformPoint(matrix,left+p.x,top+p.y).y-point.y)<=radius);
-                  if (brush.on && !event.ctrlKey && !event.shiftKey && !selectedHit) {
-                    current.onDragStart();
-                    interaction.current = {
-                      type: "meshBrush", objectId: object.id, start: point, last: content,
-                      initial: { ...mesh, enabled: true }, grid: mesh.deform,
-                    };
-                    return;
-                  }
-                  // «Сетка»: сначала узлы, потом зона — узел внутри зоны должен
-                  // выигрывать, иначе его невозможно сдвинуть.
-                  const display = event.ctrlKey ? restMesh(mesh) : shownMesh(mesh, stateOffsets(object.id));
-                  const nodes = meshNodePoints({ ...object, mesh: display }, event.ctrlKey ? null : values);
-                  if (event.ctrlKey) {
-                    const worldNodes = nodes.map((p) => transformPoint(matrix, left+p.x, top+p.y));
-                    const handle = gridRotationHandle(worldNodes, mesh.deform.cols, camera.current.zoom);
-                    if (Math.hypot(point.x-handle.tip.x, point.y-handle.tip.y) <= radius) {
-                      const center = zonePoint(object, {
-                        x: nodes.reduce((sum,p) => sum+p.x,0)/nodes.length,
-                        y: nodes.reduce((sum,p) => sum+p.y,0)/nodes.length,
-                      });
-                      const at = zonePoint(object, content);
-                      current.onDragStart();
-                      interaction.current = { type: "meshRestRotate", objectId: object.id, initial: mesh, center, start: Math.atan2((at.y-center.y)*zoneGeometry(object).height,(at.x-center.x)*zoneGeometry(object).width) };
-                      return;
-                    }
-                  }
-                  const worldNodes = nodes.map((p) => transformPoint(matrix,left+p.x,top+p.y));
-                  const index = nearestPoint(worldNodes, point, radius);
-                  if(event.shiftKey && !event.ctrlKey) {
-                    if(index!==null) {
-                      const picked=pickedNodes.current;
-                      const ids=picked?.objectId===object.id && picked.tool==="warp" ? picked.ids : [];
-                      pickedNodes.current={objectId:object.id,tool:"warp",ids:ids.includes(index)?ids.filter(id=>id!==index):[...ids,index]}; markDirty();
-                    } else interaction.current={type:"meshSelect",objectId:object.id,tool:"warp",start:point,end:point};
-                    return;
-                  }
-                  if (index !== null) {
-                    current.onDragStart();
-                    interaction.current = {
-                      type: "meshNode", indices: dragNodeSelection(object.id,"warp",index), setup: event.ctrlKey, objectId: object.id, index, start: point,
-                      initial: { ...mesh, enabled: true },
-                    };
-                    return;
-                  }
-                  // Ctrl edits the rest grid; rotation is available on its visible top handle.
-                  return;
-                }
               }
             }
             if (current.tool === "marquee" || current.tool === "lasso") {
@@ -1683,12 +1133,6 @@ export function Scene(props: SceneProps) {
             }
             const current = interaction.current;
             if (!current) return;
-            if(current.type==="meshErase") {
-              const to=scenePoint(event);
-              if(Math.hypot(to.x-current.last.x,to.y-current.last.y)>3/camera.current.zoom) eraseStroke(current,to);
-              return;
-            }
-            if(current.type==="meshSelect") { current.end=scenePoint(event);markDirty();return; }
             if (current.type === "pan") {
               const point = screenPoint(event);
               setCamera({ ...current.camera, x: current.camera.x + point.x - current.startX, y: current.camera.y + point.y - current.startY });
@@ -1730,150 +1174,6 @@ export function Scene(props: SceneProps) {
               });
               return;
             }
-            if (current.type === "meshBrush") {
-              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-              if (!object) return;
-              const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
-              const matrix = objectMatrix(object, values);
-              const left = -object.pivot.x * object.width;
-              const top = -object.pivot.y * object.height;
-              const point = scenePoint(event);
-              const local = transformPoint(invertAffine(matrix), point.x, point.y);
-              const content = { x: local.x - left, y: local.y - top };
-              const brush = current.initial.brush ?? BRUSH_DEFAULT;
-              const mirror = current.initial.mirror ?? MIRROR_DEFAULT;
-              const zone = zoneGeometry(object);
-              // Смещение — в долях зоны: сетка живёт там, а кисть меряется в
-              // пикселях картинки, иначе у вытянутого объекта она была бы овалом.
-              const step = zoneDelta({ ...object, mesh: current.initial }, current.last, content);
-              if (!step.x && !step.y) return;
-              const radius = brush.radius * Math.min(zone.width, zone.height);
-              const nodes = current.grid.points.map((node) => zone.toObject(node.x, node.y));
-              let next = brushGrid(current.grid, brushWeights(nodes, content, radius, brush.hardness), step.x, step.y);
-              if (mirror.on) {
-                // Отражённый мазок: центр — отражение курсора, сдвиг — отражение
-                // вектора. Без этого симметрия работала бы только на узлах.
-                const center = zone.toObject(mirror.x, mirror.y);
-                const dx = content.x - center.x;
-                const dy = content.y - center.y;
-                const radians = (mirror.angle * Math.PI) / 180;
-                const ux = Math.cos(radians);
-                const uy = Math.sin(radians);
-                const dot = dx * ux + dy * uy;
-                const mirrored = { x: center.x + 2 * dot * ux - dx, y: center.y + 2 * dot * uy - dy };
-                const vector = mirrorAcross({ x: step.x, y: step.y }, { ...mirror, x: 0, y: 0 });
-                next = brushGrid(
-                  next,
-                  brushWeights(nodes, mirrored, radius, brush.hardness),
-                  vector.x,
-                  vector.y,
-                );
-              }
-              current.grid = next;
-              current.last = content;
-              queueLive(() => propsRef.current.onMesh(object.id, { ...current.initial, deform: next }));
-              return;
-            }
-            if (current.type === "meshRestRotate") {
-              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-              if (!object) return;
-              const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
-              const world = scenePoint(event);
-              const local = transformPoint(invertAffine(objectMatrix(object, values)),world.x,world.y);
-              const at = zonePoint(object,{ x: local.x+object.pivot.x*object.width, y: local.y+object.pivot.y*object.height });
-              const zone = zoneGeometry(object);
-              let angle = Math.atan2((at.y-current.center.y)*zone.height,(at.x-current.center.x)*zone.width)-current.start;
-              if (event.shiftKey) angle = Math.round(angle/(Math.PI/12))*(Math.PI/12);
-              const c = Math.cos(angle), sin = Math.sin(angle), center = current.center;
-              const deform = editGridRest(current.initial.deform,(p) => ({ x: center.x+(p.x-center.x)*c-(p.y-center.y)*sin*zone.height/zone.width, y: center.y+(p.x-center.x)*sin*zone.width/zone.height+(p.y-center.y)*c }));
-              const id = current.objectId, initial = current.initial;
-              queueLive(() => propsRef.current.onMesh(id,{ ...initial, deform }));
-              return;
-            }
-            if (current.type === "meshNode" || current.type === "meshArtPoint") {
-              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-              if (!object) return;
-              const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
-              const point = scenePoint(event);
-              const matrix = objectMatrix(object, values);
-              const left = -object.pivot.x * object.width;
-              const top = -object.pivot.y * object.height;
-              const toContent = (at: Point) => {
-                const local = transformPoint(invertAffine(matrix), at.x, at.y);
-                return { x: local.x - left, y: local.y - top };
-              };
-              const id = object.id;
-              const initial = current.initial;
-              const from = toContent(current.start);
-              const to = toContent(point);
-              let delta = zoneDelta(object, from, to);
-              if (event.shiftKey) {
-                // Ось держится до конца жеста: иначе у диагонали точка дрожит.
-                if (!current.axis && Math.hypot(delta.x, delta.y) > 4 / camera.current.zoom) {
-                  current.axis = Math.abs(delta.x) >= Math.abs(delta.y) ? "x" : "y";
-                }
-                delta = current.axis === "y" ? { x: 0, y: delta.y } : current.axis === "x" ? { x: delta.x, y: 0 } : delta;
-              } else {
-                current.axis = null;
-              }
-              if (current.type === "meshArtPoint") {
-                const displayed = applyOffsets(shownMesh(initial,stateOffsets(object.id)).deform,paramOffsets(initial,values));
-                const fromSource = inverseDeform(displayed,zonePoint(object,from));
-                const toSource = inverseDeform(displayed,zonePoint(object,to));
-                delta = {x:toSource.x-fromSource.x,y:toSource.y-fromSource.y};
-              }
-              // Симметрия — про сетку: нарезка правится по точкам и её пары
-              // не зеркалятся, иначе ребро «разъехалось» бы с картинкой.
-              const mirror = initial.mirror ?? MIRROR_DEFAULT;
-              if((current.indices?.length ?? 0)>1 && !(current.type==="meshNode" && current.setup)) {
-                const next=moveMeshGroup(initial,current.indices!,delta,current.type==="meshNode"?"warp":"deform");
-                queueLive(()=>propsRef.current.onMesh(id,next)); return;
-              }
-              const next = current.type === "meshNode"
-                ? (current.setup
-                  ? { ...initial, deform: resizeRestControl(initial.deform,current.index,delta) }
-                  : mirror.on
-                  ? { ...initial, deform: moveNodeMirrored(initial.deform, current.index, delta.x, delta.y, mirror) }
-                  : moveNode(initial, current.index, delta.x, delta.y))
-                : moveArtPoint(initial,current.index,delta.x,delta.y);
-              queueLive(() => propsRef.current.onMesh(id, next));
-              return;
-            }
-            if (current.type === "warpCorner" || current.type === "warpFrame" || current.type === "warpRotate") {
-              const object = propsRef.current.preset.objects.find((item) => item.id === current.objectId);
-              if (!object) return;
-              const values = liveFrame(propsRef.current.preset)?.objects[object.id] || staticValues(object);
-              const point = scenePoint(event);
-              if (current.type === "warpRotate") {
-                const angle = Math.atan2(point.y - current.center.y, point.x - current.center.x);
-                const degrees = ((angle - current.start) * 180) / Math.PI;
-                const next = rotateWarpFrame(current.initial, event.shiftKey ? Math.round(degrees / 15) * 15 : degrees);
-                const id = object.id;
-                queueLive(() => propsRef.current.onWarp(id, next));
-                return;
-              }
-              // Экранное смещение переводим в координаты картинки: объект может
-              // быть повёрнут и отмасштабирован, а ручки живут в его осях.
-              const matrix = objectMatrix(object, values);
-              const left = -object.pivot.x * object.width;
-              const top = -object.pivot.y * object.height;
-              const toContent = (at: Point) => {
-                const local = transformPoint(invertAffine(matrix), at.x, at.y);
-                return { x: local.x - left, y: local.y - top };
-              };
-              const from = toContent(current.start);
-              const to = toContent(point);
-              const dx = to.x - from.x;
-              const dy = to.y - from.y;
-              const next = current.type === "warpCorner"
-                ? moveWarpCorner(current.initial, current.corner, object, dx, dy)
-                : current.handle === "move"
-                  ? moveWarpFrame(current.initial, object, dx, dy)
-                  : resizeWarpFrame(current.initial, current.handle, object, dx, dy);
-              const id = object.id;
-              queueLive(() => propsRef.current.onWarp(id, next));
-              return;
-            }
             if (current.type !== "drag") return;
             const point = scenePoint(event);
             if (Math.hypot(point.x - current.start.x, point.y - current.start.y) > 2) current.moved = true;
@@ -1912,17 +1212,6 @@ export function Scene(props: SceneProps) {
             // как закрыть тягу, иначе последнее положение курсора потеряется.
             flushLive();
             if (isDragInteraction(current)) propsRef.current.onDragEnd?.();
-            if(current?.type==="meshSelect") {
-              const props=propsRef.current,object=props.preset.objects.find(item=>item.id===current.objectId);
-              if(object) {
-                const values=liveFrame(props.preset)?.objects[object.id]||staticValues(object);
-                const mesh=shownMesh(editMesh(object),stateOffsets(object.id)),shown={...object,mesh};
-                const matrix=objectMatrix(object,values);
-                const points=(current.tool==="warp"?meshNodePoints(shown,values):artPointPoints(shown,values)).map(p=>transformPoint(matrix,p.x-object.pivot.x*object.width,p.y-object.pivot.y*object.height));
-                pickedNodes.current={objectId:object.id,tool:current.tool,ids:meshPointsInBox(points,current.start,scenePoint(event))};
-              }
-              markDirty();
-            }
             if (current?.type === "pen") propsRef.current.onPenDragEnd?.();
             if (current?.type === "marquee") {
               current.points.push(screenPoint(event));
@@ -2151,334 +1440,9 @@ function hiddenIds(preset: RigPreset): Set<string> {
 /** Цвет контура пера: та же тёплая гамма, что у ручек. */
 const PEN_LINE_COLOR = "#e4bd7c";
 
-/** Цвет спецрежима «Границы текстуры»: зона и её углы. */
-const WARP_COLOR = "#e0834a";
-const WARP_CORNER_COLOR = "#f0c36b";
-
-/**
- * Форма, которую видно на сцене: авторская сетка плюс вклад состояний.
- *
- * Смещения приходят из предпросмотра вкладки «Состояния» (`StatePreview.points`),
- * поэтому ручки стоят на согнутой картинке, а не на исходной.
- */
-function shownMesh(mesh: MeshSpec, offsets?: Record<string, Vec2> | null): MeshSpec {
-  if (!offsets || !Object.keys(offsets).length) return mesh;
-  return { ...mesh, deform: applyOffsets(mesh.deform, offsets) };
-}
-
-/** Точки деформера из предпросмотра: одна карта на объект вкладки. */
-function previewPoints(preview: StatePreview | null | undefined): Map<string, Record<string, Vec2>> | undefined {
-  if (!preview?.points || !Object.keys(preview.points).length) return undefined;
-  return new Map([[preview.id, preview.points]]);
-}
-
 /** Жест, который начался со снимка истории: его и надо закрыть на отпускании. */
 function isDragInteraction(current: Interaction | null): boolean {
-  if (!current) return false;
-  return current.type === "meshErase" || current.type === "drag" || current.type === "warpFrame" || current.type === "warpCorner"
-    || current.type === "meshRestRotate" || current.type === "warpRotate" || current.type === "meshNode" || current.type === "meshArtPoint"
-    || current.type === "meshBrush";
-}
-
-/** Цвет сетки и нарезки: холодный — сетка, тёплый — нарезка. */
-const MESH_GRID_COLOR = "#6fa8c8";
-const MESH_ART_COLOR = "#e0a34a";
-
-/**
- * Отрисовка спецрежима сетки.
- *
- * «Сетка» (T) показывает зону с её ручками и узлы деформера с рёбрами: видно,
- * что именно тянется. «Нарезка» (R) показывает треугольники и точки артмеша —
- * по ним щёлкают, чтобы разрезать ребро или перевернуть диагональ.
- *
- * У объекта без сетки остаются прежние ручки: старую деформацию крайних точек
- * редактор не отбирает.
- */
-function drawMeshOverlay(
-  ctx: CanvasRenderingContext2D,
-  preset: RigPreset,
-  frame: RigFrame | null,
-  zoom: number,
-  primaryId: string | null,
-  mode: "grid" | "art",
-  /** Курсор в мировых координатах: кисть рисует по нему свой радиус. */
-  cursor: Point | null,
-  /**
-   * Приглушённая накладка: вторая сетка в режиме «оба». Ручки, кисть и ось
-   * симметрии у неё не рисуются — она только для сравнения, тянуть её нельзя.
-   */
-  faint = false,
-  /** Смещения узлов от предпросмотра состояний: форма, которую видно. */
-  offsets?: Record<string, Vec2> | null,
-  setup = false,
-) {
-  if (!primaryId) return;
-  const object = preset.objects.find((item) => item.id === primaryId);
-  if (!object || object.kind === "group" || object.kind === "text") return;
-  const fade = faint ? 0.35 : 1;
-  const mesh = meshOf(object) ?? defaultMesh();
-  const values = frame?.objects[object.id] || staticValues(object);
-  const matrix = objectMatrix(object, values);
-  const left = -object.pivot.x * object.width;
-  const top = -object.pivot.y * object.height;
-  const at = (point: Vec2) => ({
-    x: matrix.a * (left + point.x) + matrix.c * (top + point.y) + matrix.e,
-    y: matrix.b * (left + point.x) + matrix.d * (top + point.y) + matrix.f,
-  });
-  const zone = zoneOutline(object).map(at);
-  const size = 3.5 / zoom;
-  const line = 1 / zoom;
-
-  ctx.save();
-  if (mode === "grid") {
-
-    const nodes = meshNodePoints({ ...object, mesh: setup ? restMesh(mesh) : shownMesh(mesh, offsets) }, setup ? null : values);
-    if (setup && !faint) {
-      const handle = gridRotationHandle(nodes.map(at), mesh.deform.cols, zoom);
-      ctx.strokeStyle = MESH_GRID_COLOR;
-      ctx.lineWidth = 1.5 / zoom;
-      ctx.beginPath(); ctx.moveTo(handle.base.x,handle.base.y); ctx.lineTo(handle.tip.x,handle.tip.y); ctx.stroke();
-      ctx.beginPath(); ctx.arc(handle.tip.x,handle.tip.y,5/zoom,0,Math.PI*2); ctx.stroke();
-    }
-    ctx.strokeStyle = MESH_GRID_COLOR;
-    ctx.lineWidth = line;
-    ctx.globalAlpha = 0.75 * fade;
-    ctx.beginPath();
-    // Горизонтали, потом вертикали: по узлам сетки, а не по зоне — иначе линии
-    // не совпадут с ручками, когда зону повернули.
-    for (let j = 0; j < mesh.deform.rows; j += 1) {
-      for (let i = 0; i < mesh.deform.cols; i += 1) {
-        const point = nodes[j * mesh.deform.cols + i];
-        if (!point) continue;
-        const screen = at(point);
-        if (i === 0) ctx.moveTo(screen.x, screen.y);
-        else ctx.lineTo(screen.x, screen.y);
-      }
-    }
-    for (let i = 0; i < mesh.deform.cols; i += 1) {
-      for (let j = 0; j < mesh.deform.rows; j += 1) {
-        const point = nodes[j * mesh.deform.cols + i];
-        if (!point) continue;
-        const screen = at(point);
-        if (j === 0) ctx.moveTo(screen.x, screen.y);
-        else ctx.lineTo(screen.x, screen.y);
-      }
-    }
-    ctx.stroke();
-    ctx.globalAlpha = faint ? 0.55 : 1;
-    ctx.fillStyle = "#1b2026";
-    ctx.strokeStyle = MESH_GRID_COLOR;
-    for (const point of nodes) {
-      const screen = at(point);
-      ctx.beginPath();
-      ctx.rect(screen.x - size, screen.y - size, size * 2, size * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
-    const mirror = mesh.mirror ?? MIRROR_DEFAULT;
-    if (mirror.on && !faint) {
-      // Ось симметрии: точка и угол в долях зоны, поэтому через `toObject` —
-      // она совпадает с той, по которой двигаются узлы.
-      const zone = zoneGeometry(object);
-      const radians = (mirror.angle * Math.PI) / 180;
-      const ux = Math.cos(radians);
-      const uy = Math.sin(radians);
-      const a = at(zone.toObject(mirror.x - ux * 4, mirror.y - uy * 4));
-      const b = at(zone.toObject(mirror.x + ux * 4, mirror.y + uy * 4));
-      ctx.strokeStyle = "rgba(111, 168, 200, 0.5)";
-      ctx.lineWidth = line;
-      ctx.setLineDash([8 / zoom, 5 / zoom]);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    const brush = mesh.brush ?? BRUSH_DEFAULT;
-    if (brush.on && cursor && !faint) {
-      // Радиус кисти — в пикселях картинки, поэтому переводим в мировые через
-      // масштаб объекта: на экране пятно совпадает с тем, что тянется.
-      const zone = zoneGeometry(object);
-      const scale = Math.hypot(matrix.a, matrix.b) || 1;
-      const radius = brush.radius * Math.min(zone.width, zone.height) * scale;
-      ctx.strokeStyle = "rgba(240, 195, 107, 0.85)";
-      ctx.lineWidth = line;
-      ctx.beginPath();
-      ctx.arc(cursor.x, cursor.y, Math.max(1e-3, radius), 0, Math.PI * 2);
-      ctx.stroke();
-      // Внутренний круг — граница жёсткости: до неё мазок тянет целиком.
-      if (brush.hardness > 0.02) {
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        ctx.arc(cursor.x, cursor.y, Math.max(1e-3, radius * brush.hardness), 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-    }
-    ctx.restore();
-    return;
-  }
-
-  // Only mesh edges are shown, not a second undeformed region.
-  ctx.globalAlpha = fade;
-  const points = artPointPoints({ ...object, mesh: { ...shownMesh(mesh, offsets), enabled: true } }, values);
-  ctx.strokeStyle = MESH_ART_COLOR;
-  ctx.lineWidth = line;
-  const lines = artLines(mesh.art);
-  for (const manual of [false, true]) {
-    ctx.lineWidth = (manual ? 1.8 : 0.8) / zoom;
-    ctx.setLineDash(manual ? [] : [4 / zoom, 3 / zoom]);
-    ctx.beginPath();
-    for (const [a, b] of manual ? lines.manual : lines.auto) {
-      if (!points[a] || !points[b]) continue;
-      const from = at(points[a]);
-      const to = at(points[b]);
-      ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
-    }
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  ctx.lineWidth = line;
-  ctx.fillStyle = "#1b2026";
-  for (const point of points) {
-    const screen = at(point);
-    ctx.beginPath();
-    ctx.arc(screen.x, screen.y, size, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-/**
- * Цепочка ручной линии: пунктир по выбранным точкам и кружки на них.
- *
- * Пока линия не построена, она живёт только здесь: в нарезку она уходит одним
- * шагом, когда между точками появляются ручные линии.
- */
-function drawLineChain(
-  ctx: CanvasRenderingContext2D,
-  preset: RigPreset,
-  frame: RigFrame | null,
-  zoom: number,
-  shape: { objectId: string; points: number[] },
-  offsets?: Record<string, Vec2> | null,
-) {
-  const object = preset.objects.find((item) => item.id === shape.objectId);
-  if (!object || object.kind === "group" || object.kind === "text") return;
-  const values = frame?.objects[object.id] || staticValues(object);
-  const matrix = objectMatrix(object, values);
-  const left = -object.pivot.x * object.width;
-  const top = -object.pivot.y * object.height;
-  const at = (point: Vec2) => ({
-    x: matrix.a * (left + point.x) + matrix.c * (top + point.y) + matrix.e,
-    y: matrix.b * (left + point.x) + matrix.d * (top + point.y) + matrix.f,
-  });
-  const mesh = meshOf(object);
-  if (!mesh) return;
-  const shown = { ...object, mesh: { ...shownMesh(mesh, offsets), enabled: true } };
-  const source = artPointPoints(shown, values);
-  const points = shape.points
-    .map((index) => source[index])
-    .filter((point): point is Vec2 => !!point)
-    .map(at);
-  if (!points.length) return;
-  ctx.save();
-  ctx.strokeStyle = "rgba(224, 163, 74, 0.95)";
-  ctx.lineWidth = 1.4 / zoom;
-  ctx.setLineDash([6 / zoom, 4 / zoom]);
-  ctx.beginPath();
-  points.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = "#1b2026";
-  const size = 3.5 / zoom;
-  for (const point of points) {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, size, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-/** Отрисовка спецрежима: зона деформации и её углы. */
-function drawWarpOverlay(
-  ctx: CanvasRenderingContext2D,
-  preset: RigPreset,
-  frame: RigFrame | null,
-  zoom: number,
-  primaryId: string | null,
-  mode: "frame" | "corners" = "frame",
-) {
-  if (!primaryId) return;
-  const object = preset.objects.find((item) => item.id === primaryId);
-  if (!object || object.kind === "group") return;
-  if (object.kind === "text") return;
-  const values = frame?.objects[object.id] || staticValues(object);
-  const matrix = objectMatrix(object, values);
-  const left = -object.pivot.x * object.width;
-  const top = -object.pivot.y * object.height;
-  const handles = warpHandlesAt(object, values, left, top, matrix, zoom);
-  const size = 5 / zoom;
-
-  ctx.save();
-  // Четырёхугольник картинки: видно, что именно получилось. В режиме зоны его
-  // не рисуем — он принадлежит инструменту углов.
-  ctx.strokeStyle = WARP_COLOR;
-  ctx.lineWidth = 1.4 / zoom;
-  ctx.setLineDash([]);
-  if (mode === "corners") {
-    ctx.beginPath();
-    handles.corners.forEach((handle, index) => (index === 0 ? ctx.moveTo(handle.point.x, handle.point.y) : ctx.lineTo(handle.point.x, handle.point.y)));
-    ctx.closePath();
-    ctx.stroke();
-    ctx.fillStyle = WARP_CORNER_COLOR;
-    for (const handle of handles.corners) {
-      ctx.beginPath();
-      ctx.arc(handle.point.x, handle.point.y, size + 1 / zoom, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-    return;
-  }
-
-  // Зона, которую гнём: пунктир плюс лёгкая заливка, чтобы отличать её от углов.
-  ctx.fillStyle = "rgba(224, 131, 74, 0.10)";
-  ctx.beginPath();
-  handles.zone.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
-  ctx.closePath();
-  ctx.fill();
-  ctx.setLineDash([6 / zoom, 4 / zoom]);
-  ctx.lineWidth = 1 / zoom;
-  ctx.stroke();
-
-  // Стороны зоны: квадратные ручки размера.
-  ctx.setLineDash([]);
-  ctx.fillStyle = "#1b2026";
-  for (const handle of handles.frameHandles) {
-    ctx.beginPath();
-    ctx.rect(handle.point.x - size, handle.point.y - size, size * 2, size * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  // Поворот зоны: кружок с точкой на ножке.
-  ctx.beginPath();
-  ctx.moveTo(handles.zone[0].x, handles.zone[0].y);
-  ctx.lineTo(handles.zone[1].x, handles.zone[1].y);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo((handles.zone[0].x + handles.zone[1].x) / 2, (handles.zone[0].y + handles.zone[1].y) / 2);
-  ctx.lineTo(handles.rotation.x, handles.rotation.y);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(handles.rotation.x, handles.rotation.y, size + 1 / zoom, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.restore();
+  return current?.type === "drag";
 }
 
 function drawHiddenOutlines(ctx: CanvasRenderingContext2D, preset: RigPreset, zoom: number) {
