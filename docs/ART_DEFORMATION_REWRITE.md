@@ -404,3 +404,30 @@ islands/diagonal touch, padding, budgets, used contour/interior vertices, insert
 regression. Подключение alpha source (sprite/shape/media), preview controls и batch
 в ArtMeshGenerator ещё НЕ сделано; пользователь пока видит только regular mode.
 Cargo/WASM/dist — прежнее ограничение. Не объявлять alpha UI готовым по core tests.
+
+## Этап 17: alpha mode в общем диалоге (исходники)
+
+ArtMeshGenerator получил regular/alpha mode и threshold/padding/contour spacing/
+interior spacing/simplification. Scene передаёт captureArtAlpha: sprite — уже
+загруженная картинка, shape — тот же drawShapeObject, media — текущий готовый
+video/image element. Новых скрытых media players/геометрии нет. Источник —
+авторское содержимое без masks, runtime opacity и deformation, это подписано.
+Группы без alpha-source явно отклоняются; для них пока regular. Снимок ограничен
+256×256, фиксируется при входе в alpha mode/смене источника, обновляется отдельной
+кнопкой. Refresh сразу инвалидирует прошлый результат до повторного чтения.
+
+Тот же режим работает в batch: отдельный raster/nextId каждой цели, preview
+выбранного объекта и totals. Пустой/недоступный/CORS source или ошибка геометрии
+одной цели блокирует всю пачку с её именем; regular fallback отсутствует. Временный
+canvas сбрасывается после чтения, snapshot не попадает в проект. До Apply проект
+не меняется. SVG viewBox учитывает внешний padding. Capture budget пачки 2M pixels.
+Генерация пока синхронная/ограниченная, без worker: latency больших пачек ещё
+требует профилирования и дальнейшей работы.
+
+17 targeted tests + tsc + diff-check + Vite bundling в .cache/alpha-ui-build
+прошли. Новый настоящий Playwright UI test добавлен, но запуск НЕ состоялся:
+Chromium executable отсутствует (browserType.launch), до assertions не дошло.
+Не считать DOM/Canvas/source/Apply flow подтверждённым браузером. Два source tests
+используют canvas mock, остальные — core/batch math. WASM/dist не обновлены, Cargo
+по-прежнему нет. Следом: полноценная проверка UI/undo, group bounds/alpha policy,
+clipboard/format/needs, удаление старой системы, Rust+Windows build.

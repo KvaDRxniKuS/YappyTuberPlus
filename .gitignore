@@ -9,3 +9,6 @@ playwright-report/
 test-results/
 artifacts/
 .DS_Store
+
+# Temporary frontend validation builds
+.cache/

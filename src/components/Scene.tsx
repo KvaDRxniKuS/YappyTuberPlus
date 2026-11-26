@@ -1,3 +1,4 @@
+import {captureArtAlpha} from "../render/artMeshAlphaSource";
 import type {ArtMeshReplacement} from "../engine/artMeshBatch";
 import {addArtFace,removeArtFace} from "../engine/artMeshFaces";
 import type {ArtTopologyCommand} from "../engine/artMeshTopology";
@@ -1283,6 +1284,7 @@ export function Scene(props: SceneProps) {
         </div>
       )}
       {artGenerator&&meshTarget&&<ArtMeshGenerator key={`${meshTarget.id}-${artGenerator}`}
+        object={meshTarget} captureAlpha={object=>captureArtAlpha(object,object.kind==="media"?(mediaAssets.current.video(object.id)??mediaAssets.current.image(object.id)):assets.current.get(object.image))}
         batch={artGenerator==="descendants"?{root:meshTarget.id,objects:props.preset.objects,onApply:(meshes,inherit)=>{props.onArtBatch(meshes,inherit);setArtGenerator(false);}}:undefined} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
         onClose={()=>setArtGenerator(false)} onApply={mesh=>{props.onArtMesh(meshTarget.id,mesh,{},true);setArtGenerator(false);props.onTool("deform");}}/>}
       <div
