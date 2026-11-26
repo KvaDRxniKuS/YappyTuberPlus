@@ -209,6 +209,7 @@ export default function App() {
   const [layout, setLayout] = useState<EditorLayout>(loadLayout);
   const [paused, setPaused] = useState(false);
   const [tool, setTool] = useState<SceneTool>("move");
+  const [artSelectionTool,setArtSelectionTool]=useState<"move"|"marquee"|"lasso">("move");
   /**
    * Перо: контур фигуры, который сейчас рисуется на сцене. Состояние живёт
    * здесь, потому что его видят двое — сцена (клики) и инспектор (кнопка).
@@ -222,8 +223,13 @@ export default function App() {
    * Перо (N) выбирает контур само: иначе после нажатия клавиши клики по сцене
    * ничего не делали бы и инструмент выглядел бы сломанным.
    */
+  const toolRef=useRef(tool);toolRef.current=tool;
   const chooseTool = useCallback((next: SceneTool) => {
     if (next === "pen" && presetRef.current.objects.find((item) => item.id === selectionRef.current.at(-1))?.kind !== "shape") return;
+    if(next==="move"||next==="marquee"||next==="lasso"){
+      const active=toolRef.current;
+      if(active==="deform"||active==="warp"){setArtSelectionTool(next);return;}
+    }
     setTool(next);
     // Ушли с пера — рисование закончилось: иначе клики продолжали бы ставить
     // точки в невидимом режиме.
@@ -1608,6 +1614,7 @@ export default function App() {
             texts={engineTexts}
             colors={engineColors}
             onDropFiles={(files) => { void importFiles(files); }}
+            artSelectionTool={artSelectionTool}
             onTool={chooseTool}
             onToggleGrid={() => setShowGrid(!showGrid)}
             onCycleBounds={() => setLayout((current) => ({ ...current, showBounds: nextGuideMode(current.showBounds) }))}

@@ -4,7 +4,7 @@ import type {RigObject,Vec2} from "../types";
 import {emptyArtDeformation,bindArtPoint,insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
 import {readStates,writeStates} from "./states";
-export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2}|{type:"insert";point:Vec2}|{type:"remove";ids:string[]}|{type:"addFace"|"removeFace";ids:string[]};
+export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[]}|{type:"addFace"|"removeFace"|"removeEdge";ids:string[]};
 /** Full object transaction: geometry, authored pose and every state key are
  * committed by the caller together. Failure leaves the source untouched. */
 export function editArtTopology(object:RigObject,command:ArtTopologyCommand):RigObject {
@@ -25,6 +25,10 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
   }
   return {...object,artMesh:improveArtTriangles({...mesh,triangles:built.triangles})};
  }
+ if(command.type==="removeEdge"){
+  if(command.ids.length!==2)throw new Error("Ребро должно содержать две вершины.");
+  return {...object,artMesh:{...mesh,triangles:mesh.triangles.filter(face=>!command.ids.every(id=>face.includes(id)))}};
+ }
  if(command.type==="addFace"||command.type==="removeFace"){
   const artMesh=command.type==="addFace"?addArtFace(mesh,command.ids):removeArtFace(mesh,command.ids);
   return {...object,artMesh};
@@ -34,7 +38,15 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
   if(!Number.isFinite(p.x)||!Number.isFinite(p.y)||object.width<=0||object.height<=0||!Number.isSafeInteger(mesh.nextId+1)||mesh.vertices.length>=65535)throw new Error("Некорректная точка или размер объекта.");
   if(mesh.vertices.some(v=>Math.hypot(v.rest.x-p.x,v.rest.y-p.y)<1e-7))throw new Error("Вершина уже существует.");
   const id=`v${mesh.nextId}`;
-  return {...object,artMesh:{...mesh,nextId:mesh.nextId+1,vertices:[...mesh.vertices,{id,rest:{...p},uv:{x:p.x/object.width,y:p.y/object.height}}]}};
+  let created={...mesh,nextId:mesh.nextId+1,vertices:[...mesh.vertices,{id,rest:{...p},uv:{x:p.x/object.width,y:p.y/object.height}}]};
+  if(command.connect){
+   if(!mesh.triangles.length&&artPointHull(created).length>=3)return editArtTopology({...object,artMesh:created},{type:"triangulate"});
+   const edges=new Map<string,{ids:[string,string];count:number}>();
+   for(const face of mesh.triangles)for(let i=0;i<3;i++){const ids:[string,string]=[face[i],face[(i+1)%3]],key=[...ids].sort().join(":");const edge=edges.get(key);if(edge)edge.count++;else edges.set(key,{ids,count:1});}
+   for(const edge of edges.values())if(edge.count===1){try{created=addArtFace(created,[...edge.ids,id]);}catch{/* Only visible boundary edges can be connected without overlap. */}}
+   created=improveArtTriangles(created);
+  }
+  return {...object,artMesh:created};
  }
  if(command.type==="insert"||command.type==="create"){
   const result=insertArtStateVertex(mesh,states,command.point);

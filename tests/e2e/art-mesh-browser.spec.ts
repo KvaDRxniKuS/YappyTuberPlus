@@ -47,10 +47,10 @@ test("App pose and rest drags use distinct data and each gesture is one undo",as
  await expect.poll(async()=>(await stored(page)).objects[0].artPose.v0?.x??0).toBeGreaterThan(0);
  expect((await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artPose).toEqual({});
- await page.getByLabel("Режим артмеша").selectOption("rest");
+ await page.getByTitle("Правка базы и топологии артмеша (R)",{exact:true}).click();
  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+20,y+10,{steps:4});await page.mouse.up();
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices[0].rest.x).toBeGreaterThan(0);
- const changed=(await stored(page)).objects[0];expect(changed.artPose).toEqual({});expect(changed.artMesh.vertices[0].uv).toEqual({x:0,y:0});
+ const changed=(await stored(page)).objects[0];expect(changed.artPose).toEqual({});expect(changed.artMesh.vertices[0].uv).toEqual({x:changed.artMesh.vertices[0].rest.x/160,y:changed.artMesh.vertices[0].rest.y/120});
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
 });
 
@@ -92,8 +92,8 @@ test("App descendant preparation applies explicit scope and inheritance in one u
 
 test("App topology insertion is explicit and undo restores IDs UV and triangles",async({page})=>{
  const preset=project();await open(page,preset);
- await page.getByLabel("Режим артмеша").selectOption("rest");
- await page.getByLabel("Выделение вершин артмеша").selectOption("insert");
+ await page.getByTitle("Правка базы и топологии артмеша (R)",{exact:true}).click();
+
  const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
  const viewport=await canvas.evaluate(el=>({width:el.clientWidth,height:el.clientHeight}));
  const zoom=Math.max(.05,Math.min((viewport.width-70)/400,(viewport.height-70)/300,2));
@@ -151,14 +151,35 @@ test("hidden group children stay fully hidden rather than becoming stop ghosts",
 test("manual tracing starts empty, creates points and connects without losing vertices",async({page})=>{
  await open(page,project(false));
  await page.getByRole("button",{name:"Создать вручную",exact:true}).click();
- await expect(page.getByLabel("Выделение вершин артмеша")).toHaveValue("create");
+ await expect(page.getByLabel("Выделение вершин артмеша")).toHaveCount(0);
  const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
  for(const [x,y] of [[.4,.4],[.6,.4],[.6,.6],[.4,.6],[.5,.5]])await page.mouse.click(box.x+box.width*x,box.y+box.height*y);
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh?.vertices.length).toBe(5);
- await page.getByRole("button",{name:"Соединить точки",exact:true}).click();
+
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(4);
  const mesh=(await stored(page)).objects[0].artMesh;expect(new Set(mesh.triangles.flat()).size).toBe(5);
- await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(0);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(4);
  await page.getByRole("button",{name:"Закрыть панель артмеша"}).click();await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
  await page.getByRole("button",{name:"Панель артмеша",exact:true}).click();await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toBeVisible();
+});
+test("mesh editing keeps V M L inside editor, moves a new point with UV and erases via Alt",async({page})=>{
+ await open(page,project());await page.keyboard.press("KeyR");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const w=box.width,h=box.height,z=Math.max(.05,Math.min((w-70)/400,(h-70)/300,2));
+ const point=(x:number,y:number)=>({x:box.x+(w-400*z)/2+x*z,y:box.y+(h-300*z)/2+y*z});
+ const p=point(140,110);
+ await page.mouse.click(p.x,p.y);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(5);
+ for(const code of ["KeyM","KeyL","KeyV"]){
+  await page.keyboard.press(code);
+  await expect(page.getByTitle("Правка базы и топологии артмеша (R)",{exact:true})).toHaveClass("active");
+  await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toBeVisible();
+ }
+ await page.mouse.move(p.x,p.y);await page.mouse.down();await page.mouse.move(p.x+15,p.y+10,{steps:5});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices[4].rest.x).toBeGreaterThan(40);
+ const changed=(await stored(page)).objects[0],v=changed.artMesh.vertices[4];
+ expect(v.uv.x).toBeCloseTo(v.rest.x/160);expect(v.uv.y).toBeCloseTo(v.rest.y/120);expect(Object.values(changed.artPose).every((p:any)=>p.x===0&&p.y===0)).toBe(true);
+ await page.keyboard.down("Alt");await page.mouse.click(p.x+15,p.y+10);await page.keyboard.up("Alt");
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(4);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(5);
 });

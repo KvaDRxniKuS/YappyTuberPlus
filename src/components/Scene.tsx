@@ -4,7 +4,7 @@ import {ArtMeshPasteDialog} from "./ArtMeshPasteDialog";
 import {holdArtMesh,heldArtMesh,type ArtMeshClip,type ArtMeshPasteScale} from "../engine/artMeshClipboard";
 import {captureArtAlpha} from "../render/artMeshAlphaSource";
 import type {ArtMeshReplacement} from "../engine/artMeshBatch";
-import {addArtFace,removeArtFace} from "../engine/artMeshFaces";
+import {addArtFace} from "../engine/artMeshFaces";
 import type {ArtTopologyCommand} from "../engine/artMeshTopology";
 import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
 import {artSymmetryPairs,mirrorArtDeltas} from "../engine/artMeshSymmetry";
@@ -12,7 +12,7 @@ import { artFramePoints, artStateOffsets } from "../engine/artMeshPlayback";
 import {addArtOffsets} from "../engine/artMeshRuntime";
 import {ArtMeshGenerator} from "./ArtMeshGenerator";
 import {artEditorPoint,editArtVertices,artBrushWeight,drawArtEditor,inverseArtEditorPoint} from "../render/artMeshEditor";
-import {insertArtVertex,artPosition,type ArtDeformation,type ArtOffsets} from "../engine/artDeformation";
+import {bindArtPoint,artPosition,type ArtDeformation,type ArtOffsets} from "../engine/artDeformation";
 import {enterRenderStage} from "../engine/renderProfile";
 import { ShortcutGuide } from "./ShortcutGuide";
 import { createParentMeshTransforms } from "../render/bend";
@@ -63,6 +63,7 @@ interface SceneProps {
   selectedIds: string[];
   primaryId: string | null;
   tool: SceneTool;
+  artSelectionTool?:"move"|"marquee"|"lasso";
   showGrid: boolean;
   /** Пауза или стоп: скрытое по входам рисуется полупрозрачным призраком. */
   ghosts: boolean;
@@ -196,8 +197,9 @@ export function Scene(props: SceneProps) {
   const [artPaste,setArtPaste]=useState<ArtMeshClip|null>(null);
   useEffect(()=>setArtPaste(null),[props.primaryId]);
   const [artReference,setArtReference]=useState(true);
-  const [artBrush,setArtBrush]=useState(false);
-  const [artPickMode,setArtPickMode]=useState<"move"|"rect"|"lasso"|"insert"|"create">("move");
+  const [artBrushEnabled,setArtBrush]=useState(false);
+  const artBrush=props.tool==="warp"&&artBrushEnabled;
+  const artPickMode=props.artSelectionTool==="marquee"?"rect":props.artSelectionTool??"move";
   const artArea=useRef<{objectId:string;shape:"rect"|"lasso";path:Vec2[];points:ArtSelectionPoint[];previous:Set<string>;mode:"replace"|"add"|"subtract"}|null>(null);
   const [artRadius,setArtRadius]=useState(80);
   const [artSymmetry,setArtSymmetry]=useState<"off"|"x"|"y">("off");
@@ -235,6 +237,18 @@ export function Scene(props: SceneProps) {
     window.addEventListener("keydown",cancel);return ()=>window.removeEventListener("keydown",cancel);
   },[]);
 
+  useEffect(()=>{
+    const key=(event:KeyboardEvent)=>{
+      const current=propsRef.current;
+      if(current.tool!=="deform"&&current.tool!=="warp")return;
+      if((event.target as HTMLElement)?.closest("input,textarea,select,[contenteditable=true]"))return;
+      if(event.code!=="Delete"&&event.code!=="Backspace")return;
+      event.preventDefault();event.stopImmediatePropagation();
+      const selection=artSelection.current;
+      if(current.tool==="deform"&&selection.objectId===current.primaryId&&selection.ids.size){current.onArtTopology(selection.objectId,{type:"remove",ids:[...selection.ids]});selection.ids.clear();markDirty();}
+    };
+    window.addEventListener("keydown",key,true);return()=>window.removeEventListener("keydown",key,true);
+  },[]);
   useEffect(()=>{artArea.current=null;markDirty();},[props.primaryId,props.tool,artPickMode]);
 
   // Отрисовка по требованию: постоянного rAF-цикла больше нет (он грузил
@@ -769,9 +783,9 @@ export function Scene(props: SceneProps) {
       <div className="scene-toolbar">
         <div className="scene-title"><div><span className="eyebrow">ПРЕВЬЮ</span><h2>Сцена</h2></div><ShortcutGuide /></div>
         <div className="scene-tools">
-          <button className={props.tool === "move" ? "active" : ""} title="Выделение и перемещение (V) · Ctrl+клик — добавить, Shift+клик — тоже добавить" onClick={() => props.onTool("move")}><MousePointer2 size={15} /></button>
-          <button className={props.tool === "marquee" ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => props.onTool("marquee")}><BoxSelect size={15} /></button>
-          <button className={props.tool === "lasso" ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => props.onTool("lasso")}><LassoSelect size={15} /></button>
+          <button className={(props.tool === "move" || ((props.tool==="deform"||props.tool==="warp") && (props.artSelectionTool??"move")==="move")) ? "active" : ""} title="Выделение и перемещение (V) · Ctrl+клик — добавить, Shift+клик — тоже добавить" onClick={() => props.onTool("move")}><MousePointer2 size={15} /></button>
+          <button className={(props.tool === "marquee" || ((props.tool==="deform"||props.tool==="warp") && (props.artSelectionTool??"move")==="marquee")) ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => props.onTool("marquee")}><BoxSelect size={15} /></button>
+          <button className={(props.tool === "lasso" || ((props.tool==="deform"||props.tool==="warp") && (props.artSelectionTool??"move")==="lasso")) ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => props.onTool("lasso")}><LassoSelect size={15} /></button>
           <button className={props.tool === "pivot" ? "active" : ""} title="Пивот (P)" onClick={() => props.onTool("pivot")}><Crosshair size={15} /></button>
           {props.preset.objects.find((item) => item.id === props.primaryId)?.kind === "shape" && <button
             className={props.tool === "pen" ? "active" : ""}
@@ -884,46 +898,47 @@ export function Scene(props: SceneProps) {
               });
               if(artSelection.current.objectId!==artObject.id)artSelection.current={objectId:artObject.id,ids:new Set()};
               const selected=artSelection.current.ids;
-              if(artPickMode==="create"){
-                if(!rest)return;
+              if(rest&&event.altKey&&artPickMode==="move"){
                 const cursor=artEditorPoint(artObject,point,matrix);
-                const seed=candidates.reduce<typeof candidates[number]|null>((best,v)=>!best||Math.hypot(v.world.x-point.x,v.world.y-point.y)<Math.hypot(best.world.x-point.x,best.world.y-point.y)?v:best,null);
-                const local=inverseArtEditorPoint(cursor,seed?.start??cursor,deform);
-                if(!local){setArtTopologyError("Не удалось обратить деформацию родителя.");return;}
-                try{current.onArtTopology(artObject.id,{type:"create",point:local});setArtTopologyError("");}
-                catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать вершину.");}
-                markDirty();return;
-              }
-              if(artPickMode==="insert"){
-                if(!rest)return;
-                const cursor=artEditorPoint(artObject,point,matrix);
-                const seed=candidates.reduce((best,v)=>Math.hypot(v.world.x-point.x,v.world.y-point.y)<Math.hypot(best.world.x-point.x,best.world.y-point.y)?v:best,candidates[0]);
-                if(!seed)return;
-                let local=inverseArtEditorPoint(cursor,seed.start,deform);
-                if(!local){setArtTopologyError("Не удалось обратить деформацию родителя.");return;}
-                // Snap to visible edges, but insert in their original rest space.
-                const byId=new Map(candidates.map(v=>[v.id,v]));let edgeDistance=6/camera.current.zoom;
-                for(const face of artObject.artMesh.triangles)for(let i=0;i<3;i++){
-                  const a=byId.get(face[i])!,b=byId.get(face[(i+1)%3])!;
-                  const dx=b.world.x-a.world.x,dy=b.world.y-a.world.y,length=dx*dx+dy*dy;
-                  if(!length)continue;
-                  const t=Math.max(0,Math.min(1,((point.x-a.world.x)*dx+(point.y-a.world.y)*dy)/length));
-                  const distance=Math.hypot(point.x-a.world.x-t*dx,point.y-a.world.y-t*dy);
-                  if(distance<edgeDistance){edgeDistance=distance;local={x:a.start.x+t*(b.start.x-a.start.x),y:a.start.y+t*(b.start.y-a.start.y)};}
-                }
+                const local=inverseArtEditorPoint(cursor,candidates.find(v=>v.id===nearest)?.start??cursor,deform);
                 try{
-                  insertArtVertex(artObject.artMesh,local,[]);
-                  current.onArtTopology(artObject.id,{type:"insert",point:local});setArtTopologyError("");
-                }catch{setArtTopologyError("Выберите точку внутри треугольника или на ребре, не существующую вершину.");}
+                  if(nearest){current.onArtTopology(artObject.id,{type:"remove",ids:[nearest]});selected.delete(nearest);}
+                  else if(local){
+                    const byId=new Map(candidates.map(v=>[v.id,v.world]));
+                    let edge:string[]|undefined,edgeDistance=6/camera.current.zoom;
+                    for(const face of artObject.artMesh.triangles)for(let i=0;i<3;i++){
+                      const a=byId.get(face[i])!,b=byId.get(face[(i+1)%3])!,dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+                      if(!length)continue;
+                      const t=Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/length));
+                      const d=Math.hypot(point.x-a.x-t*dx,point.y-a.y-t*dy);
+                      if(d<edgeDistance){edgeDistance=d;edge=[face[i],face[(i+1)%3]];}
+                    }
+                    if(edge)current.onArtTopology(artObject.id,{type:"removeEdge",ids:edge});
+                    else{const face=bindArtPoint(artObject.artMesh,local);if(face)current.onArtTopology(artObject.id,{type:"removeFace",ids:face.ids});}
+                  }
+                  setArtTopologyError("");
+                }catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось удалить элемент.");}
                 markDirty();return;
               }
               if(artPickMode!=="move"){
                 artArea.current={objectId:artObject.id,shape:artPickMode,path:[point],points:candidates,previous:new Set(selected),mode:event.altKey?"subtract":event.shiftKey?"add":"replace"};
                 markDirty();return;
               }
-              if(!artBrush&&event.shiftKey){if(nearest){if(selected.has(nearest))selected.delete(nearest);else selected.add(nearest);}markDirty();return;}
+              if(!artBrush&&event.shiftKey){
+                if(nearest){if(selected.has(nearest))selected.delete(nearest);else selected.add(nearest);}
+                if(rest&&selected.size===3){try{addArtFace(artObject.artMesh,[...selected]);current.onArtTopology(artObject.id,{type:"addFace",ids:[...selected]});setArtTopologyError("");}catch{/* Selection itself is valid even when these points cannot form a face. */}}
+                markDirty();return;
+              }
               if(!artBrush&&nearest&&!selected.has(nearest)){selected.clear();selected.add(nearest);}
-              if(!artBrush&&!nearest){selected.clear();markDirty();return;}
+              if(!artBrush&&!nearest){
+                selected.clear();
+                if(rest){
+                  const cursor=artEditorPoint(artObject,point,matrix),seed=candidates.reduce<typeof candidates[number]|undefined>((best,v)=>!best||Math.hypot(v.world.x-point.x,v.world.y-point.y)<Math.hypot(best.world.x-point.x,best.world.y-point.y)?v:best,undefined);
+                  const local=inverseArtEditorPoint(cursor,seed?.start??cursor,deform);
+                  if(local)try{current.onArtTopology(artObject.id,{type:"create",point:local,connect:true});setArtTopologyError("");}catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать точку.");}
+                }
+                markDirty();return;
+              }
               const vertices=candidates.filter(v=>artBrush?v.weight>0:selected.has(v.id)).map(v=>({...v,weight:artBrush?v.weight:1}));
               if(vertices.length){
                 const symmetry=artSymmetry==="off"?undefined:{axis:artSymmetry,pairs:artSymmetryPairs(artObject.artMesh,{axis:artSymmetry,at:(artSymmetry==="x"?artObject.width:artObject.height)/2})};
@@ -1083,7 +1098,7 @@ export function Scene(props: SceneProps) {
                 deltas[vertex.id]={x:vertex.seed.x-vertex.start.x,y:vertex.seed.y-vertex.start.y};
               }
               const mirrored=drag.symmetry?mirrorArtDeltas(deltas,drag.symmetry.pairs,drag.symmetry.axis):deltas;
-              const next=editArtVertices(drag.object.artMesh!,drag.object.artPose??{},mirrored,drag.mode);
+              const next=editArtVertices(drag.object.artMesh!,drag.object.artPose??{},mirrored,drag.mode,{width:drag.object.width,height:drag.object.height});
               propsRef.current.onArtMesh(drag.object.id,next.mesh,next.pose);return;
             }
             // Курсор помним всегда: кисть показывает свой радиус, даже когда не
@@ -1247,15 +1262,9 @@ export function Scene(props: SceneProps) {
         </div>
       </div>
       {artPanelOpen&&(props.tool==="warp"||props.tool==="deform")&&meshTarget&&["sprite","media","shape","group"].includes(meshTarget.kind??"sprite")&&<ArtMeshToolsPanel name={meshTarget.name||meshTarget.id} onClose={()=>setArtPanelOpen(false)} tools={<>
-{!meshTarget.artMesh&&<div className="artmesh-empty"><p>У объекта пока нет артмеша. Начните с точек вручную или сгенерируйте сетку во вкладке «Сетка».</p><button className="primary" onClick={()=>{props.onArtTopology(meshTarget.id,{type:"start"});props.onTool("deform");setArtPickMode("create");}}>Создать вручную</button></div>}
-            {meshTarget.artMesh&&<select className="tool-select" aria-label="Режим артмеша" value={props.tool==="deform"?"rest":"pose"} onChange={e=>props.onTool(e.target.value==="rest"?"deform":"warp")}>
-              <option value="rest">Правка сетки</option><option value="pose">Деформация</option>
-            </select>}
+{!meshTarget.artMesh&&<div className="artmesh-empty"><p>У объекта пока нет артмеша. Начните с точек вручную или сгенерируйте сетку во вкладке «Сетка».</p><button className="primary" onClick={()=>{props.onArtTopology(meshTarget.id,{type:"start"});props.onTool("deform");}}>Создать вручную</button></div>}
             {meshTarget.artMesh&&<>
-              <select className="tool-select" aria-label="Выделение вершин артмеша" value={artPickMode} onChange={e=>{setArtPickMode(e.target.value as "move"|"rect"|"lasso"|"insert"|"create");setArtBrush(false);}}>
-                <option value="move">Перемещение</option><option value="rect">Рамка</option><option value="lasso">Лассо</option>{props.tool==="deform"&&<><option value="create">Создать точку</option><option value="insert">Разделить грань / ребро</option></>}
-              </select>
-              <button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>{setArtBrush(v=>!v);setArtPickMode("move");}}><Brush size={15}/>Кисть перемещения</button>
+              {props.tool==="warp"&&<button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>{setArtBrush(v=>!v);}}><Brush size={15}/>Кисть перемещения</button>}
               {artBrush&&<label title="Радиус кисти в пикселях сцены">Радиус <input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius}  onChange={e=>setArtRadius(Math.min(1000,Math.max(1,Number(e.target.value)||1)))}/></label>}
               <select className="tool-select" aria-label="Симметрия артмеша" title="Симметрия по базовой геометрии относительно центра объекта; без создания новых вершин" value={artSymmetry} onChange={e=>setArtSymmetry(e.target.value as "off"|"x"|"y")}>
                 <option value="off">Без симметрии</option><option value="x">Лево ↔ право</option><option value="y">Верх ↔ низ</option>
@@ -1268,26 +1277,11 @@ export function Scene(props: SceneProps) {
               }}>Удалить вершины</button>}
               {props.tool==="deform"&&<>
                 <label className="artmesh-check"><input type="checkbox" checked={artReference} onChange={e=>setArtReference(e.target.checked)}/>Показывать исходник для обводки</label>
-                {!meshTarget.artMesh.triangles.length&&<button title="Соединить свободные точки по выпуклой оболочке короткими рёбрами. Для вогнутого контура создавайте грани вручную." onClick={()=>{
-                  try{props.onArtTopology(meshTarget.id,{type:"triangulate"});setArtTopologyError("");}catch(error){setArtTopologyError(error instanceof Error?error.message:"Ошибка соединения.");}
-                }}>Соединить точки</button>}
-              </>}
-              {props.tool==="deform"&&<>
-                <button title="Создать треугольник по трём выбранным вершинам" onClick={()=>{
-                  const ids=artSelection.current.objectId===meshTarget.id?[...artSelection.current.ids]:[];
-                  try{addArtFace(meshTarget.artMesh!,ids);props.onArtTopology(meshTarget.id,{type:"addFace",ids});setArtTopologyError("");}
-                  catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать грань.");}
-                }}>Создать грань</button>
-                <button title="Удалить только выбранный треугольник, сохранив вершины и состояния" onClick={()=>{
-                  const ids=artSelection.current.objectId===meshTarget.id?[...artSelection.current.ids]:[];
-                  try{removeArtFace(meshTarget.artMesh!,ids);props.onArtTopology(meshTarget.id,{type:"removeFace",ids});setArtTopologyError("");}
-                  catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось удалить грань.");}
-                }}>Удалить грань</button>
               </>}
               {artTopologyError&&<span role="status">{artTopologyError}</span>}
               <button title="Снять выделение вершин" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}
-{props.tool==="deform"&&meshTarget.artMesh&&<p className="artmesh-hint">«Создать точку» работает и вне сетки. Внутри грани точка разделяет её с интерполяцией поз; снаружи создаётся свободная вершина. Выберите три вершины с Shift и нажмите «Создать грань». Для новой сетки без граней — «Соединить точки» (выпуклый контур).</p>}</>} mesh={<><p className="artmesh-hint">Генерация, замена и перенос топологии. Изменения отменяются одним шагом истории.</p>            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/>Сгенерировать артмеш</button>
+{props.tool==="deform"&&meshTarget.artMesh&&<p className="artmesh-hint">ЛКМ по пустому месту — точка; по вершине и потянуть — перемещение без деформации текстуры. Alt + ЛКМ — удалить вершину или грань под курсором. Shift + клик — выделение; три вершины соединяются гранью. V / M / L — курсор, рамка, лассо без выхода из артмеша.</p>}</>} mesh={<><p className="artmesh-hint">Генерация, замена и перенос топологии. Изменения отменяются одним шагом истории.</p>            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/>Сгенерировать артмеш</button>
             <button title="Подготовить потомков к деформации…" onClick={()=>setArtGenerator("descendants")}>Подготовить потомков…</button>
             <button disabled={!meshTarget.artMesh} title="Скопировать новый артмеш и авторскую деформацию" onClick={()=>{
               try{holdArtMesh(meshTarget);setArtTopologyError("");}catch(error){setArtTopologyError(error instanceof Error?error.message:"Ошибка копирования.");}

@@ -40,3 +40,14 @@ test("manual empty mesh supports loose points, hull triangulation and stable IDs
  expect(()=>editArtTopology(object,{type:"triangulate"})).toThrow();
  expect(before.triangles).toHaveLength(0);
 });
+test("click creation connects new boundary points and edge erasure is atomic",()=>{
+ let object={...createDemoPreset().objects[0],width:100,height:100,artMesh:generateRegularArt(2,2,100,100)};
+ object=editArtTopology(object,{type:"create",point:{x:130,y:50},connect:true}) as typeof object;
+ expect(object.artMesh.vertices).toHaveLength(5);
+ expect(object.artMesh.triangles.some(t=>t.includes("v4"))).toBe(true);
+ const before=object.artMesh;
+ const erased=editArtTopology(object,{type:"removeEdge",ids:["v0","v3"]});
+ expect(erased.artMesh!.triangles).toHaveLength(before.triangles.length-2);
+ expect(erased.artMesh!.vertices).toEqual(before.vertices);
+ expect(before.triangles).toHaveLength(3);
+});

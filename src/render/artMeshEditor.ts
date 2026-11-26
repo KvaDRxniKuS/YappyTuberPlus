@@ -53,10 +53,12 @@ export function inverseArtEditorPoint(target:Vec2,seed:Vec2,deform?:ArtEditorDef
 
 /** One immutable update for a multi-vertex gesture. All deltas refer to the
  * gesture's original mesh/pose, so repeated pointer events never accumulate. */
-export function editArtVertices(mesh:ArtDeformation,pose:ArtOffsets,deltas:ArtOffsets,mode:"rest"|"pose"){
+export function editArtVertices(mesh:ArtDeformation,pose:ArtOffsets,deltas:ArtOffsets,mode:"rest"|"pose",size?:{width:number;height:number}){
  for(const delta of Object.values(deltas))if(!Number.isFinite(delta.x)||!Number.isFinite(delta.y))throw new Error("Invalid art edit delta");
  if(mode==="rest")return {mesh:{...mesh,vertices:mesh.vertices.map(v=>{
-  const d=deltas[v.id];return d?{...v,rest:{x:v.rest.x+d.x,y:v.rest.y+d.y}}:v;
+  const d=deltas[v.id];if(!d)return v;
+  const rest={x:v.rest.x+d.x,y:v.rest.y+d.y};
+  return {...v,rest,uv:size?{x:rest.x/size.width,y:rest.y/size.height}:v.uv};
  })},pose};
  const next={...pose};for(const v of mesh.vertices){const d=deltas[v.id];if(!d)continue;
   const p=pose[v.id]??{x:0,y:0};next[v.id]={x:p.x+d.x,y:p.y+d.y};}

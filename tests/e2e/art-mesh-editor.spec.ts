@@ -86,3 +86,11 @@ test("soft move brush has smooth bounded influence and ignores invalid radius",a
  expect(next.pose.v0.x).toBe(20);expect(next.pose.v1.x).toBe(10);
  expect(next.pose.v2).toBeUndefined();
 });
+test("rest authoring reprojects UV while deformation retains it",async()=>{
+ const {editArtVertices}=await import("../../src/render/artMeshEditor");
+ const mesh=generateRegularArt(2,2,160,120),pose={v0:{x:3,y:4}};
+ const rest=editArtVertices(mesh,pose,{v0:{x:16,y:24}},"rest",{width:160,height:120});
+ expect(rest.mesh.vertices[0].uv).toEqual({x:.1,y:.2});expect(rest.pose).toBe(pose);
+ const deformation=editArtVertices(mesh,pose,{v0:{x:16,y:24}},"pose",{width:160,height:120});
+ expect(deformation.mesh).toBe(mesh);expect(deformation.pose.v0).toEqual({x:19,y:28});
+});
