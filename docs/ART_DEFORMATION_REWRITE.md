@@ -379,3 +379,28 @@ undo в браузере не проверены. Alpha-contour generation ещ�
 пока только regular. Группы с размерами 0 требуют отдельного решения явных
 bounds, не получают скрытую геометрию. Полная Rust сборка/WASM/dist всё ещё
 ожидается; формат/needs и удаление legacy не завершены.
+
+## Этап 16: чистое ядро alpha generation (без UI подключения)
+
+artMeshAlpha принимает bounded alpha raster и local object dimensions. Реализованы
+threshold (прозрачные пиксели не считаются даже при threshold=0), внешний padding,
+cell-edge tracing отдельных островов/отверстий, closed RDP simplification,
+contour spacing, earcut triangulation с holes и проверкой deviation, interior
+spacing через insertion. UV вычисляются из local rest/object dimensions; nextId
+начинается с переданного монотонного счётчика. Коллинеарные contour samples,
+пропущенные earcut, восстанавливаются edge split, без orphan vertices.
+
+Ограничения намеренно явные: вход до 512×512, padded raster до 1024×1024,
+trace budget 65536 edges, mesh budget 8192 vertices и bounded interior sampling.
+Padding — anisotropic octile distance approximation, а не точный евклидов offset.
+Слишком сложный/пустой контур и выявленные пересечения после simplification
+отвергаются, а не заменяются регулярной сеткой. Геометрическая устойчивость на
+реальных сложных масках ещё требует проверки. Это не качественный remesher:
+внутренние точки делят существующие треугольники, без Delaunay optimization.
+
+Добавлена зависимость earcut (+ dev types); npm audit сообщает 0 vulnerabilities.
+10 targeted tests + tsc + diff-check прошли: threshold/UV/IDs, ring hole, separate
+islands/diagonal touch, padding, budgets, used contour/interior vertices, insertion
+regression. Подключение alpha source (sprite/shape/media), preview controls и batch
+в ArtMeshGenerator ещё НЕ сделано; пользователь пока видит только regular mode.
+Cargo/WASM/dist — прежнее ограничение. Не объявлять alpha UI готовым по core tests.
