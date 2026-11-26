@@ -174,6 +174,7 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
   },
   {
     id: "warp",
+    removed: 28,
     label: "деформация (`warp…`)",
     since: 18,
     words: [

@@ -374,12 +374,11 @@ export function Scene(props: SceneProps) {
     }
     drawGuides(ctx, previewed, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, previewed, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
-    // Переключатель вида: «оба» показывает вторую накладку приглушённо, под
-    // активной. Тянуть по-прежнему можно только то, что выбрано инструментом.
-    const showGrid = current.tool === "warp";
-    const showArt = current.tool === "deform";
+    // Одна топология: показ базы либо деформированных вершин.
+    const showPose = current.tool === "warp";
+    const showRest = current.tool === "deform";
     const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
-    if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt,createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget),artSelection.current.objectId===artTarget.id?artSelection.current.ids:undefined);
+    if(artTarget?.artMesh&&(showPose||showRest))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showRest,createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget),artSelection.current.objectId===artTarget.id?artSelection.current.ids:undefined);
     const area=artArea.current;
     if(area&&area.path.length>1){
       ctx.save();ctx.strokeStyle="#f0d77a";ctx.fillStyle="#f0d77a18";ctx.lineWidth=1/zoom;ctx.setLineDash([5/zoom,3/zoom]);ctx.beginPath();
@@ -388,7 +387,7 @@ export function Scene(props: SceneProps) {
       }else{area.path.forEach((p,i)=>{if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});ctx.closePath();}
       ctx.fill();ctx.stroke();ctx.restore();
     }
-    if(artTarget?.artMesh&&(showGrid||showArt)&&artToolRef.current.symmetry!=="off"){
+    if(artTarget?.artMesh&&(showPose||showRest)&&artToolRef.current.symmetry!=="off"){
       const axis=artToolRef.current.symmetry;
       const matrix=objectMatrix(artTarget,frame?.objects[artTarget.id]??staticValues(artTarget));
       const deform=createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget);
@@ -400,7 +399,7 @@ export function Scene(props: SceneProps) {
         if(i)ctx.lineTo(world.x,world.y);else ctx.moveTo(world.x,world.y);
       }ctx.stroke();ctx.restore();
     }
-    if(artTarget?.artMesh&&(showGrid||showArt)&&artToolRef.current.brush&&hover.current){
+    if(artTarget?.artMesh&&(showPose||showRest)&&artToolRef.current.brush&&hover.current){
       ctx.save();ctx.strokeStyle="#b3e5db";ctx.lineWidth=1/zoom;ctx.beginPath();ctx.arc(hover.current.x,hover.current.y,artToolRef.current.radius,0,Math.PI*2);ctx.stroke();ctx.restore();
     }
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);

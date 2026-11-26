@@ -30,7 +30,7 @@ export function pasteArtMesh(object:RigObject,source:ArtMeshClip,scale:ArtMeshPa
  const artPose:ArtOffsets=includePose?Object.fromEntries(Object.entries(clip.pose).map(([id,p])=>[ids.get(id)!,{x:p.x*sx,y:p.y*sy}])):{};
  // Scaled finite input can still overflow when dimensions differ drastically.
  readArtMesh(artMesh);readArtOffsets(artPose,artMesh);
- const next={...object,artMesh,artPose,mesh:undefined,warp:undefined};
+ const next={...object,artMesh,artPose};
  const states=replaceArtStateMesh(artMesh,readStates(object.script)).states;
  return {...next,script:writeStates(object.script,states,next).script};
 }

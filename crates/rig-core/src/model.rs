@@ -309,7 +309,6 @@ impl Param {
             "volume" | "gain" => Param::Volume,
             // Маска: 1 — режет по контуру, 0 — объект целиком.
             "mask" => Param::Mask,
-            // Углы деформации: те же имена, что в инспекторе вкладки «Объект».
             // Материал: абсолютные свойства поверхности и сила свечения.
             "roughness" => Param::Roughness,
             "metallic" => Param::Metallic,
@@ -532,4 +531,20 @@ pub struct Frame {
 pub struct BaseUpdate {
     pub id: String,
     pub base: BasePose,
+}
+
+#[cfg(test)]
+mod triangle_contract_tests {
+    use super::Param;
+
+    #[test]
+    fn retired_warp_channels_are_not_builtin_outputs() {
+        for name in ["warpTLx", "warpTLy", "warpTRx", "warpTRy", "warpBRx", "warpBRy", "warpBLx", "warpBLy"] {
+            assert!(Param::parse(name).is_none());
+        }
+        assert_eq!(Param::ALL.len(), 19);
+        for param in Param::ALL {
+            assert_eq!(Param::parse(param.as_str()), Some(param));
+        }
+    }
 }

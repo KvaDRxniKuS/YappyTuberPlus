@@ -1,5 +1,15 @@
 # Единый артмеш: согласованное устройство и ход замены
 
+## Текущий статус (этап 24)
+
+Старые NxN/cage UI, runtime, recording, clipboard и типы удалены. Ниже сохранён
+пошаговый исторический журнал: пометки «пока не подключено/осталось удалить»
+относятся к соответствующему этапу, а не к текущему дереву. Format 8/core 28.
+Активный старый cage без artMesh отклоняется при чтении, не мигрируется.
+
+Основной оставшийся внешний gate: компиляция Rust/WASM и Windows/OBS smoke.
+Браузерная проверка редактора не доказывает работу нового binary playback.
+
 ## Решения
 
 Один меш: stable vertex IDs, локальные rest-позиции, UV и треугольники по ID.
@@ -560,3 +570,40 @@ Vite bundling прошли. Browser впервые удалось запусти
 CJS/ESM импорта React в тестовой harness. Это пока только alpha generator test,
 не утверждение о полной browser/native/OBS проверке. Ничего из browser-tools,
 бинарников и временных сборок в Git не добавляется.
+
+## Этап 24: browser authoring/undo и финальный контракт
+
+Реальный App в Chromium: Cancel/Apply генерации, один Ctrl+Z для замены; pose drag
+не меняет rest, rest drag не меняет UV/pose, каждый жест отменяется одним шагом;
+clipboard требует подтверждения и отменяется; подготовка потомков учитывает
+scope/inheritance и откатывается целиком; вставка вершины отменяется вместе с
+ID/UV/гранями. **Все 5 App browser tests прошли**. Отдельно alpha source/preview/
+Apply browser test прошёл. Смешанный запуск с serverless Chromium однажды упал
+на создании browser context после первого теста (не на assertion продукта);
+финальные раздельные запуски обоих файлов успешны.
+
+Финальный полный browser-free запуск: **569 passed**. TypeScript, Vite bundling,
+diff-check, version report согласованы. Добавлен Rust Param contract test, но
+Rust тесты НЕ запускались: Cargo отсутствует. `npm run build:wasm` предсказуемо
+exit 1: реальный старый artifact не отвечает core28. Успешный gate на новом
+скомпилированном WASM здесь ещё не проверен.
+
+Удаление built-in warp channels — разрыв контракта: core **28**, ACCEPTS_FROM
+**28**, warp-формулы помечены removed28. Формат остаётся 8; art vertex weights
+по-прежнему требуют минимум27. Полная версия **1.1.28.8.2.5.21**. Активный legacy
+cage без artMesh теперь отклоняется при чтении, а не теряет форму молча;
+выключенные defaults удаляются. README описывает новый UX; PLAN-RIG помечен как
+исторический. В docs/BUILD.md записаны команды пересборки и native/OBS checklist.
+
+### Что остаётся за внешней компиляцией/приёмкой
+
+- `cargo test -p rig-core`, реальный build:wasm/core28 gate и test:engine;
+- полноценный `npm run build` / Tauri Windows build и обновление public WASM/dist;
+- vertex-only playback закрытой вкладки на новой бинарной сборке;
+- WebView2/OBS, аппаратный GPU и сложные модели с глубокой вложенностью;
+- стресс-проверка качества/performance сложных alpha-контуров (bounded sync
+  raster/генерация; не Delaunay; возможна блокировка UI на тяжёлой пачке).
+
+Это не оставленные compatibility ветки и не незаконченный перенос NxN: старый
+движок физически удалён. Это оставшиеся непроверенные среды и качественные
+ограничения, которые нельзя выдать за успешно пройденные.

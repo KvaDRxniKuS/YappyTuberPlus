@@ -429,3 +429,30 @@ npm run tauri build -- --no-bundle
   называется файл установщика.
 - Иконки — `src-tauri/icons/*`; пересобрать из одной картинки:
   `npm run tauri icon path/to/icon.png`.
+
+## 8. После перехода на единый артмеш (format 8 / core 28)
+
+Для этой ревизии **обязательна пересборка Rust/WASM**. Старые tracked
+`public/rig_core.wasm` и `dist` ещё не содержат новый контракт.
+
+Windows: `app-update-build.bat` (либо после обновления `app-build.bat`).
+Проверки из терминала:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo test -p rig-core
+npm run build
+npm run test:engine
+```
+
+`npm run build` компилирует WASM, проверяет **сам бинарник** запросом version
+(core 28) и вычислением watched vertex-only weight, затем собирает TypeScript и
+Vite. Без Cargo старый артефакт отклоняется: нельзя обходить эту ошибку прямым
+Vite build и считать результат готовым приложением. Параметры быстрого запуска
+не заменяют новую сборку ядра. Нативная Tauri-сборка запускает тот же npm build.
+
+Ручной smoke после сборки: открыть/сохранить артмеш; T — деформация, R — база;
+проверить состояние с ключами вершин при закрытой вкладке; включённое/выключенное
+наследование вложенных групп и отсутствие воздействия в отверстиях; генерацию,
+пакетную подготовку и их Ctrl+Z; тот же кадр в OBS. Проверки браузерного редактора
+не заменяют Rust/WASM, Windows WebView2 и OBS smoke.

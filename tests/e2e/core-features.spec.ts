@@ -167,3 +167,9 @@ test("единый артмеш требует вычисляющее watch яд
  expect(needsCore(preset([{script:"states_art_w0_0 = .5"}]))).toBe(27);
  expect(needsCore(preset([{script:"x = 0"}]))).toBe(1);
 });
+
+test("retired warp output formulas are diagnosed instead of silently acting as deformation",()=>{
+ const report=needsReport(preset([{script:"warpTLx = 10"}]));
+ expect(report.removed).toContainEqual({label:"деформация (`warp…`)",removed:28});
+ expect(coreVerdict({core:28,acceptsFrom:28},report).state).toBe("incompatible");
+});

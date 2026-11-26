@@ -15,3 +15,14 @@ test("production rendering has no cage fallback or synthetic child geometry",()=
   for(const old of ["engine/mesh","meshOf(","defaultMesh(","warpEnabled(","warpQuad(","drawWarpedImage(","sampleDeform(","zoneGeometry("])expect(source).not.toContain(old);
  }
 });
+test("active legacy-only projects are rejected, not silently opened without deformation",async()=>{
+ const {normalizePreset}=await import("../../src/engine/preset");
+ const {createDemoPreset}=await import("../../src/data/demoPreset");
+ const preset=createDemoPreset();
+ for(const field of ["mesh","warp"]){
+  const old={...preset,objects:[{...preset.objects[0],[field]:{enabled:true}}]};
+  expect(normalizePreset(old)).toBeNull();
+  const inactive=normalizePreset({...old,objects:[{...old.objects[0],[field]:{enabled:false}}]})!;
+  expect(inactive.objects[0]).not.toHaveProperty(field);
+ }
+});
