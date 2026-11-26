@@ -4,13 +4,12 @@ import {
   layerRange, makeLayer, mirrorLayer, moveKey, patchLayer, poseFromBase, readStates, removeKey, removeLayer,
   removeLayers, replacePose, resetStatesFor, reversePoses, scaleKeys, setPose, shiftPose, statesBlock, uniqueLayerName,
   weightsAt, poseAt, applyPoseToBase, sameBase, SMOOTH_DEFAULT, watchNames, withLiveMirrors, writeStates,
-  addPoints, fromPosePoints, noPoints, pointsFromGrids, posePoints, samePoints, tidyPoints, toPosePoints,
-  remapKeyPoints, remapStatesPoints, gridRecordDelta,
+  addPoints, fromPosePoints, noPoints, posePoints, samePoints, tidyPoints, toPosePoints,
   type StateLayer, type States,
 } from "../../src/engine/states";
 import { paramGroups } from "../../src/engine/paramNames";
 import { engineStructure } from "../../src/engine/preset";
-import { DEFAULT_BASE, type GridSpec, type RigObject, type RigPreset } from "../../src/types";
+import { DEFAULT_BASE, type RigObject, type RigPreset } from "../../src/types";
 
 /*
  * Блок состояний: разбор, генерация весов и вставка терма в авторские строки.
@@ -585,11 +584,7 @@ test("поза ключа заменяется целиком: снятое по
  * сетки, поэтому проверяется только слой: веса и сумма.
  */
 
-const grid = (cols: number, rows: number): GridSpec => ({
-  cols,
-  rows,
-  points: Array.from({ length: cols * rows }, () => ({ x: 0, y: 0 })),
-});
+
 
 test("ключи складывают точки по тем же весам, что и поля позы", () => {
   const layer = bound({
@@ -624,18 +619,7 @@ test("свободный слой берёт точки выбранного к�
   expect(fromPosePoints(layer.poses[1].points)).toEqual({ "1": { x: 0, y: 0.3 } });
 });
 
-test("разница сеток — это «что сдвинули», а нули в ключ не попадают", () => {
-  const from = grid(3, 3);
-  const to = grid(3, 3);
-  to.points[4] = { x: 0.25, y: -0.5 };
-  to.points[8] = { x: 1e-6, y: 0 };
-  const delta = pointsFromGrids(from, to);
-  expect(delta["4"]).toEqual({ x: 0.25, y: -0.5 });
-  // Дрожание мыши в ключ не пишется: допуск 1e-4.
-  expect(delta["8"]).toBeUndefined();
-  expect(samePoints(delta, pointsFromGrids(from, from))).toBe(false);
-  expect(noPoints(pointsFromGrids(from, from))).toBe(true);
-});
+
 
 test("точки ключа прибавляются к уже накопленным, а не заменяют их", () => {
   const layer = bound({ poses: [{ at: 0, pose: {}, points: { "4": [0.1, 0.1] } }, { at: 1, pose: {} }] });
@@ -679,62 +663,3 @@ test("зеркало слоя отражает точки деформера в�
  * два случая, когда писать нечего. Оба проверяются здесь: именно на них правка
  * сетки раньше молча пропадала.
  */
-
-test("правка сетки пишется в ключ после жеста, а не во время него", () => {
-  const author = grid(3, 3);
-  const start = grid(3, 3);
-  const moved = grid(3, 3);
-  moved.points[4] = { x: 0.1, y: -0.05 };
-  // Жест закончился: прошлое — форма до него, поэтому дельта видна.
-  expect(gridRecordDelta(author, start, moved)).toEqual({ "4": { x: 0.1, y: -0.05 } });
-  // Вкладка только открылась — прошлого нет.
-  expect(gridRecordDelta(author, null, moved)).toBeNull();
-  // Прошлое уже совпало с текущим (жест «проглочен») — писать нечего.
-  expect(gridRecordDelta(author, moved, moved)).toBeNull();
-  // Щелчок без движения тоже ничего не пишет.
-  expect(gridRecordDelta(author, start, start)).toBeNull();
-});
-
-test("смена густоты — не поза: дельт между разными сетками нет", () => {
-  const author = grid(2, 2);
-  const resized = grid(3, 3);
-  // Индексы узлов разные, поэтому в ключ не уходит ничего: ключи пересчитывает
-  // `remapKeyPoints`, а форма базы берётся из новой авторской сетки.
-  expect(gridRecordDelta(author, grid(2, 2), resized)).toBeNull();
-});
-
-test("точки ключа переезжают на новую густоту сетки", () => {
-  const small = grid(2, 2);
-  const big = grid(3, 3);
-  // Правый нижний узел 2×2 — правый нижний узел 3×3, смещение при нём.
-  expect(remapKeyPoints(toPosePoints({ "3": { x: 0.1, y: 0.05 } }), small, big)?.["8"])
-    .toEqual([0.1, 0.05]);
-  // Одинаковое смещение всех узлов остаётся одинаковым: форма не поехала.
-  const even = toPosePoints({ "0": { x: 0, y: 0.2 }, "1": { x: 0, y: 0.2 }, "2": { x: 0, y: 0.2 }, "3": { x: 0, y: 0.2 } });
-  const spread = remapKeyPoints(even, small, big);
-  expect(spread?.["4"]).toEqual([0, 0.2]);
-  expect(spread?.["0"]).toEqual([0, 0.2]);
-  // Густота та же — точки не трогаются вовсе.
-  const same = toPosePoints({ "1": { x: 0.3, y: 0 } });
-  expect(remapKeyPoints(same, small, grid(2, 2))).toEqual(same);
-  // Ключ без точек остаётся без них.
-  expect(remapKeyPoints(undefined, small, big)).toBeUndefined();
-});
-
-test("смена густоты переносит точки во всех ключах слоёв", () => {
-  const layer = bound({
-    poses: [
-      { at: -1, pose: { x: -20 }, points: { "3": [0.1, 0] } },
-      { at: 1, pose: { x: 20 } },
-    ],
-  });
-  const moved = remapStatesPoints({ layers: [layer] }, grid(2, 2), grid(3, 3));
-  // Угол держит полное смещение, а новая середина получает долю: сетка гуще,
-  // поэтому между узлами появляются промежуточные значения.
-  expect(moved.layers[0].poses[0].points?.["8"]).toEqual([0.1, 0]);
-  expect(moved.layers[0].poses[0].points?.["4"]).toEqual([0.025, 0]);
-  expect(Object.keys(moved.layers[0].poses[0].points ?? {})).toHaveLength(4);
-  // Поза и число ключей при этом не меняются.
-  expect(moved.layers[0].poses[0].pose).toEqual({ x: -20 });
-  expect(moved.layers[0].poses[1].points).toBeUndefined();
-});

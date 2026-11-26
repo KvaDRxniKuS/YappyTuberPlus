@@ -42,7 +42,7 @@ export interface CoreFeature {
   /** Виды объектов, которым признак обязателен. */
   kinds?: ObjectKind[];
   /** Поля объекта: признак нужен, только если поле есть. */
-  fields?: ("mask" | "warp" | "material" | "normal" | "artMesh")[];
+  fields?: ("mask" | "material" | "normal" | "artMesh")[];
   /**
    * Поколение, в котором признак **убран** из языка.
    *
@@ -180,7 +180,6 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
       "warpTLx", "warpTLy", "warpTRx", "warpTRy",
       "warpBRx", "warpBRy", "warpBLx", "warpBLy",
     ],
-    fields: ["warp"],
   },
   {
     id: "mask",

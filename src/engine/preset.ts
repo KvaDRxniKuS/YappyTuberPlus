@@ -15,8 +15,6 @@ import { DEFAULT_MEDIA } from "../render/media";
 import { DEFAULT_TEXT } from "../render/text";
 import { defaultShape, normalizeMask, normalizeShape } from "../render/shape";
 import { normalizeEnvironment, normalizeMaterial } from "../render/material";
-import { normalizeWarp } from "../render/warp";
-import { normalizeMesh } from "./mesh";
 import { PRESET_FORMAT, PRESET_FORMATS_READABLE } from "../version";
 import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
 import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
@@ -354,8 +352,11 @@ export function normalizePreset(value: unknown): RigPreset | null {
       const supportsArt=kind==="sprite"||kind==="media"||kind==="shape"||kind==="group";
       const artMesh=supportsArt&&object.artMesh ? readArtMesh(object.artMesh) : undefined;
       const artPose=artMesh&&object.artPose ? readArtOffsets(object.artPose,artMesh) : undefined;
+      // Discard retired cage payloads, without converting them or inventing geometry.
+      const supported={...object} as RigObject & Record<string,unknown>;
+      delete supported.mesh;delete supported.warp;
       return {
-        ...object,
+        ...supported,
         artMesh, artPose,
         kind,
         enabled: object.enabled !== false,
@@ -381,12 +382,6 @@ export function normalizePreset(value: unknown): RigPreset | null {
         // Маска — свойство любого объекта: одна фигура может вырезать сразу
         // несколько спрайтов, поэтому ссылка живёт на объекте, а не в фигуре.
         mask: normalizeMask(object.mask),
-        // Деформация крайних точек: без поля объект рисуется как обычно.
-        // Новый формат — сетка (`mesh`); старый `warp` остаётся в пресете как
-        // есть и мигрирует при первом обращении (`meshOf`), поэтому открытие
-        // файла ничего в нём не меняет.
-        warp: artMesh ? undefined : normalizeWarp(object.warp),
-        mesh: !artMesh && (kind === "sprite" || kind === "media") ? normalizeMesh(object.mesh) : undefined,
       };
     }).map((object) => normalizeMaskBlock(object)).map(object=>object.artMesh
       ? {...object,script:writeStates(object.script,readStates(object.script),object).script}

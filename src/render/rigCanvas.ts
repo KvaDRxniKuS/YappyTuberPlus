@@ -503,11 +503,7 @@ function drawShaded(
   const { canvas, ctx: layerCtx } = layer;
   const view = ctx.getTransform();
   const feather = object.mask?.feather ?? 0;
-  // Деформированный объект выходит за свою рамку: объём нужен по всей картинке,
-  // иначе край деформации обрежется по слою.
-  // Деформированный объект выходит за свою рамку: объём нужен по всей
-  // картинке. У сетки границы считаются по треугольникам, у старого `warp` —
-  // по четырём углам.
+  // Выступающие треугольники также входят в область шейдинга.
   const quad = surfaceBounds(object,frame,options);
   const box = contentBox(view, matrix, object, canvas.width, canvas.height, left, top, feather, quad);
   if (!box) return false;
@@ -740,6 +736,7 @@ function maskReady(
 
 /** Отдельный холст для маски: переиспользуется между кадрами и объектами. */
 let maskCanvas: HTMLCanvasElement | null = null;
+let maskDocument: Document | null = null;
 
 /** Grow in buckets, reuse across objects, shrink when the viewport shrinks. */
 export function maskBufferSize(current:number, required:number, limit:number):number {
@@ -748,7 +745,8 @@ export function maskBufferSize(current:number, required:number, limit:number):nu
 const maskResources = {};
 function maskLayer(main: HTMLCanvasElement, width:number, height:number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
   if (typeof document === "undefined") return null;
-  if (!maskCanvas) {
+  if (!maskCanvas || maskDocument !== document) {
+    maskDocument = document;
     maskCanvas = document.createElement("canvas");
     maskCanvas.width = maskCanvas.height = 1;
   }

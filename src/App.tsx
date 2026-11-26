@@ -77,26 +77,10 @@ import { useModuleInputs } from "./hooks/useModuleInputs";
 import { useModuleLibrary } from "./hooks/useModuleLibrary";
 import {
   DEFAULT_LAYOUT, nextGuideMode, type BasePose, type EditorLayout, type EnvironmentSpec,
-  type GridSpec, type MeshSpec, type ModuleInstance, type RigObject, type RigPreset, type Vec2,
-  type WarpSpec,
+  type ModuleInstance, type RigObject, type RigPreset, type Vec2,
 } from "./types";
-import { readStates, remapStatesPoints, writeStates } from "./engine/states";
+import { readStates, writeStates } from "./engine/states";
 import type { StatePreview } from "./engine/states";
-import { meshOf } from "./engine/mesh";
-
-/**
- * Смещения ключей на новую густоту сетки.
- *
- * Густота — авторская настройка, а ключи уже могут гнуть узлы: индексы у новой
- * сетки другие, поэтому точки раскладываются билинейно и блок переписывается.
- * Скрипт без точек не трогаем — лишней записи в истории не будет.
- */
-function remapObjectPoints(object: RigObject, from: GridSpec, to: GridSpec): RigObject {
-  const states = readStates(object.script);
-  if (!states.layers.some((layer) => layer.poses.some((pose) => pose.points))) return object;
-  const script = writeStates(object.script, remapStatesPoints(states, from, to), object).script;
-  return script === object.script ? object : { ...object, script };
-}
 
 const PRESET_KEY = "yappytuberplus.preset.v2";
 const LAYOUT_KEY = "yappytuberplus.layout.v1";
@@ -929,16 +913,7 @@ export default function App() {
     })();
     commit((current) => {
       const previous = current.objects.find((object) => object.id === withMask.id);
-      // Густота сетки из инспектора: индексы узлов новые, поэтому точки ключей
-      // раскладываются билинейно — тем же правилом, что и правка из сцены.
-      // Иначе состояние гнуло бы не те места картинки.
-      const before = previous ? meshOf(previous)?.deform : undefined;
-      const after = meshOf(withMask)?.deform;
-      const target = previous && before && after
-        && (before.cols !== after.cols || before.rows !== after.rows)
-        ? remapObjectPoints(withMask, before, after)
-        : withMask;
-      const objects = current.objects.map((object) => object.id === withMask.id ? target : object);
+      const objects = current.objects.map((object) => object.id === withMask.id ? withMask : object);
       // Поворот, масштаб и сдвиг родителя тянут за собой потомков — иначе
       // группа «отклеивается» от своих детей.
       const propagated = previous
@@ -1045,30 +1020,12 @@ export default function App() {
   const artMeshObject=useCallback((id:string,artMesh:ArtDeformation,artPose:ArtOffsets,regenerate=false,dimensions?:{width:number;height:number})=>{
     const update=(current:RigPreset)=>({...current,objects:current.objects.map(object=>{
       if(object.id!==id)return object;
-      const next={...object,artMesh,artPose,mesh:undefined,warp:undefined};
+      const next={...object,artMesh,artPose};
       if(regenerate)return replaceArtObjectMesh(object,artMesh,dimensions);
       return next;
     })});
     if(regenerate)commit(update,{label:"Генерация артмеша"});else setPreset(update);
   },[commit,setPreset]);
-
-  /**
-   * Вернуть сетку объекта после записи точек в ключ.
-   *
-   * Вкладка состояний снимает поправку с базы и уносит её в ключ, а базу
-   * возвращает сюда. Шага истории нет: жест записан его началом.
-   */
-  const restoreMesh = useCallback((mesh: MeshSpec, objectId: string) => {
-    commit(
-      {
-        ...presetRef.current,
-        objects: presetRef.current.objects.map((object) => (
-          object.id === objectId ? { ...object, mesh, warp: undefined } : object
-        )),
-      },
-      { label: "Запись позы", coalesce: "state-record", record: false },
-    );
-  }, [commit]);
 
   /**
    * Базовая поза выделения. `record: false` — предпросмотр состояния: он двигает
@@ -1390,13 +1347,8 @@ export default function App() {
           ? { ...object.shape, items: object.shape.items.map((item) => ({ ...item, points: [...item.points] })) }
           : undefined,
         mask: object.mask ? { ...object.mask, points: [...object.mask.points] } : undefined,
-        // Зона и углы деформации — тоже вглубь: копия должна гнуться отдельно.
-        warp: object.warp
-          ? { ...object.warp, frame: { ...object.warp.frame }, corners: {
-            tl: { ...object.warp.corners.tl }, tr: { ...object.warp.corners.tr },
-            br: { ...object.warp.corners.br }, bl: { ...object.warp.corners.bl },
-          } }
-          : undefined,
+        artMesh: object.artMesh ? structuredClone(object.artMesh) : undefined,
+        artPose: object.artPose ? structuredClone(object.artPose) : undefined,
       };
       pool = [...pool, copy];
       created.push({ source: object, copy });
@@ -1731,7 +1683,6 @@ export default function App() {
           onStates={updateStateScripts}
           onStatesQuiet={normalizeStateScripts}
           onBase={(base, id) => restoreBase(base, id)}
-          onMesh={(mesh, id) => restoreMesh(mesh, id)}
           onArtPose={(artPose,id)=>setPreset(current=>({...current,objects:current.objects.map(o=>o.id===id?{...o,artPose}:o)}))}
           onPreviewState={(preview, id) => previewState(preview, id)}
           dragging={dragging}
@@ -1805,7 +1756,7 @@ export default function App() {
             modules:preset.modules.length,diagnostics:engine.snapshot?.diagnostics.length??0,
             scene:{canvas:preset.canvas,objects:preset.objects.length,
               kinds:preset.objects.reduce<Record<string,number>>((counts,o)=>{counts[o.kind]=(counts[o.kind]??0)+1;return counts;},{}),
-              meshes:preset.objects.filter(o=>o.mesh?.enabled).length,masks:preset.objects.filter(o=>o.mask).length},
+              meshes:preset.objects.filter(o=>o.artMesh).length,masks:preset.objects.filter(o=>o.mask).length},
             overlayViewers:overlay.viewers.length,tool,ghosts,bounds:layout.showBounds,pivots:layout.showPivots,
           })} />
         </div>

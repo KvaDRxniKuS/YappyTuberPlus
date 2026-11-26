@@ -35,7 +35,7 @@ test("требование: простая сцена просит миниму�
   expect(needsCore(preset([], "x = count(mic.talking.up)"))).toBe(16);
   expect(needsCore(preset([{ script: "y = near(x, 1, 0.1) * 5" }]))).toBe(9);
   expect(needsCore(preset([{ mask: { src: null } } as Partial<RigObject>]))).toBe(19);
-  expect(needsCore(preset([{ warp: {} } as Partial<RigObject>]))).toBe(18);
+  expect(needsCore(preset([{ warp: {} } as Partial<RigObject>]))).toBe(1); // retired geometry is not a feature
 });
 
 test("требование: своя переменная — только имя слева, которого язык не знает", () => {

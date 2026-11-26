@@ -5,10 +5,9 @@ import {generateRegularArt} from "../../src/engine/artDeformation";
 import {prepareRigMeshes} from "../../src/render/rigCanvas";
 import {neutralFrame} from "../../src/engine/frame";
 import {toOverlayScene,scenePreset,structureSignature} from "../../src/overlay/protocol";
-import {defaultMesh} from "../../src/engine/mesh";
 function project(){
  const preset=createDemoPreset();const object={...preset.objects.find(o=>o.kind==="sprite")!,width:100,height:100,
-  artMesh:generateRegularArt(2,2,100,100),artPose:{v0:{x:5,y:7}},mesh:{...defaultMesh(),enabled:true}};
+  artMesh:generateRegularArt(2,2,100,100),artPose:{v0:{x:5,y:7}},mesh:{enabled:true}};
  return {...preset,objects:[object]};
 }
 test("project load/save retains authoritative art mesh and removes obsolete controls",()=>{

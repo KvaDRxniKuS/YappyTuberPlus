@@ -58,6 +58,8 @@ function makeRepo(): { dir: string; remote: string } {
     join(dir, "crates", "rig-core", "src", "lib.rs"),
   );
 
+  // Fixture build metadata must match fixture sources, not the stale tracked dist.
+  execFileSync("node", ["scripts/build-version.mjs", "--out", "dist"], {cwd:dir,encoding:"utf8"});
   git(dir, ["init", "-q", "-b", "main"]);
   git(dir, ["config", "user.email", "test@example.com"]);
   git(dir, ["config", "user.name", "Тест"]);

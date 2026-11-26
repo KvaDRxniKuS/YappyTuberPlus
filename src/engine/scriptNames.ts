@@ -20,8 +20,6 @@ export const SCRIPT_PARAMETERS: readonly string[] = [
   "opacity_behaviour", "visible_behaviour",
   // Маска: 1 — режет по контуру, 0 — объект целиком (см. «Маска» в инспекторе).
   "mask",
-  // Деформация: углы в процентах размера зоны (см. «Деформация» в инспекторе).
-  "warpTLx", "warpTLy", "warpTRx", "warpTRy", "warpBRx", "warpBRy", "warpBLx", "warpBLy",
   // Материал: три канала заменяют инспектор (−1 — «не задано»), свечение
   // прибавляется (см. «Материал» в инспекторе).
   "roughness", "metallic", "ao", "emissive", "ior",

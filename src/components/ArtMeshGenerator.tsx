@@ -65,7 +65,7 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
      <label>Область <select aria-label="Область подготовки" value={scope} onChange={e=>setScope(e.target.value as "direct"|"all")}><option value="direct">Прямые потомки</option><option value="all">Все вложенные потомки</option></select></label>
      <label className="check-line"><input type="checkbox" checked={onlyMissing} onChange={e=>setOnlyMissing(e.target.checked)}/>Только без нового артмеша</label>
      <label className="check-line"><input type="checkbox" checked={inherit} onChange={e=>setInherit(e.target.checked)}/>Включить наследование деформации у обрабатываемых объектов</label>
-     <p>Будет обработано: {targets.length}. Существующие сетки будут заменены у {targets.filter(o=>o.artMesh||o.mesh||o.warp).length} объектов. Неподдерживаемые типы и нулевые размеры: {descendants.filter(o=>!artGenerationSupported(o)).length}. Настройки наследования без галочки не меняются.</p>
+     <p>Будет обработано: {targets.length}. Существующие сетки будут заменены у {targets.filter(o=>o.artMesh).length} объектов. Неподдерживаемые типы и нулевые размеры: {descendants.filter(o=>!artGenerationSupported(o)).length}. Настройки наследования без галочки не меняются.</p>
      <label>Предпросмотр объекта <select aria-label="Объект предпросмотра" value={previewTarget?.id??""} onChange={e=>setPreviewId(e.target.value)}>{targets.map(o=><option key={o.id} value={o.id}>{o.name||o.id}</option>)}</select></label>
     </>}
     {explicitGroup&&<>

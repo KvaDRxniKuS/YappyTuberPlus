@@ -206,5 +206,5 @@ test("цвет: секция в «Поведении» и шаблон в пал
   expect(template.kind).toBe("color");
 
   const scene = readFileSync(join(process.cwd(), "src", "components", "Scene.tsx"), "utf8");
-  expect(scene).toContain("applyColors(preset, colors)");
+  expect(scene).toContain("applyColors(previewed, colors)");
 });

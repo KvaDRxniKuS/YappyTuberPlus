@@ -3,17 +3,16 @@ import type {ArtOffsets,ArtDeformation} from "../engine/artDeformation";
 import {artRecordFromBase} from "../engine/artMeshStates";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, RotateCcw, Trash2, Undo2 } from "lucide-react";
-import type { BasePose, GridSpec, InputValues, MeshSpec, ModuleInstance, RigFrame, RigObject, Vec2 } from "../types";
+import type { BasePose, InputValues, ModuleInstance, RigFrame, RigObject, Vec2 } from "../types";
 import { NumberField } from "./NumberField";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ParamPicker } from "./ParamPicker";
 import { paramGroups as collectParams } from "../engine/paramNames";
 import { useModuleLibrary } from "../hooks/useModuleLibrary";
-import { editGridRest, meshOf, resizeGrid } from "../engine/mesh";
 import {
-  addKey, addLayer, addPoints, cloneLayers, gridRecordDelta, fromPosePoints, insertLayers, invertByInput, keyAt, keyUnderPoint,
-  layerRange, makeLayer, mirrorLayer, moveKey, noPoints, patchLayer, pointsFromGrids, poseAt, poseFromBase,
-  posePoints, readStates, removeKey, removeLayer, replacePose,
+  addKey, addLayer, addPoints, cloneLayers, fromPosePoints, insertLayers, invertByInput, keyAt, keyUnderPoint,
+  layerRange, makeLayer, mirrorLayer, moveKey, noPoints, patchLayer, poseAt, poseFromBase,
+  readStates, removeKey, removeLayer, replacePose,
   removeLayers, resetStatesFor, reversePoses, sameBase, samePoints, scaleKeys, setPose, shiftPose, toPosePoints,
   withLiveMirrors, writeStates,
   liveName,
@@ -88,13 +87,6 @@ interface StatesPanelProps {
   onPreviewState?: (preview: StatePreview | null, objectId: string) => void;
   /** Идёт перетаскивание на сцене: запись позы ждёт конца жеста. */
   dragging?: boolean;
-  /**
-   * Вернуть сетку объекта после записи точек в ключ.
-   *
-   * Как и у поз: двигали базу, а форму держит ключ. Возврат идёт без шага
-   * истории — жест уже записан его началом.
-   */
-  onMesh?: (mesh: MeshSpec, objectId: string) => void;
   onArtPose?: (pose:ArtOffsets,objectId:string)=>void;
 }
 
@@ -142,17 +134,6 @@ export function StatesPanel(props: StatesPanelProps) {
   previewApi.current = props.onPreviewState;
   const restoreApi = useRef(props.onBase);
   restoreApi.current = props.onBase;
-  const restoreMeshApi = useRef(props.onMesh);
-  restoreMeshApi.current = props.onMesh;
-  /**
-   * Сетка объекта при открытии вкладки и та, что показана сейчас.
-   *
-   * Как и с позой: руками человек двигает **базу**, а форму держит ключ.
-   * Поэтому разница «база сейчас − база при открытии» уходит в ключ, а база
-   * возвращается на место.
-   */
-  const authorMesh = useRef<GridSpec | null>(null);
-  const lastMesh = useRef<GridSpec | null>(null);
   const artCapture=useRef<{id:string;mesh:ArtDeformation;author:ArtOffsets;previous:ArtOffsets}|null>(null);
   /** Перетаскивание: ключ или точка таймлайна. */
   const drag = useRef<
@@ -206,9 +187,6 @@ export function StatesPanel(props: StatesPanelProps) {
     if (authorBase || !object) return;
     setAuthorBase({ ...object.base });
     lastBase.current = { ...object.base };
-    const mesh = meshOf(object);
-    authorMesh.current = mesh ? { ...mesh.deform, points: [...mesh.deform.points] } : null;
-    lastMesh.current = authorMesh.current;
     sent.current = null;
   }, [object, authorBase]);
   /** Смена слоя: точка таймлайна встаёт на его первый ключ. */
@@ -362,7 +340,7 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   const previewPoints = (): Record<string, Vec2> => {
     if (!layer) return {};
-    if (layer.param) return object?.artMesh ? artPosePoints(layer, at ?? range[0]) : posePoints(layer, at ?? range[0]);
+    if (layer.param) return object?.artMesh ? artPosePoints(layer, at ?? range[0]) : {};
     const chosen = layer.poses[keyIndex];
     return fromPosePoints(chosen?.points) ?? {};
   };
@@ -497,8 +475,6 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   useEffect(() => {
     if (!object || !layer) return;
-    const mesh = meshOf(object);
-    const author = authorMesh.current;
     let delta:Record<string,Vec2>|null=null;
     if(object.artMesh){
       if(!props.onArtPose)return;
@@ -512,40 +488,7 @@ export function StatesPanel(props: StatesPanelProps) {
       capture.mesh=object.artMesh;capture.previous=current;
       if(!delta)return;
       props.onArtPose?.(capture.author,object.id);capture.previous=capture.author;
-    }else{
-      artCapture.current=null;
-      if (!mesh || !author) return;
-      // Густота — авторская настройка, а не поза: индексы узлов другие. Базу
-      // пересобираем из авторской формы в новый размер (ключи уже пересчитаны
-      // записью пресета), иначе дельты считались бы между разными сетками.
-      if (mesh.deform.cols !== author.cols || mesh.deform.rows !== author.rows) {
-        const resized = resizeGrid(author, mesh.deform.cols, mesh.deform.rows);
-        authorMesh.current = { ...resized, points: [...resized.points] };
-        lastMesh.current = authorMesh.current;
-        if (!props.dragging) restoreMeshApi.current?.({ ...mesh, deform: resized }, object.id);
-        return;
-      }
-      // Жест ещё идёт: запись ждёт конца, а «прошлое» не трогаем.
-      //
-      // Раньше `lastMesh` обновлялся до этой проверки, поэтому к отпусканию
-      // кнопки он уже совпадал с текущей сеткой, разница выходила нулевой — и
-      // правка формы не попадала в ключ вовсе. Теперь порядок как у позы:
-      // во время жеста ничего не пишем и не запоминаем.
-      if (props.dragging) return;
-      // Первый кадр вкладки и предпросмотр сетку не меняют — писать нечего.
-      const previous = lastMesh.current;
-      if (JSON.stringify(author.rest) !== JSON.stringify(mesh.deform.rest)) {
-        authorMesh.current = editGridRest(author, (p,i) => mesh.deform.rest?.[i] ?? p);
-        lastMesh.current = mesh.deform;
-        return;
-      }
-      lastMesh.current = { ...mesh.deform, points: [...mesh.deform.points] };
-      delta = gridRecordDelta(author, previous, mesh.deform);
-      if (!delta) return;
-      // База возвращается на место — дальше двигает ключ.
-      restoreMeshApi.current?.({ ...mesh, deform: author }, object.id);
-      lastMesh.current = { ...author, points: [...author.points] };
-    }
+    }else{artCapture.current=null;return;}
     if (noPoints(delta)) return;
     const point = round3(at ?? range[0]);
     const index = layer.param
@@ -553,7 +496,7 @@ export function StatesPanel(props: StatesPanelProps) {
       : keyIndex;
     // Прибавка к тому, что ключ уже показывает: иначе форма прыгнет назад.
     const shown = layer.param
-      ? (index >= 0 ? fromPosePoints(layer.poses[index].points) : (object.artMesh ? artPosePoints(layer,point) : posePoints(layer, point)))
+      ? (index >= 0 ? fromPosePoints(layer.poses[index].points) : artPosePoints(layer,point))
       : fromPosePoints(layer.poses[keyIndex]?.points);
     const points = toPosePoints(addPoints(shown ?? {}, delta));
     if (layer.param && index < 0) {

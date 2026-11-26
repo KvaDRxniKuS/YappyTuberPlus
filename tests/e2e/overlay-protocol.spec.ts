@@ -10,7 +10,7 @@ import { viewTransform } from "../../src/render/rigCanvas";
 import { createDemoPreset } from "../../src/data/demoPreset";
 import { DEFAULT_OVERLAY, DEFAULT_BASE, type ObjectFrame, type RigFrame } from "../../src/types";
 import { defaultShape } from "../../src/render/shape";
-import { defaultWarp } from "../../src/render/warp";
+import {generateRegularArt} from "../../src/engine/artDeformation";
 
 const NEUTRAL: ObjectFrame = {
   x: 0, y: 0, rotation: 0, sizeX: 1, sizeY: 1, skewX: 0, skewY: 0,
@@ -266,11 +266,9 @@ test("подпись сцены видит глаз, фигуры, маски и
   })));
   // Фигура и деформация.
   expect(structureSignature(patch({ ...sprite, shape: defaultShape(10, 10) }))).not.toBe(base);
-  expect(structureSignature(patch({ ...sprite, warp: { ...defaultWarp(), enabled: true } }))).not.toBe(base);
-  // Правка формы деформации — тоже новая сцена.
-  const warpFlat = { ...defaultWarp(), enabled: true };
-  const warpBent = { ...warpFlat, corners: { ...warpFlat.corners, tl: { x: 20, y: 0 } } };
-  expect(structureSignature(patch({ ...sprite, warp: warpBent }))).not.toBe(structureSignature(patch({ ...sprite, warp: warpFlat })));
+  const artMesh=generateRegularArt(2,2,100,100);
+  expect(structureSignature(patch({...sprite,artMesh}))).not.toBe(base);
+  expect(structureSignature(patch({...sprite,artMesh,artPose:{[artMesh.vertices[0].id]:{x:20,y:0}}}))).not.toBe(structureSignature(patch({...sprite,artMesh})));
 });
 
 test("сцена для оверлея несёт маску, фигуру и деформацию целиком", () => {
@@ -279,12 +277,12 @@ test("сцена для оверлея несёт маску, фигуру и д
   const rich = {
     ...preset,
     objects: preset.objects.map((item) => (item.id === sprite.id
-      ? { ...item, warp: { ...defaultWarp(), enabled: true }, base: { ...DEFAULT_BASE } }
+      ? { ...item, artMesh: generateRegularArt(2,2,100,100), base: { ...DEFAULT_BASE } }
       : item)),
   };
   const scene = toOverlayScene(rich, 7);
   const sent = scene.objects.find((object) => object.id === sprite.id)!;
-  expect(sent.warp?.enabled).toBe(true);
+  expect(sent.artMesh?.vertices).toHaveLength(4);
   expect(scene.version).toBe(7);
   // Скрипты в оверлей не едут: их исполняет ядро редактора.
   expect(scene.objects.every((object) => object.script === "")).toBe(true);
@@ -312,14 +310,13 @@ test("протокол моста: оверлей другой сборки ви
 });
 
 test("готовые меши доставляются атомарно вместе с кадром и не откатываются",async()=>{
-  const {defaultMesh}=await import("../../src/engine/mesh");
   const {prepareRigMeshes}=await import("../../src/render/rigCanvas");
   const {hostBus,viewerBus}=channelPair(`mesh-packet-${Date.now()}`);
   const host=new OverlayHost(hostBus,{hostName:"mesh-test"});
   const client=new OverlayClient(viewerBus,{});
   try {
     const preset=createDemoPreset();
-    preset.objects[0]={...preset.objects[0],mesh:{...defaultMesh(),enabled:true}};
+    preset.objects[0]={...preset.objects[0],artMesh:generateRegularArt(2,2,100,100)};
     host.start();host.setPreset(preset);client.start();
     await expect.poll(()=>host.viewerIds.length).toBe(1);
     const ready=frame(100);

@@ -1059,6 +1059,7 @@ YappyTuberPlus/
 ├── app-*.bat, app-*.sh       # ярлыки двойного клика: одной группой, ниже — полный список
 ├── app-update.bat        # обновление и сборка ядра (двойной клик), Windows
 ├── app-update.sh         # то же для Linux/macOS
+├── app-update-build.bat  # обновление и нативная сборка Windows одним запуском
 ├── app-start.bat         # запуск редактора: порты прошлого запуска закрывает сам
 ├── app-start.sh          # то же для Linux/macOS
 ├── app-build.bat         # сборка .exe, установщика и папки сборки
@@ -1074,6 +1075,7 @@ YappyTuberPlus/
 ├── app-tools.bat         # установка Node.js, Rust, Build Tools, WebView2
 ├── scripts/
 │   ├── build-wasm.mjs        # сборка Rust-ядра в WASM
+│   ├── check-wasm-core.mjs   # проверка поколения реального WASM и vertex watch
 │   ├── build-version.mjs     # паспорт сборки: build.json и его проверка
 │   ├── publish-build.mjs     # публикация готовой папки в репозиторий
 │   ├── sync-repo.mjs         # обновление рабочей копии без потерь
@@ -1110,6 +1112,9 @@ YappyTuberPlus/
 В корне остались README, лаунчеры и конфиги, которые обязаны лежать рядом с `package.json`
 (Vite, Tauri CLI и Cargo ищут их по фиксированным путям). Всё остальное — в папках.
 
+
+Служебные диагностические скрипты: `profile-frame-memory.mjs`.
+
 ## Что ещё не входит в этот MVP
 
 - Нативный Rust-аудиозахват; сейчас микрофон реализован браузерным способом, и именно
@@ -1139,3 +1144,5 @@ app-update (включая сохранение правок через stash).
 `app-update-build.bat --no-bundle` — только `.exe`, без установщика;
 `--no-open` — не открывать папку результата; `--fast` — оставить готовый WASM.
 Без параметров — полная сборка. Скрипт запускается из любой текущей папки.
+
+Ход перехода на единый артмеш и ограничения проверок: [ART_DEFORMATION_REWRITE.md](docs/ART_DEFORMATION_REWRITE.md).

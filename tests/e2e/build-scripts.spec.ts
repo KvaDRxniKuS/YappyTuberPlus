@@ -54,9 +54,9 @@ test("ярлыки: все двойные клики в корне — одно�
   // Ни одного ярлыка без префикса: иначе группа снова рассыпается.
   expect(launchers.filter((name) => !name.startsWith("app-"))).toEqual([]);
   // И у каждого есть напарник для другой платформы, кроме установки окружения:
-  // Build Tools с её winget и MSVC на Linux/macOS не ставятся.
+  // Build Tools с winget/MSVC и комбинированный Windows native build не имеют shell-версии.
   const missing = launchers
-    .filter((name) => !name.startsWith("app-tools"))
+    .filter((name) => !name.startsWith("app-tools") && !name.startsWith("app-update-build"))
     .map((name) => name.replace(/\.(bat|sh)$/, ""))
     .filter((base) => !launchers.includes(`${base}.bat`) || !launchers.includes(`${base}.sh`));
   expect([...new Set(missing)]).toEqual([]);

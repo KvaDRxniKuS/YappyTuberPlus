@@ -222,15 +222,6 @@ pub enum Param {
     /// Маска: 1 — маска применяется, 0 — объект рисуется целиком. Дробные
     /// значения смешивают оба варианта, поэтому маску можно плавно проявлять.
     Mask,
-    /// Деформация: смещение угла в процентах размера зоны (−100..100).
-    WarpTLx,
-    WarpTLy,
-    WarpTRx,
-    WarpTRy,
-    WarpBRx,
-    WarpBRy,
-    WarpBLx,
-    WarpBLy,
     /// Материал: шероховатость 0..1. По умолчанию −1 — «не задано», и тогда
     /// работает значение из инспектора. Так скрипт может менять поверхность,
     /// не перебивая настройку, пока сам этого не захочет.
@@ -248,7 +239,7 @@ pub enum Param {
 }
 
 impl Param {
-    pub const ALL: [Param; 27] = [
+    pub const ALL: [Param; 19] = [
         Param::X,
         Param::Y,
         Param::Rotation,
@@ -263,14 +254,6 @@ impl Param {
         Param::Speed,
         Param::Volume,
         Param::Mask,
-        Param::WarpTLx,
-        Param::WarpTLy,
-        Param::WarpTRx,
-        Param::WarpTRy,
-        Param::WarpBRx,
-        Param::WarpBRy,
-        Param::WarpBLx,
-        Param::WarpBLy,
         Param::Roughness,
         Param::Metallic,
         Param::Ao,
@@ -294,14 +277,6 @@ impl Param {
             Param::Speed => "speed",
             Param::Volume => "volume",
             Param::Mask => "mask",
-            Param::WarpTLx => "warpTLx",
-            Param::WarpTLy => "warpTLy",
-            Param::WarpTRx => "warpTRx",
-            Param::WarpTRy => "warpTRy",
-            Param::WarpBRx => "warpBRx",
-            Param::WarpBRy => "warpBRy",
-            Param::WarpBLx => "warpBLx",
-            Param::WarpBLy => "warpBLy",
             Param::Roughness => "roughness",
             Param::Metallic => "metallic",
             Param::Ao => "ao",
@@ -335,14 +310,6 @@ impl Param {
             // Маска: 1 — режет по контуру, 0 — объект целиком.
             "mask" => Param::Mask,
             // Углы деформации: те же имена, что в инспекторе вкладки «Объект».
-            "warpTLx" => Param::WarpTLx,
-            "warpTLy" => Param::WarpTLy,
-            "warpTRx" => Param::WarpTRx,
-            "warpTRy" => Param::WarpTRy,
-            "warpBRx" => Param::WarpBRx,
-            "warpBRy" => Param::WarpBRy,
-            "warpBLx" => Param::WarpBLx,
-            "warpBLy" => Param::WarpBLy,
             // Материал: абсолютные свойства поверхности и сила свечения.
             "roughness" => Param::Roughness,
             "metallic" => Param::Metallic,

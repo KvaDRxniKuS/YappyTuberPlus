@@ -118,7 +118,7 @@ test("маска работает только в рамке объекта, а 
   const shape = {
     id: "mask_shape_test", kind: "shape" as const, name: "Маска",
     parentId: null, image: null, script: "", width: 320, height: 220,
-    pivot: { x: 0.5, y: 0.5 }, base: { ...head.base }, enabled: true, warp: null,
+    pivot: { x: 0.5, y: 0.5 }, base: { ...head.base }, enabled: true,
     mask: null, media: null, shape: undefined,
   };
   const masked = {
@@ -170,23 +170,10 @@ test("маска работает только в рамке объекта, а 
   expect(area).toBeLessThan(1920 * 1080 / 4);
 });
 
-test("обычные спрайты с выключенными warp/mesh рисуются без их нормализации",async()=>{
-  const { defaultWarp }=await import("../../src/render/warp");
-  const { defaultMesh,meshEnabled }=await import("../../src/engine/mesh");
-  const preset=createDemoPreset();
-  const template=preset.objects.find(object=>object.kind==="sprite")!;
-  preset.objects=Array.from({length:200},(_,i)=>{
-    const object={...template,id:`sprite-${i}`,parentId:i?`sprite-${i-1}`:null,warp:defaultWarp()};
-    if(i%2===0) {
-      object.mesh=defaultMesh();
-      Object.defineProperty(object.mesh,"art",{get(){throw new Error("нормализация выключенной сетки");}});
-    }
-    Object.defineProperty(object.warp,"corners",{get(){throw new Error("миграция выключенного warp");}});
-    expect(meshEnabled(object)).toBe(false);
-    return object;
-  });
-  const frame=frameFor(preset,preset.objects.map(object=>object.id));
-  const {calls,context}=recordingContext();
-  drawRig(context,preset,frame,assets);
+test("обычные спрайты не требуют скрытых render meshes",()=>{
+  const preset=createDemoPreset(),template=preset.objects.find(o=>o.kind==="sprite")!;
+  preset.objects=Array.from({length:200},(_,i)=>({...template,id:`sprite-${i}`,parentId:null}));
+  const frame=frameFor(preset,preset.objects.map(o=>o.id));
+  const {calls,context}=recordingContext();drawRig(context,preset,frame,assets);
   expect(calls.filter(call=>call.startsWith("draw "))).toHaveLength(200);
 });

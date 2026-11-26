@@ -252,9 +252,7 @@ export function structureSignature(preset: RigPreset): string {
       object.mask ? [object.mask.kind, object.mask.shapeId, object.mask.points,
         sourceKey(object.mask.file), object.mask.origin, object.mask.invert, object.mask.feather] : null,
       object.artMesh ?? null, object.artPose ?? null,
-      object.mesh ?? null,
       object.deformParent ?? true,
-      object.warp ? [object.warp.enabled, object.warp.frame, object.warp.corners] : null,
     ]),
   });
 }

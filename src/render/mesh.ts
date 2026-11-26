@@ -4,7 +4,7 @@ import {TextureCache} from "./textureCache";
 import {reportResources} from "../engine/meter";
 import {enterRenderStage} from "../engine/renderProfile";
 import type { ObjectFrame, RigObject, Vec2 } from "../types";
-import { affineFromTriangles } from "./warp";
+import { affineFromTriangles } from "./triangleAffine";
 
 /*
  * Рендер сетки: картинка ложится на сцену треугольниками артмеша.
@@ -375,7 +375,7 @@ function drawWithWebgl(
   height: number,
   geometry: MeshGeometry,
 ): boolean {
-  if (glFailed) return false;
+  if (typeof document === "undefined" || glFailed) return false;
   if (!glState) glState = createGlState();
   if (!glState) {
     console.warn("WebGL2 недоступен: деформированные меши рисуются через медленный Canvas 2D. Проверьте аппаратное ускорение OBS/браузера.");

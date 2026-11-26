@@ -4,7 +4,8 @@ test("alpha generator captures authored shape, previews and applies only on expl
  await page.evaluate(async()=>{
   const reactPath="/node_modules/.vite/deps/react.js",rootPath="/node_modules/.vite/deps/react-dom_client.js";
   const componentPath="/src/components/ArtMeshGenerator.tsx",capturePath="/src/render/artMeshAlphaSource.ts",demoPath="/src/data/demoPreset.ts";
-  const [React,{createRoot},{ArtMeshGenerator},{captureArtAlpha},{createDemoPreset}]=await Promise.all([import(reactPath),import(rootPath),import(componentPath),import(capturePath),import(demoPath)]);
+  const [ReactModule,RootModule,{ArtMeshGenerator},{captureArtAlpha},{createDemoPreset}]=await Promise.all([import(reactPath),import(rootPath),import(componentPath),import(capturePath),import(demoPath)]);
+  const React=ReactModule.default??ReactModule;const {createRoot}=RootModule.default??RootModule;
   const object={...createDemoPreset().objects[0],id:"alpha-test",kind:"shape",width:40,height:40,shape:{draw:true,fill:"#fff",strokeWidth:0,items:[{id:"rect",kind:"rect",x:5,y:5,width:30,height:30,points:[],closed:true}]}};
   const container=document.createElement("div");document.body.append(container);
   (window as any).artApplied=null;

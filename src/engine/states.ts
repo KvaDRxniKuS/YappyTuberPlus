@@ -1,5 +1,4 @@
-import { regularGrid, resizeGrid } from "./mesh";
-import type { GridSpec, RigObject, Vec2 } from "../types";
+import type { RigObject, Vec2 } from "../types";
 
 /**
  * Состояния объекта — блок в скрипте, как «Поведение».
@@ -1127,46 +1126,6 @@ export function noPoints(points?: Record<string, Vec2> | null): boolean {
   return !points || !Object.keys(points).length;
 }
 
-/** Разница двух сеток по узлам: «что человек сдвинул» в долях зоны. */
-export function pointsFromGrids(from: GridSpec, to: GridSpec): Record<string, Vec2> {
-  const result: Record<string, Vec2> = {};
-  if (from.cols !== to.cols || from.rows !== to.rows) return result;
-  to.points.forEach((point, index) => {
-    const start = from.points[index];
-    if (!start) return;
-    const dx = Math.round((point.x - start.x) * 10000) / 10000;
-    const dy = Math.round((point.y - start.y) * 10000) / 10000;
-    if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return;
-    result[String(index)] = { x: dx, y: dy };
-  });
-  return result;
-}
-
-/**
- * Что записать в ключ из правки сетки на сцене.
- *
- * Дельты считаются от **авторской** формы, снятой при открытии вкладки: руками
- * человек двигает базу, а форму держит ключ. `null` — писать нечего или нельзя:
- *
- * - `previous` пуст — вкладка только открылась;
- * - форма не изменилась с прошлого кадра;
- * - **сменилась густота**: индексы узлов другие, дельт между ними не существует.
- *   Это правка авторской сетки, а не поза; ключи пересчитывает `remapStatesPoints`,
- *   который зовёт запись пресета.
- */
-export function gridRecordDelta(
-  author: GridSpec,
-  previous: GridSpec | null,
-  current: GridSpec,
-): Record<string, Vec2> | null {
-  if (!previous) return null;
-  if (JSON.stringify(current.rest) !== JSON.stringify(previous.rest)) return null;
-  if (current.cols !== author.cols || current.rows !== author.rows) return null;
-  const delta = pointsFromGrids(author, current);
-  if (samePoints(delta, pointsFromGrids(author, previous))) return null;
-  return delta;
-}
-
 /** Прибавка одних точек к другим: правка на сцене складывается с позой ключа. */
 export function addPoints(
   base: Record<string, Vec2> | undefined,
@@ -1211,50 +1170,6 @@ export function toPosePoints(points: Record<string, Vec2> | undefined): Record<s
 export function fromPosePoints(points: Record<string, PosePoint> | undefined): Record<string, Vec2> | undefined {
   if (!points) return undefined;
   return Object.fromEntries(Object.entries(points).map(([key, offset]) => [key, { x: offset[0], y: offset[1] }]));
-}
-
-/**
- * Перенос смещений ключа на другую густоту сетки.
- *
- * Меняется густота деформера — индексы узлов другие, и точки, записанные на
- * старой сетке, попали бы не туда. Смещения раскладываются билинейно, как и сама
- * форма (`resizeGrid`): ключ продолжает гнуть то же место картинки.
- */
-export function remapKeyPoints(
-  points: Record<string, PosePoint> | undefined,
-  from: GridSpec,
-  to: GridSpec,
-): Record<string, PosePoint> | undefined {
-  const deltas = fromPosePoints(points);
-  if (!deltas) return undefined;
-  if (from.cols === to.cols && from.rows === to.rows) return points;
-  // Сетка, в которой узлы стоят в самих дельтах: так билинейная выборка
-  // `resizeGrid` раскладывает смещения, а не положения.
-  const flat = regularGrid(from.cols, from.rows);
-  const spread = resizeGrid(
-    {
-      cols: from.cols,
-      rows: from.rows,
-      points: flat.points.map((_, index) => deltas[String(index)] ?? { x: 0, y: 0 }),
-    },
-    to.cols,
-    to.rows,
-  );
-  const next: Record<string, Vec2> = {};
-  spread.points.forEach((point, index) => {
-    next[String(index)] = point;
-  });
-  return toPosePoints(next);
-}
-
-/** Все ключи блока на новой густоте: точки не теряются при смене сетки. */
-export function remapStatesPoints(states: States, from: GridSpec, to: GridSpec): States {
-  return {
-    layers: states.layers.map((layer) => ({
-      ...layer,
-      poses: layer.poses.map((pose) => ({ ...pose, points: remapKeyPoints(pose.points, from, to) })),
-    })),
-  };
 }
 
 /** Совпадают ли две карты точек: по ним решается, писать ли ключ. */

@@ -25,7 +25,7 @@ export function replaceArtMeshes(preset:RigPreset,replacements:readonly ArtMeshR
  }
  return {...preset,objects:preset.objects.map(object=>{
   const artMesh=byId.get(object.id);if(!artMesh)return object;
-  const next={...object,artMesh,artPose:{},mesh:undefined,warp:undefined,...(enableInheritance&&object.parentId?{deformParent:true}:{})};
+  const next={...object,artMesh,artPose:{},...(enableInheritance&&object.parentId?{deformParent:true}:{})};
   const states=replaceArtStateMesh(artMesh,readStates(object.script)).states;
   return {...next,script:writeStates(object.script,states,next).script};
  })};
@@ -39,7 +39,7 @@ export function replaceArtObjectMesh(object:RigObject,mesh:ArtDeformation,dimens
  if(!artGenerationSupported(target))throw new Error("Invalid explicit mesh surface dimensions");
  const artMesh=readArtMesh(mesh),minimum=object.artMesh?.nextId??0;
  if(artMesh.nextId<minimum||artMesh.vertices.some(v=>Number(v.id.slice(1))<minimum))throw new Error("Replacement reuses vertex IDs");
- const next={...target,artMesh,artPose:{},mesh:undefined,warp:undefined};
+ const next={...target,artMesh,artPose:{}};
  const states=replaceArtStateMesh(artMesh,readStates(object.script)).states;
  return {...next,script:writeStates(object.script,states,next).script};
 }

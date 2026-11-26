@@ -535,3 +535,28 @@ artMesh ребёнка и явного deformParent=true; объектные б�
 старого cage не включают sampler/surface и production renderer их не импортирует.
 Старые тесты bend/mesh authoring относятся к удалённому API и ещё требуют замены;
 не объявляем полный suite зелёным. Legacy schema/state recording пока остаются.
+
+## Этап 23: удаление схемы и recording старой системы
+
+Удалены engine/mesh.ts (~1700 строк), meshClipboard.ts, render/warp.ts, старые
+Warp/ArtMesh/Grid/Mesh/Brush/Mirror типы. Общая affineFromTriangles выделена в
+triangleAffine.ts. Удалены gridRecordDelta и билинейный remap ключей, сеточные
+refs/onMesh в StatesPanel/RightPanel/App. Запись вершин теперь только stable-ID
+local offsets; копирование объекта владеет копией artMesh/artPose. Протокол сцены
+не хеширует старые mesh/warp. normalizePreset удаляет старые payload поля без
+миграции/создания геометрии; старые сцены без artMesh рисуются недеформированными.
+Исторический feature catalogue оставляет названия warp-параметров как историю
+поколений, но они удалены из TS/Rust built-in output channels (Param::ALL = 19).
+Rust source пока не компилировался здесь. Старые authoring tests удалены вместе с
+их API; общие matrix/render/overlay/state tests сохранены, mesh fixtures заменены
+на новый формат. Сторожи README и launcher specs приведены к реальным файлам;
+publish fixture генерирует свой паспорт вместо зависимости от устаревшего dist.
+Node-only renderer не запоминает отсутствие document как отказ настоящего GPU;
+mask scratch не переезжает между разными document (включая тестовые).
+
+**567 тестов в 84 browser-free файлах прошли одним запуском**, TypeScript и
+Vite bundling прошли. Browser впервые удалось запустить из npm-пакета Chromium
+в ignored .cache вместе с его NSS libs; alpha UI test прошёл после исправления
+CJS/ESM импорта React в тестовой harness. Это пока только alpha generator test,
+не утверждение о полной browser/native/OBS проверке. Ничего из browser-tools,
+бинарников и временных сборок в Git не добавляется.
