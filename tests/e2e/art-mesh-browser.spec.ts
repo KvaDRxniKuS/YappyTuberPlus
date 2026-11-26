@@ -111,3 +111,36 @@ test("rejected legacy file shows the blocking reason and keeps the current scene
  await expect(dialog).not.toContainText("Файл записан сборкой, которая знает больше этой");
  expect((await stored(page)).objects[0].artMesh).toEqual(current.objects[0].artMesh);
 });
+
+async function surfacePixel(page:Page){
+ return page.locator(".scene-viewport canvas").first().evaluate((element)=>{
+  const canvas=element as HTMLCanvasElement,w=canvas.clientWidth,h=canvas.clientHeight;
+  const zoom=Math.max(.05,Math.min((w-70)/400,(h-70)/300,2));
+  const x=(w-400*zoom)/2+130*zoom,y=(h-300*zoom)/2+105*zoom;
+  return [...canvas.getContext("2d")!.getImageData(Math.floor(x*canvas.width/w),Math.floor(y*canvas.height/h),1,1).data].slice(0,3);
+ });
+}
+test("structure eye immediately hides and restores pixels in stop and pause",async({page})=>{
+ await open(page,project(false));
+ await page.getByTitle("Стоп: нейтральная поза для расстановки, состояние анимации сбрасывается · Shift+K",{exact:true}).click();
+ await expect(page.locator(".status-stopped")).toBeVisible();
+ await expect.poll(()=>surfacePixel(page)).toEqual([255,255,255]);
+ const eye=page.locator(".tree-row").first().locator(".tree-eye");
+ await eye.click();await expect.poll(async()=>(await surfacePixel(page))[0]).toBeLessThan(200);
+ await eye.click();await expect.poll(()=>surfacePixel(page)).toEqual([255,255,255]);
+ // Leave stop, then enter ordinary pause; no ticks should be needed for the eye.
+ await page.getByTitle("Продолжить · K",{exact:true}).click();
+ await page.getByTitle("Пауза · K",{exact:true}).click();
+ await eye.click();await expect.poll(async()=>(await surfacePixel(page))[0]).toBeLessThan(200);
+ await eye.click();await expect.poll(()=>surfacePixel(page)).toEqual([255,255,255]);
+});
+test("hidden group children stay fully hidden rather than becoming stop ghosts",async({page})=>{
+ const preset=project(false),child=preset.objects[0];
+ preset.objects=[{...child,id:"root",kind:"group",name:"Группа"},{...child,parentId:"root"}];
+ await open(page,preset);
+ await page.getByTitle("Стоп: нейтральная поза для расстановки, состояние анимации сбрасывается · Shift+K",{exact:true}).click();
+ await expect.poll(()=>surfacePixel(page)).toEqual([255,255,255]);
+ const eye=page.locator(".tree-row").first().locator(".tree-eye");
+ await eye.click();await expect.poll(async()=>(await surfacePixel(page))[0]).toBeLessThan(70);
+ await eye.click();await expect.poll(()=>surfacePixel(page)).toEqual([255,255,255]);
+});

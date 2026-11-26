@@ -86,18 +86,21 @@ export function disabledIds(objects: RigObject[]): Set<string> {
  */
 export function applyEnabled(preset: RigPreset, frame: RigFrame): RigFrame {
   const disabled = disabledIds(preset.objects);
-  if (!disabled.size) return frame;
+  const previous=frame.enabledVisibility;
+  if (!disabled.size && !previous) return frame;
   let changed = false;
   const objects: Record<string, ObjectFrame> = {};
+  const hidden:Record<string,number>={};
   for (const [id, values] of Object.entries(frame.objects)) {
-    if (disabled.has(id) && values.visible !== 0) {
-      objects[id] = { ...values, visible: 0 };
-      changed = true;
-    } else {
-      objects[id] = values;
-    }
+    const source=previous?.[id]??values.visible;
+    const visible=disabled.has(id)?0:source;
+    if(disabled.has(id)&&source!==0)hidden[id]=source;
+    objects[id]=visible===values.visible?values:{...values,visible};
+    if(objects[id]!==values)changed=true;
   }
-  return changed ? { ...frame, objects } : frame;
+  const keys=Object.keys(hidden),oldKeys=Object.keys(previous??{});
+  const same=keys.length===oldKeys.length&&keys.every(id=>hidden[id]===previous?.[id]);
+  return changed||!same ? {...frame,objects,enabledVisibility:keys.length?hidden:undefined} : frame;
 }
 
 /**
@@ -174,12 +177,11 @@ export function prepareFrame(
  * затем по порядку объектов, как у движка до первого кадра.
  */
 export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
-  const disabled = disabledIds(preset.objects);
   const objects: Record<string, ObjectFrame> = {};
   for (const object of preset.objects) {
     objects[object.id] = {
       ...NEUTRAL_PARAMS,
-      visible: disabled.has(object.id) ? 0 : object.base.visible,
+      visible: object.base.visible,
       layer: object.base.layer,
     };
   }
@@ -188,7 +190,7 @@ export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
     .sort((a, b) => (resolveLayer(preset.objects, null, a) - resolveLayer(preset.objects, null, b))
       || frontness(paths.get(a.id), paths.get(b.id)))
     .map((object) => object.id);
-  return {
+  return applyEnabled(preset, {
     seq,
     time: 0,
     dt: 0,
@@ -198,5 +200,18 @@ export function neutralFrame(preset: RigPreset, seq = 0): RigFrame {
     texts: {},
     order,
     diagnostics: [],
-  };
+  });
+}
+
+/** Stop resets transforms/time, not script visibility. Structure eyes are applied
+ * after restoring the frozen pre-eye values, so hide/show remains reversible. */
+export function stoppedFrame(preset:RigPreset,live:RigFrame|null,seq=0):RigFrame {
+ const neutral=neutralFrame(preset,seq);
+ if(!live)return neutral;
+ const objects={...neutral.objects};
+ for(const object of preset.objects){
+  const values=live.objects[object.id],target=objects[object.id];
+  if(values&&target)objects[object.id]={...target,visible:object.base.visible===0?0:(live.enabledVisibility?.[object.id]??values.visible)};
+ }
+ return applyEnabled(preset,{...neutral,objects,enabledVisibility:undefined,texts:{...live.texts}});
 }

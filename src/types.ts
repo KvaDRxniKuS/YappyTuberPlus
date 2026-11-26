@@ -569,6 +569,9 @@ export interface MediaCue {
 }
 
 export interface RigFrame {
+  /** Editor-only values hidden by the structure eye (before enabled masking).
+   * Sparse and absent in ordinary frames; allows reversible edits while frozen. */
+  enabledVisibility?: Record<string, number>;
   seq: number;
   time: number;
   dt: number;

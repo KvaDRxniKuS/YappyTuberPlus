@@ -1,6 +1,6 @@
 import { prepareRigMeshes } from "../render/rigCanvas";
 import type { BasePose, OverlayConfig, RigFrame, RigPreset } from "../types";
-import { neutralFrame } from "../engine/frame";
+import { stoppedFrame } from "../engine/frame";
 import { nextFrameSeq } from "../engine/frameSeq";
 import { readAssetBlob, assetRef, inlineSource } from "../engine/assets";
 import type { BusKind, CompositeBus, TransportStats } from "./bus";
@@ -193,14 +193,7 @@ export class OverlayHost {
     // Номер берём из того же счётчика, что и живые кадры: иначе свой счётчик
     // хоста мог совпасть с номером следующего живого кадра, и оверлей отбросил
     // бы его как повтор — источник замирал бы ровно после «Стопа».
-    const frame=neutralFrame(preset,nextFrameSeq());
-    if(this.lastFrame) {
-      for(const object of preset.objects) {
-        const live=this.lastFrame.objects[object.id],target=frame.objects[object.id];
-        if(live&&target&&target.visible!==0) target.visible=live.visible;
-      }
-      frame.texts={...this.lastFrame.texts};
-    }
+    const frame=stoppedFrame(preset,this.lastFrame,nextFrameSeq());
     this.bus.post({
       t: "frame", sender: this.id, sceneVersion: this.sceneVersion,
       frame, meshes:prepareRigMeshes(preset,frame),

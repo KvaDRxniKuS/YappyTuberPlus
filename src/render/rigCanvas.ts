@@ -1,3 +1,4 @@
+import {disabledIds} from "../engine/frame";
 import {artFramePoints} from "../engine/artMeshPlayback";
 import {enterRenderStage} from "../engine/renderProfile";
 import {observeFrameRetention} from "../engine/frameRetention";
@@ -304,10 +305,11 @@ export function drawRig(
   // раньше светильника, всё равно должен получить от него объём. Условия те же,
   // что были у прохода по кадру: скрытое, прозрачное и нулевое света не даёт.
   const objects = orderedObjects(preset, frame);
+  const disabled=disabledIds(preset.objects);
   // Collect lights before drawing without allocating a wrapper record and
   // matrix for every object on every frame. Only lights contribute here.
   if (view) for (const object of objects) {
-    if (object.kind !== "light") continue;
+    if (object.kind !== "light" || disabled.has(object.id)) continue;
     const values = frame?.objects[object.id] || staticValues(object);
     const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));
     if (values.visible !== 0 && opacity !== 0 && values.sizeX !== 0 && values.sizeY !== 0) {
@@ -315,6 +317,7 @@ export function drawRig(
     }
   }
   for (const object of objects) {
+    if(disabled.has(object.id))continue;
     const values = frame?.objects[object.id] || staticValues(object);
     const ghost = values.visible === 0 && options.ghosts === true && scriptHidden(object, values);
     const opacity = Math.min(1, Math.max(0, object.base.opacity * values.opacity));

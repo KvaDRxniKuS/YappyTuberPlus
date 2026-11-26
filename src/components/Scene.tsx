@@ -1,3 +1,4 @@
+import {disabledIds} from "../engine/frame";
 import {ArtMeshPasteDialog} from "./ArtMeshPasteDialog";
 import {holdArtMesh,heldArtMesh,type ArtMeshClip,type ArtMeshPasteScale} from "../engine/artMeshClipboard";
 import {captureArtAlpha} from "../render/artMeshAlphaSource";
@@ -645,8 +646,9 @@ export function Scene(props: SceneProps) {
     const frame = previewFrame(current.frameRef.current, current.preset.objects, current.preview);
     const shown = current.preset;
     const inheritedFor=createParentMeshTransforms(shown,frame,artFramePoints(shown,frame,undefined,current.preview));
+    const disabled=disabledIds(shown.objects);
     const selected = shown.objects.find((item) => item.id === current.primaryId);
-    if (selected?.kind === "shape" && (!accept || accept(selected))) {
+    if (selected?.kind === "shape" && !disabled.has(selected.id) && (!accept || accept(selected))) {
       const values = frame?.objects[selected.id] || staticValues(selected);
       const box=selected.shape?shapeContentBounds(selected.shape):null;
       const center = transformPoint(objectMatrix(selected, values),box?box.x+box.width/2-selected.pivot.x*selected.width:0,box?box.y+box.height/2-selected.pivot.y*selected.height:0);
@@ -659,6 +661,7 @@ export function Scene(props: SceneProps) {
       // Невидимая фигура-маска не должна перехватывать клики у спрайтов под
       // собой: её видно в дереве, там же она и выбирается.
       if (object.kind === "shape" && object.shape?.draw === false) continue;
+      if(disabled.has(object.id))continue;
       const values = frame?.objects[object.id] || staticValues(object);
       // Призрак виден на сцене, значит по нему можно и щёлкнуть: иначе
       // полупрозрачный спрайт выглядел бы некликабельным.

@@ -619,3 +619,19 @@ presetCompatibility знал только формат: получался canOp
 Проверено: 15 targeted protocol/math tests, browser upload/rejection test реального
 App, TypeScript и Vite bundling. Legacy runtime не восстановлен, автоматической
 конвертации нет.
+
+## Исправление глаз структуры в стопе/паузе
+
+Замороженный кадр раньше держал прошлый visible и обновлялся только от симуляции;
+повторное включение также не могло восстановить значение, уже затёртое enabled.
+applyEnabled теперь сохраняет sparse pre-eye visibility только для реально
+замаскированных объектов. В паузе/стопе флаг структуры переобрабатывает готовый
+кадр без tick, продвижения времени, пересчёта формул/physics. stoppedFrame общий
+для редактора и overlay; скрытые формулой объекты не становятся видимыми от глаза.
+Renderer/hit-test дополнительно исключают выключенные поддеревья: дети скрытой
+группы не всплывают стоп-призраками. Поле enabledVisibility — frontend-only,
+опциональное, не требует новой сборки ядра само по себе.
+Проверено: 573 browser-free tests одним запуском, TypeScript/Vite/diff-check;
+2 browser pixel tests реального App (hide/show в стопе и паузе; скрытие/возврат
+группы с потомком); overlay transport regression для frozen hide/show.
+Windows WebView2 и OBS нативно здесь не проверялись.

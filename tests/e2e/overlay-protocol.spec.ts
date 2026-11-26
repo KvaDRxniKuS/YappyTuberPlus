@@ -329,3 +329,26 @@ test("готовые меши доставляются атомарно вмес
     expect(client.meshes).toBe(held);
   } finally {client.dispose();host.dispose();hostBus.close();viewerBus.close();}
 });
+
+test("frozen overlay hide/show restores the pre-eye visibility",async()=>{
+ const {neutralFrame,applyEnabled}=await import("../../src/engine/frame");
+ const {nextFrameSeq}=await import("../../src/engine/frameSeq");
+ const {hostBus,viewerBus}=channelPair(`frozen-eye-${Date.now()}`);
+ const host=new OverlayHost(hostBus,{hostName:"frozen-eye"}),client=new OverlayClient(viewerBus,{});
+ try{
+  const preset=createDemoPreset(),id=preset.objects[0].id;
+  host.start();host.setPreset(preset);client.start();
+  await expect.poll(()=>host.viewerIds.length).toBe(1);
+  const visible=neutralFrame(preset,nextFrameSeq());
+  visible.objects[id]={...visible.objects[id],visible:1};
+  host.setFrozen(true,preset,visible);
+  await expect.poll(()=>client.frame?.objects[id]?.visible).toBe(1);
+  const hidden={...preset,objects:preset.objects.map(o=>o.id===id?{...o,enabled:false}:o)};
+  host.setPreset(hidden);
+  await expect.poll(()=>client.frame?.objects[id]?.visible).toBe(0);
+  // Mirror an editor refresh: the last frame itself is now enabled-masked.
+  const masked={...applyEnabled(hidden,visible),seq:nextFrameSeq()};host.pushFrame(masked);
+  host.setPreset(preset);
+  await expect.poll(()=>client.frame?.objects[id]?.visible).toBe(1);
+ }finally{client.dispose();host.dispose();hostBus.close();viewerBus.close();}
+});

@@ -200,3 +200,23 @@ test("видимость: битые записи блока отбрасыва�
   // Пустой диапазон — не растяжение: иначе объект стал бы «всегда виден».
   expect(readVisibilitySources([{ kind: "signal", name: "a", range: true, min: 2, max: 2 }])[0].range).toBe(false);
 });
+
+test("frozen structure visibility is reversible without changing script-hidden channels",async()=>{
+ const {applyEnabled,stoppedFrame}=await import("../../src/engine/frame");
+ const preset=createDemoPreset();const target=preset.objects[0];
+ const raw=neutralFrame(preset);raw.objects[target.id]={...raw.objects[target.id],x:17,visible:1};
+ const hiddenPreset={...preset,objects:preset.objects.map(o=>o.id===target.id?{...o,enabled:false}:o)};
+ const hidden=applyEnabled(hiddenPreset,raw);
+ expect(hidden.objects[target.id].visible).toBe(0);
+ expect(hidden.enabledVisibility?.[target.id]).toBe(1);
+ expect(applyEnabled(hiddenPreset,hidden)).toBe(hidden);
+ const shown=applyEnabled(preset,hidden);
+ expect(shown.objects[target.id].visible).toBe(1);expect(shown.objects[target.id].x).toBe(17);
+ expect(shown.time).toBe(raw.time);expect(shown.enabledVisibility).toBeUndefined();
+ const stopped=stoppedFrame(hiddenPreset,hidden);
+ expect(stopped.objects[target.id].visible).toBe(0);
+ expect(applyEnabled(preset,stopped).objects[target.id].visible).toBe(1);
+ const scriptHidden={...raw,objects:{...raw.objects,[target.id]:{...raw.objects[target.id],visible:0}}};
+ expect(applyEnabled(preset,applyEnabled(hiddenPreset,scriptHidden)).objects[target.id].visible).toBe(0);
+ expect(raw.objects[target.id].visible).toBe(1);
+});

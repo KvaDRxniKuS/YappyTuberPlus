@@ -6,7 +6,7 @@ import { readStates, watchNames } from "./states";
 import { getEngineBackend, type EngineBackend, type EngineResponse } from "./backend";
 import { startNativeSchedule, type NativeSchedule } from "./nativeSchedule";
 import type { ScriptScope } from "./scripts";
-import { neutralFrame, prepareFrame } from "./frame";
+import { applyEnabled, stoppedFrame, prepareFrame } from "./frame";
 import { moduleConstants, presetGlobals } from "../modules/presets";
 import { frameProduced } from "./frameSignal";
 import { countArrival, countFrame, countDelivery } from "./meter";
@@ -251,6 +251,17 @@ export function useRigEngine(
     nativeRef.current?.pause(paused);
   }, [paused]);
 
+  // No engine ticks arrive in pause/stop. Reapply only the structure eye to
+  // frozen source visibility, preserving time, pose, vars and script state.
+  useEffect(()=>{
+    if(!paused||!frameRef.current)return;
+    const current=frameRef.current,next=applyEnabled(presetRef.current,current);
+    if(next===current)return;
+    const refreshed={...next,seq:nextFrameSeq()};
+    frameRef.current=refreshed;setSnapshot(refreshed);
+    frameSinkRef?.current?.(refreshed);frameProduced();
+  },[paused,preset.objects,frameSinkRef]);
+
   // Смена лимитера FPS: Rust пересчитывает интервал, поток не перезапускается.
   useEffect(() => {
     const schedule = nativeRef.current;
@@ -379,23 +390,7 @@ export function useRigEngine(
    * иерархию видимости и выключенные группы снова показывались бы.
    */
   const resetTimeline = useCallback(() => {
-    const neutral = neutralFrame(presetRef.current);
-    // Видимость на стоп-кадре берём с последнего живого кадра: она посчитана по
-    // текущим входам (рот в тишине, глаз на моргании). Сцена покажет такие
-    // спрайты «призраками», а не уберёт их совсем — иначе при расстановке
-    // непонятно, есть объект или его нет.
-    const live = frameRef.current;
-    if (live) {
-      for (const object of presetRef.current.objects) {
-        const values = live.objects[object.id];
-        const target = neutral.objects[object.id];
-        if (values && target) neutral.objects[object.id] = { ...target, visible: values.visible };
-      }
-      // Текст скрипта тоже замораживается вместе с кадром: иначе объект мигнул
-      // бы шаблоном. Базовое значение вернёт «Продолжить» — ядро снимает
-      // переопределение по reset_clock.
-      neutral.texts = { ...live.texts };
-    }
+    const neutral = stoppedFrame(presetRef.current,frameRef.current);
     neutral.seq = nextFrameSeq();
     frameRef.current = neutral;
     frameSinkRef?.current?.(neutral);
