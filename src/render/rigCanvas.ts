@@ -2,7 +2,6 @@ import {artFramePoints} from "../engine/artMeshPlayback";
 import {enterRenderStage} from "../engine/renderProfile";
 import {observeFrameRetention} from "../engine/frameRetention";
 import { createParentMeshTransforms } from "./bend";
-import { defaultMesh } from "../engine/mesh";
 import type { EnvironmentSpec, ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { NEUTRAL_PARAMS } from "../engine/frame";
 import { resolveLayer } from "../engine/layers";
@@ -11,9 +10,7 @@ import { DEFAULT_MEDIA, MediaAssets, MaskMedia } from "./media";
 import { assetUrl } from "../engine/assets";
 import { drawTextObject, textContent, type TextChannel } from "./text";
 import { defaultShape, traceItem, tracePath, traceShape } from "./shape";
-import { drawWarpedImage, warpEnabled, warpQuad } from "./warp";
 import { drawMeshImage, meshSurfaceGeometry, meshQuad, type MeshGeometry } from "./mesh";
-import { meshEnabled } from "../engine/mesh";
 import { paintLight } from "./light";
 import { DEFAULT_LIGHT, lightHeight } from "../types";
 import { forgetResources, reportResources } from "../engine/meter";
@@ -220,8 +217,8 @@ export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Ma
   for(const object of preset.objects) {
     if(object.kind!=="sprite"&&object.kind!=="shape"&&object.kind!=="media") continue;
     const inherited=inheritedFor?.(object);
-    if(!inherited && !meshEnabled(object)) continue;
-    const surface=meshEnabled(object)?object:{...object,mesh:{...defaultMesh(),enabled:true}};
+    if(!object.artMesh) continue;
+    const surface=object;
     const geometry=meshSurfaceGeometry(surface,object.width,object.height,frame?.objects[object.id],points?.get(object.id),inherited);
     if(geometry) result[object.id]=geometry;
   }
@@ -549,10 +546,8 @@ function drawShaded(
 function surfaceBounds(object:RigObject,frame:RigFrame|null,options:DrawRigOptions):Vec2[]|null {
   if(options.preparedMeshes) return options.preparedMeshes[object.id]?.targets ?? null;
   const inherited=options.meshTransform?.(object);
-  if(!inherited && !meshEnabled(object)) return warpEnabled(object)?warpQuad(object,frame?.objects[object.id]):null;
-  const surface=inherited && !meshEnabled(object) ? {...object,mesh:{...defaultMesh(),enabled:true}} : object;
-  const geometry=meshSurfaceGeometry(surface,surface.width,surface.height,frame?.objects[surface.id],options.meshPoints?.get(surface.id),inherited);
-  return geometry?.targets.length ? geometry.targets : warpEnabled(object) ? warpQuad(object,frame?.objects[object.id]) : null;
+  if(!object.artMesh) return null;
+  return meshSurfaceGeometry(object,object.width,object.height,frame?.objects[object.id],options.meshPoints?.get(object.id),inherited)?.targets ?? null;
 }
 
 /** Обычная отрисовка объекта: трансформа, содержимое, без маски. */
@@ -592,15 +587,12 @@ function drawObjectContent(
 
   const prepared=options.preparedMeshes?.[object.id];
   const deform = options.preparedMeshes ? undefined : options.meshTransform?.(object);
-  // A child without its own enabled deformer still has a triangulated surface.
-  // This is a render-only mesh: no child control points or saved data are moved.
-  if ((deform || prepared) && !meshEnabled(object)) object = { ...object, mesh: { ...defaultMesh(), enabled: true } };
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
   if (object.kind === "shape") {
     ctx.save();
     ctx.translate(left, top);
-    if (meshEnabled(object)) {
+    if (!!object.artMesh) {
       const image = shapeSurface(object);
       drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform, prepared);
     } else drawShapeObject(ctx, object);
@@ -631,19 +623,12 @@ function drawObjectContent(
       : object.height;
     const boxLeft = -object.pivot.x * width;
     const boxTop = -object.pivot.y * height;
-    if (picture && meshEnabled(object)) {
+    if (picture && !!object.artMesh) {
       // Сетка считается в координатах картинки: переносим начало туда, где у
       // медиа-объекта начинается его рамка.
       ctx.save();
       ctx.translate(boxLeft, boxTop);
       drawMeshImage(ctx, picture, object, width, height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform, prepared);
-      ctx.restore();
-    } else if (picture && warpEnabled(object)) {
-      // Деформация крайних точек: остаётся для объектов, которые ещё не
-      // перевели на сетку.
-      ctx.save();
-      ctx.translate(boxLeft, boxTop);
-      drawWarpedImage(ctx, picture, object, width, height, frame?.objects[object.id]);
       ctx.restore();
     } else if (picture) {
       ctx.drawImage(picture, boxLeft, boxTop, width, height);
@@ -656,15 +641,10 @@ function drawObjectContent(
   }
   const image = assets.get(object.image);
   if (image?.complete && image.naturalWidth > 0) {
-    if (meshEnabled(object)) {
+    if (!!object.artMesh) {
       ctx.save();
       ctx.translate(left, top);
       drawMeshImage(ctx, image, object, object.width, object.height, frame?.objects[object.id], options.meshPoints?.get(object.id), deform, prepared);
-      ctx.restore();
-    } else if (warpEnabled(object)) {
-      ctx.save();
-      ctx.translate(left, top);
-      drawWarpedImage(ctx, image, object, object.width, object.height, frame?.objects[object.id]);
       ctx.restore();
     } else {
       const endImageProfile=enterRenderStage("image");
@@ -907,8 +887,8 @@ function paintMask(
     ctx.translate(-shape.pivot.x * shape.width, -shape.pivot.y * shape.height);
     const prepared=options.preparedMeshes?.[shape.id];
     const inherited=options.preparedMeshes ? undefined : options.meshTransform?.(shape);
-    if(meshEnabled(shape) || inherited || prepared) {
-      const surface=meshEnabled(shape)?shape:{...shape,mesh:{...defaultMesh(),enabled:true}};
+    if(!!shape.artMesh || inherited || prepared) {
+      const surface=shape;
       drawMeshImage(ctx,shapeSurface(shape,true),surface,shape.width,shape.height,values,options.meshPoints?.get(shape.id),inherited,prepared);
       return;
     }

@@ -1,9 +1,7 @@
 import { shapeContentBounds } from "./shape";
 import type { ObjectFrame, RigObject, RigPreset } from "../types";
 import { type Affine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
-import { warpEnabled, warpQuad } from "./warp";
 import { meshQuad } from "./mesh";
-import { meshEnabled } from "../engine/mesh";
 
 export interface Point { x: number; y: number }
 
@@ -31,7 +29,7 @@ export function spriteBounds(object: RigObject, matrix: Affine): Point[] {
 export function objectOutline(object: RigObject, values: ObjectFrame, matrix?: Affine): Point[] {
   if(object.kind==="shape" && object.shape && !shapeContentBounds(object.shape)) return [];
   const deformed = object.kind !== "group" && object.kind !== "shape"
-    && (meshEnabled(object) || warpEnabled(object));
+    && !!object.artMesh;
   if (!deformed) {
     return spriteBounds(object, matrix ?? objectMatrix(object, values));
   }
@@ -39,7 +37,7 @@ export function objectOutline(object: RigObject, values: ObjectFrame, matrix?: A
   const left = -object.pivot.x * object.width;
   const top = -object.pivot.y * object.height;
   // Сетка может увести картинку за рамку: границы считаются по треугольникам.
-  const quad = meshEnabled(object) ? meshQuad(object, values) : warpQuad(object, values);
+  const quad = meshQuad(object, values);
   return quad.map((point) => transformPoint(transform, left + point.x, top + point.y));
 }
 

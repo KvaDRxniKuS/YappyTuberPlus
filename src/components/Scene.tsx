@@ -41,9 +41,7 @@ import { sameVisualFrame } from "../render/frameChanges";
 import { countDraw, countSceneWake } from "../engine/meter";
 
 import { penAction, shapeContentBounds, smoothingOf, traceItem } from "../render/shape";
-import { pointInQuad, warpQuad, warpEnabled } from "../render/warp";
-import { meshSurfaceGeometry, meshQuad } from "../render/mesh";
-import { defaultMesh, meshEnabled } from "../engine/mesh";
+import { meshSurfaceGeometry } from "../render/mesh";
 
 
 export type SceneTool =
@@ -670,8 +668,8 @@ export function Scene(props: SceneProps) {
       const left = -object.pivot.x * object.width;
       const top = -object.pivot.y * object.height;
       const inherited = inheritedFor?.(object);
-      if (inherited) {
-        const surface = meshEnabled(object) ? object : { ...object, mesh: { ...defaultMesh(), enabled: true } };
+      if (object.artMesh) {
+        const surface = object;
         const geometry = meshSurfaceGeometry(surface, object.width, object.height, values, stateOffsets(object.id),inherited);
         if (geometry) {
           const bent = geometry;
@@ -680,15 +678,6 @@ export function Scene(props: SceneProps) {
             if (pointInPolygon(content, bent.triangles.slice(i, i + 3).map((id) => bent.targets[id]))) return object;
           }
         }
-        continue;
-      }
-      if (meshEnabled(object) || warpEnabled(object)) {
-        // Деформированный спрайт — не прямоугольник: угол, который уехал,
-        // больше не должен ловить мышь, а вытянутый — наоборот. У сетки
-        // границы идут по треугольникам.
-        const content = { x: local.x - left, y: local.y - top };
-        const quad = meshEnabled(object) ? meshQuad(object, values) : warpQuad(object, values);
-        if (pointInQuad(content, quad)) return object;
         continue;
       }
       const contentBounds=object.kind==="shape"&&object.shape?shapeContentBounds(object.shape):null;

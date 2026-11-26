@@ -520,3 +520,18 @@ Chromium и Cargo всё ещё отсутствуют, public WASM/dist не о
 в App/StatesPanel/states, старые типы/fixtures/clipboard modules и согласовать
 поведение старых demo presets без compatibility engine. Этот этап НЕ объявляет
 старый runtime удалённым: он пока ещё используется при чтении старых объектов.
+
+## Этап 22: единственный runtime поверхностей
+
+Удалены cage/zone sampling, source tessellation caches, numeric node picking и
+bendFrame (перенос центра ребёнка). meshGeometry/meshSurfaceGeometry теперь
+возвращают только явный artMesh. rigCanvas, bounds и Scene больше не включают
+warp fallback и не создают render-only defaultMesh ребёнку. Наследование требует
+artMesh ребёнка и явного deformParent=true; объектные базы не изгибаются.
+Хит-тест сцены использует реальные треугольники, включая пустоты, и state offsets
+даже без деформации родителем.
+
+21 целевой тест, TypeScript, Vite bundling прошли. Добавлены проверки, что поля
+старого cage не включают sampler/surface и production renderer их не импортирует.
+Старые тесты bend/mesh authoring относятся к удалённому API и ещё требуют замены;
+не объявляем полный suite зелёным. Legacy schema/state recording пока остаются.
