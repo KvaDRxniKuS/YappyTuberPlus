@@ -1,3 +1,4 @@
+import {artSymmetryPairs,mirrorArtDeltas} from "../engine/artMeshSymmetry";
 import {artFramePoints,artStateOffsets} from "../engine/artMeshPlayback";
 import {addArtOffsets} from "../engine/artMeshRuntime";
 import {ArtMeshGenerator} from "./ArtMeshGenerator";
@@ -262,10 +263,11 @@ export function Scene(props: SceneProps) {
   const [artGenerator,setArtGenerator]=useState(false);
   const [artBrush,setArtBrush]=useState(false);
   const [artRadius,setArtRadius]=useState(80);
-  const artToolRef=useRef({brush:artBrush,radius:artRadius});
-  artToolRef.current={brush:artBrush,radius:artRadius};
+  const [artSymmetry,setArtSymmetry]=useState<"off"|"x"|"y">("off");
+  const artToolRef=useRef({brush:artBrush,radius:artRadius,symmetry:artSymmetry});
+  artToolRef.current={brush:artBrush,radius:artRadius,symmetry:artSymmetry};
   const artSelection=useRef<{objectId:string;ids:Set<string>}>({objectId:"",ids:new Set()});
-  const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number}>;cursor:Vec2}|null>(null);
+  const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number}>;cursor:Vec2;symmetry?:{axis:"x"|"y";pairs:Map<string,string>}}|null>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
   /**
@@ -469,6 +471,18 @@ export function Scene(props: SceneProps) {
     }
     const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
     if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt,createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget),artSelection.current.objectId===artTarget.id?artSelection.current.ids:undefined);
+    if(artTarget?.artMesh&&(showGrid||showArt)&&artToolRef.current.symmetry!=="off"){
+      const axis=artToolRef.current.symmetry;
+      const matrix=objectMatrix(artTarget,frame?.objects[artTarget.id]??staticValues(artTarget));
+      const deform=createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget);
+      ctx.save();ctx.strokeStyle="#d6a2ed";ctx.lineWidth=1/zoom;ctx.setLineDash([5/zoom,4/zoom]);ctx.beginPath();
+      for(let i=0;i<=32;i++){
+        const source=axis==="x"?{x:artTarget.width/2,y:artTarget.height*i/32}:{x:artTarget.width*i/32,y:artTarget.height/2};
+        const p=deform?deform(source):source;
+        const world=transformPoint(matrix,p.x-artTarget.pivot.x*artTarget.width,p.y-artTarget.pivot.y*artTarget.height);
+        if(i)ctx.lineTo(world.x,world.y);else ctx.moveTo(world.x,world.y);
+      }ctx.stroke();ctx.restore();
+    }
     if(artTarget?.artMesh&&(showGrid||showArt)&&artToolRef.current.brush&&hover.current){
       ctx.save();ctx.strokeStyle="#b3e5db";ctx.lineWidth=1/zoom;ctx.beginPath();ctx.arc(hover.current.x,hover.current.y,artToolRef.current.radius,0,Math.PI*2);ctx.stroke();ctx.restore();
     }
@@ -627,7 +641,7 @@ export function Scene(props: SceneProps) {
 
   useEffect(() => {
     markDirty("scene-props");
-  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview, meshBoth, artBrush, artRadius]);
+  }, [props.preset, props.selectedIds, props.primaryId, props.showGrid, props.tool, props.bounds, props.pivots, props.ghosts, props.pen, props.preview, meshBoth, artBrush, artRadius, artSymmetry]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
@@ -1014,6 +1028,9 @@ export function Scene(props: SceneProps) {
             {meshTarget.artMesh&&<>
               <button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>setArtBrush(v=>!v)}><Brush size={15}/></button>
               {artBrush&&<label title="Радиус кисти в пикселях сцены">Радиус <input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius} style={{width:55}} onChange={e=>setArtRadius(Math.min(1000,Math.max(1,Number(e.target.value)||1)))}/></label>}
+              <select className="tool-select" aria-label="Симметрия артмеша" title="Симметрия по базовой геометрии относительно центра объекта; без создания новых вершин" value={artSymmetry} onChange={e=>setArtSymmetry(e.target.value as "off"|"x"|"y")}>
+                <option value="off">Без симметрии</option><option value="x">Лево ↔ право</option><option value="y">Верх ↔ низ</option>
+              </select>
               <button title="Выделить все вершины; Shift+клик — добавить/убрать вершину" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set(meshTarget.artMesh!.vertices.map(v=>v.id))};markDirty();}}>Все вершины</button>
               <button title="Снять выделение вершин" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}
@@ -1276,7 +1293,9 @@ export function Scene(props: SceneProps) {
               if(!artBrush&&nearest&&!selected.has(nearest)){selected.clear();selected.add(nearest);}
               if(!artBrush&&!nearest){selected.clear();markDirty();return;}
               const vertices=candidates.filter(v=>artBrush?v.weight>0:selected.has(v.id)).map(v=>({...v,weight:artBrush?v.weight:1}));
-              if(vertices.length){current.onDragStart();artDrag.current={object:artObject,matrix,mode:rest?"rest":"pose",deform,vertices,cursor:artEditorPoint(artObject,point,matrix)};markDirty();}
+              if(vertices.length){
+                const symmetry=artSymmetry==="off"?undefined:{axis:artSymmetry,pairs:artSymmetryPairs(artObject.artMesh,{axis:artSymmetry,at:(artSymmetry==="x"?artObject.width:artObject.height)/2})};
+                current.onDragStart();artDrag.current={object:artObject,matrix,mode:rest?"rest":"pose",deform,vertices,cursor:artEditorPoint(artObject,point,matrix),symmetry};markDirty();}
               return;
             }
             if (current.pen) {
@@ -1544,7 +1563,8 @@ export function Scene(props: SceneProps) {
                 if(local)vertex.seed=local;
                 deltas[vertex.id]={x:vertex.seed.x-vertex.start.x,y:vertex.seed.y-vertex.start.y};
               }
-              const next=editArtVertices(drag.object.artMesh!,drag.object.artPose??{},deltas,drag.mode);
+              const mirrored=drag.symmetry?mirrorArtDeltas(deltas,drag.symmetry.pairs,drag.symmetry.axis):deltas;
+              const next=editArtVertices(drag.object.artMesh!,drag.object.artPose??{},mirrored,drag.mode);
               propsRef.current.onArtMesh(drag.object.id,next.mesh,next.pose);return;
             }
             // Курсор помним всегда: кисть показывает свой радиус, даже когда не
