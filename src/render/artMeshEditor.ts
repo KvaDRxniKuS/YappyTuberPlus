@@ -13,11 +13,40 @@ export function editArtVertex(mesh:ArtDeformation,pose:ArtOffsets,id:string,star
  if(mode==="rest")return {mesh:moveArtRest(mesh,id,{x:vertex.rest.x+delta.x,y:vertex.rest.y+delta.y}),pose};
  const before=pose[id]??{x:0,y:0};return {mesh,pose:{...pose,[id]:{x:before.x+delta.x,y:before.y+delta.y}}};
 }
-export function drawArtEditor(ctx:CanvasRenderingContext2D,object:RigObject,values:Parameters<typeof objectMatrix>[1],zoom:number,rest:boolean){
+export function drawArtEditor(ctx:CanvasRenderingContext2D,object:RigObject,values:Parameters<typeof objectMatrix>[1],zoom:number,rest:boolean,deform?:ArtEditorDeform){
  const mesh=object.artMesh;if(!mesh)return;
  const matrix=objectMatrix(object,values);
- const points=new Map(mesh.vertices.map(v=>{const p=rest?v.rest:artPosition(v,object.artPose);return [v.id,transformPoint(matrix,p.x-object.pivot.x*object.width,p.y-object.pivot.y*object.height)] as const;}));
+ const points=new Map(mesh.vertices.map(v=>{const source=rest?v.rest:artPosition(v,object.artPose);const p=deform?deform(source):source;return [v.id,transformPoint(matrix,p.x-object.pivot.x*object.width,p.y-object.pivot.y*object.height)] as const;}));
  ctx.save();ctx.lineWidth=1/zoom;ctx.strokeStyle=rest?"#82d5c1":"#f0d77a";ctx.fillStyle=ctx.strokeStyle;
  for(const face of mesh.triangles){ctx.beginPath();face.forEach((id,i)=>{const p=points.get(id)!;if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});ctx.closePath();ctx.stroke();}
  for(const p of points.values()){ctx.beginPath();ctx.arc(p.x,p.y,3/zoom,0,Math.PI*2);ctx.fill();}ctx.restore();
+}
+
+export type ArtEditorDeform=(point:Vec2)=>Vec2;
+/** Locally invert the actual parent sampler, seeded by the grabbed vertex.
+ * A folded surface has no unique global inverse. Follow the nearby branch and
+ * reject singular/non-converging steps rather than writing an arbitrary pose. */
+export function inverseArtEditorPoint(target:Vec2,seed:Vec2,deform?:ArtEditorDeform):Vec2|null {
+ const finite=(p:Vec2)=>Number.isFinite(p.x)&&Number.isFinite(p.y);
+ if(!finite(target)||!finite(seed))return null;
+ if(!deform)return {...target};
+ let point={...seed};
+ for(let iteration=0;iteration<24;iteration++){
+  const shown=deform(point);if(!finite(shown))return null;
+  const dx=target.x-shown.x,dy=target.y-shown.y,error=Math.hypot(dx,dy);
+  if(error<1e-5)return point;
+  const h=1e-3;
+  const px=deform({x:point.x+h,y:point.y}),py=deform({x:point.x,y:point.y+h});
+  const a=(px.x-shown.x)/h,b=(px.y-shown.y)/h,c=(py.x-shown.x)/h,d=(py.y-shown.y)/h;
+  const determinant=a*d-b*c;
+  if(!Number.isFinite(determinant)||Math.abs(determinant)<1e-10)return null;
+  const step={x:(d*dx-c*dy)/determinant,y:(a*dy-b*dx)/determinant};
+  let accepted=false;
+  for(let scale=1;scale>=1/128;scale/=2){
+   const candidate={x:point.x+step.x*scale,y:point.y+step.y*scale},mapped=deform(candidate);
+   if(finite(mapped)&&Math.hypot(target.x-mapped.x,target.y-mapped.y)<error){point=candidate;accepted=true;break;}
+  }
+  if(!accepted)return null;
+ }
+ return null;
 }
