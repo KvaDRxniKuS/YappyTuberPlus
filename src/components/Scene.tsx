@@ -1,10 +1,11 @@
+import type {ArtTopologyCommand} from "../engine/artMeshTopology";
 import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
 import {artSymmetryPairs,mirrorArtDeltas} from "../engine/artMeshSymmetry";
 import {artFramePoints,artStateOffsets} from "../engine/artMeshPlayback";
 import {addArtOffsets} from "../engine/artMeshRuntime";
 import {ArtMeshGenerator} from "./ArtMeshGenerator";
 import {artEditorPoint,editArtVertices,artBrushWeight,drawArtEditor,inverseArtEditorPoint} from "../render/artMeshEditor";
-import {artPosition,type ArtDeformation,type ArtOffsets} from "../engine/artDeformation";
+import {insertArtVertex,artPosition,type ArtDeformation,type ArtOffsets} from "../engine/artDeformation";
 import {enterRenderStage} from "../engine/renderProfile";
 import { ShortcutGuide } from "./ShortcutGuide";
 import { createParentMeshTransforms } from "../render/bend";
@@ -149,6 +150,7 @@ interface SceneProps {
   onWarp: (id: string, warp: WarpSpec) => void;
   /** Сетка и нарезка из спецрежима: узлы, точки, рёбра, треугольники. */
   onMesh: (id: string, mesh: MeshSpec) => void;
+  onArtTopology:(id:string,command:ArtTopologyCommand)=>void;
   onArtMesh:(id:string,mesh:ArtDeformation,pose:ArtOffsets,regenerate?:boolean)=>void;
 }
 
@@ -262,8 +264,9 @@ export function Scene(props: SceneProps) {
   const dirty = useRef(true);
   const interaction = useRef<Interaction>(null);
   const [artGenerator,setArtGenerator]=useState(false);
+  const [artTopologyError,setArtTopologyError]=useState("");
   const [artBrush,setArtBrush]=useState(false);
-  const [artPickMode,setArtPickMode]=useState<"move"|"rect"|"lasso">("move");
+  const [artPickMode,setArtPickMode]=useState<"move"|"rect"|"lasso"|"insert">("move");
   const artArea=useRef<{objectId:string;shape:"rect"|"lasso";path:Vec2[];points:ArtSelectionPoint[];previous:Set<string>;mode:"replace"|"add"|"subtract"}|null>(null);
   const [artRadius,setArtRadius]=useState(80);
   const [artSymmetry,setArtSymmetry]=useState<"off"|"x"|"y">("off");
@@ -1044,8 +1047,8 @@ export function Scene(props: SceneProps) {
               <option value="rest">Правка сетки</option><option value="pose">Деформация</option>
             </select>}
             {meshTarget.artMesh&&<>
-              <select className="tool-select" aria-label="Выделение вершин артмеша" value={artPickMode} onChange={e=>{setArtPickMode(e.target.value as "move"|"rect"|"lasso");setArtBrush(false);}}>
-                <option value="move">Перемещение</option><option value="rect">Рамка</option><option value="lasso">Лассо</option>
+              <select className="tool-select" aria-label="Выделение вершин артмеша" value={artPickMode} onChange={e=>{setArtPickMode(e.target.value as "move"|"rect"|"lasso"|"insert");setArtBrush(false);}}>
+                <option value="move">Перемещение</option><option value="rect">Рамка</option><option value="lasso">Лассо</option>{props.tool==="deform"&&<option value="insert">Вставить вершину</option>}
               </select>
               <button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>{setArtBrush(v=>!v);setArtPickMode("move");}}><Brush size={15}/></button>
               {artBrush&&<label title="Радиус кисти в пикселях сцены">Радиус <input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius} style={{width:55}} onChange={e=>setArtRadius(Math.min(1000,Math.max(1,Number(e.target.value)||1)))}/></label>}
@@ -1053,6 +1056,12 @@ export function Scene(props: SceneProps) {
                 <option value="off">Без симметрии</option><option value="x">Лево ↔ право</option><option value="y">Верх ↔ низ</option>
               </select>
               <button title="Выделить все вершины; Shift+клик — добавить/убрать вершину" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set(meshTarget.artMesh!.vertices.map(v=>v.id))};markDirty();}}>Все вершины</button>
+              {props.tool==="deform"&&<button title="Удалить выбранные вершины и прилегающие грани; образуются отверстия" onClick={()=>{
+                const selection=artSelection.current;
+                if(selection.objectId!==meshTarget.id||!selection.ids.size)return;
+                props.onArtTopology(meshTarget.id,{type:"remove",ids:[...selection.ids]});selection.ids.clear();markDirty();
+              }}>Удалить вершины</button>}
+              {artTopologyError&&<span role="status">{artTopologyError}</span>}
               <button title="Снять выделение вершин" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}
           </>}
@@ -1310,6 +1319,29 @@ export function Scene(props: SceneProps) {
               });
               if(artSelection.current.objectId!==artObject.id)artSelection.current={objectId:artObject.id,ids:new Set()};
               const selected=artSelection.current.ids;
+              if(artPickMode==="insert"){
+                if(!rest)return;
+                const cursor=artEditorPoint(artObject,point,matrix);
+                const seed=candidates.reduce((best,v)=>Math.hypot(v.world.x-point.x,v.world.y-point.y)<Math.hypot(best.world.x-point.x,best.world.y-point.y)?v:best,candidates[0]);
+                if(!seed)return;
+                let local=inverseArtEditorPoint(cursor,seed.start,deform);
+                if(!local){setArtTopologyError("Не удалось обратить деформацию родителя.");return;}
+                // Snap to visible edges, but insert in their original rest space.
+                const byId=new Map(candidates.map(v=>[v.id,v]));let edgeDistance=6/camera.current.zoom;
+                for(const face of artObject.artMesh.triangles)for(let i=0;i<3;i++){
+                  const a=byId.get(face[i])!,b=byId.get(face[(i+1)%3])!;
+                  const dx=b.world.x-a.world.x,dy=b.world.y-a.world.y,length=dx*dx+dy*dy;
+                  if(!length)continue;
+                  const t=Math.max(0,Math.min(1,((point.x-a.world.x)*dx+(point.y-a.world.y)*dy)/length));
+                  const distance=Math.hypot(point.x-a.world.x-t*dx,point.y-a.world.y-t*dy);
+                  if(distance<edgeDistance){edgeDistance=distance;local={x:a.start.x+t*(b.start.x-a.start.x),y:a.start.y+t*(b.start.y-a.start.y)};}
+                }
+                try{
+                  insertArtVertex(artObject.artMesh,local,[]);
+                  current.onArtTopology(artObject.id,{type:"insert",point:local});setArtTopologyError("");
+                }catch{setArtTopologyError("Выберите точку внутри треугольника или на ребре, не существующую вершину.");}
+                markDirty();return;
+              }
               if(artPickMode!=="move"){
                 artArea.current={objectId:artObject.id,shape:artPickMode,path:[point],points:candidates,previous:new Set(selected),mode:event.altKey?"subtract":event.shiftKey?"add":"replace"};
                 markDirty();return;

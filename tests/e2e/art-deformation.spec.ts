@@ -32,8 +32,8 @@ test("insertion interpolates poses, deletion keeps other IDs and never reuses th
  expect(generateRegularArt(2,2,100,100,0,removed.mesh.nextId).vertices[0].id).toBe("v5");
  expect(pose.v1).toEqual({x:10,y:5});
 });
-test("reject invalid sizes and unsafe edge insertion",()=>{
+test("reject invalid sizes and duplicate vertex insertion",()=>{
  for(const cols of [1,33,2.5,NaN])expect(()=>generateRegularArt(cols,2,100,100)).toThrow();
  expect(()=>generateRegularArt(2,2,100,100,50)).toThrow();
- expect(()=>insertArtVertex(generateRegularArt(2,2,100,100),{x:50,y:50},[])).toThrow();
+ expect(()=>insertArtVertex(generateRegularArt(2,2,100,100),{x:0,y:0},[])).toThrow();
 });

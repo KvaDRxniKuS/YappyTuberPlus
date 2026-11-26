@@ -80,18 +80,33 @@ export function removeArtVertex(mesh:ArtDeformation,id:string,poses:ArtOffsets[]
   return {mesh:{...mesh,vertices:mesh.vertices.filter(v=>v.id!==id),triangles:mesh.triangles.filter(t=>!t.includes(id))},
     poses:poses.map(pose=>Object.fromEntries(Object.entries(pose).filter(([key])=>key!==id)))};
 }
-/** Insert strictly inside a triangle, interpolate UV and every vertex pose.
- * Edge splitting needs both adjacent triangles and is deliberately separate. */
+/** Insert into a face or split every face incident to an edge. UV and all
+ * poses interpolate from the same rest-space barycentric binding. */
 export function insertArtVertex(mesh:ArtDeformation,p:Vec2,poses:ArtOffsets[]):{mesh:ArtDeformation;poses:ArtOffsets[]} {
+  if(!Number.isFinite(p.x)||!Number.isFinite(p.y)||!Number.isSafeInteger(mesh.nextId+1)||mesh.vertices.length>=65535||mesh.triangles.length+2>131072)throw new Error("Invalid art insertion");
+  if(mesh.vertices.some(v=>Math.hypot(v.rest.x-p.x,v.rest.y-p.y)<1e-7))throw new Error("Vertex already exists");
   const binding=bindArtPoint(mesh,p);
-  if(!binding||binding.weights.some(w=>w<=1e-9))throw new Error("Point must be strictly inside a triangle");
+  if(!binding)throw new Error("Point must be inside the mesh");
+  const zeros=binding.weights.map((w,i)=>w<=1e-9?i:-1).filter(i=>i>=0);
+  if(zeros.length>1)throw new Error("Vertex already exists");
   const vertices=new Map(mesh.vertices.map(v=>[v.id,v]));
   const uv={x:0,y:0};
   binding.ids.forEach((id,i)=>{const v=vertices.get(id)!;uv.x+=v.uv.x*binding.weights[i];uv.y+=v.uv.y*binding.weights[i];});
   const id=`v${mesh.nextId}`;const [a,b,c]=binding.ids;
   const triangle=mesh.triangles.findIndex(t=>t.every((v,i)=>v===binding.ids[i]));
+  const edge=zeros.length?binding.ids.filter((_,i)=>i!==zeros[0]):null;
+  const triangles=mesh.triangles.flatMap((t,i):Array<[string,string,string]>=>{
+    if(edge){
+      for(let j=0;j<3;j++){
+        const u=t[j],v=t[(j+1)%3],w=t[(j+2)%3];
+        if((u===edge[0]&&v===edge[1])||(u===edge[1]&&v===edge[0]))return [[u,id,w],[id,v,w]];
+      }
+      return [t];
+    }
+    return i===triangle?[[a,b,id],[b,c,id],[c,a,id]]:[t];
+  });
   return {mesh:{...mesh,nextId:mesh.nextId+1,vertices:[...mesh.vertices,{id,rest:copy(p),uv}],
-    triangles:mesh.triangles.flatMap((t,i)=>i===triangle?[[a,b,id],[b,c,id],[c,a,id]] as Array<[string,string,string]>:[t])},
+    triangles},
     poses:poses.map(pose=>{
       const delta={x:0,y:0};binding.ids.forEach((key,i)=>{delta.x+=(pose[key]?.x??0)*binding.weights[i];delta.y+=(pose[key]?.y??0)*binding.weights[i];});
       return {...pose,[id]:delta};

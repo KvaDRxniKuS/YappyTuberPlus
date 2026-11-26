@@ -316,3 +316,26 @@ lasso vs bbox, add/subtract, неизменность входных данны�
 editing/symmetry. Реальные DOM pointer/keyboard cancellation ещё не проверены.
 Далее topology UI/edge split, alpha/batch generation, формат/needs и удаление
 legacy; Rust toolchain/WASM/dist всё ещё ожидают полноценной сборки.
+
+## Этап 13: первая topology UI и безопасный shared-edge split
+
+insertArtVertex теперь вставляет вершину внутри грани либо разделяет все грани,
+смежные с ребром, сохраняя winding. UV, artPose и vertex points всех state keys
+интерполируются по одной rest-space binding; совпадение с существующей вершиной,
+внешняя/нечисловая точка и превышение лимитов отвергаются. nextId монотонен.
+
+editArtTopology — полная immutable object transaction. App делает один commit
+на вставку/удаление выбранной пачки: mesh+artPose+script со всеми ключами вместе.
+В rest mode есть «Вставить вершину» (клик, snap 6 screen px к видимым рёбрам) и
+«Удалить вершины». Удаление убирает прилегающие грани и создаёт отверстие, без
+автозаливки/перенумерации; это указано в tooltip кнопки. Ошибки вставки видны в
+status панели, не только в console. До вызова updater вставка валидируется.
+Топология не зеркалится автоматически, симметрия пока действует на перемещение.
+После удаления всех граней восстанавливать поверхность нужно генерацией: пока
+нет UI ручного соединения/создания граней. Snap под сильной нелинейной родительской
+деформацией приближён хордой между концами ребра; это не точный inverse curve hit.
+
+11 targeted core/states/topology tests + tsc + diff-check проходят. Тестируются
+shared/boundary split, winding, authored/state interpolation и сохранение прочих
+полей, атомарный результат, удаление stable IDs. DOM undo/pointer и Rust/Windows
+по-прежнему требуют проверки. WASM/dist не обновлены (нет Cargo).
