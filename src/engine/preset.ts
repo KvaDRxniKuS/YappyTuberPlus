@@ -1,3 +1,4 @@
+import {presetObjectDataIssues} from "./presetDataCheck";
 import {readArtMesh,readArtOffsets} from "./artMeshRuntime";
 import { childScript, rootScript } from "../data/demoPreset";
 import { ensureModules, instanceInputs } from "../modules/values";
@@ -325,19 +326,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
   // потерял бы при сохранении то, чего не понял.
   if (!PRESET_FORMATS_READABLE.includes(Number(preset.version))
     || !Array.isArray(preset.objects) || !preset.canvas) return null;
-  // Retired active cages cannot be opened as a deceptively undeformed model.
-  // Explicit artMesh is authoritative; disabled legacy defaults may be discarded.
-  if(preset.objects.some(object=>{
-    const retired=object as RigObject & {mesh?:{enabled?:unknown};warp?:{enabled?:unknown}};
-    return !object.artMesh&&(retired.mesh?.enabled===true||retired.warp?.enabled===true);
-  }))return null;
-  // Reject malformed new payloads instead of silently losing topology/poses.
-  try {
-    for(const object of preset.objects)if(object.artMesh){
-      const art=readArtMesh(object.artMesh);
-      if(object.artPose)readArtOffsets(object.artPose,art);
-    }
-  } catch {return null;}
+  if(presetObjectDataIssues(preset.objects).length)return null;
   return ensureModules({
     version: PRESET_FORMAT,
     // Штамп сборки переезжает как есть: по нему видно, чем файл записан.

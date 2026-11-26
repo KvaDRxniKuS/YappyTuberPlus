@@ -278,7 +278,13 @@ export function parsePreset(text: string): RigPreset {
   const normalized = normalizePreset(raw);
   if (normalized) return normalized;
   // Не просто «не открылось»: считаем, чем файл новее, и показываем списком.
-  throw new IncompatiblePresetError(presetCompatibility(raw));
+  const report=presetCompatibility(raw);
+  report.canOpen=false;
+  if(!report.issues.length)report.issues.push({
+    label:"Данные пресета не прошли проверку",
+    detail:"Формат файла распознан, но загрузчик не смог прочитать данные сцены. Файл не изменён. Нужна проверка содержимого или резервная копия, а не только обновление редактора.",
+  });
+  throw new IncompatiblePresetError(report);
 }
 
 /** Браузерный запасной путь — только для разработки. */

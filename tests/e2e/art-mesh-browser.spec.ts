@@ -98,3 +98,16 @@ test("App topology insertion is explicit and undo restores IDs UV and triangles"
  expect((await stored(page)).objects[0].artMesh.vertices.at(-1).id).toBe("v4");
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
 });
+
+test("rejected legacy file shows the blocking reason and keeps the current scene",async({page})=>{
+ const current=project();await open(page,current);
+ const old=project(false);Object.assign(old.objects[0],{mesh:{enabled:true}});
+ await page.locator('input[type="file"][accept=".json,.yappy.json,application/json"]').setInputFiles({name:"legacy.yappy.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(old))});
+ const dialog=page.getByRole("dialog",{name:"Версии несовместимы",exact:true});
+ await expect(dialog.getByRole("heading",{name:"Пресет не открыт",exact:true})).toBeVisible();
+ await expect(dialog).toContainText("Почему пресет не открыт:");
+ await expect(dialog).toContainText("Старый деформер: «Проверка артмеша»");
+ await expect(dialog).toContainText("автоматического переноса нет");
+ await expect(dialog).not.toContainText("Файл записан сборкой, которая знает больше этой");
+ expect((await stored(page)).objects[0].artMesh).toEqual(current.objects[0].artMesh);
+});

@@ -30,6 +30,10 @@ export function PresetIncompatibleDialog(props: PresetIncompatibleDialogProps) {
   }, [props]);
 
   const report = props.report;
+  const issues=report.issues.length?report.issues:[{
+    label:"Причина отказа не уточнена",
+    detail:"Загрузчик не смог прочитать данные пресета. Файл не изменён; сохраните его для проверки и попробуйте резервную копию.",
+  }];
   return (
     <div
       className="dialog-backdrop"
@@ -52,7 +56,7 @@ export function PresetIncompatibleDialog(props: PresetIncompatibleDialogProps) {
             {props.fileName ? <><code>{props.fileName}</code> — </> : null}
             {props.opened
               ? "Файл открылся, но записан другой сборкой: часть настроек может считаться не так, как задумывал автор."
-              : "Файл записан сборкой, которая знает больше этой. Открыть его нельзя: редактор не понимает часть данных и потерял бы их при первом сохранении."}
+              : "Файл не прошёл проверку совместимости или целостности данных. Он не открыт и не изменён. Причины указаны ниже."}
           </p>
 
           <ul className="module-dialog-list">
@@ -66,10 +70,10 @@ export function PresetIncompatibleDialog(props: PresetIncompatibleDialogProps) {
             </li>
           </ul>
 
-          <p className="dialog-note small">Что может не работать:</p>
+          <p className="dialog-note small">{props.opened?"Что может не работать:":"Почему пресет не открыт:"}</p>
           <ul className="module-dialog-list">
-            {report.issues.map((issue) => (
-              <li key={issue.label}>
+            {issues.map((issue,index) => (
+              <li key={`${index}:${issue.label}`}>
                 <code>{issue.label}</code>
                 <span>{issue.detail}</span>
               </li>
@@ -82,8 +86,7 @@ export function PresetIncompatibleDialog(props: PresetIncompatibleDialogProps) {
           <p className="dialog-note small">
             {props.opened
               ? "Сцена уже на экране — работать можно. Если что-то выглядит не так, обновите редактор."
-              : "Обновите редактор до версии не ниже файла — тогда пресет откроется целиком. "
-                + "Если он пришёл от другого человека, попросите сохранить его этой сборкой."}
+              : "Действуйте по указанным причинам. Обновление помогает только при более новом формате; удалённые деформеры и повреждённые данные требуют отдельного исправления. Исходный файл оставьте как резервную копию."}
           </p>
         </div>
       </div>

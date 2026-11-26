@@ -114,3 +114,23 @@ test("совместимость: не пресет и не JSON", () => {
   // Штамп текущей сборки ничего не ломает.
   expect(presetCompatibility(file({ built: versionString() })).issues).toEqual([]);
 });
+
+test("совместимость: legacy cage rejection names the object and never has an empty explanation",()=>{
+ for(const field of ["mesh","warp"]){
+  const raw=file();Object.assign(raw.objects[0],{[field]:{enabled:true}});
+  const report=presetCompatibility(raw);
+  expect(report.canOpen).toBe(false);expect(labels(report)).toContain("Старый деформер: «Тело»");
+  expect(labels(report)).toContain("автоматического переноса нет");
+  try{parsePreset(JSON.stringify(raw));throw new Error("must reject");}
+  catch(reason){expect(reason).toBeInstanceOf(IncompatiblePresetError);expect((reason as IncompatiblePresetError).report).toEqual(report);}
+ }
+});
+test("совместимость: malformed unified geometry and object entries give blocking explanations",()=>{
+ const raw=file();Object.assign(raw.objects[0],{artMesh:{schema:1,nextId:1,vertices:[],triangles:[["v0","v1","v2"]]}});
+ expect(presetCompatibility(raw).canOpen).toBe(false);
+ expect(labels(presetCompatibility(raw))).toContain("Некорректный артмеш: «Тело»");
+ expect(()=>parsePreset(JSON.stringify(raw))).toThrow(IncompatiblePresetError);
+ const broken={...file(),objects:[null]};
+ expect(presetCompatibility(broken).canOpen).toBe(false);
+ expect(()=>parsePreset(JSON.stringify(broken))).toThrow(IncompatiblePresetError);
+});

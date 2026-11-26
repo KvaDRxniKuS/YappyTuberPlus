@@ -1,3 +1,4 @@
+import {presetObjectDataIssues} from "./presetDataCheck";
 /**
  * Совместимость открываемого пресета с этим редактором.
  *
@@ -71,9 +72,11 @@ export function presetCompatibility(raw: unknown): CompatibilityReport {
   const parsed = parseVersion(fileVersion);
   const format = Number(preset.version);
   const readable = PRESET_FORMATS_READABLE.includes(format);
-  const canOpen = readable && Array.isArray(preset.objects) && Boolean(preset.canvas);
+  const dataIssues=presetObjectDataIssues(objects);
+  const canOpen = readable && Array.isArray(preset.objects) && Boolean(preset.canvas) && !dataIssues.length;
+  issues.push(...dataIssues);
 
-  // Формат — единственное, что решает «открывать или нет».
+  // Формат и целостность данных определяют возможность открытия.
   if (Number.isFinite(format) && format > PRESET_FORMAT) {
     issues.push({
       label: `формат файла ${format} против ${PRESET_FORMAT}`,
@@ -99,7 +102,7 @@ export function presetCompatibility(raw: unknown): CompatibilityReport {
   }
 
   // Требование к ядру и убранные формы считаются по содержимому сцены.
-  if (Array.isArray(preset.objects)) {
+  if (Array.isArray(preset.objects) && !dataIssues.length) {
     const report = needsReport(preset as RigPreset);
     // Требование по содержимому — то, что действительно нужно сцене сейчас.
     // Число из файла говорит о том, чем файл записан; подмешивать его в
