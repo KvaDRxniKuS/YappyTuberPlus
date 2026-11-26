@@ -1040,7 +1040,7 @@ export default function App() {
    * снимок кладёт начало жеста, поэтому весь жест откатывается одним Ctrl+Z.
    */
   const artTopologyObject=useCallback((id:string,command:ArtTopologyCommand)=>{
-    commit(current=>({...current,objects:current.objects.map(o=>o.id===id?editArtTopology(o,command):o)}),{label:command.type==="insert"?"Вставка вершины артмеша":"Удаление вершин артмеша"});
+    commit(current=>({...current,objects:current.objects.map(o=>o.id===id?editArtTopology(o,command):o)}),{label:command.type==="insert"?"Вставка вершины артмеша":command.type==="remove"?"Удаление вершин артмеша":command.type==="addFace"?"Создание грани артмеша":"Удаление грани артмеша"});
   },[commit]);
 
   const artMeshObject=useCallback((id:string,artMesh:ArtDeformation,artPose:ArtOffsets,regenerate=false)=>{

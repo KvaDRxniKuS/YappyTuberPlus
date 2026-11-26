@@ -1,3 +1,4 @@
+import {addArtFace,removeArtFace} from "../engine/artMeshFaces";
 import type {ArtTopologyCommand} from "../engine/artMeshTopology";
 import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
 import {artSymmetryPairs,mirrorArtDeltas} from "../engine/artMeshSymmetry";
@@ -1061,6 +1062,18 @@ export function Scene(props: SceneProps) {
                 if(selection.objectId!==meshTarget.id||!selection.ids.size)return;
                 props.onArtTopology(meshTarget.id,{type:"remove",ids:[...selection.ids]});selection.ids.clear();markDirty();
               }}>Удалить вершины</button>}
+              {props.tool==="deform"&&<>
+                <button title="Создать треугольник по трём выбранным вершинам" onClick={()=>{
+                  const ids=artSelection.current.objectId===meshTarget.id?[...artSelection.current.ids]:[];
+                  try{addArtFace(meshTarget.artMesh!,ids);props.onArtTopology(meshTarget.id,{type:"addFace",ids});setArtTopologyError("");}
+                  catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать грань.");}
+                }}>Создать грань</button>
+                <button title="Удалить только выбранный треугольник, сохранив вершины и состояния" onClick={()=>{
+                  const ids=artSelection.current.objectId===meshTarget.id?[...artSelection.current.ids]:[];
+                  try{removeArtFace(meshTarget.artMesh!,ids);props.onArtTopology(meshTarget.id,{type:"removeFace",ids});setArtTopologyError("");}
+                  catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось удалить грань.");}
+                }}>Удалить грань</button>
+              </>}
               {artTopologyError&&<span role="status">{artTopologyError}</span>}
               <button title="Снять выделение вершин" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}

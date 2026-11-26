@@ -339,3 +339,20 @@ status панели, не только в console. До вызова updater в�
 shared/boundary split, winding, authored/state interpolation и сохранение прочих
 полей, атомарный результат, удаление stable IDs. DOM undo/pointer и Rust/Windows
 по-прежнему требуют проверки. WASM/dist не обновлены (нет Cargo).
+
+## Этап 14: ручное создание/удаление граней
+
+В rest toolbar есть «Создать грань» и «Удалить грань» по ровно трём выбранным
+stable IDs. Создание нормализует winding, отклоняет дубликаты, вырожденные грани,
+пересечения/перекрытия, прохождение через другие вершины (T-junction) и третью
+грань на уже занятом двумя гранями ребре. Удаление грани не удаляет её вершины.
+Face-only editArtTopology возвращает новый объект/mesh с теми же artPose, vertices,
+UV и script: состояния не переписываются и не очищаются. App использует один
+commit с отдельной подписью истории. Ошибки видны в status toolbar.
+
+Это ручное заполнение по одному треугольнику, не автоматическая заливка
+произвольного контура. Пока нет создания изолированных вершин вне поверхности,
+реберного flip, автозаливки и пакетной генерации по alpha. 11 targeted tests,
+tsc и diff-check прошли: восстановление грани, winding, overlap/duplicates,
+collinear/T-junction rejection и byte-for-byte сохранность state script.
+Браузерные gestures/undo, Rust compile и WASM/dist остаются непроверенными.

@@ -1,13 +1,18 @@
+import {addArtFace,removeArtFace} from "./artMeshFaces";
 import type {RigObject,Vec2} from "../types";
 import {insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
 import {readStates,writeStates} from "./states";
-export type ArtTopologyCommand={type:"insert";point:Vec2}|{type:"remove";ids:string[]};
+export type ArtTopologyCommand={type:"insert";point:Vec2}|{type:"remove";ids:string[]}|{type:"addFace"|"removeFace";ids:string[]};
 /** Full object transaction: geometry, authored pose and every state key are
  * committed by the caller together. Failure leaves the source untouched. */
 export function editArtTopology(object:RigObject,command:ArtTopologyCommand):RigObject {
  if(!object.artMesh)throw new Error("Object has no art mesh");
  let mesh=object.artMesh,states=readStates(object.script),pose=object.artPose??{};
+ if(command.type==="addFace"||command.type==="removeFace"){
+  const artMesh=command.type==="addFace"?addArtFace(mesh,command.ids):removeArtFace(mesh,command.ids);
+  return {...object,artMesh};
+ }
  if(command.type==="insert"){
   const result=insertArtStateVertex(mesh,states,command.point);
   const authored=insertArtVertex(mesh,command.point,[pose]);
