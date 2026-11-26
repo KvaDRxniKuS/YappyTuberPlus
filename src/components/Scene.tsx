@@ -158,7 +158,7 @@ interface SceneProps {
   onArtPaste:(id:string,clip:ArtMeshClip,scale:ArtMeshPasteScale,pose:boolean)=>void;
   onArtBatch:(meshes:ArtMeshReplacement[],inherit:boolean)=>void;
   onArtTopology:(id:string,command:ArtTopologyCommand)=>void;
-  onArtMesh:(id:string,mesh:ArtDeformation,pose:ArtOffsets,regenerate?:boolean)=>void;
+  onArtMesh:(id:string,mesh:ArtDeformation,pose:ArtOffsets,regenerate?:boolean,dimensions?:{width:number;height:number})=>void;
 }
 
 type Camera = { zoom: number; x: number; y: number };
@@ -1301,7 +1301,7 @@ export function Scene(props: SceneProps) {
       {artGenerator&&meshTarget&&<ArtMeshGenerator key={`${meshTarget.id}-${artGenerator}`}
         object={meshTarget} captureAlpha={object=>captureArtAlpha(object,object.kind==="media"?(mediaAssets.current.video(object.id)??mediaAssets.current.image(object.id)):assets.current.get(object.image))}
         batch={artGenerator==="descendants"?{root:meshTarget.id,objects:props.preset.objects,onApply:(meshes,inherit)=>{props.onArtBatch(meshes,inherit);setArtGenerator(false);}}:undefined} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
-        onClose={()=>setArtGenerator(false)} onApply={mesh=>{props.onArtMesh(meshTarget.id,mesh,{},true);setArtGenerator(false);props.onTool("deform");}}/>}
+        onClose={()=>setArtGenerator(false)} onApply={(mesh,dimensions)=>{props.onArtMesh(meshTarget.id,mesh,{},true,dimensions);setArtGenerator(false);props.onTool("deform");}}/>}
       <div
         className={`scene-viewport tool-${props.tool}`}
         ref={viewport}

@@ -30,3 +30,16 @@ export function replaceArtMeshes(preset:RigPreset,replacements:readonly ArtMeshR
   return {...next,script:writeStates(object.script,states,next).script};
  })};
 }
+
+/** Explicit surface dimensions are allowed only for authored group deformers.
+ * No child transform, pivot, inheritance flag or sibling is changed. */
+export function replaceArtObjectMesh(object:RigObject,mesh:ArtDeformation,dimensions?:{width:number;height:number}):RigObject {
+ if(dimensions&&object.kind!=="group")throw new Error("Surface dimensions are only editable for groups");
+ const target=dimensions?{...object,...dimensions}:object;
+ if(!artGenerationSupported(target))throw new Error("Invalid explicit mesh surface dimensions");
+ const artMesh=readArtMesh(mesh),minimum=object.artMesh?.nextId??0;
+ if(artMesh.nextId<minimum||artMesh.vertices.some(v=>Number(v.id.slice(1))<minimum))throw new Error("Replacement reuses vertex IDs");
+ const next={...target,artMesh,artPose:{},mesh:undefined,warp:undefined};
+ const states=replaceArtStateMesh(artMesh,readStates(object.script)).states;
+ return {...next,script:writeStates(object.script,states,next).script};
+}

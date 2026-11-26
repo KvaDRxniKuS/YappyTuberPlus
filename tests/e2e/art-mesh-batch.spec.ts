@@ -40,3 +40,26 @@ test("invalid later target rejects whole batch and stale IDs cannot be reused",(
  expect(()=>replaceArtMeshes(preset,[{...valid,id:"a"}])).toThrow();
  expect(JSON.stringify(preset)).toBe(snapshot);
 });
+
+test("zero-size groups get only an explicitly applied surface, without moving children",async()=>{
+ const {replaceArtObjectMesh}=await import("../../src/engine/artMeshBatch");
+ const {prepareRigMeshes}=await import("../../src/render/rigCanvas");
+ const {neutralFrame}=await import("../../src/engine/frame");
+ const preset=setup(),group={...preset.objects[0],width:0,height:0};
+ const child={...preset.objects[1],kind:"sprite" as const,width:100,height:80,deformParent:true};
+ const mesh=generateRegularArt(2,2,400,300);
+ const snapshot=JSON.stringify(preset.objects);
+ expect(()=>replaceArtObjectMesh(group,mesh)).toThrow();
+ const surface=replaceArtObjectMesh(group,mesh,{width:400,height:300});
+ expect(surface.width).toBe(400);expect(surface.height).toBe(300);
+ expect(surface.base).toBe(group.base);expect(surface.pivot).toBe(group.pivot);expect(surface.deformParent).toBe(group.deformParent);
+ const project={...preset,objects:[surface,child]},frame=neutralFrame(project);
+ const before=prepareRigMeshes(project,frame).a;
+ const posed={...surface,artPose:Object.fromEntries(mesh.vertices.map(v=>[v.id,{x:10,y:5}]))};
+ const after=prepareRigMeshes({...project,objects:[posed,child]},frame).a;
+ expect(after.targets[0].x-before.targets[0].x).toBeCloseTo(10);
+ expect(after.targets[0].y-before.targets[0].y).toBeCloseTo(5);
+ expect(JSON.stringify(preset.objects)).toBe(snapshot);
+ expect(()=>replaceArtObjectMesh(group,mesh,{width:NaN,height:300})).toThrow();
+ expect(()=>replaceArtObjectMesh(child,mesh,{width:400,height:300})).toThrow();
+});

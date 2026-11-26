@@ -1,8 +1,7 @@
 import {pasteArtMesh,type ArtMeshClip,type ArtMeshPasteScale} from "./engine/artMeshClipboard";
-import {replaceArtMeshes,type ArtMeshReplacement} from "./engine/artMeshBatch";
+import {replaceArtMeshes,replaceArtObjectMesh,type ArtMeshReplacement} from "./engine/artMeshBatch";
 import {editArtTopology,type ArtTopologyCommand} from "./engine/artMeshTopology";
 import type {ArtDeformation,ArtOffsets} from "./engine/artDeformation";
-import {replaceArtStateMesh} from "./engine/artMeshStates";
 import {countAppCommit} from "./engine/meter";
 import { PerformanceTest } from "./components/PerformanceTest";
 import { toolForCode } from "./engine/shortcuts";
@@ -1054,12 +1053,11 @@ export default function App() {
     commit(current=>({...current,objects:current.objects.map(o=>o.id===id?editArtTopology(o,command):o)}),{label:command.type==="insert"?"Вставка вершины артмеша":command.type==="remove"?"Удаление вершин артмеша":command.type==="addFace"?"Создание грани артмеша":"Удаление грани артмеша"});
   },[commit]);
 
-  const artMeshObject=useCallback((id:string,artMesh:ArtDeformation,artPose:ArtOffsets,regenerate=false)=>{
+  const artMeshObject=useCallback((id:string,artMesh:ArtDeformation,artPose:ArtOffsets,regenerate=false,dimensions?:{width:number;height:number})=>{
     const update=(current:RigPreset)=>({...current,objects:current.objects.map(object=>{
       if(object.id!==id)return object;
       const next={...object,artMesh,artPose,mesh:undefined,warp:undefined};
-      if(regenerate){const states=replaceArtStateMesh(artMesh,readStates(object.script)).states;
-        return {...next,script:writeStates(object.script,states,next).script};}
+      if(regenerate)return replaceArtObjectMesh(object,artMesh,dimensions);
       return next;
     })});
     if(regenerate)commit(update,{label:"Генерация артмеша"});else setPreset(update);
