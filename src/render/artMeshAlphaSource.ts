@@ -15,7 +15,7 @@ export function captureArtAlpha(object:RigObject,source?:CanvasImageSource|null)
   else ctx.drawImage(source!,0,0,width,height);
   const rgba=ctx.getImageData(0,0,width,height).data,alpha=new Uint8Array(width*height);
   for(let i=0;i<alpha.length;i++)alpha[i]=rgba[i*4+3];
-  return {width,height,alpha,objectWidth:object.width,objectHeight:object.height};
+  return {width,height,alpha,rgba,objectWidth:object.width,objectHeight:object.height};
  }catch{throw new Error("Не удалось прочитать alpha: источник недоступен или запрещает чтение пикселей (CORS).");}
  finally{canvas.width=canvas.height=1;}
 }

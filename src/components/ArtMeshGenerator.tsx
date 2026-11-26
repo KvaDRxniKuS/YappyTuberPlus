@@ -1,3 +1,4 @@
+import {DeferredNumberInput} from "./DeferredNumberInput";
 import {X,Grid3X3} from "lucide-react";
 import {generateAlphaArt,type AlphaRaster} from "../engine/artMeshAlpha";
 import type {RigObject} from "../types";
@@ -24,7 +25,7 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
  const sourcesRef=useRef(sourceTargets);sourcesRef.current=sourceTargets;
  const [snapshot,setSnapshot]=useState<{key:string;rasters:Map<string,AlphaRaster>;error:string}>({key:"",rasters:new Map(),error:""});
  useEffect(()=>{
-  if(mode!=="alpha")return;
+  if(explicitGroup)return;
   let cancelled=false;
   setSnapshot({key:"",rasters:new Map(),error:""});
   const timer=window.setTimeout(()=>{
@@ -40,7 +41,7 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
    }catch(error){if(!cancelled)setSnapshot({key:sourceKey,rasters:new Map(),error:error instanceof Error?error.message:"Ошибка alpha-маски."});}
   },0);
   return ()=>{cancelled=true;window.clearTimeout(timer);};
- },[mode,sourceKey,refresh]);
+ },[explicitGroup,sourceKey,refresh]);
  const result=useMemo(()=>{try{
   if(mode==="alpha"&&(snapshot.key!==sourceKey||snapshot.error))return {mesh:null,meshes:[],error:snapshot.error||"Чтение alpha-масок…"};
   const generate=(o?:RigObject)=>{
@@ -59,12 +60,13 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
  const previewWidth=batch?previewTarget?.width??width:width,previewHeight=batch?previewTarget?.height??height:height;
  const vertices=new Map(mesh?.vertices.map(v=>[v.id,v]));
  const alphaPreview=useMemo(()=>{
-  const raster=mode==="alpha"?snapshot.rasters.get(batch?previewTarget?.id??"":object?.id??""):undefined;
+  const raster=snapshot.rasters.get(batch?previewTarget?.id??"":object?.id??"");
   if(!raster)return undefined;
   const canvas=document.createElement("canvas");canvas.width=raster.width;canvas.height=raster.height;
   const ctx=canvas.getContext("2d");if(!ctx)return undefined;
   const image=ctx.createImageData(raster.width,raster.height);
-  for(let i=0;i<raster.alpha.length;i++){image.data[i*4]=180;image.data[i*4+1]=195;image.data[i*4+2]=210;image.data[i*4+3]=Math.round(raster.alpha[i]*.4);}
+  if(raster.rgba)image.data.set(raster.rgba);
+  else for(let i=0;i<raster.alpha.length;i++){image.data[i*4]=180;image.data[i*4+1]=195;image.data[i*4+2]=210;image.data[i*4+3]=raster.alpha[i];}
   ctx.putImageData(image,0,0);return canvas.toDataURL();
  },[mode,snapshot,batch,previewTarget?.id,object?.id]);
 
@@ -74,6 +76,7 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
    <div className="dialog-body artmesh-generator-layout">
    <div className="artmesh-generator-settings">
     <h4>Параметры</h4>
+    <p>Числа применяются по Enter, при выходе из поля или через 5 секунд без ввода.</p>
     {batch&&<>
      <label>Область <select aria-label="Область подготовки" value={scope} onChange={e=>setScope(e.target.value as "direct"|"all")}><option value="direct">Прямые потомки</option><option value="all">Все вложенные потомки</option></select></label>
      <label className="check-line"><input type="checkbox" checked={onlyMissing} onChange={e=>setOnlyMissing(e.target.checked)}/>Только без нового артмеша</label>
@@ -84,8 +87,8 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
     {explicitGroup&&<>
       <p>Явная нетекстурированная поверхность группы. Размеры сохранятся только при применении. Позиция, пивот и параметры потомков не меняются; сетка не подгоняется под них автоматически.</p>
       <div className="property-grid two-columns">
-        <label>Ширина поверхности группы<input aria-label="Ширина поверхности группы" type="number" min={1} value={groupWidth} onChange={e=>setGroupWidth(Number(e.target.value))}/></label>
-        <label>Высота поверхности группы<input aria-label="Высота поверхности группы" type="number" min={1} value={groupHeight} onChange={e=>setGroupHeight(Number(e.target.value))}/></label>
+        <label>Ширина поверхности группы<DeferredNumberInput aria-label="Ширина поверхности группы" min={1} value={groupWidth} onCommit={setGroupWidth}/></label>
+        <label>Высота поверхности группы<DeferredNumberInput aria-label="Высота поверхности группы" min={1} value={groupHeight} onCommit={setGroupHeight}/></label>
       </div>
     </>}
     <label>Способ <select aria-label="Способ генерации" value={mode} onChange={e=>setMode(e.target.value as "regular"|"alpha")}><option value="regular">Регулярная N×M</option><option value="alpha" disabled={explicitGroup}>По alpha-форме</option></select></label>
@@ -94,20 +97,20 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
      <label>Внутренняя раскладка<select aria-label="Раскладка альфа-сетки" value={alphaLayout} onChange={e=>setAlphaLayout(e.target.value as "grid"|"radial")}><option value="grid">Ровная сетка рядами</option><option value="radial">Центрическая паутинка</option></select></label>
      <p>Шаг контура задаёт плотность границы, а не добавляет точки к каждому пиксельному излому. Упрощение автоматически ограничивается, если повреждает контур.</p>
      <div className="property-grid two-columns">
-      <label>Порог alpha (0–255)<input type="number" min={0} max={255} value={threshold} onChange={e=>setThreshold(Number(e.target.value))}/></label>
-      <label>Внешний отступ, px<input type="number" min={0} value={padding} onChange={e=>setPadding(Number(e.target.value))}/></label>
-      <label>Шаг контура, px<input type="number" min={.1} value={contourSpacing} onChange={e=>setContourSpacing(Number(e.target.value))}/></label>
-      <label>Внутренний шаг, px<input type="number" min={.1} value={interiorSpacing} onChange={e=>setInteriorSpacing(Number(e.target.value))}/></label>
-      <label>Упрощение, px<input type="number" min={0} value={simplification} onChange={e=>setSimplification(Number(e.target.value))}/></label>
+      <label>Порог alpha (0–255)<DeferredNumberInput min={0} max={255} value={threshold} onCommit={setThreshold}/></label>
+      <label>Внешний отступ, px<DeferredNumberInput min={0} value={padding} onCommit={setPadding}/></label>
+      <label>Шаг контура, px<DeferredNumberInput min={1} value={contourSpacing} onCommit={setContourSpacing}/></label>
+      <label>Внутренний шаг, px<DeferredNumberInput min={1} value={interiorSpacing} onCommit={setInteriorSpacing}/></label>
+      <label>Упрощение, px<DeferredNumberInput min={0} value={simplification} onCommit={setSimplification}/></label>
      </div>
      <button onClick={()=>setRefresh(v=>v+1)}>Обновить alpha-снимок</button>
     </>}
     {mode==="regular"&&<>
     <p>Регулярная сетка. Создаются вершины и треугольники самого артмеша, не отдельный деформер.</p>
     <div className="property-grid two-columns">
-     <label>Столбцов <input type="number" min={2} max={32} step={1} value={cols} onChange={e=>setCols(Number(e.target.value))}/></label>
-     <label>Строк <input type="number" min={2} max={32} step={1} value={rows} onChange={e=>setRows(Number(e.target.value))}/></label>
-     <label>Отступ, px <input type="number" min={0} value={inset} onChange={e=>setInset(Number(e.target.value))}/></label>
+     <label>Столбцов <DeferredNumberInput min={2} max={32} step={1} value={cols} onCommit={setCols}/></label>
+     <label>Строк <DeferredNumberInput min={2} max={32} step={1} value={rows} onCommit={setRows}/></label>
+     <label>Отступ, px <DeferredNumberInput min={0} value={inset} onCommit={setInset}/></label>
     </div>
     </>}
    </div>
@@ -115,7 +118,7 @@ export function ArtMeshGenerator({width:sourceWidth,height:sourceHeight,nextId,o
     <header><h4>Предпросмотр</h4><span>{batch?previewTarget?.name:object?.name}</span></header>
     <div className="artmesh-preview-canvas">
     {mesh?<svg role="img" aria-label="Предпросмотр сетки" viewBox={mode==="alpha"?`${-padding} ${-padding} ${previewWidth+2*padding} ${previewHeight+2*padding}`:`0 0 ${previewWidth} ${previewHeight}`}>
-     {alphaPreview&&<image href={alphaPreview} x={0} y={0} width={previewWidth} height={previewHeight}/>}
+     {alphaPreview&&<image aria-label="Исходное изображение объекта" opacity={.65} href={alphaPreview} x={0} y={0} width={previewWidth} height={previewHeight}/>}
      {mesh.triangles.map((face,i)=><polygon key={i} points={face.map(id=>{const v=vertices.get(id)!;return `${v.rest.x},${v.rest.y}`;}).join(" ")} fill="#82d5c109" stroke="#82d5c1" strokeWidth={.8} vectorEffect="non-scaling-stroke"/>)}
      {mesh.vertices.map(v=><circle key={v.id} cx={v.rest.x} cy={v.rest.y} r={Math.max(previewWidth,previewHeight)/230} fill="#e1f9f2"/>)}
     </svg>:<p className="artmesh-preview-empty">Измените параметры для построения сетки</p>}

@@ -2,7 +2,7 @@ import cdt2d from "cdt2d";
 import type {Vec2} from "../types";
 import {emptyArtDeformation,type ArtDeformation} from "./artDeformation";
 import {pointInPolygon} from "./selection";
-export interface AlphaRaster {width:number;height:number;alpha:Uint8Array;objectWidth:number;objectHeight:number}
+export interface AlphaRaster {width:number;height:number;alpha:Uint8Array;rgba?:Uint8ClampedArray;objectWidth:number;objectHeight:number}
 export interface AlphaMeshOptions {threshold:number;padding:number;contourSpacing:number;interiorSpacing:number;simplification:number;layout?:"grid"|"radial";nextId?:number}
 const MAX_POINTS=8192;
 const area=(loop:Vec2[])=>loop.reduce((sum,p,i)=>{const q=loop[(i+1)%loop.length];return sum+p.x*q.y-q.x*p.y;},0)/2;
