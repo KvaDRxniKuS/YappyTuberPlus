@@ -299,3 +299,20 @@ spatial buckets, только взаимно ближайшие кандидат
 conflict, UV/topology invariants. Браузерные жесты не проверены. Произвольная ось,
 рамка/лассо, topology UI, alpha/batch generation и окончательное удаление старых
 путей ещё впереди; Cargo/WASM/dist ограничения остаются.
+
+## Этап 12: рамка и лассо для stable-ID вершин
+
+В инструментах нового артмеша добавлены «Перемещение / Рамка / Лассо».
+Выделение строится по snapshot видимых scene-space координат с state/preview
+и parent deformation, в rest и pose режимах. Shift — добавить, Alt — вычесть,
+иначе заменить; границы региона включаются. Выделение применяется на pointerup,
+не вызывает onDragStart, не меняет проект и не создаёт undo. Escape, blur,
+pointercancel, смена объекта/инструмента отменяют draft. Лассо ограничено 4096
+точками с минимальным шагом 2 screen px; перед polygon-test отсекается bbox.
+После региона для drag нужно вернуться в «Перемещение» (или включить кисть).
+
+16 targeted tests + tsc + diff-check прошли: reverse rectangle, edge inclusion,
+lasso vs bbox, add/subtract, неизменность входных данных и regression checks
+editing/symmetry. Реальные DOM pointer/keyboard cancellation ещё не проверены.
+Далее topology UI/edge split, alpha/batch generation, формат/needs и удаление
+legacy; Rust toolchain/WASM/dist всё ещё ожидают полноценной сборки.

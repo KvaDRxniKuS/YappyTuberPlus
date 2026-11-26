@@ -1,3 +1,4 @@
+import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
 import {artSymmetryPairs,mirrorArtDeltas} from "../engine/artMeshSymmetry";
 import {artFramePoints,artStateOffsets} from "../engine/artMeshPlayback";
 import {addArtOffsets} from "../engine/artMeshRuntime";
@@ -262,6 +263,8 @@ export function Scene(props: SceneProps) {
   const interaction = useRef<Interaction>(null);
   const [artGenerator,setArtGenerator]=useState(false);
   const [artBrush,setArtBrush]=useState(false);
+  const [artPickMode,setArtPickMode]=useState<"move"|"rect"|"lasso">("move");
+  const artArea=useRef<{objectId:string;shape:"rect"|"lasso";path:Vec2[];points:ArtSelectionPoint[];previous:Set<string>;mode:"replace"|"add"|"subtract"}|null>(null);
   const [artRadius,setArtRadius]=useState(80);
   const [artSymmetry,setArtSymmetry]=useState<"off"|"x"|"y">("off");
   const artToolRef=useRef({brush:artBrush,radius:artRadius,symmetry:artSymmetry});
@@ -310,10 +313,17 @@ export function Scene(props: SceneProps) {
   const propsRef = useRef(props);
   propsRef.current = props;
   useEffect(()=>{
-    const finish=()=>{if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}};
+    const finish=()=>{artArea.current=null;markDirty();if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}};
     window.addEventListener("blur",finish);
     return ()=>{window.removeEventListener("blur",finish);finish();};
   },[]);
+
+  useEffect(()=>{
+    const cancel=(event:KeyboardEvent)=>{if(event.key==="Escape"&&artArea.current){artArea.current=null;markDirty();}};
+    window.addEventListener("keydown",cancel);return ()=>window.removeEventListener("keydown",cancel);
+  },[]);
+
+  useEffect(()=>{artArea.current=null;markDirty();},[props.primaryId,props.tool,artPickMode]);
 
   // Отрисовка по требованию: постоянного rAF-цикла больше нет (он грузил
   // процессор в простое), но любая правка или новый кадр планирует ровно один
@@ -471,6 +481,14 @@ export function Scene(props: SceneProps) {
     }
     const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
     if(artTarget?.artMesh&&(showGrid||showArt))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showArt,createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget),artSelection.current.objectId===artTarget.id?artSelection.current.ids:undefined);
+    const area=artArea.current;
+    if(area&&area.path.length>1){
+      ctx.save();ctx.strokeStyle="#f0d77a";ctx.fillStyle="#f0d77a18";ctx.lineWidth=1/zoom;ctx.setLineDash([5/zoom,3/zoom]);ctx.beginPath();
+      if(area.shape==="rect"){
+        const first=area.path[0],last=area.path[area.path.length-1];ctx.rect(first.x,first.y,last.x-first.x,last.y-first.y);
+      }else{area.path.forEach((p,i)=>{if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});ctx.closePath();}
+      ctx.fill();ctx.stroke();ctx.restore();
+    }
     if(artTarget?.artMesh&&(showGrid||showArt)&&artToolRef.current.symmetry!=="off"){
       const axis=artToolRef.current.symmetry;
       const matrix=objectMatrix(artTarget,frame?.objects[artTarget.id]??staticValues(artTarget));
@@ -1026,7 +1044,10 @@ export function Scene(props: SceneProps) {
               <option value="rest">Правка сетки</option><option value="pose">Деформация</option>
             </select>}
             {meshTarget.artMesh&&<>
-              <button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>setArtBrush(v=>!v)}><Brush size={15}/></button>
+              <select className="tool-select" aria-label="Выделение вершин артмеша" value={artPickMode} onChange={e=>{setArtPickMode(e.target.value as "move"|"rect"|"lasso");setArtBrush(false);}}>
+                <option value="move">Перемещение</option><option value="rect">Рамка</option><option value="lasso">Лассо</option>
+              </select>
+              <button className={artBrush?"active":""} title="Кисть мягкого перемещения" aria-label="Кисть артмеша" onClick={()=>{setArtBrush(v=>!v);setArtPickMode("move");}}><Brush size={15}/></button>
               {artBrush&&<label title="Радиус кисти в пикселях сцены">Радиус <input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius} style={{width:55}} onChange={e=>setArtRadius(Math.min(1000,Math.max(1,Number(e.target.value)||1)))}/></label>}
               <select className="tool-select" aria-label="Симметрия артмеша" title="Симметрия по базовой геометрии относительно центра объекта; без создания новых вершин" value={artSymmetry} onChange={e=>setArtSymmetry(e.target.value as "off"|"x"|"y")}>
                 <option value="off">Без симметрии</option><option value="x">Лево ↔ право</option><option value="y">Верх ↔ низ</option>
@@ -1285,10 +1306,14 @@ export function Scene(props: SceneProps) {
                 const world=transformPoint(matrix,p.x-artObject.pivot.x*artObject.width,p.y-artObject.pivot.y*artObject.height);
                 const d=Math.hypot(world.x-point.x,world.y-point.y);
                 if(d<distance){distance=d;nearest=v.id;}
-                return {id:v.id,start:source,seed:source,weight:artBrushWeight(d,artRadius)};
+                return {id:v.id,world,start:source,seed:source,weight:artBrushWeight(d,artRadius)};
               });
               if(artSelection.current.objectId!==artObject.id)artSelection.current={objectId:artObject.id,ids:new Set()};
               const selected=artSelection.current.ids;
+              if(artPickMode!=="move"){
+                artArea.current={objectId:artObject.id,shape:artPickMode,path:[point],points:candidates,previous:new Set(selected),mode:event.altKey?"subtract":event.shiftKey?"add":"replace"};
+                markDirty();return;
+              }
               if(!artBrush&&event.shiftKey){if(nearest){if(selected.has(nearest))selected.delete(nearest);else selected.add(nearest);}markDirty();return;}
               if(!artBrush&&nearest&&!selected.has(nearest)){selected.clear();selected.add(nearest);}
               if(!artBrush&&!nearest){selected.clear();markDirty();return;}
@@ -1552,6 +1577,13 @@ export function Scene(props: SceneProps) {
             interaction.current = { type: "drag", ids: [targetObject.id], start: point, initial, pending: null, moved: false };
           }}
           onPointerMove={(event) => {
+            const area=artArea.current;
+            if(area){
+              const point=scenePoint(event),last=area.path[area.path.length-1];
+              if(area.shape==="rect")area.path=[area.path[0],point];
+              else if(Math.hypot(last.x-point.x,last.y-point.y)>2/camera.current.zoom&&area.path.length<4096)area.path.push(point);
+              markDirty();return;
+            }
             const drag=artDrag.current;
             if(drag){
               const cursor=artEditorPoint(drag.object,scenePoint(event),drag.matrix);
@@ -1799,6 +1831,13 @@ export function Scene(props: SceneProps) {
             queueLive(() => propsRef.current.onDragObjects(ids, initial, delta));
           }}
           onPointerUp={(event) => {
+            const area=artArea.current;
+            if(area){
+              artArea.current=null;area.path.push(scenePoint(event));
+              if(propsRef.current.primaryId===area.objectId)artSelection.current={objectId:area.objectId,ids:selectArtRegion(area.points,area.path,area.shape,area.previous,area.mode)};
+              if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
+              markDirty();return;
+            }
             if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();markDirty();
               if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);return;}
             const current = interaction.current;
@@ -1833,6 +1872,7 @@ export function Scene(props: SceneProps) {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            artArea.current=null;
             if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}
             const current = interaction.current;
             interaction.current = null;
