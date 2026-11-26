@@ -1,3 +1,4 @@
+import type {ArtMeshReplacement} from "../engine/artMeshBatch";
 import {addArtFace,removeArtFace} from "../engine/artMeshFaces";
 import type {ArtTopologyCommand} from "../engine/artMeshTopology";
 import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
@@ -151,6 +152,7 @@ interface SceneProps {
   onWarp: (id: string, warp: WarpSpec) => void;
   /** Сетка и нарезка из спецрежима: узлы, точки, рёбра, треугольники. */
   onMesh: (id: string, mesh: MeshSpec) => void;
+  onArtBatch:(meshes:ArtMeshReplacement[],inherit:boolean)=>void;
   onArtTopology:(id:string,command:ArtTopologyCommand)=>void;
   onArtMesh:(id:string,mesh:ArtDeformation,pose:ArtOffsets,regenerate?:boolean)=>void;
 }
@@ -264,7 +266,7 @@ export function Scene(props: SceneProps) {
   const maskMedia = useRef(new MaskMedia());
   const dirty = useRef(true);
   const interaction = useRef<Interaction>(null);
-  const [artGenerator,setArtGenerator]=useState(false);
+  const [artGenerator,setArtGenerator]=useState<false|"single"|"descendants">(false);
   const [artTopologyError,setArtTopologyError]=useState("");
   const [artBrush,setArtBrush]=useState(false);
   const [artPickMode,setArtPickMode]=useState<"move"|"rect"|"lasso"|"insert">("move");
@@ -1043,7 +1045,8 @@ export function Scene(props: SceneProps) {
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
           {(props.tool==="warp"||props.tool==="deform")&&meshTarget&&["sprite","media","shape","group"].includes(meshTarget.kind??"sprite")&&<>
-            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator(true)}><Grid3X3 size={15}/></button>
+            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/></button>
+            <button title="Подготовить потомков к деформации…" onClick={()=>setArtGenerator("descendants")}>Подготовить потомков…</button>
             {meshTarget.artMesh&&<select className="tool-select" aria-label="Режим артмеша" value={props.tool==="deform"?"rest":"pose"} onChange={e=>props.onTool(e.target.value==="rest"?"deform":"warp")}>
               <option value="rest">Правка сетки</option><option value="pose">Деформация</option>
             </select>}
@@ -1279,7 +1282,8 @@ export function Scene(props: SceneProps) {
           )}
         </div>
       )}
-      {artGenerator&&meshTarget&&<ArtMeshGenerator key={meshTarget.id} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
+      {artGenerator&&meshTarget&&<ArtMeshGenerator key={`${meshTarget.id}-${artGenerator}`}
+        batch={artGenerator==="descendants"?{root:meshTarget.id,objects:props.preset.objects,onApply:(meshes,inherit)=>{props.onArtBatch(meshes,inherit);setArtGenerator(false);}}:undefined} width={meshTarget.width} height={meshTarget.height} nextId={meshTarget.artMesh?.nextId??0}
         onClose={()=>setArtGenerator(false)} onApply={mesh=>{props.onArtMesh(meshTarget.id,mesh,{},true);setArtGenerator(false);props.onTool("deform");}}/>}
       <div
         className={`scene-viewport tool-${props.tool}`}
