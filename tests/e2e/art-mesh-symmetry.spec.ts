@@ -35,3 +35,18 @@ test("missing/asymmetric counterparts do not create hidden geometry",()=>{
  expect(asymmetric.vertices).toHaveLength(3);
  expect(()=>artSymmetryPairs(mesh,{axis:"x",at:NaN})).toThrow();
 });
+test("angled symmetry pairs, mirrors and projects movement along the same axis",()=>{
+ const mesh=generateRegularArt(2,2,100,100),pairs=artSymmetryPairs(mesh,{angle:45,center:{x:50,y:50}});
+ expect(pairs.get("v0")).toBe("v3");expect(pairs.get("v1")).toBe("v1");
+ const deltas=mirrorArtDeltas({v0:{x:10,y:4},v1:{x:8,y:2}},pairs,45);
+ expect(deltas.v3.x).toBeCloseTo(-4);expect(deltas.v3.y).toBeCloseTo(-10);
+ expect(deltas.v1.x).toBeCloseTo(3);expect(deltas.v1.y).toBeCloseTo(-3);
+ expect(()=>artSymmetryPairs(mesh,{angle:Infinity,center:{x:0,y:0}})).toThrow();
+});
+test("arbitrary 27 degree reflection is involutive and uses object-local center",async()=>{
+ const {reflectArtVector}=await import("../../src/engine/artMeshSymmetry");
+ const p={x:17,y:-9},other=reflectArtVector(p,27),back=reflectArtVector(other,27);
+ expect(back.x).toBeCloseTo(p.x);expect(back.y).toBeCloseTo(p.y);
+ const mesh={...generateRegularArt(2,2,100,100),vertices:[p,other].map((v,i)=>({id:`v${i}`,rest:{x:v.x+33,y:v.y+71},uv:{x:0,y:0}})),triangles:[]};
+ expect(artSymmetryPairs(mesh,{angle:27,center:{x:33,y:71}}).get("v0")).toBe("v1");
+});

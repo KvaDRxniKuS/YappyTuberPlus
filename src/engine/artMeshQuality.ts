@@ -1,3 +1,4 @@
+import Delaunator from "delaunator";
 import type {ArtDeformation} from "./artDeformation";
 import type {Vec2} from "../types";
 const cross=(a:Vec2,b:Vec2,c:Vec2)=>(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
@@ -38,4 +39,20 @@ export function artPointHull(mesh:ArtDeformation):string[]{
  const sorted=[...mesh.vertices].sort((a,b)=>a.rest.x-b.rest.x||a.rest.y-b.rest.y);
  const half=(vertices:typeof sorted)=>{const result:typeof sorted=[];for(const v of vertices){while(result.length>1&&cross(result.at(-2)!.rest,result.at(-1)!.rest,v.rest)<=1e-10)result.pop();result.push(v);}return result;};
  return [...half(sorted).slice(0,-1),...half([...sorted].reverse()).slice(0,-1)].map(v=>v.id);
+}
+
+/** Automatic editing topology: Delaunay over the current authored points.
+ * Stable IDs, UV, offsets and vertex order are never regenerated. Collinear
+ * point sets have no surface; coincident points are retained for the editor. */
+export function rebuildArtTriangles(mesh:ArtDeformation):ArtDeformation{
+ const delaunay=Delaunator.from(mesh.vertices,v=>v.rest.x,v=>v.rest.y);
+ const triangles:Array<[string,string,string]>=[];
+ for(let i=0;i<delaunay.triangles.length;i+=3){
+  const vertices=[0,1,2].map(j=>mesh.vertices[delaunay.triangles[i+j]]);
+  const area=cross(vertices[0].rest,vertices[1].rest,vertices[2].rest);
+  if(Math.abs(area)<1e-10)continue;
+  const ids=vertices.map(v=>v.id) as [string,string,string];
+  triangles.push(area>0?ids:[ids[0],ids[2],ids[1]]);
+ }
+ return {...mesh,triangles};
 }

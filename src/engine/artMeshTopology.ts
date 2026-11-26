@@ -1,10 +1,10 @@
-import {artPointHull,improveArtTriangles} from "./artMeshQuality";
+import {artPointHull,improveArtTriangles,rebuildArtTriangles} from "./artMeshQuality";
 import {addArtFace,removeArtFace} from "./artMeshFaces";
 import type {RigObject,Vec2} from "../types";
 import {emptyArtDeformation,bindArtPoint,insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
 import {readStates,writeStates} from "./states";
-export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[]}|{type:"addFace"|"removeFace"|"removeEdge";ids:string[]};
+export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[];rebuild?:boolean}|{type:"addFace"|"removeFace"|"removeEdge";ids:string[];rebuild?:boolean};
 /** Full object transaction: geometry, authored pose and every state key are
  * committed by the caller together. Failure leaves the source untouched. */
 export function editArtTopology(object:RigObject,command:ArtTopologyCommand):RigObject {
@@ -27,11 +27,11 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
  }
  if(command.type==="removeEdge"){
   if(command.ids.length!==2)throw new Error("Ребро должно содержать две вершины.");
-  return {...object,artMesh:{...mesh,triangles:mesh.triangles.filter(face=>!command.ids.every(id=>face.includes(id)))}};
+  return {...object,artMesh:command.rebuild?rebuildArtTriangles(mesh):{...mesh,triangles:mesh.triangles.filter(face=>!command.ids.every(id=>face.includes(id)))}};
  }
  if(command.type==="addFace"||command.type==="removeFace"){
   const artMesh=command.type==="addFace"?addArtFace(mesh,command.ids):removeArtFace(mesh,command.ids);
-  return {...object,artMesh};
+  return {...object,artMesh:command.rebuild?rebuildArtTriangles(artMesh):artMesh};
  }
  if(command.type==="create"&&!bindArtPoint(mesh,command.point)){
   const p=command.point;
@@ -39,25 +39,20 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
   if(mesh.vertices.some(v=>Math.hypot(v.rest.x-p.x,v.rest.y-p.y)<1e-7))throw new Error("Вершина уже существует.");
   const id=`v${mesh.nextId}`;
   let created={...mesh,nextId:mesh.nextId+1,vertices:[...mesh.vertices,{id,rest:{...p},uv:{x:p.x/object.width,y:p.y/object.height}}]};
-  if(command.connect){
-   if(!mesh.triangles.length&&artPointHull(created).length>=3)return editArtTopology({...object,artMesh:created},{type:"triangulate"});
-   const edges=new Map<string,{ids:[string,string];count:number}>();
-   for(const face of mesh.triangles)for(let i=0;i<3;i++){const ids:[string,string]=[face[i],face[(i+1)%3]],key=[...ids].sort().join(":");const edge=edges.get(key);if(edge)edge.count++;else edges.set(key,{ids,count:1});}
-   for(const edge of edges.values())if(edge.count===1){try{created=addArtFace(created,[...edge.ids,id]);}catch{/* Only visible boundary edges can be connected without overlap. */}}
-   created=improveArtTriangles(created);
-  }
+  if(command.connect)created=rebuildArtTriangles(created);
   return {...object,artMesh:created};
  }
  if(command.type==="insert"||command.type==="create"){
   const result=insertArtStateVertex(mesh,states,command.point);
   const authored=insertArtVertex(mesh,command.point,[pose]);
-  mesh=result.mesh;states=result.states;pose=authored.poses[0];
+  mesh=command.type==="create"&&command.connect?rebuildArtTriangles(result.mesh):result.mesh;states=result.states;pose=authored.poses[0];
  }else{
   const ids=new Set(command.ids);
   if(!mesh.vertices.some(v=>ids.has(v.id)))return object;
   for(const id of ids){const result=removeArtStateVertex(mesh,states,id);mesh=result.mesh;states=result.states;}
   pose=Object.fromEntries(Object.entries(pose).filter(([id])=>!ids.has(id)));
  }
+ if(command.type==="remove"&&command.rebuild)mesh=rebuildArtTriangles(mesh);
  const next={...object,artMesh:mesh,artPose:pose};
  return {...next,script:writeStates(object.script,states,next).script};
 }

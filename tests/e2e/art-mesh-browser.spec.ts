@@ -183,3 +183,28 @@ test("mesh editing keeps V M L inside editor, moves a new point with UV and eras
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(4);
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(5);
 });
+test("rest edits rebuild edges and angled symmetry reflects movement with one undo",async({page})=>{
+ const preset=project();preset.objects[0].height=160;preset.objects[0].artMesh=generateRegularArt(2,2,160,160);
+ await open(page,preset);await page.keyboard.press("KeyR");
+ await page.getByLabel("Симметрия артмеша",{exact:true}).check();
+ await page.getByLabel("Угол симметрии артмеша").fill("45");await page.getByLabel("Угол симметрии артмеша").blur();
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+100*z,y=box.y+(box.height-300*z)/2+80*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+20,y+10,{steps:6});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices[0].rest.x).toBeGreaterThan(5);
+ const mesh=(await stored(page)).objects[0].artMesh,a=mesh.vertices[0].rest,b=mesh.vertices[3].rest;
+ expect(b.x).toBeCloseTo(160-a.y);expect(b.y).toBeCloseTo(160-a.x);
+ expect(new Set(mesh.triangles.flat()).size).toBe(4);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
+});
+test("Alt edge deletion rebuilds faces instead of leaving floating vertices",async({page})=>{
+ const preset=project();await open(page,preset);await page.keyboard.press("KeyR");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+180*z,y=box.y+(box.height-300*z)/2+140*z;
+ await page.keyboard.down("Alt");await page.mouse.click(x,y);await page.keyboard.up("Alt");
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles).not.toEqual(preset.objects[0].artMesh!.triangles);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(2);
+ const mesh=(await stored(page)).objects[0].artMesh;expect(mesh.vertices).toHaveLength(4);expect(new Set(mesh.triangles.flat()).size).toBe(4);
+});
