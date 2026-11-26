@@ -34,14 +34,14 @@ test("паспорт: шесть чисел и подписи слотов", () 
   // переименование переменной во всех местах (оболочка 20),
   // профиль приложения для адреса телефона, портов и эталона трекера (оболочка 21),
   // состояния объекта с блоком `# states` и `vars` в кадре (ядро 26).
-  expect(versionString()).toBe("1.1.26.7.2.5.21");
+  expect(versionString()).toBe("1.1.27.8.2.5.21");
   // Мост в паспорте и протокол оверлея — одно число, иначе они разъедутся.
   expect(VERSION.bridge).toBe(OVERLAY_PROTOCOL);
   expect(VERSION.format).toBe(PRESET_FORMAT);
   expect(VERSION.modules).toBe(MODULE_FORMAT);
 
   // Для человека — подписями, в том же порядке.
-  expect(versionLabel()).toBe("1.1 · ядро 26 · файл 7 · мост 2 · модули 5 · оболочка 21");
+  expect(versionLabel()).toBe("1.1 · ядро 27 · файл 8 · мост 2 · модули 5 · оболочка 21");
   expect(versionShort()).toBe("1.1");
   // В установщик уходят только три числа: поколения туда не помещаются.
   expect(packagingVersion()).toBe("1.1.0");

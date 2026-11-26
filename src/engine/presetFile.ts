@@ -2,7 +2,7 @@ import type { RigPreset } from "../types";
 import { normalizePreset } from "./preset";
 import { materialSources } from "../render/material";
 import { IncompatiblePresetError, presetCompatibility, type CompatibilityReport } from "./presetCheck";
-import { withBuildStamp } from "../version";
+import { withBuildStamp, PRESET_FORMAT } from "../version";
 import { needsCore } from "./coreFeatures";
 import { stripTrackerProfile } from "../modules/trackerProfile";
 import {
@@ -110,7 +110,7 @@ export function stampPreset(preset: RigPreset): RigPreset {
   // Адрес телефона, порты трекера и эталон позы — настройки машины, а не рига:
   // в записываемом файле их нет (см. `trackerProfile`).
   const clean = stripTrackerProfile(preset);
-  return { ...withBuildStamp(clean), needs: needsCore(clean) };
+  return { ...withBuildStamp(clean), version: PRESET_FORMAT, needs: needsCore(clean) };
 }
 
 /**

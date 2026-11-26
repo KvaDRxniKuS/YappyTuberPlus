@@ -154,3 +154,16 @@ test("требование: файл уносит его с собой", () => {
   // В памяти сцены требования нет: оно считается при записи.
   expect(scene.needs).toBeUndefined();
 });
+
+test("единый артмеш требует вычисляющее watch ядро 27 и сохраняется только форматом 8",async()=>{
+ const {generateRegularArt}=await import("../../src/engine/artDeformation");
+ const {PRESET_FORMAT}=await import("../../src/version");
+ const scene=preset([{artMesh:generateRegularArt(2,2,100,100),artPose:{v0:{x:3,y:4}}}]);
+ const stamped=stampPreset(scene);
+ expect(PRESET_FORMAT).toBe(8);expect(stamped.version).toBe(8);expect(stamped.needs).toBe(27);
+ expect(needsReport(scene).reasons.some(r=>r.since===27)).toBe(true);
+ expect(coreVerdict({core:26,acceptsFrom:16},{needs:stamped.needs!}).state).toBe("older");
+ expect(normalizePreset(stamped)!.objects[0].artMesh).toEqual(scene.objects[0].artMesh);
+ expect(needsCore(preset([{script:"states_art_w0_0 = .5"}]))).toBe(27);
+ expect(needsCore(preset([{script:"x = 0"}]))).toBe(1);
+});

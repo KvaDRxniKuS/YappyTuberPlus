@@ -13,8 +13,9 @@ if (probe.status !== 0) {
   // The built core is committed, so a machine without Rust can still build and
   // run the frontend. A real Rust build always takes priority when available.
   if (existsSync(artifact)) {
-    console.warn("cargo не найден — используется уже собранный public/rig_core.wasm");
-    process.exit(0);
+    console.warn("cargo не найден — проверяется уже собранный public/rig_core.wasm");
+    const checked=spawnSync(process.execPath,[join(root,"scripts","check-wasm-core.mjs")],{cwd:root,stdio:"inherit"});
+    process.exit(checked.status??1);
   }
   console.error("cargo не найден и public/rig_core.wasm отсутствует: установите Rust");
   process.exit(1);
@@ -30,3 +31,6 @@ copyFileSync(
   artifact,
 );
 console.log("Rust core → public/rig_core.wasm");
+
+const checked=spawnSync(process.execPath,[join(root,"scripts","check-wasm-core.mjs")],{cwd:root,stdio:"inherit"});
+if(checked.status!==0)process.exit(checked.status??1);

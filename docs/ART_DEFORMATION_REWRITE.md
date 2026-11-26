@@ -475,3 +475,26 @@ replaceArtObjectMesh строго проверяет размеры/mesh/мон�
 эффекта на подготовленный child mesh и отсутствия мутации потомков. Браузерная
 проверка dialog/undo и Rust/WASM/dist всё ещё не выполнена. Следующий крупный блок:
 format/needs и удаление старого NxN runtime/UI, затем полная проверка цепочки.
+
+## Этап 20: формат 8, needs 27 и запрет stale WASM build
+
+PRESET_FORMAT поднят до 8, VERSION.core и Rust CORE_GENERATION — 27. Любая
+запись через stampPreset явно ставит текущий version, а не сохраняет номер
+входного объекта: старый frontend формата 7 откажется открыть новый файл вместо
+молчаливой потери artMesh/artPose. needsCore распознаёт artMesh и генерируемые
+states_art_w locals как требование 27; простые сцены не получают 27 автоматически.
+Промежуточно форматы 2–7 ещё читаются; legacy runtime/UI пока НЕ удалены.
+
+scripts/check-wasm-core.mjs инстанцирует реальный public/rig_core.wasm, сверяет
+его ответ version с Rust source generation, затем проверяет vertex-only watch
+вычислением кадра. build-wasm вызывает проверку как при fallback без Cargo, так
+и после компиляции. Больше нельзя получить «успешную сборку» с прежним WASM,
+который не поддерживает новый contract. Это намеренно ужесточает build gate.
+
+28 targeted tests + tsc + diff-check прошли, version:report согласовал 27 в
+таблице/редакторе/Rust. Отдельный npm run build:wasm ОЖИДАЕМО завершился code 1:
+Cargo отсутствует, существующий артефакт не сообщает требуемое поколение 27.
+WASM probe успешного ядра пока проверить нельзя; Rust tests не выполнены.
+`npm run build` теперь тоже будет блокироваться до полноценной Rust/WASM сборки.
+Dist/public WASM не обновлены. Следующий шаг — удалить старые NxN-пути, но не
+объявлять миграцию готовой до Rust/browser/Windows проверок.

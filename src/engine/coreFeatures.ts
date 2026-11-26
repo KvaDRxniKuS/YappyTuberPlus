@@ -42,7 +42,7 @@ export interface CoreFeature {
   /** Виды объектов, которым признак обязателен. */
   kinds?: ObjectKind[];
   /** Поля объекта: признак нужен, только если поле есть. */
-  fields?: ("mask" | "warp" | "material" | "normal")[];
+  fields?: ("mask" | "warp" | "material" | "normal" | "artMesh")[];
   /**
    * Поколение, в котором признак **убран** из языка.
    *
@@ -230,6 +230,13 @@ export const CORE_FEATURES: readonly CoreFeature[] = [
     // Имя придумывает автор, поэтому признак ловится не словом, а формой:
     // слева имя, которого язык не знает (см. `hasLocalAssignment`).
     localAssignment: true,
+  },
+  {
+    id: "art-mesh-playback",
+    label: "единый артмеш и вычисляемые веса вершинных состояний",
+    since: 27,
+    fields: ["artMesh"],
+    syntax: [/\bstates_art_w\d+_\d+\s*=/],
   },
 ];
 
