@@ -1,3 +1,4 @@
+import {DeformationSources} from "./DeformationSources";
 import { useRef, useState, type ReactNode } from "react";
 import { ChevronRight, Crosshair, Eye, EyeOff, ImageUp, Layers, Link2, Music, Lightbulb, RotateCcw, Shapes, Type } from "lucide-react";
 import type { BasePose, EnvironmentSpec, MediaRepeat, MediaSpec, RigFrame, RigObject, TextSpec } from "../types";
@@ -359,7 +360,7 @@ export function Inspector(props: InspectorProps) {
         )}
 
         {(object.kind === "sprite" || object.kind === "media" || object.kind === "group" || object.kind === "shape") && (
-          <MeshSection object={object} onChange={onChange} />
+          <MeshSection object={object} objects={props.objects} onChange={onChange} />
         )}
 
         {object.kind !== "group" && object.kind !== "shape" && (
@@ -501,11 +502,11 @@ function MediaSection({ object, media, onChange }: {
  * Смена густоты форму не сбрасывает: узлы новой сетки берутся билинейно из
  * старой. Поэтому «стало мало» лечится одним полем.
  */
-function MeshSection({object,onChange}:{object:RigObject;onChange:(object:RigObject)=>void}){
+function MeshSection({object,objects,onChange}:{object:RigObject;objects:RigObject[];onChange:(object:RigObject)=>void}){
   return <Fold className="property-section compact-section" id="Деформация" title="Артмеш" note={object.artMesh?`${object.artMesh.vertices.length} ВЕРШИН`:"НЕТ СЕТКИ"}>
     <p className="behaviour-hint">{object.artMesh?"Правка базы и деформация вершин — в инструментах сцены T/R.":"Создайте артмеш кнопкой «Сгенерировать артмеш» в инструментах сцены T/R. Без меша объект не наследует деформацию поверхности."}</p>
     {object.artMesh&&<>
-      {object.parentId&&<label className="check-line"><input type="checkbox" checked={object.deformParent===true} onChange={e=>onChange({...object,deformParent:e.target.checked})}/><span>Наследовать деформацию</span></label>}
+      <DeformationSources object={object} objects={objects} onChange={onChange}/>
       <button className="button secondary" onClick={()=>onChange({...object,artPose:{}})}>Сбросить деформацию</button>
     </>}
   </Fold>;

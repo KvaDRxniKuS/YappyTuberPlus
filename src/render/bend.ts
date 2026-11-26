@@ -3,7 +3,7 @@ import {compiledArtMesh,evaluateArtMesh,addArtOffsets,bindArtVertices,applyArtBi
 import type { ObjectFrame, RigFrame, RigObject, RigPreset, Vec2 } from "../types";
 import { invertAffine, objectMatrix, staticValues, transformPoint } from "./rigCanvas";
 
-/** Explicit triangle deformers map child vertices in world space. Object bases
+/** Explicit triangle sources map selected vertices in world space. Object bases
  * remain unchanged; no geometry is invented for children without an artMesh. */
 
 /** Предел вложенности: защита от петли в структуре, а не ограничение модели. */
@@ -59,19 +59,26 @@ export function createParentMeshTransforms(
   const samplers=new Map<string,Sampler|undefined>();
   const transforms=new WeakMap<RigObject,Sampler|undefined>();
   return object=>{
-    if(object.deformParent!==true || !object.artMesh || !object.parentId) return undefined;
+    if(object.deformParent!==true || !object.artMesh || (!object.parentId&&!object.deformSources?.length)) return undefined;
     if(transforms.has(object)) return transforms.get(object);
     const chain:Sampler[]=[];
     const seen=new Set<string>([object.id]);
-    let parent=byId.get(object.parentId);
-    for(let depth=0;parent&&depth<MAX_DEPTH&&!seen.has(parent.id);depth++) {
-      seen.add(parent.id);
-      if(parent.artMesh) {
-        if(!samplers.has(parent.id)) samplers.set(parent.id,prepareDeformOffset(parent,frame?.objects[parent.id]??staticValues(parent),points?.get(parent.id)));
-        const sampler=samplers.get(parent.id);
-        if(sampler) chain.push(sampler);
+    const sources:RigObject[]=[];
+    if(object.deformSources){
+      for(const id of object.deformSources)if(!seen.has(id)){seen.add(id);const source=byId.get(id);if(source)sources.push(source);}
+    }else{
+      let parent=object.parentId?byId.get(object.parentId):undefined;
+      for(let depth=0;parent&&depth<MAX_DEPTH&&!seen.has(parent.id);depth++){
+        seen.add(parent.id);sources.push(parent);parent=parent.parentId?byId.get(parent.parentId):undefined;
       }
-      parent=parent.parentId?byId.get(parent.parentId):undefined;
+    }
+    if(object.deformSources){
+      const depth=(source:RigObject)=>{let count=0,parent=source.parentId;const visited=new Set([source.id]);while(parent&&!visited.has(parent)){visited.add(parent);count++;parent=byId.get(parent)?.parentId??null;}return count;};
+      sources.sort((a,b)=>depth(b)-depth(a)||preset.objects.indexOf(a)-preset.objects.indexOf(b));
+    }
+    for(const parent of sources)if(parent.artMesh){
+      if(!samplers.has(parent.id))samplers.set(parent.id,prepareDeformOffset(parent,frame?.objects[parent.id]??staticValues(parent),points?.get(parent.id)));
+      const sampler=samplers.get(parent.id);if(sampler)chain.push(sampler);
     }
     if(!chain.length) {transforms.set(object,undefined);return undefined;}
     const values=frame?.objects[object.id]??staticValues(object);

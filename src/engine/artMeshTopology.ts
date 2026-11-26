@@ -1,5 +1,5 @@
 import {artPointHull,improveArtTriangles,rebuildArtTriangles} from "./artMeshQuality";
-import {addArtFace,removeArtFace} from "./artMeshFaces";
+import {addArtFace} from "./artMeshFaces";
 import type {RigObject,Vec2} from "../types";
 import {emptyArtDeformation,bindArtPoint,insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
@@ -25,13 +25,18 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
   }
   return {...object,artMesh:improveArtTriangles({...mesh,triangles:built.triangles})};
  }
- if(command.type==="removeEdge"){
-  if(command.ids.length!==2)throw new Error("Ребро должно содержать две вершины.");
-  return {...object,artMesh:command.rebuild?rebuildArtTriangles(mesh):{...mesh,triangles:mesh.triangles.filter(face=>!command.ids.every(id=>face.includes(id)))}};
+ if(command.type==="removeEdge"||command.type==="removeFace"){
+  const removed=mesh.triangles.filter(face=>command.ids.every(id=>face.includes(id)));
+  if(!removed.length)return object;
+  const key=(face:string[])=>[...face].sort().join(":");
+  const removedIds=new Set(removed.map(key));
+  const next={...mesh,manualFaces:mesh.manualFaces?.filter(f=>!removedIds.has(key(f))),excludedFaces:[...new Map([...mesh.excludedFaces??[],...removed].map(f=>[key(f),f])).values()]};
+  return {...object,artMesh:rebuildArtTriangles(next)};
  }
- if(command.type==="addFace"||command.type==="removeFace"){
-  const artMesh=command.type==="addFace"?addArtFace(mesh,command.ids):removeArtFace(mesh,command.ids);
-  return {...object,artMesh:command.rebuild?rebuildArtTriangles(artMesh):artMesh};
+ if(command.type==="addFace"){
+  addArtFace({...mesh,triangles:mesh.manualFaces??[]},command.ids);
+  const next={...mesh,manualFaces:[...mesh.manualFaces??[],command.ids as [string,string,string]],excludedFaces:mesh.excludedFaces};
+  return {...object,artMesh:rebuildArtTriangles(next)};
  }
  if(command.type==="create"&&!bindArtPoint(mesh,command.point)){
   const p=command.point;
@@ -49,6 +54,7 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
  }else{
   const ids=new Set(command.ids);
   if(!mesh.vertices.some(v=>ids.has(v.id)))return object;
+  mesh={...mesh,manualFaces:mesh.manualFaces?.filter(f=>!f.some(id=>ids.has(id))),excludedFaces:mesh.excludedFaces?.filter(f=>!f.some(id=>ids.has(id)))};
   for(const id of ids){const result=removeArtStateVertex(mesh,states,id);mesh=result.mesh;states=result.states;}
   pose=Object.fromEntries(Object.entries(pose).filter(([id])=>!ids.has(id)));
  }

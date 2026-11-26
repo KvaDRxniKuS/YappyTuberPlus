@@ -1,3 +1,4 @@
+import {mirrorStateKey,pasteStateKey,copyStateKey,heldStateKey} from "../engine/stateKeyActions";
 import {artPosePoints} from "../engine/artMeshBlend";
 import type {ArtOffsets,ArtDeformation} from "../engine/artDeformation";
 import {artRecordFromBase} from "../engine/artMeshStates";
@@ -109,6 +110,7 @@ export function StatesPanel(props: StatesPanelProps) {
   /** Выделенные строки: копирование и правки из меню идут по ним. */
   const [picked, setPicked] = useState<number[]>([]);
   /** Открытое контекстное меню: где и для какой строки. */
+  const [keyMenu,setKeyMenu]=useState<{x:number;y:number;index:number;at:number}|null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; index: number } | null>(null);
   /** Замена параметра: диалог с поиском и картой «было → стало». */
   const [replaceFor, setReplaceFor] = useState<number[] | null>(null);
@@ -213,10 +215,10 @@ export function StatesPanel(props: StatesPanelProps) {
 
   const pose: Pose | null = layer?.poses[keyIndex] ?? null;
 
-  const apply = (next: States, index = layerIndex, key = keyIndex) => {
+  const apply = (next: States, index = layerIndex, key = keyIndex, record = true) => {
     if (!object) return;
     const written = writeStates(object.script, next, object).script;
-    if (written !== object.script) props.onChange({ [object.id]: written });
+    if (written !== object.script) (record?props.onChange:props.onNormalize??props.onChange)({ [object.id]: written });
     setLayerIndex(Math.min(index, Math.max(0, next.layers.length - 1)));
     // Выбор ключа не переставляем: у привязанного слоя он вычисляется из точки,
     // у свободного хранится отдельно. Иначе любая правка поля откатывала выбор
@@ -506,14 +508,14 @@ export function StatesPanel(props: StatesPanelProps) {
         ...next,
         poses: next.poses.map((item, at2) => (at2 === created ? { ...item, points } : item)),
       };
-      apply(patchLayer(states, layerIndex, withPoints), layerIndex, created);
+      apply(patchLayer(states, layerIndex, withPoints), layerIndex, created, false);
       return;
     }
     const nextLayer = {
       ...layer,
       poses: layer.poses.map((item, at2) => (at2 === index ? { ...item, points } : item)),
     };
-    apply(patchLayer(states, layerIndex, nextLayer), layerIndex, index);
+    apply(patchLayer(states, layerIndex, nextLayer), layerIndex, index, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
@@ -901,6 +903,7 @@ export function StatesPanel(props: StatesPanelProps) {
           {/* Линия таймлайна: ключи на ней, точка — предпросмотр. */}
           <div
             className="states-track"
+            onContextMenu={event=>{event.preventDefault();event.stopPropagation();const hit=(event.target as HTMLElement).closest("[data-key]");const index=hit?Number(hit.getAttribute("data-key")):-1;setKeyMenu({x:event.clientX,y:event.clientY,index,at:index>=0?layer.poses[index].at??0:valueAt(pointOf(event,event.currentTarget))});}}
             title="Клик — поставить точку · ключи тянутся мышью · + добавляет ключ в точке"
             onPointerDown={(event) => {
               if (event.button !== 0) return;
@@ -993,6 +996,7 @@ export function StatesPanel(props: StatesPanelProps) {
             {layer.poses.map((item, index) => (
               <span
                 key={index}
+                onContextMenu={event=>{event.preventDefault();event.stopPropagation();setKeyMenu({x:event.clientX,y:event.clientY,index,at:item.at??0});}}
                 className={`states-key-chip ${index === keyIndex ? "active" : ""}`}
                 onClick={() => { setAt(item.at ?? at); setPickedKey(index); }}
               >
@@ -1018,7 +1022,7 @@ export function StatesPanel(props: StatesPanelProps) {
       {layer && !bound && (
         <div className="states-weights">
           {layer.poses.map((item, index) => (
-            <div key={index} className={`states-weight ${index === keyIndex ? "active" : ""}`} onClick={() => setPickedKey(index)}>
+            <div key={index} onContextMenu={event=>{event.preventDefault();event.stopPropagation();setKeyMenu({x:event.clientX,y:event.clientY,index,at:0});}} className={`states-weight ${index === keyIndex ? "active" : ""}`} onClick={() => setPickedKey(index)}>
               <span>вес</span>
               <input
                 value={item.weight ?? ""}
@@ -1134,6 +1138,19 @@ export function StatesPanel(props: StatesPanelProps) {
         </>
       )}
 
+      {keyMenu&&layer&&<ContextMenu x={keyMenu.x} y={keyMenu.y} onClose={()=>setKeyMenu(null)} items={[
+        {label:"Копировать ключ",disabled:keyMenu.index<0,onSelect:()=>copyStateKey(layer.poses[keyMenu.index])},
+        ...[{label:"Отразить ключ: вертикаль",angle:0},{label:"Отразить ключ: горизонталь",angle:90}].map(({label,angle})=>({label,disabled:keyMenu.index<0,onSelect:()=>{
+          const poses=layer.poses.map((p,i)=>i===keyMenu.index?mirrorStateKey(p,object.artMesh,object.width,object.height,angle):p);applyLayer({...layer,poses});
+        }})),
+        {label:keyMenu.index>=0?"Вставить ключ (заменить)":"Вставить ключ сюда",disabled:!heldStateKey()||Object.keys(heldStateKey()?.points??{}).some(id=>!object.artMesh?.vertices.some(v=>v.id===id)),onSelect:()=>{
+          const copied=heldStateKey();if(!copied)return;
+          const at=round3(keyMenu.at),index=keyMenu.index>=0?keyMenu.index:keyAt(layer,at);
+          const next=index>=0?{...layer,poses:layer.poses.map((p,i)=>i===index?pasteStateKey(copied,p):p)}:addKey(layer,at,{});
+          if(index<0){const created=keyAt(next,at);next.poses=next.poses.map((p,i)=>i===created?pasteStateKey(copied,p):p);}
+          applyLayer(next);setAt(at);
+        }},
+      ]}/>}
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={layerMenu(menu.index)} />
       )}

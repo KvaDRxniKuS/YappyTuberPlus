@@ -1,3 +1,4 @@
+import {makeLayer,writeStates,readStates} from "../../src/engine/states";
 import {test,expect,type Page} from "@playwright/test";
 import {createDemoPreset,rootScript} from "../../src/data/demoPreset";
 import {generateRegularArt} from "../../src/engine/artDeformation";
@@ -187,7 +188,8 @@ test("mesh editing keeps V M L inside editor, moves a new point with UV and eras
 test("rest edits rebuild edges and angled symmetry reflects movement with one undo",async({page})=>{
  const preset=project();preset.objects[0].height=160;preset.objects[0].artMesh=generateRegularArt(2,2,160,160);
  await open(page,preset);await page.keyboard.press("KeyR");
- await page.getByLabel("Симметрия артмеша",{exact:true}).check();
+ await page.getByRole("button",{name:"Симметрия артмеша",exact:true}).click();
+ await page.getByRole("button",{name:"Симметрия артмеша",exact:true}).hover();
  await page.getByLabel("Угол симметрии артмеша").fill("45");await page.getByLabel("Угол симметрии артмеша").blur();
  const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
  const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
@@ -199,15 +201,15 @@ test("rest edits rebuild edges and angled symmetry reflects movement with one un
  expect(new Set(mesh.triangles.flat()).size).toBe(4);
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
 });
-test("Alt edge deletion rebuilds faces instead of leaving floating vertices",async({page})=>{
+test("Alt edge deletion creates a persistent excluded surface",async({page})=>{
  const preset=project();await open(page,preset);await page.keyboard.press("KeyR");
  const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
  const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
  const x=box.x+(box.width-400*z)/2+180*z,y=box.y+(box.height-300*z)/2+140*z;
  await page.keyboard.down("Alt");await page.mouse.click(x,y);await page.keyboard.up("Alt");
  await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles).not.toEqual(preset.objects[0].artMesh!.triangles);
- await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(2);
- const mesh=(await stored(page)).objects[0].artMesh;expect(mesh.vertices).toHaveLength(4);expect(new Set(mesh.triangles.flat()).size).toBe(4);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(0);
+ const mesh=(await stored(page)).objects[0].artMesh;expect(mesh.vertices).toHaveLength(4);expect(mesh.excludedFaces).toHaveLength(2);
 });
 test("mesh panel preserves panned zoomed camera and mesh modes can be exited",async({page})=>{
  await open(page,project());
@@ -233,4 +235,96 @@ test("mesh panel preserves panned zoomed camera and mesh modes can be exited",as
  await page.keyboard.press("KeyR");await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
  await page.keyboard.press("KeyT");await page.getByRole("button",{name:"Выйти из артмеша (Esc)",exact:true}).click();
  await expect(page.getByRole("complementary",{name:"Редактор артмеша"})).toHaveCount(0);
+});
+test("brush has mirrored static strokes, dynamic pickup and one-step undo",async({page})=>{
+ const preset=project();preset.objects[0].artMesh=generateRegularArt(5,2,160,120);
+ await open(page,preset);
+ await page.keyboard.press("KeyM");await page.keyboard.press("KeyB");
+ const brush=page.getByRole("button",{name:"Кисть артмеша",exact:true});await expect(brush).toHaveClass("active");await brush.hover();
+ await page.getByLabel("Радиус кисти артмеша").fill("25");await page.getByLabel("Жёсткость кисти артмеша").fill("1");
+ await page.getByRole("button",{name:"Симметрия артмеша",exact:true}).click();
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+100*z,y=box.y+(box.height-300*z)/2+80*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+10*z,y+5*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artPose.v0?.x??0).toBeGreaterThan(5);
+ const first=(await stored(page)).objects[0].artPose;expect(first.v4.x).toBeCloseTo(-first.v0.x);expect(first.v4.y).toBeCloseTo(first.v0.y);
+ expect(first.v2).toBeUndefined();await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artPose).toEqual({});
+ await page.getByRole("button",{name:"Симметрия артмеша",exact:true}).click();
+ await brush.hover();await page.getByLabel("Режим кисти артмеша").selectOption("dynamic");
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+85*z,y,{steps:20});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artPose.v2?.x??0).toBeGreaterThan(0);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artPose).toEqual({});
+});
+test("brush recording in layer key is undone in one step and key context menu copies replaces mirrors",async({page})=>{
+ test.setTimeout(60000);
+ const preset=project(),object=preset.objects[0],layer=makeLayer(0,"test");layer.poses=[{at:0,pose:{}},{at:1,pose:{}}];
+ object.script=writeStates(object.script,{layers:[layer]},object).script;
+ await open(page,preset);await page.getByRole("button",{name:"Состояния",exact:true}).click();
+ await expect(page.locator(".states-key")).toHaveCount(2);
+ const brush=page.getByRole("button",{name:"Кисть артмеша",exact:true});await brush.click();await brush.hover();await page.getByLabel("Радиус кисти артмеша").fill("25");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2)),x=box.x+(box.width-400*z)/2+100*z,y=box.y+(box.height-300*z)/2+80*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+15*z,y+10*z,{steps:5});await page.mouse.up();
+ const points=async()=>readStates((await stored(page)).objects[0].script).layers[0].poses[0].points;
+ await expect.poll(async()=>(await points())?.v0?.[0]??0).toBeGreaterThan(0);
+ await expect.poll(async()=>(await stored(page)).objects[0].artPose).toEqual({});
+ const recorded=await points();await undo(page);
+ await expect.poll(points).toBeUndefined();
+ await page.keyboard.press("Control+Shift+z");await expect.poll(points).toEqual(recorded);
+ await page.locator(".states-key").first().click({button:"right",timeout:5000});await page.getByRole("button",{name:"Копировать ключ",exact:true}).click({timeout:5000});
+ await page.locator(".states-key").last().click({button:"right",timeout:5000});await page.getByRole("button",{name:"Вставить ключ (заменить)",exact:true}).click();
+ await expect.poll(async()=>readStates((await stored(page)).objects[0].script).layers[0].poses[1].points).toEqual(recorded);
+ await page.locator(".states-key").last().click({button:"right",timeout:5000});await page.getByRole("button",{name:"Отразить ключ: вертикаль",exact:true}).click();
+ await expect.poll(async()=>readStates((await stored(page)).objects[0].script).layers[0].poses[1].points?.v1?.[0]??0).toBeLessThan(0);
+ const track=page.locator(".states-track"),trackBox=(await track.boundingBox())!;
+ await track.click({button:"right",position:{x:trackBox.width*.5,y:8}});
+ await page.getByRole("button",{name:"Вставить ключ сюда",exact:true}).click();
+ await expect.poll(async()=>readStates((await stored(page)).objects[0].script).layers[0].poses.length).toBe(3);
+ const inserted=readStates((await stored(page)).objects[0].script).layers[0].poses.find(p=>p.at===.5);expect(inserted?.points).toEqual(recorded);
+
+});
+test("source picker selects individual ancestors or unrelated surfaces",async({page})=>{
+ const preset=project(),base=preset.objects[0];
+ preset.objects=[{...base,id:"face",name:"Лицо",kind:"group"},{...base,id:"mask",name:"Маска",kind:"group",parentId:"face"},{...base,id:"eye",name:"Глаз",parentId:"mask",deformParent:true,deformSources:["face"]},{...base,id:"other",name:"Другой",kind:"group"}];
+ await open(page,preset);await page.locator(".tree-row").filter({hasText:"Глаз"}).click();await page.getByRole("button",{name:"Параметры",exact:true}).click();
+ const sources=page.getByRole("group",{name:"Источники деформации"});
+ await expect(sources.getByRole("button",{name:"Лицо",exact:true})).toHaveAttribute("aria-pressed","true");
+ await expect(sources.getByRole("button",{name:"Маска",exact:true})).toHaveAttribute("aria-pressed","false");
+ await page.getByLabel("Показать все слои",{exact:true}).check();await sources.getByRole("button",{name:"Другой",exact:true}).click();
+ await expect.poll(async()=>(await stored(page)).objects.find((o:any)=>o.id==="eye").deformSources).toEqual(["face","other"]);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects.find((o:any)=>o.id==="eye").deformSources).toEqual(["face"]);
+});
+test("manual face choice and deletion persist through a rest drag and undo",async({page})=>{
+ await open(page,project());await page.keyboard.press("KeyR");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const p=(x:number,y:number)=>({x:box.x+(box.width-400*z)/2+x*z,y:box.y+(box.height-300*z)/2+y*z});
+ const center=p(180,140);await page.keyboard.down("Alt");await page.mouse.click(center.x,center.y);await page.keyboard.up("Alt");
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(0);
+ await page.keyboard.down("Shift");for(const [x,y] of [[100,80],[260,80],[100,200]]){const q=p(x,y);await page.mouse.click(q.x,q.y);}await page.keyboard.up("Shift");
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.triangles.length).toBe(1);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.manualFaces.length).toBe(1);
+ await page.getByRole("button",{name:"Снять",exact:true}).click();const start=p(100,80);
+ await page.mouse.move(start.x,start.y);await page.mouse.down();await page.mouse.move(start.x+5*z,start.y+5*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices[0].rest.x).toBeGreaterThan(0);
+ expect((await stored(page)).objects[0].artMesh.triangles).toHaveLength(1);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices[0].rest.x).toBe(0);
+});
+test("rest surface matches base vertices and tracing shows a root with an empty mesh and zero opacity",async({page})=>{
+ const preset=project();preset.objects[0].artPose={v0:{x:60,y:50}};
+ await open(page,preset);await page.keyboard.press("KeyR");
+ const pixel=()=>page.locator(".scene-viewport canvas").first().evaluate(el=>{
+  const c=el as HTMLCanvasElement,w=c.clientWidth,h=c.clientHeight,z=Math.max(.05,Math.min((w-70)/400,(h-70)/300,2));
+  const x=(w-400*z)/2+110*z,y=(h-300*z)/2+85*z;
+  return [...c.getContext("2d")!.getImageData(Math.floor(x*c.width/w),Math.floor(y*c.height/h),1,1).data].slice(0,3);
+ });
+ await expect.poll(async()=>(await pixel())[0]).toBeGreaterThan(240);
+ const hidden=project();hidden.objects[0].base.opacity=0;hidden.objects[0].artMesh={schema:1,nextId:0,vertices:[],triangles:[]};
+ await page.evaluate(value=>localStorage.setItem("yappytuberplus.preset.v2",JSON.stringify(value)),hidden);
+ // open() init script restores its input on reload, so install the new source explicitly.
+ await page.addInitScript(value=>localStorage.setItem("yappytuberplus.preset.v2",JSON.stringify(value)),hidden);
+ await page.reload();await page.locator(".tree-row").first().click();await page.keyboard.press("KeyR");await page.getByTitle("Вписать сцену",{exact:true}).click();
+ const check=page.getByLabel("Показывать исходник для обводки",{exact:true});await expect(check).toBeChecked();
+ const shown=(await pixel())[0];await check.uncheck();await expect.poll(async()=>(await pixel())[0]).toBeLessThan(shown-20);
 });

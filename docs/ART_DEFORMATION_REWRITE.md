@@ -675,3 +675,58 @@ Windows WebView2 и OBS нативно здесь не проверялись.
 - Source capture retains RGBA in addition to alpha and is available in regular mode as well as alpha mode. Both previews show the actual authored source pixels underneath topology; groups remain explicitly untextured. Missing regular preview sources do not block regular generation.
 - Deferred Live2D-style mesh-line generation is recorded in docs/BACKLOG.md, not implemented in this change.
 - Validation: TypeScript, 586 browser-free tests, Vite-only bundle, diff check; three standalone browser generator scenarios (alpha apply, Enter/blur/5s draft timing + arrow stepping, regular RGBA source pixels + latest-draft Apply), plus actual App regular-generation undo and descendant-batch scenarios. Draft timeout test uses Playwright clock to assert the 4900/5000 ms boundary. Native gates remain external.
+
+### Persistent manual topology, brush tools, key actions and source selection (2026-10-24)
+
+This entry supersedes the earlier erase-and-rebuild policy: explicitly removed
+faces are intentional holes, not a request to restore the convex hull there.
+
+- Shift-click three vertices in R to pin a manual face. Its edges constrain
+  subsequent automatic Delaunay rebuilding, even when another diagonal is shorter.
+  Alt-click a face/edge cuts the affected faces persistently. `manualFaces` and
+  `excludedFaces` use stable vertex IDs, survive strict loading and clipboard ID
+  remapping, and are cleared with full generation replacement. Only the union
+  boundary of adjacent cuts is constrained; a new manual face can fill part of a
+  cut using a different diagonal without restoring the other half. Automatic
+  edges remain automatic elsewhere. Crossing manual constraints reject the drag
+  with an error rather than passing an invalid graph to the triangulator.
+- Brush is a toolbar tool (B); V/M/L leave brush selection for vertex selection,
+  without leaving T/R context. Symmetry is an independent toolbar toggle.
+  Both have downward chevrons and hover/focus dropdowns beneath their icons.
+  Brush options: radius, hardness and static/dynamic mode. Static fixes influence
+  at pointer-down; dynamic samples moved vertices under each current cursor
+  position and integrates only that motion increment. Leaving its circle stops
+  further influence. A mirrored brush samples a reflected footprint as well as
+  reflecting motion, so it does not depend on exact symmetric vertex pairing.
+  Mirrored circle and angled axis are shown. Hardness controls the full-strength
+  inner radius and smooth edge falloff; overlapping symmetric influence is not
+  summed twice. Brush deformation remains a T operation, not rest-topology paint.
+- R now renders the selected object's rest surface without its own pose/state
+  offsets, matching displayed base vertices; this is scene-only, not a saved pose
+  reset. Reference tracing ignores the selected source's mask/runtime opacity and
+  visibility and handles root objects/empty meshes. Explicit structure-disabled
+  objects/subtrees still remain hidden. Ancestor transformations remain active.
+- Recording an authored mesh gesture into a state key uses the gesture's original
+  undo snapshot; the script update/restoration no longer adds a second history
+  step. Verified brush key recording, Ctrl+Z and redo in the actual App.
+- Key context menus are available on bound timeline dots/chips, empty timeline
+  positions and free-pose rows. Copy, replace/paste and vertical/horizontal mirror;
+  paste preserves target time/weight and validates mesh point IDs. Mirror remaps
+  paired stable vertex IDs as well as reflecting offsets. Playhead beam no longer
+  intercepts clicks on actual keys. Layer-wide clipboard/menu commands are intact.
+- Inspector → Parameters → Artmesh: choose deformation sources individually in a
+  highlighted hierarchy; Show all layers reveals unrelated objects too. Explicit
+  `deformSources` selects only those surfaces (empty list means none), with the
+  enable checkbox retained. Without an explicit list the enabled ancestor chain
+  remains the default; disabled still means position-only, no invented geometry.
+  Selected sources use their own surface offsets, not recursively expanded source
+  lists, avoiding implicit extra inheritance and dependency cycles. Self/missing
+  sources are ignored; application is descendant-first, then stable scene order.
+  Shared TS renderer and serialized overlay geometry use the same source selection;
+  changing the list invalidates the overlay scene signature.
+- Validation: TypeScript, Vite-only bundle, diff check; **592 browser-free tests**
+  and **18 actual App browser scenarios**. New coverage includes manual constraints,
+  holes/rest movement/clipboard, arbitrary source selection, toolbar brush symmetry,
+  static/dynamic strokes, key undo/redo, key menus including paste at a new time,
+  reference pixels and rest-surface alignment. Native Rust/WASM/Windows/OBS gates
+  remain untested here; no new binary-validation claim.

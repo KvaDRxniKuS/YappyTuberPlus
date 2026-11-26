@@ -26,7 +26,13 @@ export function readArtMesh(raw:unknown):ArtDeformation {
     const key=[...face].sort().join(":");if(faces.has(key))throw new Error("Duplicate mesh triangle");faces.add(key);
     return [...face] as [string,string,string];
   });
-  return {schema:1,nextId:Number(raw.nextId),vertices,triangles};
+  const constraints=(value:unknown)=>{
+   if(value===undefined)return undefined;
+   if(!Array.isArray(value)||value.length>MAX_TRIANGLES)throw new Error("Invalid mesh constraints");
+   return value.map(face=>{if(!Array.isArray(face)||face.length!==3||new Set(face).size!==3||!face.every(id=>typeof id==="string"&&ids.has(id)))throw new Error("Invalid constrained face");return [...face] as [string,string,string];});
+  };
+  const manualFaces=constraints(raw.manualFaces),excludedFaces=constraints(raw.excludedFaces);
+  return {schema:1,nextId:Number(raw.nextId),vertices,triangles,...(manualFaces?{manualFaces}:{}),...(excludedFaces?{excludedFaces}:{})};
 }
 export function readArtOffsets(raw:unknown,mesh:ArtDeformation):ArtOffsets {
   if(!record(raw))throw new Error("Invalid vertex pose");

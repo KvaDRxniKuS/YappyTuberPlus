@@ -1,3 +1,4 @@
+import cdt2d from "cdt2d";
 import Delaunator from "delaunator";
 import type {ArtDeformation} from "./artDeformation";
 import type {Vec2} from "../types";
@@ -41,10 +42,40 @@ export function artPointHull(mesh:ArtDeformation):string[]{
  return [...half(sorted).slice(0,-1),...half([...sorted].reverse()).slice(0,-1)].map(v=>v.id);
 }
 
-/** Automatic editing topology: Delaunay over the current authored points.
+/** Automatic editing topology: Delaunay over the current authored points,
+ * constrained by manually pinned faces and intentional cut regions.
  * Stable IDs, UV, offsets and vertex order are never regenerated. Collinear
  * point sets have no surface; coincident points are retained for the editor. */
 export function rebuildArtTriangles(mesh:ArtDeformation):ArtDeformation{
+ const ids=new Map(mesh.vertices.map((v,i)=>[v.id,i]));
+ const valid=(face:string[])=>face.every(id=>ids.has(id));
+ const manualFaces=mesh.manualFaces?.filter(valid),excludedFaces=mesh.excludedFaces?.filter(valid);
+ if(manualFaces?.length||excludedFaces?.length){
+  const edges=new Map<string,[number,number]>();
+  const cutEdges=new Map<string,{edge:[number,number];count:number}>();
+  for(const face of excludedFaces??[])for(let i=0;i<3;i++){const a=ids.get(face[i])!,b=ids.get(face[(i+1)%3])!,key=a<b?`${a}:${b}`:`${b}:${a}`,old=cutEdges.get(key);if(old)old.count++;else cutEdges.set(key,{edge:[a,b],count:1});}
+  // Only the cut region's union boundary is constrained, never diagonals
+  // between two erased faces. New manual faces can fill it using another edge.
+  for(const [key,{edge,count}] of cutEdges)if(count===1)edges.set(key,edge);
+  for(const face of manualFaces??[])for(let i=0;i<3;i++){const a=ids.get(face[i])!,b=ids.get(face[(i+1)%3])!;edges.set(a<b?`${a}:${b}`:`${b}:${a}`,[a,b]);}
+  const segments=[...edges.values()];
+  for(let i=0;i<segments.length;i++)for(let j=i+1;j<segments.length;j++){
+   const [a,b]=segments[i],[c,d]=segments[j];if(a===c||a===d||b===c||b===d)continue;
+   const [pa,pb,pc,pd]=[a,b,c,d].map(k=>mesh.vertices[k].rest);
+   if(cross(pa,pb,pc)*cross(pa,pb,pd)<-1e-12&&cross(pc,pd,pa)*cross(pc,pd,pb)<-1e-12)throw new Error("Закреплённые рёбра пересекаются. Удалите конфликтующую грань перед перемещением.");
+  }
+  const splitEdges:Array<[number,number]>=[];
+  for(const [a,b] of segments){
+   const pa=mesh.vertices[a].rest,pb=mesh.vertices[b].rest,dx=pb.x-pa.x,dy=pb.y-pa.y,length=dx*dx+dy*dy;
+   if(length<1e-16)continue;
+   const along=mesh.vertices.map((v,i)=>({i,t:((v.rest.x-pa.x)*dx+(v.rest.y-pa.y)*dy)/length,p:v.rest})).filter(v=>v.t>=0&&v.t<=1&&Math.abs(cross(pa,pb,v.p))<1e-8).sort((a,b)=>a.t-b.t);
+   for(let i=1;i<along.length;i++)if(along[i].t-along[i-1].t>1e-10)splitEdges.push([along[i-1].i,along[i].i]);
+  }
+  const indices=cdt2d(mesh.vertices.map(v=>[v.rest.x,v.rest.y]),splitEdges);
+  const inside=(p:Vec2,face:string[])=>{const [a,b,c]=face.map(id=>mesh.vertices[ids.get(id)!].rest),d=[cross(a,b,p),cross(b,c,p),cross(c,a,p)];if(Math.abs(cross(a,b,c))<1e-10)return false;return d.every(x=>x>=-1e-8)||d.every(x=>x<=1e-8);};
+  const triangles=indices.filter(face=>{const p=face.map(i=>mesh.vertices[i].rest),center={x:(p[0].x+p[1].x+p[2].x)/3,y:(p[0].y+p[1].y+p[2].y)/3};return manualFaces?.some(f=>inside(center,f))||!excludedFaces?.some(f=>inside(center,f));}).map(face=>face.map(i=>mesh.vertices[i].id) as [string,string,string]);
+  return {...mesh,manualFaces,excludedFaces,triangles};
+ }
  const delaunay=Delaunator.from(mesh.vertices,v=>v.rest.x,v=>v.rest.y);
  const triangles:Array<[string,string,string]>=[];
  for(let i=0;i<delaunay.triangles.length;i+=3){

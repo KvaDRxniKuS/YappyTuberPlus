@@ -2362,3 +2362,17 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 @media(max-width:850px) { .artmesh-panel { width:225px; flex-basis:225px; } .artmesh-generator .artmesh-generator-layout { grid-template-columns:1fr; } .artmesh-generator-settings { border-right:0; } .artmesh-generator-preview { min-height:330px; } .artmesh-generator-footer { flex-wrap:wrap; } }
 .artmesh-panel-body .artmesh-check { display:flex; flex-direction:row; align-items:flex-start; line-height:1.6; }
 .artmesh-panel-body .artmesh-check input { min-height:0; width:auto; margin:2px 0 0; accent-color:#82d5c1; }
+.scene-tool-options { position:relative; display:inline-flex; }
+.scene-tool-options > button { display:flex; align-items:center; gap:2px; }
+.scene-tool-popover { display:none; position:absolute; z-index:100; top:100%; left:0; width:210px; padding:14px; background:#1b242d; border:1px solid #415365; border-radius:8px; box-shadow:0 8px 28px #0009; white-space:normal; }
+.scene-tool-options:hover .scene-tool-popover,.scene-tool-options:focus-within .scene-tool-popover { display:flex; flex-direction:column; gap:12px; }
+.scene-tool-popover label { display:flex; flex-direction:column; gap:6px; font-size:11px; color:#b4c8d7; }
+.scene-tool-popover input,.scene-tool-popover select { width:100%; min-height:28px; padding:4px; background:#10161e; color:#e2ecf2; border:1px solid #3d5264; border-radius:4px; }
+.deformation-sources { display:flex; flex-direction:column; gap:8px; }
+.deformation-sources [role=group] { display:flex; flex-direction:column; max-height:230px; overflow:auto; gap:3px; }
+.deformation-sources [role=group] button { text-align:left; border:1px solid #374655; border-radius:4px; padding:6px; font-size:11px; color:#9bafbd; background:#151d25; }
+.deformation-sources [role=group] button.selected { border-color:#82d5c1; color:#b7f3e3; background:#82d5c119; }
+/* The playhead beam must not steal clicks/context menus from an actual key. */
+.states-key { z-index:4; }
+.scene-tool-popover { right:0; left:auto; }
+.deformation-sources [role=group] button:disabled { opacity:.4; cursor:not-allowed; }

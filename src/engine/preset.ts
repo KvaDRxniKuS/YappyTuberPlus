@@ -353,6 +353,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
       return {
         ...supported,
         artMesh, artPose,
+        deformSources:Array.isArray(object.deformSources)?[...new Set(object.deformSources.filter(id=>typeof id==="string"&&id!==object.id))]:undefined,
         kind,
         enabled: object.enabled !== false,
         base: { ...DEFAULT_BASE, ...object.base },

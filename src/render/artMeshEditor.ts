@@ -64,7 +64,9 @@ export function editArtVertices(mesh:ArtDeformation,pose:ArtOffsets,deltas:ArtOf
   const p=pose[v.id]??{x:0,y:0};next[v.id]={x:p.x+d.x,y:p.y+d.y};}
  return {mesh,pose:next};
 }
-export function artBrushWeight(distance:number,radius:number):number {
+export function artBrushWeight(distance:number,radius:number,hardness=0):number {
  if(!Number.isFinite(distance)||!Number.isFinite(radius)||radius<=0||distance>=radius)return 0;
- const t=Math.max(0,1-distance/radius);return t*t*(3-2*t);
+ const inner=Math.max(0,Math.min(1,hardness));
+ if(distance<=radius*inner)return 1;
+ const t=Math.max(0,(1-distance/radius)/(1-inner));return t*t*(3-2*t);
 }

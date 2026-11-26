@@ -9,6 +9,8 @@ export interface ArtDeformation {
   nextId:number;
   vertices:ArtVertex[];
   triangles:Array<[string,string,string]>;
+  manualFaces?:Array<[string,string,string]>;
+  excludedFaces?:Array<[string,string,string]>;
 }
 export type ArtOffsets=Record<string,Vec2>;
 export interface ArtBinding {ids:[string,string,string];weights:[number,number,number]}

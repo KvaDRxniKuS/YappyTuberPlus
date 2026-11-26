@@ -314,6 +314,8 @@ export interface RigObject {
    * Скрытая геометрия ребёнку не создаётся.
    */
   deformParent?: boolean;
+  /** Explicit independent surface sources, in application order. Empty = none. */
+  deformSources?: string[];
   /** Карта нормалей: картинка или видео с нормалями поверхности. */
   normal?: NormalMapSpec;
   /** Материал: шероховатость, металл, окклюзия, свечение. Нет — старый вид. */
