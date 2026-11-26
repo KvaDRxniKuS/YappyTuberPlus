@@ -50,3 +50,49 @@ test("parent group animation produces serializable prepared overlay geometry",as
  const message=JSON.parse(JSON.stringify({t:"frame",frame,sceneVersion:1,meshes:geometry}));
  expect(message.meshes.child).toEqual(geometry.child);
 });
+
+test("average blends neutral and absent vertex poses continuously in runtime and preview",async()=>{
+ const {artPosePoints,blendArtLayer}=await import("../../src/engine/artMeshBlend");
+ const {object,project,frame}=setup();
+ const layer={...makeLayer(0,"mouse.x"),normalize:"average" as const,poses:[
+  {at:0,pose:{},points:{v0:[0,0] as [number,number]}},
+  {at:1,pose:{},points:{v0:[20,8] as [number,number]}},
+ ]};
+ object.script=writeStates(object.script,{layers:[layer]},object).script;
+ expect(artPosePoints(layer,.25).v0).toEqual({x:5,y:2});
+ frame.vars={[object.id]:{states_art_w0_0:.75,states_art_w0_1:.25}};
+ expect(artStateOffsets(object,frame).v0).toEqual(artPosePoints(layer,.25).v0);
+ expect(prepareRigMeshes(project,frame)[object.id].targets[0]).toEqual({x:7,y:5});
+ const sparse={...layer,poses:[{at:0,pose:{}},layer.poses[1]]};
+ expect(artPosePoints(sparse,.25).v0).toEqual({x:5,y:2});
+ expect(blendArtLayer(layer,[3,1]).v0).toEqual({x:5,y:2});
+ expect(blendArtLayer(layer,[0,0]).v0).toEqual({x:0,y:0});
+ expect(blendArtLayer(layer,[NaN,Infinity])).toEqual({});
+});
+
+test("record between average keys preserves the displayed blend when inserting a key",async()=>{
+ const {artPosePoints}=await import("../../src/engine/artMeshBlend");
+ const {addKey,toPosePoints,addPoints}=await import("../../src/engine/states");
+ const layer={...makeLayer(0,"mouse.x"),normalize:"average" as const,poses:[
+  {at:0,pose:{}}, {at:1,pose:{},points:{v0:[20,8] as [number,number]}},
+ ]};
+ const displayed=artPosePoints(layer,.25),dragDelta={v0:{x:3,y:-2}};
+ const points=toPosePoints(addPoints(displayed,dragDelta));
+ const inserted=addKey(layer,.25,{});
+ const recorded={...inserted,poses:inserted.poses.map(p=>p.at===.25?{...p,points}:p)};
+ expect(artPosePoints(recorded,.25).v0).toEqual({x:8,y:0});
+ expect(recorded.poses[0]).toEqual(layer.poses[0]);
+ expect(recorded.poses[2]).toEqual(layer.poses[1]);
+});
+
+test("loading canonicalizes intermediate art state blocks without losing author code",async()=>{
+ const {normalizePreset}=await import("../../src/engine/preset");
+ const {object,project}=setup();
+ object.script=object.script.replace(/^states_art_w\d+_\d+ = .*\n/gm,"")+"\ncustom_value = 42";
+ const original=readStates(object.script);
+ const normalized=normalizePreset(project)!;
+ expect(normalized.objects[0].script).toContain("states_art_w0_1 = t0_0");
+ expect(normalized.objects[0].script).toContain("custom_value = 42");
+ expect(readStates(normalized.objects[0].script)).toEqual(original);
+ expect(normalizePreset(normalized)!.objects[0].script).toBe(normalized.objects[0].script);
+});

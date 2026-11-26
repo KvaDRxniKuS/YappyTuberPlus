@@ -1,3 +1,4 @@
+import {blendArtLayer} from "./artMeshBlend";
 import type {RigObject,RigPreset,RigFrame,Vec2} from "../types";
 import {readStates,artWeightName,type States,type StatePreview} from "./states";
 import type {ArtOffsets} from "./artDeformation";
@@ -15,20 +16,10 @@ export function artStateOffsets(object:RigObject,frame:RigFrame|null,preview?:St
     const old=result[id]??{x:0,y:0};result[id]={x:old.x+p.x,y:old.y+p.y};
    }return;
   }
-  const sums:ArtOffsets={},denoms:ArtOffsets={};
-  layer.poses.forEach((pose,j)=>{
-   const weight=frame?.vars?.[object.id]?.[artWeightName(i,j)];
-   if(weight===undefined||!Number.isFinite(weight))return;
-   for(const [id,p] of Object.entries(pose.points??{}))if(ids.has(id)){
-    const sum=sums[id]??{x:0,y:0},denom=denoms[id]??{x:0,y:0};
-    sums[id]={x:sum.x+p[0]*weight,y:sum.y+p[1]*weight};
-    denoms[id]={x:denom.x+(p[0]!==0?weight:0),y:denom.y+(p[1]!==0?weight:0)};
-   }
-  });
-  for(const [id,p] of Object.entries(sums)){
-   const d=denoms[id],old=result[id]??{x:0,y:0};
-   const average=layer.normalize==="average";
-   result[id]={x:old.x+(average?(d.x?p.x/d.x:0):p.x),y:old.y+(average?(d.y?p.y/d.y:0):p.y)};
+  const weights=layer.poses.map((_,j)=>frame?.vars?.[object.id]?.[artWeightName(i,j)]??0);
+  const offsets=blendArtLayer(layer,weights);
+  for(const [id,p] of Object.entries(offsets))if(ids.has(id)&&(p.x!==0||p.y!==0)){
+   const old=result[id]??{x:0,y:0};result[id]={x:old.x+p.x,y:old.y+p.y};
   }
  });return result;
 }

@@ -1,3 +1,4 @@
+import {artPosePoints} from "../engine/artMeshBlend";
 import type {ArtOffsets,ArtDeformation} from "../engine/artDeformation";
 import {artRecordFromBase} from "../engine/artMeshStates";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -361,7 +362,7 @@ export function StatesPanel(props: StatesPanelProps) {
    */
   const previewPoints = (): Record<string, Vec2> => {
     if (!layer) return {};
-    if (layer.param) return posePoints(layer, at ?? range[0]);
+    if (layer.param) return object?.artMesh ? artPosePoints(layer, at ?? range[0]) : posePoints(layer, at ?? range[0]);
     const chosen = layer.poses[keyIndex];
     return fromPosePoints(chosen?.points) ?? {};
   };
@@ -552,7 +553,7 @@ export function StatesPanel(props: StatesPanelProps) {
       : keyIndex;
     // Прибавка к тому, что ключ уже показывает: иначе форма прыгнет назад.
     const shown = layer.param
-      ? (index >= 0 ? fromPosePoints(layer.poses[index].points) : posePoints(layer, point))
+      ? (index >= 0 ? fromPosePoints(layer.poses[index].points) : (object.artMesh ? artPosePoints(layer,point) : posePoints(layer, point)))
       : fromPosePoints(layer.poses[keyIndex]?.points);
     const points = toPosePoints(addPoints(shown ?? {}, delta));
     if (layer.param && index < 0) {

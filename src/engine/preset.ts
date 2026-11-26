@@ -20,7 +20,7 @@ import { normalizeMesh } from "./mesh";
 import { PRESET_FORMAT, PRESET_FORMATS_READABLE } from "../version";
 import { lightBounds, normalizeLight, normalizeNormal } from "../render/light";
 import { hasMaskBlock, parseMaskBlock, writeMaskBlock } from "./maskScript";
-import { readStates, watchNames } from "./states";
+import { readStates, watchNames, writeStates } from "./states";
 import { hasModule, libraryEmpty, moduleDefaults, moduleDefinition, type ModuleField } from "../modules/registry";
 import { readTemplates, sanitizeVisemeName, uniqueVisemeName } from "../modules/viseme";
 import { sanitizeStateName, uniqueStateName } from "../modules/manual";
@@ -388,7 +388,9 @@ export function normalizePreset(value: unknown): RigPreset | null {
         warp: artMesh ? undefined : normalizeWarp(object.warp),
         mesh: !artMesh && (kind === "sprite" || kind === "media") ? normalizeMesh(object.mesh) : undefined,
       };
-    }).map((object) => normalizeMaskBlock(object)),
+    }).map((object) => normalizeMaskBlock(object)).map(object=>object.artMesh
+      ? {...object,script:writeStates(object.script,readStates(object.script),object).script}
+      : object),
     globals: preset.globals || "",
     runtime: {
       fpsMode: preset.runtime?.fpsMode === "display" ? "display" : "limited",
