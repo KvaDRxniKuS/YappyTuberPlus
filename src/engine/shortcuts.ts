@@ -5,6 +5,7 @@ export const TOOL_SHORTCUTS = [
   {code:"KeyM",key:"M",tool:"marquee",label:"Выделение рамкой"},
   {code:"KeyL",key:"L",tool:"lasso",label:"Лассо"},
   {code:"KeyP",key:"P",tool:"pivot",label:"Пивот"},
+  {code:"KeyG",key:"G",tool:"transform",label:"Базовый трансформ (Ctrl — рамка, Alt — пивот, Shift — центр)"},
   {code:"KeyT",key:"T",tool:"warp",label:"Деформация артмеша"},
   {code:"KeyR",key:"R",tool:"deform",label:"База и топология артмеша"},
   {code:"KeyN",key:"N",tool:"pen",label:"Перо (только фигуры)"},

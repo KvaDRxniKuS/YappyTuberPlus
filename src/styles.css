@@ -2377,3 +2377,5 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .scene-tool-popover { right:0; left:auto; }
 .deformation-sources [role=group] button:disabled { opacity:.4; cursor:not-allowed; }
 .scene-viewport.tool-brush canvas { cursor:crosshair; }
+.scene-viewport.tool-transform canvas { cursor:move; }
+.scene-viewport canvas:focus, .tree-panel:focus { outline:none; }

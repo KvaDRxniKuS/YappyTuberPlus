@@ -469,11 +469,11 @@ export function StatesPanel(props: StatesPanelProps) {
       const delta = shiftPose(poseAt(layer, round3(point)), shift);
       const next = existing >= 0 ? setPose(layer, existing, delta) : addKey(layer, round3(point), delta);
       const index = next.poses.findIndex((item) => Math.abs((item.at ?? 0) - round3(point)) < 1e-6);
-      apply(patchLayer(states, layerIndex, next), layerIndex, index);
+      apply(patchLayer(states, layerIndex, next), layerIndex, index, false);
       return;
     }
     if (!pose) return;
-    apply(patchLayer(states, layerIndex, setPose(layer, keyIndex, shiftPose(pose.pose, shift))), layerIndex, keyIndex);
+    apply(patchLayer(states, layerIndex, setPose(layer, keyIndex, shiftPose(pose.pose, shift))), layerIndex, keyIndex, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 

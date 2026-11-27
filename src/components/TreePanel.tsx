@@ -92,7 +92,9 @@ export function TreePanel(props: TreePanelProps) {
   const primary = objects.find((object) => object.id === primaryId) || null;
 
   return (
-    <aside className="tree-panel panel-surface">
+    <aside className="tree-panel panel-surface" tabIndex={-1} onPointerDownCapture={event=>{
+      if(!(event.target as HTMLElement).closest("input,textarea,select,[contenteditable=true]"))event.currentTarget.focus({preventScroll:true});
+    }}>
       <div className="panel-heading">
         <div>
           <span className="eyebrow">СТРУКТУРА</span>

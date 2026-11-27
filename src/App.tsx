@@ -1647,6 +1647,9 @@ export default function App() {
               else selectOnly(id);
             }}
             onSelectMany={selectMany}
+            onTransform={(id,base,frame)=>{
+              setPreset(current=>({...current,objects:base?withBases(current.objects,[id],()=>base):current.objects.map(o=>o.id===id&&frame?{...o,transformFrame:frame}:o)}));
+            }}
             onDragStart={() => { setDragging(true); pushUndo("Перемещение"); }}
             onDragEnd={() => setDragging(false)}
             onDragObjects={(ids, initial: Record<string, BasePose>, delta) => {

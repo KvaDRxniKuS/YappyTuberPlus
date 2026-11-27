@@ -316,6 +316,8 @@ export interface RigObject {
   deformParent?: boolean;
   /** Explicit independent surface sources, in application order. Empty = none. */
   deformSources?: string[];
+  /** Editor transform zone in content coordinates; does not deform geometry. */
+  transformFrame?: {a:number;b:number;c:number;d:number;e:number;f:number};
   /** Карта нормалей: картинка или видео с нормалями поверхности. */
   normal?: NormalMapSpec;
   /** Материал: шероховатость, металл, окклюзия, свечение. Нет — старый вид. */

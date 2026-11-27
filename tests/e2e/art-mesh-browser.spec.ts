@@ -436,3 +436,36 @@ test("deleting the last state layer clears its preview without closing the panel
  await expect(page.locator(".states-key")).toHaveCount(0);
  await expect.poll(async()=>(await shot()).equals(before)).toBe(true);
 });
+
+test("Delete in object tree removes objects even with mesh tool active",async({page})=>{
+ await open(page,project());await page.locator(".tree-row").first().click();await page.keyboard.press("Delete");
+ await expect(page.locator(".tree-row")).toHaveCount(0);
+ await undo(page);await expect(page.locator(".tree-row")).toHaveCount(1);
+});
+test("transform scales base and edits Ctrl zone separately with one undo",async({page})=>{
+ const preset=project();await open(page,preset);await page.keyboard.press("KeyG");
+ await page.getByTitle("Вписать сцену",{exact:true}).click();
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!,z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+260*z,y=box.y+(box.height-300*z)/2+200*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+25*z,y+15*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].base.sizeX).toBeGreaterThan(1);
+ expect((await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].base).toEqual(preset.objects[0].base);
+ await page.keyboard.down("Control");await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+25*z,y+15*z,{steps:4});await page.mouse.up();await page.keyboard.up("Control");
+ await expect.poll(async()=>(await stored(page)).objects[0].transformFrame?.a??160).toBeGreaterThan(160);
+ expect((await stored(page)).objects[0].base).toEqual(preset.objects[0].base);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].transformFrame).toBeUndefined();
+});
+
+test("base transform records scale in selected state key without changing mesh",async({page})=>{
+ const preset=project(),object=preset.objects[0],layer=makeLayer(0,"test");layer.poses=[{at:0,pose:{}}];object.script=writeStates(object.script,{layers:[layer]},object).script;
+ await open(page,preset);await page.getByRole("button",{name:"Состояния",exact:true}).click();await expect(page.locator(".states-key")).toHaveCount(1);
+ await page.keyboard.press("KeyG");await page.getByTitle("Вписать сцену",{exact:true}).click();
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!,z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+260*z,y=box.y+(box.height-300*z)/2+200*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+25*z,y+15*z,{steps:5});await page.mouse.up();
+ await expect.poll(async()=>readStates((await stored(page)).objects[0].script).layers[0].poses[0].pose.sizeX??1).toBeGreaterThan(1);
+ await expect.poll(async()=>(await stored(page)).objects[0].base).toEqual(object.base);
+ expect((await stored(page)).objects[0].artMesh).toEqual(object.artMesh);
+ await undo(page);await expect.poll(async()=>readStates((await stored(page)).objects[0].script).layers[0].poses[0].pose.sizeX??1).toBe(1);
+});

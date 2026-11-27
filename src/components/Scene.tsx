@@ -1,3 +1,4 @@
+import {worldZone,hitTransform,transformGesture,transformHandles,type TransformHandle} from "../engine/transformTool";
 import {SceneToolOptions} from "./SceneToolOptions";
 import {rebuildArtTriangles} from "../engine/artMeshQuality";
 import {ArtMeshToolsPanel} from "./ArtMeshToolsPanel";
@@ -49,7 +50,7 @@ import { meshSurfaceGeometry } from "../render/mesh";
 
 
 export type SceneTool =
-  | "move" | "pivot" | "pan" | "marquee" | "lasso" | "brush"
+  | "move" | "pivot" | "pan" | "marquee" | "lasso" | "brush" | "transform"
   /** Деформация существующих вершин артмеша. */
   | "warp"
   /** Базовая геометрия и топология того же артмеша. */
@@ -118,6 +119,7 @@ interface SceneProps {
   onCanvasSize: (width: number, height: number) => void;
   onSelect: (id: string | null, mode: SelectMode) => void;
   onSelectMany: (ids: string[], mode: "replace" | "add") => void;
+  onTransform: (id:string,base?:BasePose,frame?:Affine)=>void;
   onDragStart: () => void;
   /**
    * Жест закончился. Вкладке «Состояния» нужно знать конец: пока объект тянут,
@@ -211,6 +213,7 @@ export function Scene(props: SceneProps) {
   artToolRef.current={brush:artBrush,radius:artRadius,symmetry:artSymmetry,angle:artSymmetryAngle,reference:artReference};
   const artEdgeAnchor=useRef<{objectId:string;id:string}|null>(null);
   const artSelection=useRef<{objectId:string;ids:Set<string>}>({objectId:"",ids:new Set()});
+  const transformDrag=useRef<{object:RigObject;values:ReturnType<typeof staticValues>;zone:Affine;handle:TransformHandle;start:Vec2;ctrl:boolean}|null>(null);
   const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number;mirrored?:boolean}>;cursor:Vec2;shape?:{itemId:string;smoothing:number[]};brush?:{dynamic:boolean;radius:number;hardness:number;angle?:number;last:Vec2;deltas:ArtOffsets};symmetry?:{axis:number;pairs:Map<string,string>}}|null>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
@@ -243,7 +246,7 @@ export function Scene(props: SceneProps) {
     }catch(error){setArtTopologyError(error instanceof Error?error.message:"Невозможно перестроить сетку.");}
   };
   useEffect(()=>{
-    const finish=()=>{artEdgeAnchor.current=null;artArea.current=null;markDirty();if(artDrag.current)finishArtDrag();};
+    const finish=()=>{if(transformDrag.current){transformDrag.current=null;propsRef.current.onDragEnd?.();}artEdgeAnchor.current=null;artArea.current=null;markDirty();if(artDrag.current)finishArtDrag();};
     window.addEventListener("blur",finish);
     return ()=>{window.removeEventListener("blur",finish);finish();};
   },[]);
@@ -259,6 +262,7 @@ export function Scene(props: SceneProps) {
       if(current.tool!=="deform"&&current.tool!=="warp"&&current.tool!=="brush")return;
       if((event.target as HTMLElement)?.closest("input,textarea,select,[contenteditable=true]"))return;
       if((event.ctrlKey||event.metaKey)&&["KeyZ","KeyY"].includes(event.code))artEdgeAnchor.current=null;
+      if(!(event.target as HTMLElement)?.closest(".scene-viewport"))return;
       if(event.code!=="Delete"&&event.code!=="Backspace")return;
       event.preventDefault();event.stopImmediatePropagation();
       const selection=artSelection.current;
@@ -458,6 +462,12 @@ export function Scene(props: SceneProps) {
         ctx.setLineDash([4/zoom,3/zoom]);ctx.beginPath();ctx.arc(world.x,world.y,artToolRef.current.radius,0,Math.PI*2);ctx.stroke();
       }
       ctx.restore();
+    }
+    if(current.tool==="transform"&&artTarget){
+      const zone=worldZone(artTarget,frame?.objects[artTarget.id]??staticValues(artTarget));
+      ctx.save();ctx.strokeStyle="#62d6ed";ctx.fillStyle="#17252c";ctx.lineWidth=1.5/zoom;
+      ctx.beginPath();for(const [i,p] of [[0,0],[1,0],[1,1],[0,1]].entries()){const q=transformPoint(zone,p[0],p[1]);if(i)ctx.lineTo(q.x,q.y);else ctx.moveTo(q.x,q.y);}ctx.closePath();ctx.stroke();
+      for(const h of transformHandles(zone,zoom)){if(h.stem){ctx.beginPath();ctx.moveTo(h.stem.x,h.stem.y);ctx.lineTo(h.point.x,h.point.y);ctx.stroke();}ctx.beginPath();if(h.kind==="rotate")ctx.arc(h.point.x,h.point.y,4/zoom,0,Math.PI*2);else ctx.rect(h.point.x-3/zoom,h.point.y-3/zoom,6/zoom,6/zoom);ctx.fill();ctx.stroke();}ctx.restore();
     }
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
     if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
@@ -837,6 +847,7 @@ export function Scene(props: SceneProps) {
           {/* Деформация — отдельной группой: зона и углы это разные правки,
               и в работе они не должны пересекаться. */}
           <span className="tool-separator" />
+          <button className={props.tool==="transform"?"active":""} title="Базовый трансформ (G) · Ctrl — рамка · Alt — пивот · Shift — центр" onClick={()=>props.onTool("transform")}><Scan size={15}/></button>
           <button
             className={props.tool === "warp" ? "active" : ""}
             title="Деформация артмеша (T)"
@@ -906,8 +917,10 @@ export function Scene(props: SceneProps) {
       >
         <canvas
           ref={canvas}
+          tabIndex={0}
           onPointerDown={(event) => {
             if (event.button !== 0 && event.button !== 1) return;
+            event.currentTarget.focus({preventScroll:true});
             event.currentTarget.setPointerCapture(event.pointerId);
             const current = propsRef.current;
             const pan = current.tool === "pan" || event.button === 1 || spaceDown.current;
@@ -920,6 +933,11 @@ export function Scene(props: SceneProps) {
             // чужие объекты, иначе перо «переключает фокус» вместо рисования.
             if (current.tool === "pen" && !current.pen && !artBrush) return;
             const point = scenePoint(event);
+            if(current.tool==="transform"){
+              const object=current.preset.objects.find(o=>o.id===current.primaryId);
+              if(object){const frame=liveFrame(current.preset),values=frame?.objects[object.id]??staticValues(object),zone=worldZone(object,values),handle=hitTransform(zone,point,camera.current.zoom);
+                if(handle){current.onDragStart();transformDrag.current={object,values,zone,handle,start:point,ctrl:event.ctrlKey||event.metaKey};return;}}
+            }
             const pointObject=current.preset.objects.find(o=>o.id===current.primaryId);
             const shapeItem=artBrush&&pointObject?.shape&&(current.tool==="pen"||!pointObject.artMesh)?pointObject.shape.items.find(item=>item.points.length>0&&(!current.pen||current.pen.objectId!==pointObject.id||item.id===current.pen.itemId)):undefined;
             const shapeBrush=shapeItem?{itemId:shapeItem.id,smoothing:shapeItem.points.map((_,i)=>smoothingOf(shapeItem,i))}:undefined;
@@ -1144,6 +1162,7 @@ export function Scene(props: SceneProps) {
             interaction.current = { type: "drag", ids: [targetObject.id], start: point, initial, pending: null, moved: false };
           }}
           onPointerMove={(event) => {
+            if(transformDrag.current){const drag=transformDrag.current,result=transformGesture(drag.object,drag.values,drag.zone,drag.handle,drag.start,scenePoint(event),{ctrl:drag.ctrl,alt:event.altKey,shift:event.shiftKey});propsRef.current.onTransform(drag.object.id,result.base,result.frame);markDirty();return;}
             const area=artArea.current;
             if(area){
               const point=scenePoint(event),last=area.path[area.path.length-1];
@@ -1269,6 +1288,7 @@ export function Scene(props: SceneProps) {
             queueLive(() => propsRef.current.onDragObjects(ids, initial, delta));
           }}
           onPointerUp={(event) => {
+            if(transformDrag.current){transformDrag.current=null;propsRef.current.onDragEnd?.();markDirty();return;}
             const area=artArea.current;
             if(area){
               artArea.current=null;area.path.push(scenePoint(event));
@@ -1299,6 +1319,7 @@ export function Scene(props: SceneProps) {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            if(transformDrag.current){transformDrag.current=null;propsRef.current.onDragEnd?.();}
             artArea.current=null;
             if(artDrag.current)finishArtDrag();
             const current = interaction.current;
@@ -1400,6 +1421,7 @@ export function Scene(props: SceneProps) {
 }
 
 const TOOL_HINT: Record<SceneTool, string> = {
+  transform: "Трансформ: точки — масштаб · грани — skew · крутилки — поворот · Ctrl — рамка · Alt — пивот · Shift — центр",
   brush: "Кисть точек (B): перемещение вершин без смены режима; где нет редактируемых точек — без действия",
   move: "Перемещение меняет базовую позу",
   marquee: "Тяните рамку; Shift — добавить к выборке",

@@ -353,6 +353,7 @@ export function normalizePreset(value: unknown): RigPreset | null {
       return {
         ...supported,
         artMesh, artPose,
+        transformFrame: object.transformFrame && [object.transformFrame.a,object.transformFrame.b,object.transformFrame.c,object.transformFrame.d,object.transformFrame.e,object.transformFrame.f].every(Number.isFinite) && Math.abs(object.transformFrame.a*object.transformFrame.d-object.transformFrame.b*object.transformFrame.c)>1e-8 ? {...object.transformFrame} : undefined,
         deformSources:Array.isArray(object.deformSources)?[...new Set(object.deformSources.filter(id=>typeof id==="string"&&id!==object.id))]:undefined,
         kind,
         enabled: object.enabled !== false,
