@@ -1315,6 +1315,11 @@ export default function App() {
       let updated = object.parentId && doomed.has(object.parentId)
         ? setParent(object, replacementOf.get(object.parentId) ?? null)
         : object;
+      // Явные источники деформации не должны переживать удалённый объект.
+      // Сохраняем [] (не undefined), чтобы не включить наследование всех предков.
+      if (updated.deformSources?.some(id => doomed.has(id))) {
+        updated = { ...updated, deformSources: updated.deformSources.filter(id => !doomed.has(id)) };
+      }
       // Маска на удалённую фигуру — ссылка в пустоту: объект снова виден целиком.
       if (updated.mask?.kind === "shape" && doomed.has(updated.mask.shapeId)) {
         updated = { ...updated, mask: undefined };

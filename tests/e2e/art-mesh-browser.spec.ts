@@ -417,3 +417,22 @@ test("independent brush edits shape path without generating a mesh and undoes on
  expect((await stored(page)).objects[0].artMesh).toBeUndefined();
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].shape).toEqual(before);
 });
+
+test("deleting the last state layer clears its preview without closing the panel",async({page})=>{
+ const preset=project(),object=preset.objects[0],layer=makeLayer(0,"test");
+ layer.poses=[{at:0,pose:{x:45},points:{v0:[30,20]}}];
+ object.script=writeStates(object.script,{layers:[layer]},object).script;
+ preset.objects.push({...structuredClone(object),id:"child",name:"Дочерняя поверхность",parentId:object.id,deformParent:true,deformSources:[object.id],script:rootScript(),base:{...object.base,x:120,y:100},width:80,height:60,artMesh:generateRegularArt(2,2,80,60)});
+ await open(page,preset);
+ const canvas=page.locator(".scene-viewport canvas").first();
+ await page.mouse.move(0,0);
+ const box=(await canvas.boundingBox())!;
+ const shot=()=>page.screenshot({clip:{...box,height:Math.min(box.height,500)}});
+ const before=await shot();
+ await page.getByRole("button",{name:"Состояния",exact:true}).click();
+ await expect(page.locator(".states-key")).toHaveCount(1);
+ await expect.poll(async()=>(await shot()).equals(before)).toBe(false);
+ await page.getByTitle("Удалить слой",{exact:true}).click();
+ await expect(page.locator(".states-key")).toHaveCount(0);
+ await expect.poll(async()=>(await shot()).equals(before)).toBe(true);
+});

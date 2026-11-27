@@ -381,7 +381,7 @@ export function StatesPanel(props: StatesPanelProps) {
     // входу, вкладка тянула бы объект за мышью, хотя на сцене ничего не
     // происходит. Вклад относится к кадру — значит и пересчитывается вместе с
     // ним: новый кадр (или другой слой) — новый вклад, иначе прежний.
-    const key = `${objectId}|${props.frame?.seq ?? -1}|${layerIndex}|${layer.param}`;
+    const key = `${objectId}|${props.frame?.seq ?? -1}|${layerIndex}|${layer.param}|${object?.script}`;
     if (liveCache.current?.key === key) return liveCache.current.live;
     const value = liveValue(layer.param);
     const live = value === undefined ? {} : poseAt(layer, value);
@@ -396,7 +396,17 @@ export function StatesPanel(props: StatesPanelProps) {
    * возвращает объект на место — без истории и без «двойного применения».
    */
   useEffect(() => {
-    if (!object || !layer || !props.onPreviewState) return;
+    if (!object || !layer) {
+      // Удаление последнего слоя не размонтирует панель. Нельзя оставлять
+      // предпросмотр удалённого слоя в сцене и у наследующих его детей.
+      if (sent.current !== null) {
+        sent.current = null;
+        previewApi.current?.(null, objectId);
+      }
+      liveCache.current = null;
+      return;
+    }
+    if (!props.onPreviewState) return;
     // Пока объект в руке, предпросмотр заморожен.
     //
     // Поправка предпросмотра считается по живому входу слоя. Если вход связан с
