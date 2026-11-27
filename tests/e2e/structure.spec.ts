@@ -223,3 +223,40 @@ test("поле пишется через inherit — видно по автор�
   // Чужое поле с похожим именем не путается: x и sizeX разные.
   expect(inheritsField("sizeX = inherit\n", "x")).toBe(false);
 });
+
+test("preview rotation moves child pivots like runtime follow, with nested reverse-order hierarchy",()=>{
+ const objects=[
+  {...object("grandchild","child",base(250,100)),script:"x = inherit + follow(offset, parent).x\ny = inherit + follow(offset, parent).y\nrotation = inherit\nsizeX = inherit\nsizeY = inherit"},
+  {...object("child","parent",base(200,100)),script:"x = inherit + follow(offset, parent).x\ny = inherit + follow(offset, parent).y\nrotation = inherit\nsizeX = inherit\nsizeY = inherit"},
+  object("parent",null,base(100,100)),
+ ];
+ const shown=previewFrame(null,objects,{id:"parent",live:{},pose:{rotation:90}})!;
+ expect(shown.objects.child.rotation).toBe(90);
+ expect(shown.objects.child.x).toBeCloseTo(-100);expect(shown.objects.child.y).toBeCloseTo(100);
+ expect(shown.objects.grandchild.x).toBeCloseTo(-150);expect(shown.objects.grandchild.y).toBeCloseTo(150);
+});
+
+test("preview replaces live rotation and nonuniform scale, not double-applying follow",()=>{
+ const objects=[object("parent",null,base(100,100)),object("child","parent",base(200,120))];
+ const frame:RigFrame={seq:1,time:0,dt:0,globals:{},diagnostics:[],order:[],objects:{
+  parent:{...NEUTRAL_PARAMS,rotation:90,sizeX:2,sizeY:3},
+  // R90 * S(2,3) * (100,20) - (100,20) = (-160,180).
+  child:{...NEUTRAL_PARAMS,x:-160,y:180,rotation:90,sizeX:2,sizeY:3},
+ },vars:{parent:{states_rotation:90,states_sizeX:2,states_sizeY:3}}};
+ const shown=previewFrame(frame,objects,{id:"parent",live:{},pose:{rotation:180,sizeX:3,sizeY:2}})!;
+ expect(shown.objects.child.x).toBeCloseTo(-400);expect(shown.objects.child.y).toBeCloseTo(-60);
+ expect(shown.objects.child.rotation).toBe(180);expect(shown.objects.child.sizeX).toBe(3);expect(shown.objects.child.sizeY).toBe(2);
+ expect(frame.objects.child.x).toBe(-160);
+});
+
+test("preview respects explicit independent channels and interrupted inheritance",()=>{
+ const objects=[object("parent",null,base(100,100)),
+  {...object("fixed","parent",base(200,100)),script:"x = 7\ny = 8\nrotation = 0\nsizeX = 1\nsizeY = 1"},
+  {...object("leaf","fixed",base(250,100)),script:"x = inherit + follow(offset,parent).x\ny = inherit + follow(offset,parent).y\nrotation = inherit"},
+  {...object("translationOnly","parent",base(200,100)),script:"x = inherit\ny = inherit\nrotation = 0"},
+ ];
+ const shown=previewFrame(null,objects,{id:"parent",live:{},pose:{x:12,rotation:90}})!;
+ expect(shown.objects.fixed.x).toBe(0);expect(shown.objects.fixed.y).toBe(0);
+ expect(shown.objects.leaf.x).toBe(0);expect(shown.objects.leaf.y).toBe(0);expect(shown.objects.leaf.rotation).toBe(0);
+ expect(shown.objects.translationOnly.x).toBe(12);expect(shown.objects.translationOnly.y).toBe(0);
+});

@@ -524,3 +524,23 @@ test("visibility mouth and eye are opt-in factors with removal persistence",asyn
  await expect.poll(async()=>{const {readBehaviour}=await import("../../src/engine/behaviour");return readBehaviour((await stored(page)).objects[0].script).eye;}).toBe("none");
  await page.reload();await page.getByRole("button",{name:"Поведение",exact:true}).click();await expect(page.locator(".visibility-empty")).toBeVisible();
 });
+
+test("state angle preview rotates child position as well as its mesh orientation",async({page})=>{
+ const {childScript}=await import("../../src/data/demoPreset");
+ const preset=project(),parent=preset.objects[0],layer=makeLayer(0,"test");
+ layer.poses=[{at:0,pose:{rotation:90}}];parent.script=writeStates(parent.script,{layers:[layer]},parent).script;
+ preset.objects.push({...structuredClone(parent),id:"child",name:"Ребёнок",parentId:parent.id,script:childScript(),base:{...parent.base,x:200,y:80},width:50,height:40,artMesh:generateRegularArt(2,2,50,40)});
+ await open(page,preset);await page.getByRole("button",{name:"Состояния",exact:true}).click();await expect(page.locator(".states-key")).toHaveCount(1);
+ await page.mouse.move(0,0);
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const clip={...box,height:Math.min(500,box.height)};
+ const expected=structuredClone(preset);expected.objects[0].script=rootScript();expected.objects[0].base.rotation=90;
+ expected.objects[1].script=rootScript();expected.objects[1].base={...expected.objects[1].base,x:100,y:180,rotation:90};
+ const reference=await page.context().newPage();
+ try{
+  await open(reference,expected);await reference.mouse.move(0,0);
+  const refCanvas=reference.locator(".scene-viewport canvas").first(),refBox=(await refCanvas.boundingBox())!;
+  const referenceImage=await reference.screenshot({clip:{...refBox,height:Math.min(500,refBox.height)}});
+  await expect.poll(async()=>(await page.screenshot({clip})).equals(referenceImage)).toBe(true);
+ }finally{await reference.close();}
+});

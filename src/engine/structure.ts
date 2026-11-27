@@ -412,9 +412,10 @@ export function withBases(
  * кадровым. Поэтому предпросмотр больше не «обнуляет» объект: он показывает
  * ту же сцену, но с входом, поставленным в точку таймлайна.
  *
- * Дети, у которых поле пишется через `inherit`, едут за родителем: их кадровое
- * значение — это живое значение родителя плюс своё, значит меняется ровно на ту
- * же поправку. У остальных детей поле своё, и его предпросмотр не трогает.
+ * Дети получают поправку непосредственного родителя через inherit (включая
+ * неявные каналы ядра). Для позиции дополнительно пересчитывается follow:
+ * поворот и масштаб смещают пивот ребёнка вокруг родителя. Явные независимые
+ * каналы не меняются; заблокированное наследование дальше не распространяется.
  */
 export function previewFrame(
   frame: RigFrame | null,
@@ -457,25 +458,50 @@ export function previewFrame(
   if (Math.abs(visible - 1) > 1e-9) shown.visible *= visible;
   objects0[target.id] = shown;
 
-  for (const object of subtreeBlock(objects, target.id)) {
-    if (object.id === target.id) continue;
-    const values: ObjectFrame = { ...(objects0[object.id] ?? standbyValues(object)) };
-    let touched = false;
-    for (const [field, shift] of shifts) {
-      if (!inheritsField(object.script, field)) continue;
-      values[field] += shift;
-      touched = true;
+  // Propagate changes through immediate parents, in hierarchy order. Runtime
+  // positions include follow(offset,parent): changing an angle/scale moves a
+  // child's pivot as well as changing its own angle/scale.
+  const children = new Map<string, RigObject[]>();
+  for (const object of objects) if (object.parentId) {
+    const list = children.get(object.parentId) ?? [];
+    list.push(object); children.set(object.parentId, list);
+  }
+  const pending = [target], visited = new Set([target.id]);
+  for (let index = 0; index < pending.length; index++) {
+    const parent = pending[index];
+    const before = frame?.objects[parent.id] ?? standbyValues(parent);
+    const after = objects0[parent.id] ?? before;
+    for (const object of children.get(parent.id) ?? []) {
+      if (visited.has(object.id)) continue;
+      visited.add(object.id); pending.push(object);
+      const values: ObjectFrame = { ...(frame?.objects[object.id] ?? standbyValues(object)) };
+      const expression = (field: string) => new RegExp(`^[ \t]*${field}[ \t]*=([^\n]*)`, "m").exec(object.script)?.[1];
+      const inherits = (field: string) => expression(field) === undefined || inheritsField(object.script, field);
+      for (const field of ADDITIVE_FIELDS) {
+        if (inherits(field)) values[field] += after[field] - before[field];
+      }
+      for (const field of [...FACTOR_FIELDS, "visible"] as const) {
+        if (!inherits(field)) continue;
+        if (Math.abs(before[field]) > 1e-9) values[field] *= after[field] / before[field];
+        else values[field] += after[field] - before[field];
+      }
+      const offset = {x:object.base.x-parent.base.x, y:object.base.y-parent.base.y};
+      // Same order and channels as rig-core follow_vector: dynamic scale, then
+      // dynamic rotation. Base transforms are already baked into child bases.
+      const follow = (value: ObjectFrame) => {
+        const angle = value.rotation * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
+        const x = offset.x * value.sizeX, y = offset.y * value.sizeY;
+        return {x:c*x-s*y, y:s*x+c*y};
+      };
+      const oldOffset = follow(before), newOffset = follow(after);
+      for (const field of ["x", "y"] as const) {
+        const rhs = expression(field);
+        if (rhs === undefined || /\bfollow\s*\(\s*offset\s*,\s*parent\s*\)/.test(rhs)) {
+          values[field] += newOffset[field] - oldOffset[field];
+        }
+      }
+      objects0[object.id] = values;
     }
-    for (const [field, factor] of factors) {
-      if (!inheritsField(object.script, field)) continue;
-      values[field] *= factor;
-      touched = true;
-    }
-    if (Math.abs(visible - 1) > 1e-9 && inheritsField(object.script, "visible")) {
-      values.visible *= visible;
-      touched = true;
-    }
-    if (touched) objects0[object.id] = values;
   }
 
   const source: RigFrame = frame ?? {
