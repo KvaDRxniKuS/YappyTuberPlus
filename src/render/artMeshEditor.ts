@@ -19,6 +19,10 @@ export function drawArtEditor(ctx:CanvasRenderingContext2D,object:RigObject,valu
  const points=new Map(mesh.vertices.map(v=>{const source=rest?v.rest:artPosition(v,object.artPose);const p=deform?deform(source):source;return [v.id,transformPoint(matrix,p.x-object.pivot.x*object.width,p.y-object.pivot.y*object.height)] as const;}));
  ctx.save();ctx.lineWidth=1/zoom;ctx.strokeStyle=rest?"#82d5c1":"#f0d77a";ctx.fillStyle=ctx.strokeStyle;
  for(const face of mesh.triangles){ctx.beginPath();face.forEach((id,i)=>{const p=points.get(id)!;if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});ctx.closePath();ctx.stroke();}
+ if(rest&&mesh.manualEdges?.length){
+  ctx.save();ctx.strokeStyle="#f0b878";ctx.lineWidth=2/zoom;
+  for(const [a,b] of mesh.manualEdges){const p=points.get(a),q=points.get(b);if(!p||!q)continue;ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();}ctx.restore();
+ }
  for(const [id,p] of points){ctx.fillStyle=selected?.has(id)?"#ffffff":ctx.strokeStyle;ctx.beginPath();ctx.arc(p.x,p.y,(selected?.has(id)?4.5:3)/zoom,0,Math.PI*2);ctx.fill();}ctx.restore();
 }
 

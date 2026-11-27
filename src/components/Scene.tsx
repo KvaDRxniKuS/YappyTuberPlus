@@ -7,7 +7,7 @@ import {holdArtMesh,heldArtMesh,type ArtMeshClip,type ArtMeshPasteScale} from ".
 import {captureArtAlpha} from "../render/artMeshAlphaSource";
 import type {ArtMeshReplacement} from "../engine/artMeshBatch";
 import {addArtFace} from "../engine/artMeshFaces";
-import type {ArtTopologyCommand} from "../engine/artMeshTopology";
+import {editArtTopology,type ArtTopologyCommand} from "../engine/artMeshTopology";
 import {selectArtRegion,type ArtSelectionPoint} from "../engine/artMeshSelection";
 import {artSymmetryPairs,mirrorArtDeltas,reflectArtVector} from "../engine/artMeshSymmetry";
 import { artFramePoints, artStateOffsets } from "../engine/artMeshPlayback";
@@ -211,6 +211,7 @@ export function Scene(props: SceneProps) {
   const [artSymmetryAngle,setArtSymmetryAngle]=useState(0);
   const artToolRef=useRef({brush:artBrush,radius:artRadius,symmetry:artSymmetry,angle:artSymmetryAngle,reference:artReference});
   artToolRef.current={brush:artBrush,radius:artRadius,symmetry:artSymmetry,angle:artSymmetryAngle,reference:artReference};
+  const artEdgeAnchor=useRef<{objectId:string;id:string}|null>(null);
   const artSelection=useRef<{objectId:string;ids:Set<string>}>({objectId:"",ids:new Set()});
   const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number;mirrored?:boolean}>;cursor:Vec2;brush?:{dynamic:boolean;radius:number;hardness:number;angle?:number;last:Vec2;deltas:ArtOffsets};symmetry?:{axis:number;pairs:Map<string,string>}}|null>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
@@ -233,7 +234,7 @@ export function Scene(props: SceneProps) {
   const propsRef = useRef(props);
   propsRef.current = props;
   useEffect(()=>{
-    const finish=()=>{artArea.current=null;markDirty();if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}};
+    const finish=()=>{artEdgeAnchor.current=null;artArea.current=null;markDirty();if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}};
     window.addEventListener("blur",finish);
     return ()=>{window.removeEventListener("blur",finish);finish();};
   },[]);
@@ -249,6 +250,7 @@ export function Scene(props: SceneProps) {
       if(current.tool!=="deform"&&current.tool!=="warp")return;
       if((event.target as HTMLElement)?.closest("input,textarea,select,[contenteditable=true]"))return;
       if(event.code==="KeyB"&&!event.ctrlKey&&!event.metaKey){if(current.tool!=="warp")current.onTool("warp");setArtBrush(true);event.preventDefault();return;}
+      if((event.ctrlKey||event.metaKey)&&["KeyZ","KeyY"].includes(event.code))artEdgeAnchor.current=null;
       if(["KeyV","KeyM","KeyL"].includes(event.code))setArtBrush(false);
       if(event.code!=="Delete"&&event.code!=="Backspace")return;
       event.preventDefault();event.stopImmediatePropagation();
@@ -257,7 +259,11 @@ export function Scene(props: SceneProps) {
     };
     window.addEventListener("keydown",key,true);return()=>window.removeEventListener("keydown",key,true);
   },[]);
-  useEffect(()=>{artArea.current=null;markDirty();},[props.primaryId,props.tool,artPickMode]);
+  useEffect(()=>{artEdgeAnchor.current=null;artArea.current=null;markDirty();},[props.primaryId,props.tool,artPickMode]);
+  useEffect(()=>{
+    const release=(event:KeyboardEvent)=>{if(event.key==="Control"||event.key==="Meta")artEdgeAnchor.current=null;};
+    window.addEventListener("keyup",release);return()=>window.removeEventListener("keyup",release);
+  },[]);
 
   // Отрисовка по требованию: постоянного rAF-цикла больше нет (он грузил
   // процессор в простое), но любая правка или новый кадр планирует ровно один
@@ -933,6 +939,20 @@ export function Scene(props: SceneProps) {
               });
               if(artSelection.current.objectId!==artObject.id)artSelection.current={objectId:artObject.id,ids:new Set()};
               const selected=artSelection.current.ids;
+              if(!(event.ctrlKey||event.metaKey)||event.altKey)artEdgeAnchor.current=null;
+              if(rest&&!artBrush&&artPickMode==="move"&&(event.ctrlKey||event.metaKey)&&!event.altKey){
+                if(!nearest){artEdgeAnchor.current=null;markDirty();return;}
+                const anchor=artEdgeAnchor.current;
+                try{
+                  if(anchor?.objectId===artObject.id&&anchor.id!==nearest&&artObject.artMesh.vertices.some(v=>v.id===anchor.id)){
+                    const command:ArtTopologyCommand={type:"addEdges",ids:[anchor.id,nearest]};
+                    editArtTopology(artObject,command); // Validate before committing/history.
+                    current.onArtTopology(artObject.id,command);
+                  }
+                  selected.add(nearest);artEdgeAnchor.current={objectId:artObject.id,id:nearest};setArtTopologyError("");
+                }catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать ручное ребро.");}
+                markDirty();return;
+              }
               if(rest&&event.altKey&&artPickMode==="move"){
                 const cursor=artEditorPoint(artObject,point,matrix);
                 const local=inverseArtEditorPoint(cursor,candidates.find(v=>v.id===nearest)?.start??cursor,deform);
@@ -941,12 +961,13 @@ export function Scene(props: SceneProps) {
                   else if(local){
                     const byId=new Map(candidates.map(v=>[v.id,v.world]));
                     let edge:string[]|undefined,edgeDistance=6/camera.current.zoom;
-                    for(const face of artObject.artMesh.triangles)for(let i=0;i<3;i++){
-                      const a=byId.get(face[i])!,b=byId.get(face[(i+1)%3])!,dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+                    const edgeCandidates=[...artObject.artMesh.triangles.flatMap(face=>face.map((id,i)=>[id,face[(i+1)%3]])),...artObject.artMesh.manualEdges??[]];
+                    for(const pair of edgeCandidates){
+                      const a=byId.get(pair[0])!,b=byId.get(pair[1])!,dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
                       if(!length)continue;
                       const t=Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/length));
                       const d=Math.hypot(point.x-a.x-t*dx,point.y-a.y-t*dy);
-                      if(d<edgeDistance){edgeDistance=d;edge=[face[i],face[(i+1)%3]];}
+                      if(d<edgeDistance){edgeDistance=d;edge=[pair[0],pair[1]];}
                     }
                     if(edge)current.onArtTopology(artObject.id,{type:"removeEdge",rebuild:true,ids:edge});
                     else{const face=bindArtPoint(artObject.artMesh,local);if(face)current.onArtTopology(artObject.id,{type:"removeFace",rebuild:true,ids:face.ids});}
@@ -1331,9 +1352,9 @@ export function Scene(props: SceneProps) {
                 <label className="artmesh-check"><input type="checkbox" checked={artReference} onChange={e=>setArtReference(e.target.checked)}/>Показывать исходник для обводки</label>
               </>}
               {artTopologyError&&<span role="status">{artTopologyError}</span>}
-              <button title="Снять выделение вершин" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
+              <button title="Снять выделение вершин" onClick={()=>{artEdgeAnchor.current=null;artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}
-{props.tool==="deform"&&meshTarget.artMesh&&<p className="artmesh-hint">ЛКМ по пустому месту — точка; по вершине и потянуть — перемещение без деформации текстуры. Сетка автоматически перестраивается по текущим точкам. Alt + ЛКМ — удалить вершину или перестроить грани у ребра. Shift + клик — выделение; три вершины закрепляют ручную грань вопреки автоматической диагонали. Alt + клик по грани — вырезать её, без автозаполнения. V / M / L — курсор, рамка, лассо без выхода из артмеша.</p>}</>} mesh={<><p className="artmesh-hint">Генерация, замена и перенос топологии. Изменения отменяются одним шагом истории.</p>            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/>Сгенерировать артмеш</button>
+{props.tool==="deform"&&meshTarget.artMesh&&<p className="artmesh-hint">ЛКМ по пустому месту — точка; по вершине и потянуть — перемещение без деформации текстуры. Сетка автоматически перестраивается по текущим точкам. Alt + ЛКМ — удалить вершину либо вырезать ребро с прилегающими гранями. Ctrl + клик по вершинам — цепочка ручных рёбер; отпускание Ctrl завершает цепочку. Shift + клик — выделение; три вершины закрепляют ручную грань вопреки автоматической диагонали. Alt + клик по грани — вырезать её, без автозаполнения. V / M / L — курсор, рамка, лассо без выхода из артмеша.</p>}</>} mesh={<><p className="artmesh-hint">Генерация, замена и перенос топологии. Изменения отменяются одним шагом истории.</p>            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/>Сгенерировать артмеш</button>
             <button title="Подготовить потомков к деформации…" onClick={()=>setArtGenerator("descendants")}>Подготовить потомков…</button>
             <button disabled={!meshTarget.artMesh} title="Скопировать новый артмеш и авторскую деформацию" onClick={()=>{
               try{holdArtMesh(meshTarget);setArtTopologyError("");}catch(error){setArtTopologyError(error instanceof Error?error.message:"Ошибка копирования.");}
@@ -1370,7 +1391,7 @@ const TOOL_HINT: Record<SceneTool, string> = {
   pivot: "Клик по спрайту задаёт пивот, по группе — точку вращения",
   pan: "Панорамирование",
   warp: "Деформация артмеша: перемещение вершин, кисть, симметрия; Shift+клик — выбор нескольких вершин",
-  deform: "База артмеша: перемещение rest-вершин без изменения UV и поз; вставка/удаление вершин и граней — отдельными кнопками",
+  deform: "Правка сетки: Ctrl+клики — цепочка ручных рёбер · Shift+3 вершины — ручная грань · Alt+клик — удалить · Esc — выйти",
   pen: "Клик ставит точку между ближайшими; первая точка замыкает контур; Alt+клик — угол ⇄ кривая",
 };
 

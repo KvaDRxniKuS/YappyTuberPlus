@@ -31,8 +31,17 @@ export function readArtMesh(raw:unknown):ArtDeformation {
    if(!Array.isArray(value)||value.length>MAX_TRIANGLES)throw new Error("Invalid mesh constraints");
    return value.map(face=>{if(!Array.isArray(face)||face.length!==3||new Set(face).size!==3||!face.every(id=>typeof id==="string"&&ids.has(id)))throw new Error("Invalid constrained face");return [...face] as [string,string,string];});
   };
+  let manualEdges:Array<[string,string]>|undefined;
+  if(raw.manualEdges!==undefined){
+   if(!Array.isArray(raw.manualEdges)||raw.manualEdges.length>MAX_TRIANGLES)throw new Error("Invalid mesh edges");
+   const seen=new Set<string>();
+   manualEdges=raw.manualEdges.map(edge=>{
+    if(!Array.isArray(edge)||edge.length!==2||edge[0]===edge[1]||!edge.every(id=>typeof id==="string"&&ids.has(id)))throw new Error("Invalid manual edge");
+    const key=[...edge].sort().join(":");if(seen.has(key))throw new Error("Duplicate manual edge");seen.add(key);return [...edge] as [string,string];
+   });
+  }
   const manualFaces=constraints(raw.manualFaces),excludedFaces=constraints(raw.excludedFaces);
-  return {schema:1,nextId:Number(raw.nextId),vertices,triangles,...(manualFaces?{manualFaces}:{}),...(excludedFaces?{excludedFaces}:{})};
+  return {schema:1,nextId:Number(raw.nextId),vertices,triangles,...(manualEdges?{manualEdges}:{}),...(manualFaces?{manualFaces}:{}),...(excludedFaces?{excludedFaces}:{})};
 }
 export function readArtOffsets(raw:unknown,mesh:ArtDeformation):ArtOffsets {
   if(!record(raw))throw new Error("Invalid vertex pose");

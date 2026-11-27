@@ -27,6 +27,7 @@ export function pasteArtMesh(object:RigObject,source:ArtMeshClip,scale:ArtMeshPa
  const ids=new Map(clip.mesh.vertices.map(v=>[v.id,`v${nextId++}`]));
  const sx=scale==="fit"?object.width/clip.width:1,sy=scale==="fit"?object.height/clip.height:1;
  const artMesh:ArtDeformation={schema:1,nextId,vertices:clip.mesh.vertices.map(v=>({id:ids.get(v.id)!,rest:{x:v.rest.x*sx,y:v.rest.y*sy},uv:{...v.uv}})),triangles:clip.mesh.triangles.map(t=>t.map(id=>ids.get(id)!) as [string,string,string])};
+ if(clip.mesh.manualEdges)artMesh.manualEdges=clip.mesh.manualEdges.map(edge=>edge.map(id=>ids.get(id)!) as [string,string]);
  for(const field of ["manualFaces","excludedFaces"] as const)if(clip.mesh[field])artMesh[field]=clip.mesh[field]!.map(f=>f.map(id=>ids.get(id)!) as [string,string,string]);
  const artPose:ArtOffsets=includePose?Object.fromEntries(Object.entries(clip.pose).map(([id,p])=>[ids.get(id)!,{x:p.x*sx,y:p.y*sy}])):{};
  // Scaled finite input can still overflow when dimensions differ drastically.

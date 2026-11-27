@@ -730,3 +730,28 @@ faces are intentional holes, not a request to restore the convex hull there.
   static/dynamic strokes, key undo/redo, key menus including paste at a new time,
   reference pixels and rest-surface alignment. Native Rust/WASM/Windows/OBS gates
   remain untested here; no new binary-validation claim.
+
+### Ordered manual edge chains (2026-10-24)
+
+- In rest/topology mode R with the cursor V, hold Ctrl (or Meta) and click
+  vertices in order: A → B → C adds A–B and B–C, without implicitly closing A–C
+  and without creating a manually pinned triangular face. Releasing the modifier,
+  clicking elsewhere normally, changing object/tool, blur or undo ends the chain.
+- `manualEdges` are stable-ID constraints for the shared constrained Delaunay
+  rebuild. They take priority over automatic diagonals; automatic neighbouring
+  triangles continue to rebuild as points move. Existing intermediate vertices
+  split a line into consecutive nonoverlapping edges, including points inserted
+  onto that line later. Conflicting manual constraints require a common vertex;
+  a crossing is rejected atomically, not passed to the triangulator.
+- Manual edges are highlighted in orange in R and are drawable/pickable even
+  without any surface triangles. Alt-click removes an edge and cuts incident
+  faces consistently with existing erase controls. Endpoint deletion clears its
+  edge references. Existing intentional cut regions are not filled by drawing
+  a wire through them. JSON validation, clipboard ID remapping, undo/redo and
+  regeneration follow the same rules as manual face constraints.
+- Validation: TypeScript, Vite-only build and diff checks; **597 browser-free
+  tests** and **19 actual App browser scenarios**. New tests cover a deliberately
+  longer constrained diagonal, consecutive-series semantics, intermediate-point
+  splitting, atomic crossing rejection, edge-only geometry, JSON/clipboard,
+  Ctrl-chain lifecycle, rest drag, Alt erasure and undo/redo. Native gates remain
+  external; no Rust/WASM binaries rebuilt here.

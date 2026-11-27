@@ -1,10 +1,11 @@
+import {normalizeArtEdges,artEdgeKey} from "./artMeshEdges";
 import {artPointHull,improveArtTriangles,rebuildArtTriangles} from "./artMeshQuality";
 import {addArtFace} from "./artMeshFaces";
 import type {RigObject,Vec2} from "../types";
 import {emptyArtDeformation,bindArtPoint,insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
 import {readStates,writeStates} from "./states";
-export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[];rebuild?:boolean}|{type:"addFace"|"removeFace"|"removeEdge";ids:string[];rebuild?:boolean};
+export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[];rebuild?:boolean}|{type:"addEdges"|"addFace"|"removeFace"|"removeEdge";ids:string[];rebuild?:boolean};
 /** Full object transaction: geometry, authored pose and every state key are
  * committed by the caller together. Failure leaves the source untouched. */
 export function editArtTopology(object:RigObject,command:ArtTopologyCommand):RigObject {
@@ -25,12 +26,21 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
   }
   return {...object,artMesh:improveArtTriangles({...mesh,triangles:built.triangles})};
  }
+ if(command.type==="addEdges"){
+  if(command.ids.length<2||command.ids.length>65535)throw new Error("Выберите не менее двух вершин по порядку.");
+  const path=command.ids.slice(1).map((id,i)=>[command.ids[i],id] as [string,string]);
+  const manualEdges=normalizeArtEdges(mesh,[...mesh.manualEdges??[],...path]);
+  if(manualEdges.length>131072)throw new Error("Достигнут лимит ручных рёбер.");
+  return {...object,artMesh:rebuildArtTriangles({...mesh,manualEdges})};
+ }
  if(command.type==="removeEdge"||command.type==="removeFace"){
   const removed=mesh.triangles.filter(face=>command.ids.every(id=>face.includes(id)));
-  if(!removed.length)return object;
+  const removeKeys=command.type==="removeEdge"?new Set(normalizeArtEdges(mesh,[command.ids as [string,string]]).map(edge=>artEdgeKey(...edge))):new Set<string>();
+  const manualEdges=mesh.manualEdges?.filter(edge=>!removeKeys.has(artEdgeKey(...edge)));
+  if(!removed.length){if(manualEdges?.length===mesh.manualEdges?.length)return object;return {...object,artMesh:rebuildArtTriangles({...mesh,manualEdges})};}
   const key=(face:string[])=>[...face].sort().join(":");
   const removedIds=new Set(removed.map(key));
-  const next={...mesh,manualFaces:mesh.manualFaces?.filter(f=>!removedIds.has(key(f))),excludedFaces:[...new Map([...mesh.excludedFaces??[],...removed].map(f=>[key(f),f])).values()]};
+  const next={...mesh,...(manualEdges?{manualEdges}:{}),manualFaces:mesh.manualFaces?.filter(f=>!removedIds.has(key(f))),excludedFaces:[...new Map([...mesh.excludedFaces??[],...removed].map(f=>[key(f),f])).values()]};
   return {...object,artMesh:rebuildArtTriangles(next)};
  }
  if(command.type==="addFace"){
@@ -54,7 +64,7 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
  }else{
   const ids=new Set(command.ids);
   if(!mesh.vertices.some(v=>ids.has(v.id)))return object;
-  mesh={...mesh,manualFaces:mesh.manualFaces?.filter(f=>!f.some(id=>ids.has(id))),excludedFaces:mesh.excludedFaces?.filter(f=>!f.some(id=>ids.has(id)))};
+  mesh={...mesh,manualEdges:mesh.manualEdges?.filter(f=>!f.some(id=>ids.has(id))),manualFaces:mesh.manualFaces?.filter(f=>!f.some(id=>ids.has(id))),excludedFaces:mesh.excludedFaces?.filter(f=>!f.some(id=>ids.has(id)))};
   for(const id of ids){const result=removeArtStateVertex(mesh,states,id);mesh=result.mesh;states=result.states;}
   pose=Object.fromEntries(Object.entries(pose).filter(([id])=>!ids.has(id)));
  }

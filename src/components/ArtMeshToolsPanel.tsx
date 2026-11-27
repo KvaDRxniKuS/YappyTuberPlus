@@ -10,6 +10,6 @@ export function ArtMeshToolsPanel({name,onClose,tools,mesh}:{name:string;onClose
    <button role="tab" aria-selected={tab==="mesh"} onClick={()=>setTab("mesh")}><Layers3 size={14}/>Сетка</button>
   </div>
   <div className="artmesh-panel-body" role="tabpanel">{tab==="tools"?tools:mesh}</div>
-  <footer>Shift + клик — выбор вершин<br/>Ctrl + Z — отменить действие</footer>
+  <footer>R: Ctrl + клики — ручные рёбра<br/>Shift + клик — выбор вершин<br/>Ctrl + Z — отменить действие</footer>
  </aside>;
 }

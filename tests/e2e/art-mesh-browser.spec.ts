@@ -328,3 +328,27 @@ test("rest surface matches base vertices and tracing shows a root with an empty 
  const check=page.getByLabel("Показывать исходник для обводки",{exact:true});await expect(check).toBeChecked();
  const shown=(await pixel())[0];await check.uncheck();await expect.poll(async()=>(await pixel())[0]).toBeLessThan(shown-20);
 });
+test("Ctrl vertex series builds ordered priority edges, survives drag and supports erase undo",async({page})=>{
+ await open(page,project());await page.keyboard.press("KeyR");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const p=(x:number,y:number)=>({x:box.x+(box.width-400*z)/2+(100+x)*z,y:box.y+(box.height-300*z)/2+(80+y)*z});
+ const click=async(x:number,y:number)=>{const q=p(x,y);await page.mouse.click(q.x,q.y);};
+ await page.keyboard.down("Control");await click(160,0);await click(0,120);await click(0,0);await page.keyboard.up("Control");
+ const mesh=async()=>(await stored(page)).objects[0].artMesh;
+ await expect.poll(async()=>(await mesh()).manualEdges).toEqual([["v1","v2"],["v2","v0"]]);
+ expect((await mesh()).manualFaces).toBeUndefined();expect((await mesh()).triangles.some((f:string[])=>f.includes("v1")&&f.includes("v2"))).toBe(true);
+ await undo(page);await expect.poll(async()=>(await mesh()).manualEdges).toEqual([["v1","v2"]]);
+ await page.keyboard.press("Control+Shift+z");await expect.poll(async()=>(await mesh()).manualEdges.length).toBe(2);
+ // New modifier series must start a new path, not connect back to the old anchor.
+ await page.keyboard.down("Control");await click(160,120);await click(160,0);await page.keyboard.up("Control");
+ await expect.poll(async()=>(await mesh()).manualEdges.length).toBe(3);
+ expect((await mesh()).manualEdges.some((e:string[])=>e.includes("v0")&&e.includes("v3"))).toBe(false);
+ await page.getByRole("button",{name:"Снять",exact:true}).click();
+ const start=p(160,0);await page.mouse.move(start.x,start.y);await page.mouse.down();await page.mouse.move(start.x-10*z,start.y+5*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await mesh()).vertices[1].rest.x).toBeLessThan(160);
+ expect((await mesh()).triangles.some((f:string[])=>f.includes("v1")&&f.includes("v2"))).toBe(true);
+ await page.keyboard.down("Alt");await click(75,62.5);await page.keyboard.up("Alt");
+ await expect.poll(async()=>(await mesh()).manualEdges.some((e:string[])=>e.includes("v1")&&e.includes("v2"))).toBe(false);
+ await undo(page);await expect.poll(async()=>(await mesh()).manualEdges.some((e:string[])=>e.includes("v1")&&e.includes("v2"))).toBe(true);
+});

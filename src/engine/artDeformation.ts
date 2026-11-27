@@ -9,6 +9,7 @@ export interface ArtDeformation {
   nextId:number;
   vertices:ArtVertex[];
   triangles:Array<[string,string,string]>;
+  manualEdges?:Array<[string,string]>;
   manualFaces?:Array<[string,string,string]>;
   excludedFaces?:Array<[string,string,string]>;
 }
