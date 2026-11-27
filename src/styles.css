@@ -2379,3 +2379,20 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 10px; heigh
 .scene-viewport.tool-brush canvas { cursor:crosshair; }
 .scene-viewport.tool-transform canvas { cursor:move; }
 .scene-viewport canvas:focus, .tree-panel:focus { outline:none; }
+/* Visibility factors: optional cards, one explicit add control. */
+.visibility-section { min-width:0; }
+.visibility-section .visibility-intro { margin:4px 0 12px; line-height:1.5; }
+.visibility-empty { display:flex; flex-direction:column; gap:6px; padding:18px 14px; margin:8px 0 12px; border:1px dashed var(--border-soft); border-radius:9px; background:rgba(110,170,190,.035); }
+.visibility-empty b { font-size:12px; color:var(--text); }
+.visibility-empty span { font-size:11px; line-height:1.5; color:var(--text-muted, #8f9ba8); }
+.visibility-section .visibility-source { padding:12px; gap:10px; border-radius:9px; background:linear-gradient(135deg,#182129,#131a20); border-color:#2c3a46; box-shadow:0 2px 6px #0002; }
+.visibility-factor-head { display:flex; align-items:center; justify-content:space-between; padding-bottom:7px; border-bottom:1px solid #ffffff0d; }
+.visibility-factor-head b { font-size:12px; font-weight:600; }
+.visibility-section .module-field { min-width:0; }
+.visibility-section select { max-width:100%; min-width:0; border-radius:6px; }
+.visibility-section .behaviour-state { gap:8px; }
+.visibility-section .behaviour-state>span { font-size:11px; }
+.visibility-add { display:flex; align-items:center; gap:8px; padding:2px 10px; margin-top:12px; border:1px solid #3b5667; background:#1c2c36; border-radius:7px; color:#99d6ed; }
+.visibility-add select { flex:1; width:0; padding:9px 0; border:0; background:transparent; color:inherit; font-size:12px; cursor:pointer; }
+.visibility-add:focus-within { outline:1px solid #75bedb; outline-offset:2px; }
+.visibility-add select option { background:#182129; color:#dce7ef; }

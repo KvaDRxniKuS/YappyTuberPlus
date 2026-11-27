@@ -89,7 +89,12 @@ test("селекторы речи и моргания видны с одним �
     return markup.slice(start, end);
   };
 
-  const single = render("", [mic("mic"), auto("auto")]);
+  const empty=render("", [mic("mic"), auto("auto")]);
+  expect(empty).not.toContain('aria-label="Источник речи"');
+  expect(empty).not.toContain('aria-label="Источник моргания"');
+  expect(empty).toContain("Множителей нет");
+  const active=writeBehaviour("",{...DEFAULT_BEHAVIOUR,mouth:"open",eye:"open",voiceModule:"mic",eyeModule:"auto"},object).script;
+  const single = render(active, [mic("mic"), auto("auto")]);
   for (const [label, name] of [["Источник речи", "mic"], ["Источник моргания", "auto"]]) {
     const select = picker(single, label);
     expect(select).toContain("disabled=\"\"");
@@ -97,7 +102,7 @@ test("селекторы речи и моргания видны с одним �
   }
 
   const saved = writeBehaviour("", {
-    ...DEFAULT_BEHAVIOUR, voiceModule: "mic_2", eyeModule: "auto_2",
+    ...DEFAULT_BEHAVIOUR, mouth:"open", eye:"open", voiceModule: "mic_2", eyeModule: "auto_2",
   }, object).script;
   const multiple = render(saved, [mic("mic"), mic("mic_2"), auto("auto"), auto("auto_2")]);
   for (const [label, selected, other] of [

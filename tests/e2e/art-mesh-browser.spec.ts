@@ -509,3 +509,18 @@ test("tree arrows expand and collapse hierarchy and Ctrl+D copies a subtree",asy
  expect(objects.filter(o=>o.parentId===copy.id)).toHaveLength(1);
  await page.keyboard.press("Control+z");await expect(page.locator(".tree-row")).toHaveCount(2);
 });
+
+test("visibility mouth and eye are opt-in factors with removal persistence",async({page})=>{
+ const preset=project();preset.modules=[{name:"mic",type:"loudness",enabled:true,source:"live",config:{}},{name:"blink",type:"autoblink",enabled:true,source:"manual",config:{}}];
+ await open(page,preset);await page.getByRole("button",{name:"Поведение",exact:true}).click();
+ const section=page.locator(".visibility-section"),add=page.getByLabel("Добавить множитель видимости");
+ await expect(section.getByText("Множителей нет",{exact:true})).toBeVisible();
+ await expect(page.getByLabel("Источник речи")).toHaveCount(0);await expect(page.getByLabel("Источник моргания")).toHaveCount(0);
+ await add.selectOption("mouth");await expect(page.getByLabel("Источник речи")).toHaveValue("mic");
+ await add.selectOption("eye");await expect(page.getByLabel("Источник моргания")).toHaveValue("blink");
+ await expect(page.getByLabel("Множитель рта",{exact:true})).toBeVisible();await expect(page.getByLabel("Множитель глаза",{exact:true})).toBeVisible();
+ await page.getByTitle("Удалить множитель рта",{exact:true}).click();await page.getByTitle("Удалить множитель глаза",{exact:true}).click();
+ await expect(section.getByText("Множителей нет",{exact:true})).toBeVisible();
+ await expect.poll(async()=>{const {readBehaviour}=await import("../../src/engine/behaviour");return readBehaviour((await stored(page)).objects[0].script).eye;}).toBe("none");
+ await page.reload();await page.getByRole("button",{name:"Поведение",exact:true}).click();await expect(page.locator(".visibility-empty")).toBeVisible();
+});

@@ -87,16 +87,16 @@ function Row({ label, hint, value, min, max, step, unit, onCommit }: {
   );
 }
 
-function StateRow({ label, value, onChange, titles }: {
+function StateRow({ label, value, onChange, titles, words }: {
   label: string;
   value: VisibilityRule;
   onChange: (value: VisibilityRule) => void;
   titles: Record<VisibilityRule, string>;
+  words?: {open:string;closed:string};
 }) {
   const options: Array<{ id: VisibilityRule; text: string }> = [
-    { id: "none", text: "×" },
-    { id: "open", text: "открыт" },
-    { id: "closed", text: "закрыт" },
+    { id: "open", text: words?.open??"открыт" },
+    { id: "closed", text: words?.closed??"закрыт" },
   ];
   return (
     <div className="behaviour-state">
@@ -897,85 +897,27 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
         </section>
       )}
 
-      <section className={foldClass("visibility")}>
+      <section className={`${foldClass("visibility")} visibility-section`}>
         <div className="section-title">
           <SectionToggle id="visibility" open={isOpen("visibility")} onToggle={toggleSection}><X size={13} /> Видимость</SectionToggle>
         </div>
-        <p className="behaviour-hint">
-          Видимость — это множители. Каждый источник даёт число 0…1, они перемножаются:
-          ноль гасит объект, единица ничего не меняет, дробь делает его полупрозрачным.
-          Флаг «виден» остаётся двоичным, а доля уходит в прозрачность. Источники бывают
-          любые: вход включённого модуля, <code>signal.*</code> или <code>state.*</code>
-          предыдущего кадра — в том числе своя переменная из скрипта.
-        </p>
-        {(hasVoice || hasEye) && (<>
-          <p className="behaviour-hint">
-            Рот и глаз — частный случай того же правила: это ворота из речевого модуля и
-            модуля моргания.
-          </p>
-          {hasVoice && (
-            <>
-              <StateRow
-                label="Рот"
-                value={behaviour.mouth}
-                onChange={(mouth) => patch({ mouth })}
-                titles={{
-                  none: "не управлять видимостью",
-                  open: "виден, когда персонаж говорит",
-                  closed: "виден, когда персонаж молчит",
-                }}
-              />
-              <ModulePicker
-                label="Источник речи"
-                modules={voiceModules}
-                value={behaviour.voiceModule}
-                onPick={(voiceModule) => patch({ voiceModule })}
-              />
-            </>
-          )}
-          {hasEye && (
-            <StateRow
-              label="Глаз"
-              value={behaviour.eye}
-              onChange={(eye) => patch({ eye })}
-              titles={{
-                none: "не управлять видимостью",
-                open: "виден, когда глаза открыты",
-                closed: "виден на моргании",
-              }}
-            />
-          )}
-          <ModulePicker
-            label="Источник моргания"
-            modules={eyeModules}
-            value={behaviour.eyeModule}
-            onPick={(eyeModule) => {
-              const picked = eyeModules.find((item) => item.name === eyeModule);
-              patch({ eyeModule, eyeInput: picked ? autoBlinkEyeInput(picked) : "blink" });
-            }}
-          />
-          {hasEye && eyeOutputs.length > 1 && (
-            <label className="module-field">
-              <span
-                className="module-field-label"
-                title="У модуля моргания несколько выводов: какой из них открывает и закрывает глаз"
-              >
-                Какое моргание
-              </span>
-              <select value={eyeInput} onChange={(event) => patch({ eyeInput: event.target.value })}>
-                {eyeOutputs.map((output) => (
-                  <option key={output.name} value={output.name}>{output.label} ({output.name})</option>
-                ))}
-              </select>
-            </label>
-          )}
-          <p className="behaviour-hint">
-            Если заданы оба, условия перемножаются: слой виден, когда верно и то, и другое.
-            Входы берутся из своих модулей: речь — из {hasVoice ? `«${behaviour.voiceModule || voiceModules[0].name}»` : "микрофона"},
-            моргание — из {hasEye ? `«${behaviour.eyeModule || eyeModules[0].name}» (${eyeInput})` : "модуля моргания"}.
-            Строки есть только у тех модулей, что добавлены в пресет.
-          </p>
-        </>)}
+        <p className="behaviour-hint visibility-intro">Добавьте условия показа объекта. Множители перемножаются: 0 скрывает объект, 1 оставляет его видимым.</p>
+        {behaviour.mouth === "none" && behaviour.eye === "none" && !behaviour.visibility.length && (
+          <div className="visibility-empty"><b>Множителей нет</b><span>Видимость не ограничена условиями. Добавьте рот, глаз или свой источник.</span></div>
+        )}
+        {behaviour.mouth !== "none" && <div className="visibility-source visibility-factor" aria-label="Множитель рта">
+          <div className="visibility-factor-head"><b>Рот</b><button className="icon-button danger" title="Удалить множитель рта" onClick={()=>patch({mouth:"none"})}><Trash2 size={14}/></button></div>
+          <StateRow label="Показывать при" words={{open:"речи",closed:"молчании"}} value={behaviour.mouth} onChange={mouth=>patch({mouth})} titles={{none:"убрать множитель рта",open:"виден, когда персонаж говорит",closed:"виден, когда персонаж молчит"}}/>
+          <ModulePicker label="Источник речи" modules={voiceModules} value={behaviour.voiceModule} onPick={voiceModule=>patch({voiceModule})}/>
+          {!hasVoice && <p className="behaviour-hint behaviour-warning">Добавьте модуль речи, чтобы множитель работал.</p>}
+        </div>}
+        {behaviour.eye !== "none" && <div className="visibility-source visibility-factor" aria-label="Множитель глаза">
+          <div className="visibility-factor-head"><b>Глаз</b><button className="icon-button danger" title="Удалить множитель глаза" onClick={()=>patch({eye:"none"})}><Trash2 size={14}/></button></div>
+          <StateRow label="Показывать, когда" value={behaviour.eye} onChange={eye=>patch({eye})} titles={{none:"убрать множитель глаза",open:"виден, когда глаза открыты",closed:"виден на моргании"}}/>
+          <ModulePicker label="Источник моргания" modules={eyeModules} value={behaviour.eyeModule} onPick={eyeModule=>{const picked=eyeModules.find(item=>item.name===eyeModule);patch({eyeModule,eyeInput:picked?autoBlinkEyeInput(picked):"blink"});}}/>
+          {eyeOutputs.length>1 && <label className="module-field"><span className="module-field-label">Какое моргание</span><select aria-label="Какое моргание" value={eyeInput} onChange={event=>patch({eyeInput:event.target.value})}>{eyeOutputs.map(output=><option key={output.name} value={output.name}>{output.label} ({output.name})</option>)}</select></label>}
+          {!hasEye && <p className="behaviour-hint behaviour-warning">Добавьте модуль моргания, чтобы множитель работал.</p>}
+        </div>}
 
         {behaviour.visibility.map((source, index) => (
           <div className="visibility-source" key={`${sourceKey(source)}-${index}`}>
@@ -1110,10 +1052,12 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
           </div>
         ))}
 
-        <button
-          className="button secondary"
-          title="Добавить множитель видимости"
-          onClick={() => {
+        <label className="visibility-add">
+          <Plus size={15}/><select aria-label="Добавить множитель видимости" value="" onChange={event=>{
+            const kind=event.target.value;
+            if(kind==="mouth"){patch({mouth:"open",voiceModule:behaviour.voiceModule||voiceModules[0]?.name||""});return;}
+            if(kind==="eye"){patch({eye:"open",eyeModule:behaviour.eyeModule||eyeModules[0]?.name||"",eyeInput});return;}
+            if(kind!=="source")return;
             const first = visibilityInputs[0];
             const source: VisibilitySource = first
               ? {
@@ -1128,10 +1072,13 @@ export function BehaviourPanel({ object, selection, onChange, onText, onColors, 
               }
               : { kind: "signal", module: "", name: "", gate: true, range: false, min: 0, max: 1, invert: false };
             patch({ visibility: [...behaviour.visibility, source] });
-          }}
-        >
-          <Plus size={13} /> Добавить источник
-        </button>
+          }}>
+            <option value="" disabled>Добавить множитель…</option>
+            <option value="mouth" disabled={behaviour.mouth!=="none"}>Рот — речь / молчание</option>
+            <option value="eye" disabled={behaviour.eye!=="none"}>Глаз — открыт / моргание</option>
+            <option value="source">Свой источник — вход, сигнал, переменная</option>
+          </select>
+        </label>
         {visibilityInputs.length === 0 && (
           <p className="behaviour-hint">
             В пресете нет включённых модулей с входами: остаются <code>signal.*</code> и

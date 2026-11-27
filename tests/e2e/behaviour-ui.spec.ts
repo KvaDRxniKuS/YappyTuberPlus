@@ -10,8 +10,10 @@ async function openStudio(page: Page): Promise<void> {
 test("source selectors show one source and retain an explicit second-source choice", async ({ page }) => {
   await openStudio(page);
 
-  // Demo has one microphone module and one AutoBlink module. Pickers must stay
-  // visible even when their value cannot yet be changed.
+  await page.locator(".right-tabs button").filter({hasText:"Поведение"}).click();
+  await page.getByLabel("Добавить множитель видимости").selectOption("mouth");
+  await page.getByLabel("Добавить множитель видимости").selectOption("eye");
+  // Explicit factors show their source even when only one module is available.
   const voice = page.getByLabel("Источник речи");
   const blink = page.getByLabel("Источник моргания");
   await expect(voice).toBeVisible();
