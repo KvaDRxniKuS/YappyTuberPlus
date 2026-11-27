@@ -544,3 +544,23 @@ test("state angle preview rotates child position as well as its mesh orientation
   await expect.poll(async()=>(await page.screenshot({clip})).equals(referenceImage)).toBe(true);
  }finally{await reference.close();}
 });
+
+test("editor and read-only overlay draw inherited child layer below its zero-layer neighbor",async({page})=>{
+ const {childScript}=await import("../../src/data/demoPreset");
+ const preset=project(false),base=preset.objects[0];preset.overlay.scaleMode="contain";
+ preset.objects=[
+  {...structuredClone(base),id:"parent",kind:"group",base:{...base.base,layer:-1},script:rootScript({layer:"-1"})},
+  {...structuredClone(base),id:"child",parentId:"parent",script:childScript(),shape:{...base.shape!,fill:"#ff0000"}},
+  {...structuredClone(base),id:"neighbor",script:rootScript(),shape:{...base.shape!,fill:"#0000ff"}},
+ ];
+ await open(page,preset);await page.locator(".scene-title").click();await page.keyboard.press("Shift+KeyK");
+ const pixel=async(target:Page,overlay:boolean)=>target.locator(overlay?".overlay-canvas":".scene-viewport canvas").first().evaluate((canvas:HTMLCanvasElement,isOverlay)=>{
+  const w=canvas.clientWidth,h=canvas.clientHeight,z=isOverlay?Math.min(w/400,h/300):Math.max(.05,Math.min((w-70)/400,(h-70)/300,2));
+  const x=(w-400*z)/2+160*z,y=(h-300*z)/2+120*z;
+  return Array.from(canvas.getContext("2d")!.getImageData(Math.floor(x*canvas.width/w),Math.floor(y*canvas.height/h),1,1).data);
+ },overlay);
+ await expect.poll(()=>pixel(page,false)).toEqual([0,0,255,255]);
+ const overlay=await page.context().newPage();
+ try{await overlay.goto("/overlay.html?overlay=1");await expect.poll(()=>pixel(overlay,true)).toEqual([0,0,255,255]);}
+ finally{await overlay.close();}
+});

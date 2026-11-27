@@ -261,6 +261,7 @@ export function OverlayApp() {
         media: mediaAssets.current, maskMedia: maskMedia.current, lighting,
         environment: current.environment,
         preparedMeshes:client?.meshes,
+        drawOrder:frame?.order,
       });
       ctx.restore();
       if (guide) {

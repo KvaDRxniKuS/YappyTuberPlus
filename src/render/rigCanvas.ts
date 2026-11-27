@@ -194,7 +194,18 @@ export function objectMatrix(object: RigObject, values: ObjectFrame): Affine {
  * обязан быть тот, кто выше в структуре, — индекс в массиве пресета про это
  * не знает. Смена слоя применяется сразу, без перезапуска движка.
  */
-export function orderedObjects(preset: RigPreset, frame: RigFrame | null): RigObject[] {
+export function orderedObjects(preset: RigPreset, frame: RigFrame | null, drawOrder?: readonly string[]): RigObject[] {
+  // Read-only viewers receive no scripts. Their authoritative order is already
+  // resolved by the host (including inherit, formulas and tree tie-breaking).
+  if (drawOrder?.length) {
+    const byId = new Map(preset.objects.filter(object=>object.kind!=="group").map(object=>[object.id,object]));
+    const ordered: RigObject[] = [];
+    for (const id of drawOrder) {const object=byId.get(id);if(object){ordered.push(object);byId.delete(id);}}
+    // Scene/frame delivery may briefly straddle a structural edit. Keep new
+    // objects drawable and deterministic until their matching frame arrives.
+    if (byId.size) for (const object of orderedObjects(preset,frame)) if(byId.has(object.id))ordered.push(object);
+    return ordered;
+  }
   const sprites = preset.objects.filter((object) => object.kind !== "group");
   const paths = structurePaths(preset.objects);
   // Resolve inheritance/formulas once per object, not twice per comparator.
@@ -232,6 +243,8 @@ export function prepareRigMeshes(preset:RigPreset,frame:RigFrame|null,points?:Ma
 }
 
 export interface DrawRigOptions {
+  /** Host-resolved back-to-front order for script-free viewers. */
+  drawOrder?: readonly string[];
   /** Original destination dimensions for screen-sized lights in cropped layers. */
   lightCanvas?: {width:number;height:number};
   /** Presence (even empty) means geometry has already been evaluated by the host. */
@@ -304,7 +317,7 @@ export function drawRig(
   // его собственной отрисовки (см. drawShaded), поэтому объект, нарисованный
   // раньше светильника, всё равно должен получить от него объём. Условия те же,
   // что были у прохода по кадру: скрытое, прозрачное и нулевое света не даёт.
-  const objects = orderedObjects(preset, frame);
+  const objects = orderedObjects(preset, frame, options.drawOrder);
   const disabled=disabledIds(preset.objects);
   // Collect lights before drawing without allocating a wrapper record and
   // matrix for every object on every frame. Only lights contribute here.
