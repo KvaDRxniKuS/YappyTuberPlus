@@ -1023,7 +1023,7 @@ export default function App() {
   },[commit]);
 
   const artTopologyObject=useCallback((id:string,command:ArtTopologyCommand)=>{
-    commit(current=>({...current,objects:current.objects.map(o=>o.id===id?editArtTopology(o,command):o)}),{label:command.type==="addEdges"?"Ручные рёбра артмеша":command.type==="triangulate"?"Соединение точек артмеша":command.type==="start"?"Создание ручного артмеша":command.type==="create"?"Создание вершины артмеша":command.type==="insert"?"Вставка вершины артмеша":command.type==="remove"?"Удаление вершин артмеша":command.type==="addFace"?"Создание грани артмеша":"Удаление грани артмеша"});
+    commit(current=>({...current,objects:current.objects.map(o=>o.id===id?editArtTopology(o,command):o)}),{label:command.type==="autoEdges"?"Создание автолиний артмеша":command.type==="addEdges"?"Ручные рёбра артмеша":command.type==="triangulate"?"Соединение точек артмеша":command.type==="start"?"Создание ручного артмеша":command.type==="create"?"Создание вершины артмеша":command.type==="insert"?"Вставка вершины артмеша":command.type==="remove"?"Удаление вершин артмеша":command.type==="addFace"?"Создание грани артмеша":"Удаление грани артмеша"});
   },[commit]);
 
   const artMeshObject=useCallback((id:string,artMesh:ArtDeformation,artPose:ArtOffsets,regenerate=false,dimensions?:{width:number;height:number})=>{

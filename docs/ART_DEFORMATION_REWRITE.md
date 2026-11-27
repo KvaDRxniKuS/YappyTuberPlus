@@ -755,3 +755,23 @@ faces are intentional holes, not a request to restore the convex hull there.
   splitting, atomic crossing rejection, edge-only geometry, JSON/clipboard,
   Ctrl-chain lifecycle, rest drag, Alt erasure and undo/redo. Native gates remain
   external; no Rust/WASM binaries rebuilt here.
+
+### Reconnect authored points and explicit auto-lines action (2026-10-24)
+
+- Creating a connected point inside a previously erased face now locally reopens
+  the containing cut triangle(s) before insertion. The point is immediately part
+  of the triangulation; UV, authored offsets and every state key interpolate from
+  that restored surface. Unrelated cut regions remain excluded. Merely moving
+  points or rebuilding still respects intentional cuts; adding a new point there
+  is now an explicit request to author surface there.
+- R panel → **Создать автолинии**: with no selected current vertices, rebuild using
+  all points and clear intentional cut exclusions. With a selection from any
+  selection tool, reopen cuts incident to selected vertices or containing selected
+  loose points, and triangulate against the complete surrounding point set (not
+  an isolated mesh containing only the selection). Other cuts stay intact. Manual
+  edges/faces retain priority in both cases; IDs, rest, UV, authored poses and state
+  keys are not regenerated. Each button action is a single undo transaction.
+- Validation: TypeScript, Vite-only bundle, diff checks, **600 browser-free tests**
+  and **21 actual App browser scenarios**. Added cut-insertion/interpolation,
+  selected/all reconnection, untouched cut preservation, manual edge priority,
+  marquee-selected UI action and undo checks. Native gates remain external.

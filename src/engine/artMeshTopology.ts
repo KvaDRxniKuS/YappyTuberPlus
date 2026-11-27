@@ -5,7 +5,17 @@ import type {RigObject,Vec2} from "../types";
 import {emptyArtDeformation,bindArtPoint,insertArtVertex} from "./artDeformation";
 import {insertArtStateVertex,removeArtStateVertex} from "./artMeshStates";
 import {readStates,writeStates} from "./states";
-export type ArtTopologyCommand={type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[];rebuild?:boolean}|{type:"addEdges"|"addFace"|"removeFace"|"removeEdge";ids:string[];rebuild?:boolean};
+export type ArtTopologyCommand={type:"autoEdges";ids?:string[]}|{type:"start"}|{type:"triangulate"}|{type:"create";point:Vec2;connect?:boolean}|{type:"insert";point:Vec2}|{type:"remove";ids:string[];rebuild?:boolean}|{type:"addEdges"|"addFace"|"removeFace"|"removeEdge";ids:string[];rebuild?:boolean};
+/** A cut is tied to its original rest-space triangle. Explicit point authoring
+ * inside it or an auto-connect action reopens only the touched cut region. */
+function cutContains(rest:ReadonlyMap<string,Vec2>,face:string[],point:Vec2):boolean{
+ const vertices=face.map(id=>rest.get(id));
+ if(vertices.some(v=>!v))return false;
+ const [a,b,c]=vertices as Vec2[],cross=(a:Vec2,b:Vec2,c:Vec2)=>(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+ if(Math.abs(cross(a,b,c))<1e-10)return false;
+ const signs=[cross(a,b,point),cross(b,c,point),cross(c,a,point)];
+ return signs.every(v=>v>=-1e-8)||signs.every(v=>v<=1e-8);
+}
 /** Full object transaction: geometry, authored pose and every state key are
  * committed by the caller together. Failure leaves the source untouched. */
 export function editArtTopology(object:RigObject,command:ArtTopologyCommand):RigObject {
@@ -15,6 +25,19 @@ export function editArtTopology(object:RigObject,command:ArtTopologyCommand):Rig
  }
  if(!object.artMesh)throw new Error("Object has no art mesh");
  let mesh=object.artMesh,states=readStates(object.script),pose=object.artPose??{};
+ const restById=new Map(mesh.vertices.map(v=>[v.id,v.rest]));
+ if(command.type==="autoEdges"){
+  const ids=new Set(command.ids??[]);
+  if([...ids].some(id=>!restById.has(id)))throw new Error("Выбрана отсутствующая вершина.");
+  const selected=mesh.vertices.filter(v=>ids.has(v.id));
+  const excludedFaces=ids.size&&ids.size<mesh.vertices.length?mesh.excludedFaces?.filter(face=>!face.some(id=>ids.has(id))&&!selected.some(v=>cutContains(restById,face,v.rest))):[];
+  return {...object,artMesh:rebuildArtTriangles({...mesh,excludedFaces})};
+ }
+ // Reopen a cut before inserting, so UV and all authored/state offsets are
+ // interpolated from the restored surface instead of inventing a loose point.
+ if(command.type==="create"&&command.connect&&mesh.excludedFaces?.some(face=>cutContains(restById,face,command.point))){
+  mesh=rebuildArtTriangles({...mesh,excludedFaces:mesh.excludedFaces.filter(face=>!cutContains(restById,face,command.point))});
+ }
  if(command.type==="triangulate"){
   if(mesh.triangles.length)throw new Error("Автосоединение доступно только для свободных точек без граней.");
   const hull=artPointHull(mesh);if(hull.length<3)throw new Error("Нужны три точки не на одной прямой.");

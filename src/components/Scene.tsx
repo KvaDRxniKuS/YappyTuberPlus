@@ -1343,6 +1343,13 @@ export function Scene(props: SceneProps) {
 {!meshTarget.artMesh&&<div className="artmesh-empty"><p>У объекта пока нет артмеша. Начните с точек вручную или сгенерируйте сетку во вкладке «Сетка».</p><button className="primary" onClick={()=>{props.onArtTopology(meshTarget.id,{type:"start"});if(props.tool!=="deform")props.onTool("deform");}}>Создать вручную</button></div>}
             {meshTarget.artMesh&&<>
               <button title="Выделить все вершины; Shift+клик — добавить/убрать вершину" onClick={()=>{artSelection.current={objectId:meshTarget.id,ids:new Set(meshTarget.artMesh!.vertices.map(v=>v.id))};markDirty();}}>Все вершины</button>
+              {props.tool==="deform"&&<button title="Без выделения — восстановить автолинии всех точек. С выделением — соединить выбранные точки между собой и с окружением, восстанавливая затронутые вырезы. Ручные рёбра сохраняют приоритет." onClick={()=>{
+                const selection=artSelection.current;
+                const ids=selection.objectId===meshTarget.id?meshTarget.artMesh!.vertices.filter(v=>selection.ids.has(v.id)).map(v=>v.id):[];
+                const command:ArtTopologyCommand={type:"autoEdges",ids};
+                try{editArtTopology(meshTarget,command);props.onArtTopology(meshTarget.id,command);setArtTopologyError("");artEdgeAnchor.current=null;markDirty();}
+                catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать автолинии.");}
+              }}>Создать автолинии</button>}
               {props.tool==="deform"&&<button title="Удалить выбранные вершины и прилегающие грани; образуются отверстия" onClick={()=>{
                 const selection=artSelection.current;
                 if(selection.objectId!==meshTarget.id||!selection.ids.size)return;
@@ -1354,7 +1361,7 @@ export function Scene(props: SceneProps) {
               {artTopologyError&&<span role="status">{artTopologyError}</span>}
               <button title="Снять выделение вершин" onClick={()=>{artEdgeAnchor.current=null;artSelection.current={objectId:meshTarget.id,ids:new Set()};markDirty();}}>Снять</button>
             </>}
-{props.tool==="deform"&&meshTarget.artMesh&&<p className="artmesh-hint">ЛКМ по пустому месту — точка; по вершине и потянуть — перемещение без деформации текстуры. Сетка автоматически перестраивается по текущим точкам. Alt + ЛКМ — удалить вершину либо вырезать ребро с прилегающими гранями. Ctrl + клик по вершинам — цепочка ручных рёбер; отпускание Ctrl завершает цепочку. Shift + клик — выделение; три вершины закрепляют ручную грань вопреки автоматической диагонали. Alt + клик по грани — вырезать её, без автозаполнения. V / M / L — курсор, рамка, лассо без выхода из артмеша.</p>}</>} mesh={<><p className="artmesh-hint">Генерация, замена и перенос топологии. Изменения отменяются одним шагом истории.</p>            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/>Сгенерировать артмеш</button>
+{props.tool==="deform"&&meshTarget.artMesh&&<p className="artmesh-hint">ЛКМ по пустому месту — точка; по вершине и потянуть — перемещение без деформации текстуры. Сетка автоматически перестраивается по текущим точкам. Новая точка внутри выреза локально восстанавливает грани. «Создать автолинии» соединяет выбранные точки с окружением, без выделения — все точки. Alt + ЛКМ — удалить вершину либо вырезать ребро с прилегающими гранями. Ctrl + клик по вершинам — цепочка ручных рёбер; отпускание Ctrl завершает цепочку. Shift + клик — выделение; три вершины закрепляют ручную грань вопреки автоматической диагонали. Alt + клик по грани — вырезать её, без автозаполнения. V / M / L — курсор, рамка, лассо без выхода из артмеша.</p>}</>} mesh={<><p className="artmesh-hint">Генерация, замена и перенос топологии. Изменения отменяются одним шагом истории.</p>            <button title="Сгенерировать артмеш" aria-label="Сгенерировать артмеш" onClick={()=>setArtGenerator("single")}><Grid3X3 size={15}/>Сгенерировать артмеш</button>
             <button title="Подготовить потомков к деформации…" onClick={()=>setArtGenerator("descendants")}>Подготовить потомков…</button>
             <button disabled={!meshTarget.artMesh} title="Скопировать новый артмеш и авторскую деформацию" onClick={()=>{
               try{holdArtMesh(meshTarget);setArtTopologyError("");}catch(error){setArtTopologyError(error instanceof Error?error.message:"Ошибка копирования.");}

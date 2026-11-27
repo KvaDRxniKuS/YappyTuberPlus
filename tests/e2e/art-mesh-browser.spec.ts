@@ -1,3 +1,4 @@
+import {editArtTopology} from "../../src/engine/artMeshTopology";
 import {makeLayer,writeStates,readStates} from "../../src/engine/states";
 import {test,expect,type Page} from "@playwright/test";
 import {createDemoPreset,rootScript} from "../../src/data/demoPreset";
@@ -351,4 +352,31 @@ test("Ctrl vertex series builds ordered priority edges, survives drag and suppor
  await page.keyboard.down("Alt");await click(75,62.5);await page.keyboard.up("Alt");
  await expect.poll(async()=>(await mesh()).manualEdges.some((e:string[])=>e.includes("v1")&&e.includes("v2"))).toBe(false);
  await undo(page);await expect.poll(async()=>(await mesh()).manualEdges.some((e:string[])=>e.includes("v1")&&e.includes("v2"))).toBe(true);
+});
+test("new point inside a deleted triangle reconnects immediately and one undo restores the cut",async({page})=>{
+ const preset=project();preset.objects[0]=editArtTopology(preset.objects[0],{type:"removeFace",ids:["v0","v1","v3"]});
+ await open(page,preset);await page.keyboard.press("KeyR");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ await page.mouse.click(box.x+(box.width-400*z)/2+200*z,box.y+(box.height-300*z)/2+100*z);
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices.length).toBe(5);
+ const mesh=(await stored(page)).objects[0].artMesh;
+ expect(mesh.triangles.some((f:string[])=>f.includes("v4"))).toBe(true);expect(mesh.excludedFaces).toEqual([]);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
+});
+test("auto-lines button uses marquee-selected points and then all points when deselected",async({page})=>{
+ const preset=project();let object=editArtTopology(preset.objects[0],{type:"removeEdge",ids:["v0","v3"]});
+ object=editArtTopology(object,{type:"create",point:{x:100,y:20}});preset.objects[0]=object;
+ await open(page,preset);await page.keyboard.press("KeyR");await page.keyboard.press("KeyM");
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const p=(x:number,y:number)=>({x:box.x+(box.width-400*z)/2+(100+x)*z,y:box.y+(box.height-300*z)/2+(80+y)*z});
+ const a=p(95,15),b=p(105,25);await page.mouse.move(a.x,a.y);await page.mouse.down();await page.mouse.move(b.x,b.y,{steps:4});await page.mouse.up();
+ const button=page.getByRole("button",{name:"Создать автолинии",exact:true});await button.click();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.excludedFaces.length).toBe(1);
+ let mesh=(await stored(page)).objects[0].artMesh;expect(mesh.triangles.some((f:string[])=>f.includes("v4"))).toBe(true);
+ await page.getByRole("button",{name:"Снять",exact:true}).click();await button.click();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.excludedFaces.length).toBe(0);
+ mesh=(await stored(page)).objects[0].artMesh;expect(new Set(mesh.triangles.flat()).size).toBe(5);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.excludedFaces.length).toBe(1);
 });
