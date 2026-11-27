@@ -49,7 +49,7 @@ import { meshSurfaceGeometry } from "../render/mesh";
 
 
 export type SceneTool =
-  | "move" | "pivot" | "pan" | "marquee" | "lasso"
+  | "move" | "pivot" | "pan" | "marquee" | "lasso" | "brush"
   /** Деформация существующих вершин артмеша. */
   | "warp"
   /** Базовая геометрия и топология того же артмеша. */
@@ -65,7 +65,7 @@ interface SceneProps {
   selectedIds: string[];
   primaryId: string | null;
   tool: SceneTool;
-  artSelectionTool?:"move"|"marquee"|"lasso";
+  artSelectionTool?:"move"|"marquee"|"lasso"|"brush";
   showGrid: boolean;
   /** Пауза или стоп: скрытое по входам рисуется полупрозрачным призраком. */
   ghosts: boolean;
@@ -199,10 +199,8 @@ export function Scene(props: SceneProps) {
   const [artPaste,setArtPaste]=useState<ArtMeshClip|null>(null);
   useEffect(()=>setArtPaste(null),[props.primaryId]);
   const [artReference,setArtReference]=useState(true);
-  const [artBrushEnabled,setArtBrush]=useState(false);
-  const artBrush=props.tool==="warp"&&artBrushEnabled;
-  useEffect(()=>setArtBrush(false),[props.artSelectionTool]);
-  const artPickMode=artBrush?"move":props.artSelectionTool==="marquee"?"rect":props.artSelectionTool??"move";
+  const artBrush=props.tool==="brush"||((props.tool==="warp"||props.tool==="deform"||props.tool==="pen")&&props.artSelectionTool==="brush");
+  const artPickMode=artBrush||props.artSelectionTool==="brush"?"move":props.artSelectionTool==="marquee"?"rect":props.artSelectionTool??"move";
   const artArea=useRef<{objectId:string;shape:"rect"|"lasso";path:Vec2[];points:ArtSelectionPoint[];previous:Set<string>;mode:"replace"|"add"|"subtract"}|null>(null);
   const [artHardness,setArtHardness]=useState(.5);
   const [artDynamic,setArtDynamic]=useState(false);
@@ -213,7 +211,7 @@ export function Scene(props: SceneProps) {
   artToolRef.current={brush:artBrush,radius:artRadius,symmetry:artSymmetry,angle:artSymmetryAngle,reference:artReference};
   const artEdgeAnchor=useRef<{objectId:string;id:string}|null>(null);
   const artSelection=useRef<{objectId:string;ids:Set<string>}>({objectId:"",ids:new Set()});
-  const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number;mirrored?:boolean}>;cursor:Vec2;brush?:{dynamic:boolean;radius:number;hardness:number;angle?:number;last:Vec2;deltas:ArtOffsets};symmetry?:{axis:number;pairs:Map<string,string>}}|null>(null);
+  const artDrag=useRef<{object:RigObject;matrix:Affine;mode:"rest"|"pose";deform?:((point:Vec2)=>Vec2);vertices:Array<{id:string;start:Vec2;seed:Vec2;weight:number;mirrored?:boolean}>;cursor:Vec2;shape?:{itemId:string;smoothing:number[]};brush?:{dynamic:boolean;radius:number;hardness:number;angle?:number;last:Vec2;deltas:ArtOffsets};symmetry?:{axis:number;pairs:Map<string,string>}}|null>(null);
   /** Курсор в мировых координатах: по нему кисть показывает свой радиус. */
   const hover = useRef<Point | null>(null);
   const spaceDown = useRef(false);
@@ -233,8 +231,19 @@ export function Scene(props: SceneProps) {
   // раньше не переключалась сетка и залипало выделение).
   const propsRef = useRef(props);
   propsRef.current = props;
+  const finishArtDrag=()=>{
+    const drag=artDrag.current;if(!drag)return;artDrag.current=null;
+    if(drag.shape)propsRef.current.onPenDragEnd?.();else propsRef.current.onDragEnd?.();
+  };
+  const applyArtDrag=(drag:NonNullable<typeof artDrag.current>,mesh:ArtDeformation,pose:ArtOffsets)=>{
+    try{
+      if(drag.shape)propsRef.current.onPenPoints?.(drag.object.id,drag.shape.itemId,mesh.vertices.map(v=>v.rest),drag.shape.smoothing,true);
+      else propsRef.current.onArtMesh(drag.object.id,drag.mode==="rest"?rebuildArtTriangles(mesh):mesh,pose);
+      setArtTopologyError("");
+    }catch(error){setArtTopologyError(error instanceof Error?error.message:"Невозможно перестроить сетку.");}
+  };
   useEffect(()=>{
-    const finish=()=>{artEdgeAnchor.current=null;artArea.current=null;markDirty();if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}};
+    const finish=()=>{artEdgeAnchor.current=null;artArea.current=null;markDirty();if(artDrag.current)finishArtDrag();};
     window.addEventListener("blur",finish);
     return ()=>{window.removeEventListener("blur",finish);finish();};
   },[]);
@@ -247,11 +256,9 @@ export function Scene(props: SceneProps) {
   useEffect(()=>{
     const key=(event:KeyboardEvent)=>{
       const current=propsRef.current;
-      if(current.tool!=="deform"&&current.tool!=="warp")return;
+      if(current.tool!=="deform"&&current.tool!=="warp"&&current.tool!=="brush")return;
       if((event.target as HTMLElement)?.closest("input,textarea,select,[contenteditable=true]"))return;
-      if(event.code==="KeyB"&&!event.ctrlKey&&!event.metaKey){if(current.tool!=="warp")current.onTool("warp");setArtBrush(true);event.preventDefault();return;}
       if((event.ctrlKey||event.metaKey)&&["KeyZ","KeyY"].includes(event.code))artEdgeAnchor.current=null;
-      if(["KeyV","KeyM","KeyL"].includes(event.code))setArtBrush(false);
       if(event.code!=="Delete"&&event.code!=="Backspace")return;
       event.preventDefault();event.stopImmediatePropagation();
       const selection=artSelection.current;
@@ -417,7 +424,7 @@ export function Scene(props: SceneProps) {
     drawGuides(ctx, previewed, frame, zoom, current.bounds, current.pivots, current.selectedIds);
     drawSelection(ctx, previewed, frame, zoom, current.selectedIds, current.primaryId, current.tool === "pivot");
     // Одна топология: показ базы либо деформированных вершин.
-    const showPose = current.tool === "warp";
+    const showPose = current.tool === "warp"||current.tool==="brush";
     const showRest = current.tool === "deform";
     const artTarget=previewed.objects.find(o=>o.id===current.primaryId);
     if(artTarget?.artMesh&&(showPose||showRest))drawArtEditor(ctx,{...artTarget,artPose:addArtOffsets(artTarget.artPose,meshPoints.get(artTarget.id))},frame?.objects[artTarget.id]??staticValues(artTarget),zoom,showRest,createParentMeshTransforms(previewed,frame,meshPoints)?.(artTarget),artSelection.current.objectId===artTarget.id?artSelection.current.ids:undefined);
@@ -442,9 +449,9 @@ export function Scene(props: SceneProps) {
         if(i)ctx.lineTo(world.x,world.y);else ctx.moveTo(world.x,world.y);
       }ctx.stroke();ctx.restore();
     }
-    if(artTarget?.artMesh&&(showPose||showRest)&&artToolRef.current.brush&&hover.current){
+    if(artToolRef.current.brush&&hover.current){
       ctx.save();ctx.strokeStyle="#b3e5db";ctx.lineWidth=1/zoom;ctx.beginPath();ctx.arc(hover.current.x,hover.current.y,artToolRef.current.radius,0,Math.PI*2);ctx.stroke();
-      if(artToolRef.current.symmetry){
+      if(artTarget&&artToolRef.current.symmetry){
         const matrix=objectMatrix(artTarget,frame?.objects[artTarget.id]??staticValues(artTarget)),p=artEditorPoint(artTarget,hover.current,matrix);
         const reflected=reflectArtVector({x:p.x-artTarget.width/2,y:p.y-artTarget.height/2},artToolRef.current.angle);
         const world=transformPoint(matrix,reflected.x+artTarget.width/2-artTarget.pivot.x*artTarget.width,reflected.y+artTarget.height/2-artTarget.pivot.y*artTarget.height);
@@ -454,6 +461,7 @@ export function Scene(props: SceneProps) {
     }
     drawShapeOutlines(ctx, previewed, frame, zoom, current.selectedIds);
     if (current.pen) drawPen(ctx, previewed, frame, current.pen, zoom, true);
+    else if(artToolRef.current.brush&&artTarget?.shape&&!artTarget.artMesh){const item=artTarget.shape.items.find(item=>item.points.length>0);if(item)drawPen(ctx,previewed,frame,{objectId:artTarget.id,itemId:item.id},zoom,true);}
     if (current.tool === "marquee" || current.tool === "lasso") drawHiddenOutlines(ctx, previewed, zoom);
 
     ctx.strokeStyle = "#454d57";
@@ -808,9 +816,17 @@ export function Scene(props: SceneProps) {
       <div className="scene-toolbar">
         <div className="scene-title"><div><span className="eyebrow">ПРЕВЬЮ</span><h2>Сцена</h2></div><ShortcutGuide /></div>
         <div className="scene-tools">
-          <button className={(props.tool === "move" || ((props.tool==="deform"||props.tool==="warp") && !artBrush && (props.artSelectionTool??"move")==="move")) ? "active" : ""} title="Выделение и перемещение (V) · Ctrl+клик — добавить, Shift+клик — тоже добавить" onClick={() => {setArtBrush(false);props.onTool("move");}}><MousePointer2 size={15} /></button>
-          <button className={(props.tool === "marquee" || ((props.tool==="deform"||props.tool==="warp") && !artBrush && (props.artSelectionTool??"move")==="marquee")) ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => {setArtBrush(false);props.onTool("marquee");}}><BoxSelect size={15} /></button>
-          <button className={(props.tool === "lasso" || ((props.tool==="deform"||props.tool==="warp") && !artBrush && (props.artSelectionTool??"move")==="lasso")) ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => {setArtBrush(false);props.onTool("lasso");}}><LassoSelect size={15} /></button>
+          <button className={(props.tool === "move" || ((props.tool==="deform"||props.tool==="warp") && !artBrush && (props.artSelectionTool??"move")==="move")) ? "active" : ""} title="Выделение и перемещение (V) · Ctrl+клик — добавить, Shift+клик — тоже добавить" onClick={() => {props.onTool("move");}}><MousePointer2 size={15} /></button>
+           <SceneToolOptions label="Кисть артмеша" active={artBrush} icon={<Brush size={15}/>} onClick={()=>props.onTool("brush")}>
+            <label>Радиус<input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius} onChange={e=>setArtRadius(Math.max(1,Math.min(1000,Number(e.target.value)||1)))}/></label>
+            <label>Жёсткость<input aria-label="Жёсткость кисти артмеша" type="range" min={0} max={1} step={.01} value={artHardness} onChange={e=>setArtHardness(Number(e.target.value))}/></label>
+            <label>Режим<select aria-label="Режим кисти артмеша" value={artDynamic?"dynamic":"static"} onChange={e=>setArtDynamic(e.target.value==="dynamic")}><option value="static">Статичная</option><option value="dynamic">Динамичная</option></select></label>
+           </SceneToolOptions>
+           <SceneToolOptions label="Симметрия артмеша" active={artSymmetry} icon={<FlipHorizontal2 size={15}/>} onClick={()=>setArtSymmetry(v=>!v)}>
+            <label>Угол оси, °<input aria-label="Угол симметрии артмеша" type="number" value={artSymmetryAngle} onChange={e=>setArtSymmetryAngle(Number(e.target.value)||0)}/></label>
+           </SceneToolOptions>
+          <button className={(props.tool === "marquee" || ((props.tool==="deform"||props.tool==="warp") && !artBrush && (props.artSelectionTool??"move")==="marquee")) ? "active" : ""} title="Выделение рамкой (M) · Shift — добавить к выборке" onClick={() => {props.onTool("marquee");}}><BoxSelect size={15} /></button>
+          <button className={(props.tool === "lasso" || ((props.tool==="deform"||props.tool==="warp") && !artBrush && (props.artSelectionTool??"move")==="lasso")) ? "active" : ""} title="Выделение лассо (L) · Shift — добавить к выборке" onClick={() => {props.onTool("lasso");}}><LassoSelect size={15} /></button>
           <button className={props.tool === "pivot" ? "active" : ""} title="Пивот (P)" onClick={() => props.onTool("pivot")}><Crosshair size={15} /></button>
           {props.preset.objects.find((item) => item.id === props.primaryId)?.kind === "shape" && <button
             className={props.tool === "pen" ? "active" : ""}
@@ -834,16 +850,6 @@ export function Scene(props: SceneProps) {
             onClick={() => props.onTool("deform")}
           ><Move3D size={15} /></button>
           {(props.tool==="warp"||props.tool==="deform")&&meshTarget&&<button className={artPanelOpen?"active":""} aria-label="Панель артмеша" title="Панель артмеша" aria-expanded={artPanelOpen} onClick={()=>setArtPanelOpen(v=>!v)}><SlidersHorizontal size={16}/></button>}
-          {(props.tool==="warp"||props.tool==="deform")&&<>
-           <SceneToolOptions label="Кисть артмеша" active={artBrush} icon={<Brush size={15}/>} onClick={()=>{if(props.tool!=="warp")props.onTool("warp");setArtBrush(true);}}>
-            <label>Радиус<input aria-label="Радиус кисти артмеша" type="number" min={1} max={1000} value={artRadius} onChange={e=>setArtRadius(Math.max(1,Math.min(1000,Number(e.target.value)||1)))}/></label>
-            <label>Жёсткость<input aria-label="Жёсткость кисти артмеша" type="range" min={0} max={1} step={.01} value={artHardness} onChange={e=>setArtHardness(Number(e.target.value))}/></label>
-            <label>Режим<select aria-label="Режим кисти артмеша" value={artDynamic?"dynamic":"static"} onChange={e=>setArtDynamic(e.target.value==="dynamic")}><option value="static">Статичная</option><option value="dynamic">Динамичная</option></select></label>
-           </SceneToolOptions>
-           <SceneToolOptions label="Симметрия артмеша" active={artSymmetry} icon={<FlipHorizontal2 size={15}/>} onClick={()=>setArtSymmetry(v=>!v)}>
-            <label>Угол оси, °<input aria-label="Угол симметрии артмеша" type="number" value={artSymmetryAngle} onChange={e=>setArtSymmetryAngle(Number(e.target.value)||0)}/></label>
-           </SceneToolOptions>
-          </>}
           <span className="tool-separator" />
           <button className={props.showGrid ? "active" : ""} title={`Сетка: ${props.showGrid ? "вкл" : "выкл"}`} onClick={props.onToggleGrid}><Grid3X3 size={15} /></button>
           <button
@@ -912,17 +918,20 @@ export function Scene(props: SceneProps) {
             }
             // Инструмент пера, но контур не выбран: клик не должен выделять
             // чужие объекты, иначе перо «переключает фокус» вместо рисования.
-            if (current.tool === "pen" && !current.pen) return;
+            if (current.tool === "pen" && !current.pen && !artBrush) return;
             const point = scenePoint(event);
-            const artObject=current.preset.objects.find(o=>o.id===current.primaryId);
-            if(artObject?.artMesh&&(current.tool==="warp"||current.tool==="deform")){
+            const pointObject=current.preset.objects.find(o=>o.id===current.primaryId);
+            const shapeItem=artBrush&&pointObject?.shape&&(current.tool==="pen"||!pointObject.artMesh)?pointObject.shape.items.find(item=>item.points.length>0&&(!current.pen||current.pen.objectId!==pointObject.id||item.id===current.pen.itemId)):undefined;
+            const shapeBrush=shapeItem?{itemId:shapeItem.id,smoothing:shapeItem.points.map((_,i)=>smoothingOf(shapeItem,i))}:undefined;
+            const artObject=pointObject&&shapeItem?{...pointObject,artPose:{},artMesh:{schema:1 as const,nextId:shapeItem.points.length,vertices:shapeItem.points.map((rest,i)=>({id:`v${i}`,rest,uv:{x:rest.x/pointObject.width,y:rest.y/pointObject.height}})),triangles:[] as [string,string,string][]}}:pointObject;
+            if(artObject?.artMesh&&(current.tool==="warp"||current.tool==="deform"||artBrush)){
               hover.current=point;
               const frame=liveFrame(current.preset);
               const values=frame?.objects[artObject.id]??staticValues(artObject);
               const points=artFramePoints(current.preset,frame,undefined,current.preview);
-              const deform=createParentMeshTransforms(current.preset,frame,points)?.(artObject);
+              const deform=shapeBrush?undefined:createParentMeshTransforms(current.preset,frame,points)?.(artObject);
               const pose=addArtOffsets(artObject.artPose,points.get(artObject.id));
-              const matrix=objectMatrix(artObject,values),rest=current.tool==="deform";
+              const matrix=objectMatrix(artObject,values),rest=current.tool==="deform"||!!shapeBrush;
               let nearest:string|null=null,distance=10/camera.current.zoom;
               const pointerLocal=artEditorPoint(artObject,point,matrix);
               const center={x:artObject.width/2,y:artObject.height/2};
@@ -953,7 +962,7 @@ export function Scene(props: SceneProps) {
                 }catch(error){setArtTopologyError(error instanceof Error?error.message:"Не удалось создать ручное ребро.");}
                 markDirty();return;
               }
-              if(rest&&event.altKey&&artPickMode==="move"){
+              if(rest&&!artBrush&&event.altKey&&artPickMode==="move"){
                 const cursor=artEditorPoint(artObject,point,matrix);
                 const local=inverseArtEditorPoint(cursor,candidates.find(v=>v.id===nearest)?.start??cursor,deform);
                 try{
@@ -998,10 +1007,10 @@ export function Scene(props: SceneProps) {
               const vertices=candidates.filter(v=>artBrush?(artDynamic||v.weight>0):selected.has(v.id)).map(v=>({...v,weight:artBrush?v.weight:1}));
               if(vertices.length){
                 const symmetry=!artSymmetry?undefined:{axis:artSymmetryAngle,pairs:artSymmetryPairs(artObject.artMesh,{angle:artSymmetryAngle,center:{x:artObject.width/2,y:artObject.height/2}})};
-                current.onDragStart();artDrag.current={object:artObject,matrix,mode:rest?"rest":"pose",deform,vertices,cursor:artEditorPoint(artObject,point,matrix),symmetry:artBrush?undefined:symmetry,brush:artBrush?{dynamic:artDynamic,radius:artRadius,hardness:artHardness,angle:artSymmetry?artSymmetryAngle:undefined,last:point,deltas:{}}:undefined};markDirty();}
+                if(!shapeBrush)current.onDragStart();artDrag.current={shape:shapeBrush,object:artObject,matrix,mode:rest?"rest":"pose",deform,vertices,cursor:artEditorPoint(artObject,point,matrix),symmetry:artBrush?undefined:symmetry,brush:artBrush?{dynamic:artDynamic,radius:artRadius,hardness:artHardness,angle:artSymmetry?artSymmetryAngle:undefined,last:point,deltas:{}}:undefined};markDirty();}
               return;
             }
-            if(current.tool==="warp"||current.tool==="deform")return;
+            if(current.tool==="warp"||current.tool==="deform"||artBrush)return;
             if (current.pen) {
               const object = current.preset.objects.find((item) => item.id === current.pen!.objectId);
               const item = object?.shape?.items.find((entry) => entry.id === current.pen!.itemId);
@@ -1163,7 +1172,7 @@ export function Scene(props: SceneProps) {
                 }
                 brush.last=world;
                 const next=editArtVertices(drag.object.artMesh!,drag.object.artPose??{},brush.deltas,drag.mode,{width:drag.object.width,height:drag.object.height});
-                propsRef.current.onArtMesh(drag.object.id,next.mesh,next.pose);return;
+                applyArtDrag(drag,next.mesh,next.pose);return;
               }
               for(const vertex of drag.vertices){
                 const origin=drag.deform?drag.deform(vertex.start):vertex.start;
@@ -1176,15 +1185,14 @@ export function Scene(props: SceneProps) {
               }
               const mirrored=drag.symmetry?mirrorArtDeltas(deltas,drag.symmetry.pairs,drag.symmetry.axis):deltas;
               const next=editArtVertices(drag.object.artMesh!,drag.object.artPose??{},mirrored,drag.mode,{width:drag.object.width,height:drag.object.height});
-              try{propsRef.current.onArtMesh(drag.object.id,drag.mode==="rest"?rebuildArtTriangles(next.mesh):next.mesh,next.pose);setArtTopologyError("");}
-              catch(error){setArtTopologyError(error instanceof Error?error.message:"Невозможно перестроить сетку.");}return;
+              applyArtDrag(drag,next.mesh,next.pose);return;
             }
             // Курсор помним всегда: кисть показывает свой радиус, даже когда не
             // ведёт, а ось симметрии видно сразу. Перерисовка — только когда
             // курсор действительно сдвинулся, иначе мышь с высоким поллингом
             // гоняла бы кадры впустую.
             const tool = propsRef.current.tool;
-            if (tool === "warp" || tool === "deform") {
+            if (tool === "warp" || tool === "deform" || artToolRef.current.brush) {
               const world = scenePoint(event);
               const previous = hover.current;
               if (!previous || Math.hypot(world.x - previous.x, world.y - previous.y) > 1) {
@@ -1268,7 +1276,7 @@ export function Scene(props: SceneProps) {
               if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
               markDirty();return;
             }
-            if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();markDirty();
+            if(artDrag.current){finishArtDrag();markDirty();
               if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);return;}
             const current = interaction.current;
             interaction.current = null;
@@ -1292,7 +1300,7 @@ export function Scene(props: SceneProps) {
           }}
           onPointerCancel={() => {
             artArea.current=null;
-            if(artDrag.current){artDrag.current=null;propsRef.current.onDragEnd?.();}
+            if(artDrag.current)finishArtDrag();
             const current = interaction.current;
             interaction.current = null;
             marqueeRef.current = null;
@@ -1392,6 +1400,7 @@ export function Scene(props: SceneProps) {
 }
 
 const TOOL_HINT: Record<SceneTool, string> = {
+  brush: "Кисть точек (B): перемещение вершин без смены режима; где нет редактируемых точек — без действия",
   move: "Перемещение меняет базовую позу",
   marquee: "Тяните рамку; Shift — добавить к выборке",
   lasso: "Обведите объекты; Shift — добавить к выборке",

@@ -209,7 +209,7 @@ export default function App() {
   const [layout, setLayout] = useState<EditorLayout>(loadLayout);
   const [paused, setPaused] = useState(false);
   const [tool, setTool] = useState<SceneTool>("move");
-  const [artSelectionTool,setArtSelectionTool]=useState<"move"|"marquee"|"lasso">("move");
+  const [artSelectionTool,setArtSelectionTool]=useState<"move"|"marquee"|"lasso"|"brush">("move");
   /**
    * Перо: контур фигуры, который сейчас рисуется на сцене. Состояние живёт
    * здесь, потому что его видят двое — сцена (клики) и инспектор (кнопка).
@@ -226,10 +226,12 @@ export default function App() {
   const toolRef=useRef(tool);toolRef.current=tool;
   const chooseTool = useCallback((next: SceneTool) => {
     if (next === "pen" && presetRef.current.objects.find((item) => item.id === selectionRef.current.at(-1))?.kind !== "shape") return;
-    if(next==="move"||next==="marquee"||next==="lasso"){
+    if(next==="move"||next==="marquee"||next==="lasso"||next==="brush"){
       const active=toolRef.current;
-      if(active==="deform"||active==="warp"){setArtSelectionTool(next);return;}
+      if(active==="deform"||active==="warp"||(active==="pen"&&next==="brush")){setArtSelectionTool(next);return;}
+      setArtSelectionTool(next);
     }
+    if(next==="pen")setArtSelectionTool("move");
     setTool((next==="deform"||next==="warp")&&toolRef.current===next?"move":next);
     // Ушли с пера — рисование закончилось: иначе клики продолжали бы ставить
     // точки в невидимом режиме.
@@ -246,7 +248,7 @@ export default function App() {
    */
   const startPen = useCallback((next: { objectId: string; itemId: string } | null) => {
     setPen(next);
-    if (next) setTool("pen");
+    if (next) {setArtSelectionTool("move");setTool("pen");}
   }, []);
   const [showGrid, setShowGrid] = useState(true);
   /**

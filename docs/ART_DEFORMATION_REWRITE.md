@@ -775,3 +775,10 @@ faces are intentional holes, not a request to restore the convex hull there.
   and **21 actual App browser scenarios**. Added cut-insertion/interpolation,
   selected/all reconnection, untouched cut preservation, manual edge priority,
   marquee-selected UI action and undo checks. Native gates remain external.
+
+### Самостоятельная кисть точек (2026-10-24)
+
+- B и постоянная иконка рядом с V выбирают кисть без входа в редактор сетки. В R/T кисть сохраняет текущую базу/позу, в редакторе контура — выбранный контур.
+- Кисть работает с вершинами артмеша и точками path-фигуры; для контура не создаётся и не сохраняется артмеш. Без доступных точек мазок ничего не меняет.
+- Радиус, жёсткость и static/dynamic доступны под иконкой; симметрия также доступна вне панели артмеша. Мазок отменяется одним действием.
+- Проверки: TypeScript, Vite, 600 pure-тестов и 23 браузерных сценария, включая кисть вне редактора, сохранение R и контур без сетки. Native/WASM сборка в этой среде не проверена.

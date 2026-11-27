@@ -380,3 +380,40 @@ test("auto-lines button uses marquee-selected points and then all points when de
  mesh=(await stored(page)).objects[0].artMesh;expect(new Set(mesh.triangles.flat()).size).toBe(5);
  await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh.excludedFaces.length).toBe(1);
 });
+
+test("independent brush stays outside mesh editor and preserves rest mode",async({page})=>{
+ const preset=project();await open(page,preset);
+ await page.getByTitle("Деформация артмеша (T)",{exact:true}).click();
+ const brush=page.getByRole("button",{name:"Кисть артмеша",exact:true});await expect(brush).toBeVisible();
+ await page.keyboard.press("KeyB");await expect(brush).toHaveClass("active");
+ await expect(page.getByTitle("Деформация артмеша (T)",{exact:true})).not.toHaveClass("active");
+ await page.getByTitle("Вписать сцену",{exact:true}).click();
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+100*z,y=box.y+(box.height-300*z)/2+80*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+12*z,y+6*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artPose.v0?.x??0).toBeGreaterThan(0);
+ expect((await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artPose).toEqual({});
+ await page.keyboard.press("KeyR");await page.keyboard.press("KeyB");
+ await page.getByRole("button",{name:"Панель артмеша",exact:true}).click();
+ await expect(page.getByTitle("Правка базы и топологии артмеша (R)",{exact:true})).toHaveClass("active");
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+12*z,y+6*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].artMesh.vertices[0].rest.x).toBeGreaterThan(0);
+ expect((await stored(page)).objects[0].artPose).toEqual({});
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].artMesh).toEqual(preset.objects[0].artMesh);
+});
+
+test("independent brush edits shape path without generating a mesh and undoes one stroke",async({page})=>{
+ const preset=project(false);preset.objects[0].shape!.items=[{id:"path",kind:"path",points:[{x:0,y:0},{x:160,y:0},{x:160,y:120},{x:0,y:120}],closed:true}];
+ await open(page,preset);await page.getByTitle("Деформация артмеша (T)",{exact:true}).click();await page.keyboard.press("KeyB");
+ await page.getByTitle("Вписать сцену",{exact:true}).click();
+ const before=(await stored(page)).objects[0].shape;
+ const canvas=page.locator(".scene-viewport canvas").first(),box=(await canvas.boundingBox())!;
+ const z=Math.max(.05,Math.min((box.width-70)/400,(box.height-70)/300,2));
+ const x=box.x+(box.width-400*z)/2+100*z,y=box.y+(box.height-300*z)/2+80*z;
+ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+12*z,y+6*z,{steps:4});await page.mouse.up();
+ await expect.poll(async()=>(await stored(page)).objects[0].shape.items[0].points[0].x).toBeGreaterThan(0);
+ expect((await stored(page)).objects[0].artMesh).toBeUndefined();
+ await undo(page);await expect.poll(async()=>(await stored(page)).objects[0].shape).toEqual(before);
+});
