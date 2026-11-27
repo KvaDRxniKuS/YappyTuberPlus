@@ -469,3 +469,43 @@ test("base transform records scale in selected state key without changing mesh",
  expect((await stored(page)).objects[0].artMesh).toEqual(object.artMesh);
  await undo(page);await expect.poll(async()=>readStates((await stored(page)).objects[0].script).layers[0].poses[0].pose.sizeX??1).toBe(1);
 });
+
+test("tree Ctrl+D duplicates selection and Ctrl+A Delete removes it in one step",async({page})=>{
+ await open(page,project());await page.locator(".tree-row").first().click();
+ await page.keyboard.press("Control+d");await expect(page.locator(".tree-row")).toHaveCount(2);
+ await expect(page.locator(".tree-row.selected")).toHaveCount(1);
+ await page.keyboard.press("Control+z");await expect(page.locator(".tree-row")).toHaveCount(1);
+ await page.keyboard.press("Control+Shift+z");await expect(page.locator(".tree-row")).toHaveCount(2);
+ await page.keyboard.press("Control+a");await expect(page.locator(".tree-row.selected")).toHaveCount(2);
+ await page.keyboard.press("Delete");await expect(page.locator(".tree-row")).toHaveCount(0);
+ await page.keyboard.press("Control+z");await expect(page.locator(".tree-row")).toHaveCount(2);
+});
+test("tree navigation rename reorder and shortcut isolation",async({page})=>{
+ const preset=project();preset.objects.push({...structuredClone(preset.objects[0]),id:"second",name:"Второй"});
+ await open(page,preset);await page.locator(".tree-row").first().click();
+ await page.keyboard.press("End");await expect(page.locator(".tree-row.selected")).toContainText("Второй");
+ await page.keyboard.press("Shift+Home");await expect(page.locator(".tree-row.selected")).toHaveCount(2);
+ await page.keyboard.press("Home");await page.keyboard.press("F2");
+ const input=page.locator(".tree-row input");await expect(input).toBeFocused();
+ await page.keyboard.press("Control+d");await expect(page.locator(".tree-row")).toHaveCount(2);
+ await input.fill("Новое имя");await page.keyboard.press("Enter");
+ await expect(page.locator(".tree-row").first()).toContainText("Новое имя");
+ await page.keyboard.press("Control+d");await expect(page.locator(".tree-row")).toHaveCount(3);
+ await page.keyboard.press("Control+z");await expect(page.locator(".tree-row")).toHaveCount(2);
+ await page.locator(".tree-row").first().click();await page.keyboard.press("Alt+ArrowDown");
+ await expect(page.locator(".tree-row").last()).toContainText("Новое имя");
+ await page.locator(".scene-title").click();await page.keyboard.press("Control+d");await expect(page.locator(".tree-row")).toHaveCount(2);
+});
+test("tree arrows expand and collapse hierarchy and Ctrl+D copies a subtree",async({page})=>{
+ const preset=project();preset.objects.push({...structuredClone(preset.objects[0]),id:"child",name:"Ребёнок",parentId:"surface"});
+ await open(page,preset);await page.locator(".tree-row").first().click();
+ await page.keyboard.press("ArrowLeft");await expect(page.locator(".tree-row")).toHaveCount(1);
+ await page.keyboard.press("ArrowRight");await expect(page.locator(".tree-row")).toHaveCount(2);
+ await page.keyboard.press("ArrowRight");await expect(page.locator(".tree-row.selected")).toContainText("Ребёнок");
+ await page.keyboard.press("ArrowLeft");await expect(page.locator(".tree-row.selected")).toContainText("Проверка артмеша");
+ await page.keyboard.press("Control+d");await expect(page.locator(".tree-row")).toHaveCount(4);
+ await expect.poll(async()=>(await stored(page)).objects.length).toBe(4);
+ const objects=(await stored(page)).objects,copy=objects.find(o=>o.id!=="surface"&&o.id!=="child"&&!o.parentId);
+ expect(objects.filter(o=>o.parentId===copy.id)).toHaveLength(1);
+ await page.keyboard.press("Control+z");await expect(page.locator(".tree-row")).toHaveCount(2);
+});

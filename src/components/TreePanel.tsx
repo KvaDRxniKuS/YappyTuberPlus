@@ -94,6 +94,33 @@ export function TreePanel(props: TreePanelProps) {
   return (
     <aside className="tree-panel panel-surface" tabIndex={-1} onPointerDownCapture={event=>{
       if(!(event.target as HTMLElement).closest("input,textarea,select,[contenteditable=true]"))event.currentTarget.focus({preventScroll:true});
+    }} onKeyDown={event=>{
+      const target=event.target as HTMLElement;
+      if(target.closest("input,textarea,select,[contenteditable=true]"))return;
+      const command=event.ctrlKey||event.metaKey;
+      const handled=()=>{event.preventDefault();event.stopPropagation();};
+      if(command&&!event.altKey&&!event.shiftKey&&event.code==="KeyD"){
+        handled();if(selectedIds.length)props.onDuplicate();return;
+      }
+      if(command&&!event.altKey&&!event.shiftKey&&event.code==="KeyA"){
+        handled();props.onSelectRange(order);return;
+      }
+      if(command||event.altKey)return; // Undo, rename, deletion and Alt+arrows use App commands.
+      if(["ArrowUp","ArrowDown","Home","End"].includes(event.code)){
+        handled();if(!order.length)return;
+        const current=order.indexOf(primaryId??"");
+        const index=event.code==="Home"?0:event.code==="End"?order.length-1:Math.max(0,Math.min(order.length-1,current+(event.code==="ArrowUp"?-1:1)));
+        const id=order[index];
+        if(event.shiftKey)props.onSelectRange(rangeIds(order,primaryId,id));else props.onSelect(id);
+      }else if(event.code==="ArrowLeft"||event.code==="ArrowRight"){
+        handled();if(!primary)return;
+        const children=objects.filter(o=>o.parentId===primary.id);
+        if(event.code==="ArrowRight"){
+          if(children.length&&collapsed.has(primary.id))setCollapsed(previous=>{const next=new Set(previous);next.delete(primary.id);return next;});
+          else if(children.length)props.onSelect(children[0].id);
+        }else if(children.length&&!collapsed.has(primary.id))setCollapsed(previous=>new Set(previous).add(primary.id));
+        else if(primary.parentId)props.onSelect(primary.parentId);
+      }
     }}>
       <div className="panel-heading">
         <div>
@@ -334,8 +361,12 @@ function TreeRename({ value, onCommit, onCancel }: {
         onBlur={() => finish(true)}
         onKeyDown={(event) => {
           event.stopPropagation();
-          if (event.key === "Enter") { event.preventDefault(); finish(true); }
-          else if (event.key === "Escape") { event.preventDefault(); finish(false); }
+          if (event.key === "Enter" || event.key === "Escape") {
+            event.preventDefault();
+            const tree=event.currentTarget.closest<HTMLElement>(".tree-panel");
+            finish(event.key === "Enter");
+            tree?.focus({preventScroll:true});
+          }
         }}
       />
     </span>
